@@ -1300,17 +1300,17 @@ pub open spec fn types_to(
         ExprSpec::Bind(BinderKind::Lam, binder_type, body) => exists|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
             real_lam_marker(cod, s, l) && (io == IoMode::InferWt || (types_to(dty, denv, lctx, io, *binder_type, s, (fuel - 1) as nat)
             && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (fuel - 1) as nat)))
-            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body))
-            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body) ==>
-                unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
+            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(*binder_type, k) && fv_absent(*body, k))
+            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(*binder_type, k) && fv_absent(*body, k) ==>
+                fv_absent(cod, k) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                 && types_to(dty, denv, lctx.insert(k, *binder_type), io, subst_full(*body, seq![ExprSpec::Free(k)], 0), infd, (fuel - 1) as nat)
                 && deq_p(dty, denv, lctx.insert(k, *binder_type), io, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (fuel - 1) as nat))
             && t == ExprSpec::Bind(BinderKind::Pi, Box::new(*binder_type), Box::new(cod)),
         ExprSpec::Bind(BinderKind::Pi, binder_type, body) => exists|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
             real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, io, *binder_type, bt_ty, (fuel - 1) as nat)
             && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), (fuel - 1) as nat)
-            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body))
-            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body) ==>
+            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(*binder_type, k) && fv_absent(*body, k))
+            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(*binder_type, k) && fv_absent(*body, k) ==>
                 exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                 && types_to(dty, denv, lctx.insert(k, *binder_type), io, subst_full(*body, seq![ExprSpec::Free(k)], 0), instd, (fuel - 1) as nat)
                 && deq_p(dty, denv, lctx.insert(k, *binder_type), io, instd, ExprSpec::Sort(cod_level), (fuel - 1) as nat))
@@ -1660,9 +1660,9 @@ pub proof fn types_to_mono_real_bind(
         let (cod, s0, l0) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
             real_lam_marker(cod, s, l) && (io == IoMode::InferWt || (types_to(dty, denv, lctx, io, bt, s, g1)
             && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)))
-            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, bt) && unreach(lctx, k, body))
-            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, bt) && unreach(lctx, k, body) ==>
-                unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
+            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(bt, k) && fv_absent(body, k))
+            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(bt, k) && fv_absent(body, k) ==>
+                fv_absent(cod, k) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                 && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, g1)
                 && deq_p(dty, denv, lctx.insert(k, bt), io, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1))
             && t == ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(cod));
@@ -1670,8 +1670,8 @@ pub proof fn types_to_mono_real_bind(
             types_to_mono(dty, denv, lctx, io, bt, s0, g1, g2);
             deq_p_mono(dty, denv, lctx, io, s0, ExprSpec::Sort(l0), g1, g2);
         }
-        assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, bt) && unreach(lctx, k, body) implies
-            unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
+        assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(bt, k) && fv_absent(body, k) implies
+            fv_absent(cod, k) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, g2)
             && deq_p(dty, denv, lctx.insert(k, bt), io, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), g2) by {
             let infd = choose|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
@@ -1687,15 +1687,15 @@ pub proof fn types_to_mono_real_bind(
         let (bt_ty, dl, cl) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
             real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, io, bt, bt_ty, g1)
             && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), g1)
-            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, bt) && unreach(lctx, k, body))
-            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, bt) && unreach(lctx, k, body) ==>
+            && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(bt, k) && fv_absent(body, k))
+            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(bt, k) && fv_absent(body, k) ==>
                 exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                 && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, g1)
                 && deq_p(dty, denv, lctx.insert(k, bt), io, instd, ExprSpec::Sort(cod_level), g1))
             && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
         types_to_mono(dty, denv, lctx, io, bt, bt_ty, g1, g2);
         deq_p_mono(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dl), g1, g2);
-        assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, bt) && unreach(lctx, k, body) implies
+        assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(bt, k) && fv_absent(body, k) implies
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, g2)
             && deq_p(dty, denv, lctx.insert(k, bt), io, instd, ExprSpec::Sort(cl), g2) by {
@@ -2873,7 +2873,7 @@ pub open spec fn bind_ty_marker(ty: ExprSpec) -> bool {
 /// A local the scoped binder congruence may open with: outside the context
 /// and unreachable from both binders.
 pub open spec fn bind_fresh_ok(lctx: Map<nat, ExprSpec>, k: nat, ty: ExprSpec, b1: ExprSpec, b2: ExprSpec) -> bool {
-    !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, ty) && unreach(lctx, k, b1) && unreach(lctx, k, b2)
+    !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(ty, k) && fv_absent(b1, k) && fv_absent(b2, k)
 }
 
 /// No entry of the context mentions `k` (the locally nameless side

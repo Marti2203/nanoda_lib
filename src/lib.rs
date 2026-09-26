@@ -41,5 +41,6 @@ mod tests;
 pub mod unique_hasher;
 pub mod util;
 pub mod util_model;
+pub mod weaken;
 
 pub(crate) const STACK_SIZE: usize = 16_777_216;

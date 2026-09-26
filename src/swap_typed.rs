@@ -309,18 +309,18 @@ proof fn sw_tt_real_bind(
     let (sa, sb) = (fswap(a, x, y), fswap(b, x, y));
     let g1 = (f - 1) as nat;
     // non-vacuity
-    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, b);
+    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(b, k);
     cswap_key(lctx, k0, x, y);
     fswap_ctx_fresh(lctx, k0, x, y);
-    fswap_unreach(lctx, k0, a, x, y);
-    fswap_unreach(lctx, k0, b, x, y);
+    fswap_fv_absent(a, k0, x, y);
+    fswap_fv_absent(b, k0, x, y);
     assert(fresh_marker(sw(k0, x, y)));
     if bk == BinderKind::Lam {
         let (cod, s0, l0) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
             real_lam_marker(cod, s, l) && (r == IoMode::InferWt || (types_to(dty, denv, lctx, r, a, s, g1)
             && deq_p(dty, denv, lctx, r, s, ExprSpec::Sort(l), g1)))
-            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, b) ==>
-                unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
+            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(b, k) ==>
+                fv_absent(cod, k) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                 && types_to(dty, denv, lctx.insert(k, a), r, subst_full(b, seq![ExprSpec::Free(k)], 0), infd, g1)
                 && deq_p(dty, denv, lctx.insert(k, a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1))
             && t == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod));
@@ -329,23 +329,23 @@ proof fn sw_tt_real_bind(
             sw_deq_p(dty, denv, lctx, r, s0, ExprSpec::Sort(l0), g1, x, y);
         }
         let scod = fswap(cod, x, y);
-        assert forall|k2: nat| #[trigger] fresh_marker(k2) && !g.contains_key(k2) && ctx_fresh(g, k2) && unreach(g, k2, sa) && unreach(g, k2, sb) implies
-            unreach(g, k2, scod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k2, infd)
+        assert forall|k2: nat| #[trigger] fresh_marker(k2) && !g.contains_key(k2) && ctx_fresh(g, k2) && fv_absent(sa, k2) && fv_absent(sb, k2) implies
+            fv_absent(scod, k2) && exists|infd: ExprSpec| #[trigger] real_body_marker(k2, infd)
             && types_to(dty, denv, g.insert(k2, sa), r, subst_full(sb, seq![ExprSpec::Free(k2)], 0), infd, g1)
             && deq_p(dty, denv, g.insert(k2, sa), r, infd, subst_full(scod, seq![ExprSpec::Free(k2)], 0), g1) by {
             let k = sw(k2, x, y);
             sw_invol(k2, x, y);
             cswap_at(lctx, x, y, k2);
             fswap_ctx_fresh_back(lctx, k2, x, y);
-            fswap_unreach_back(lctx, k2, sa, x, y);
-            fswap_unreach_back(lctx, k2, sb, x, y);
+            fswap_fv_absent(sa, k2, x, y);
+            fswap_fv_absent(sb, k2, x, y);
             fswap_invol(a, x, y);
             fswap_invol(b, x, y);
             assert(fresh_marker(k));
             let infd = choose|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                 && types_to(dty, denv, lctx.insert(k, a), r, subst_full(b, seq![ExprSpec::Free(k)], 0), infd, g1)
                 && deq_p(dty, denv, lctx.insert(k, a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1);
-            fswap_unreach(lctx, k, cod, x, y);
+            fswap_fv_absent(cod, k, x, y);
             cswap_insert(lctx, k, a, x, y);
             fswap_inst_free(b, k, x, y);
             fswap_inst_free(cod, k, x, y);
@@ -358,14 +358,14 @@ proof fn sw_tt_real_bind(
         let (bt_ty, dl, cl) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
             real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, r, a, bt_ty, g1)
             && deq_p(dty, denv, lctx, r, bt_ty, ExprSpec::Sort(dom_level), g1)
-            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, b) ==>
+            && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(b, k) ==>
                 exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                 && types_to(dty, denv, lctx.insert(k, a), r, subst_full(b, seq![ExprSpec::Free(k)], 0), instd, g1)
                 && deq_p(dty, denv, lctx.insert(k, a), r, instd, ExprSpec::Sort(cod_level), g1))
             && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
         sw_types_to(dty, denv, lctx, r, a, bt_ty, g1, x, y);
         sw_deq_p(dty, denv, lctx, r, bt_ty, ExprSpec::Sort(dl), g1, x, y);
-        assert forall|k2: nat| #[trigger] fresh_marker(k2) && !g.contains_key(k2) && ctx_fresh(g, k2) && unreach(g, k2, sa) && unreach(g, k2, sb) implies
+        assert forall|k2: nat| #[trigger] fresh_marker(k2) && !g.contains_key(k2) && ctx_fresh(g, k2) && fv_absent(sa, k2) && fv_absent(sb, k2) implies
             exists|instd: ExprSpec| #[trigger] real_body_marker(k2, instd)
             && types_to(dty, denv, g.insert(k2, sa), r, subst_full(sb, seq![ExprSpec::Free(k2)], 0), instd, g1)
             && deq_p(dty, denv, g.insert(k2, sa), r, instd, ExprSpec::Sort(cl), g1) by {
@@ -373,8 +373,8 @@ proof fn sw_tt_real_bind(
             sw_invol(k2, x, y);
             cswap_at(lctx, x, y, k2);
             fswap_ctx_fresh_back(lctx, k2, x, y);
-            fswap_unreach_back(lctx, k2, sa, x, y);
-            fswap_unreach_back(lctx, k2, sb, x, y);
+            fswap_fv_absent(sa, k2, x, y);
+            fswap_fv_absent(sb, k2, x, y);
             fswap_invol(a, x, y);
             fswap_invol(b, x, y);
             assert(fresh_marker(k));
@@ -574,9 +574,9 @@ pub proof fn sw_deq_p_c(
                     let k0 = choose|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2);
                     cswap_key(lctx, k0, x, y);
                     fswap_ctx_fresh(lctx, k0, x, y);
-                    fswap_unreach(lctx, k0, ty, x, y);
-                    fswap_unreach(lctx, k0, *b1, x, y);
-                    fswap_unreach(lctx, k0, *b2, x, y);
+                    fswap_fv_absent(ty, k0, x, y);
+                    fswap_fv_absent(*b1, k0, x, y);
+                    fswap_fv_absent(*b2, k0, x, y);
                     assert(fresh_marker(sw(k0, x, y)) && bind_fresh_ok(g, sw(k0, x, y), sty, sb1, sb2));
                     // every fresh local, swapped back, used, swapped forward
                     assert forall|k2: nat| #[trigger] fresh_marker(k2) && bind_fresh_ok(g, k2, sty, sb1, sb2) implies
@@ -585,9 +585,9 @@ pub proof fn sw_deq_p_c(
                         sw_invol(k2, x, y);
                         cswap_at(lctx, x, y, k2);
                         fswap_ctx_fresh_back(lctx, k2, x, y);
-                        fswap_unreach_back(lctx, k2, sty, x, y);
-                        fswap_unreach_back(lctx, k2, sb1, x, y);
-                        fswap_unreach_back(lctx, k2, sb2, x, y);
+                        fswap_fv_absent(sty, k2, x, y);
+                        fswap_fv_absent(sb1, k2, x, y);
+                        fswap_fv_absent(sb2, k2, x, y);
                         fswap_invol(ty, x, y);
                         fswap_invol(*b1, x, y);
                         fswap_invol(*b2, x, y);
@@ -1083,14 +1083,14 @@ pub proof fn real_lam_intro(
 {
     let r = IoMode::Real;
     let g1 = (f - 1) as nat;
-    scoped_unreach_p(lctx, lid, a);
-    scoped_unreach_p(lctx, lid, body);
+    assert(fv_absent(a, lid) || lctx.contains_key(lid));
+    assert(fv_absent(body, lid) || lctx.contains_key(lid));
     assert(fresh_marker(lid));
-    assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) implies
-        unreach(lctx, k, cod) && exists|infd2: ExprSpec| #[trigger] real_body_marker(k, infd2)
+    assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) implies
+        fv_absent(cod, k) && exists|infd2: ExprSpec| #[trigger] real_body_marker(k, infd2)
         && types_to(dty, denv, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), infd2, g1)
         && deq_p(dty, denv, lctx.insert(k, a), r, infd2, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1) by {
-        scoped_unreach_p(lctx, k, cod);
+        assert(fv_absent(cod, k) || lctx.contains_key(k));
         assert(fv_absent(a, lid) || lctx.contains_key(lid));
         assert(fv_absent(a, k) || lctx.contains_key(k));
         assert(fv_absent(body, lid) || lctx.contains_key(lid));
@@ -1148,10 +1148,10 @@ pub proof fn real_pi_intro(
 {
     let r = IoMode::Real;
     let g1 = (f - 1) as nat;
-    scoped_unreach_p(lctx, lid, a);
-    scoped_unreach_p(lctx, lid, body);
+    assert(fv_absent(a, lid) || lctx.contains_key(lid));
+    assert(fv_absent(body, lid) || lctx.contains_key(lid));
     assert(fresh_marker(lid));
-    assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) implies
+    assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) implies
         exists|instd2: ExprSpec| #[trigger] real_body_marker(k, instd2)
         && types_to(dty, denv, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), instd2, g1)
         && deq_p(dty, denv, lctx.insert(k, a), r, instd2, ExprSpec::Sort(cl), g1) by {
@@ -1168,6 +1168,127 @@ pub proof fn real_pi_intro(
         assert(real_body_marker(k, fswap(instd, lid, k)));
     }
     assert(real_pi_marker(bt_ty, dl, cl));
+}
+
+
+// ---------------------------------------------------------------------------
+// M2: a fresh local always exists (local ids are `nat`, contexts finite).
+// ---------------------------------------------------------------------------
+
+/// One more than the largest free local of `e` (0 if none).
+pub open spec fn max_fv(e: ExprSpec) -> nat
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(i) => i + 1,
+        ExprSpec::App(f, a) => nat_max(max_fv(*f), max_fv(*a)),
+        ExprSpec::Bind(_, t, b) => nat_max(max_fv(*t), max_fv(*b)),
+        ExprSpec::Let(t, v, b) => nat_max(max_fv(*t), nat_max(max_fv(*v), max_fv(*b))),
+        ExprSpec::Proj(_, st) => max_fv(*st),
+        _ => 0,
+    }
+}
+
+pub open spec fn nat_max(a: nat, b: nat) -> nat {
+    if a >= b { a } else { b }
+}
+
+pub proof fn fv_absent_above(e: ExprSpec, k: nat)
+    requires
+        k >= max_fv(e),
+    ensures
+        fv_absent(e, k),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            fv_absent_above(*f, k);
+            fv_absent_above(*a, k);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            fv_absent_above(*t, k);
+            fv_absent_above(*b, k);
+        },
+        ExprSpec::Let(t, v, b) => {
+            fv_absent_above(*t, k);
+            fv_absent_above(*v, k);
+            fv_absent_above(*b, k);
+        },
+        ExprSpec::Proj(_, st) => {
+            fv_absent_above(*st, k);
+        },
+        _ => {},
+    }
+}
+
+/// A finite set of naturals is bounded.
+pub proof fn set_bound(s: Set<nat>) -> (b: nat)
+    ensures
+        forall|x: nat| s.contains(x) ==> x < b,
+    decreases s.len(),
+{
+    broadcast use vstd::set::group_set_lemmas;
+    if s.len() == 0 {
+        assert forall|x: nat| s.contains(x) implies x < 0 by {
+            vstd::set::lemma_set_contains_len(s, x);
+        }
+        0
+    } else {
+        let x = s.choose();
+        vstd::set::lemma_set_choose_len(s);
+        vstd::set::lemma_set_remove_len(s, x);
+        let b0 = set_bound(s.remove(x));
+        let b = nat_max(x + 1, b0);
+        assert forall|y: nat| s.contains(y) implies y < b by {
+            if y != x {
+                assert(s.remove(x).contains(y));
+            }
+        }
+        b
+    }
+}
+
+/// A bound on the free locals of a list of terms.
+pub proof fn seq_fv_bound(es: Seq<ExprSpec>) -> (b: nat)
+    ensures
+        forall|i: int| 0 <= i < es.len() ==> #[trigger] max_fv(es[i]) <= b,
+    decreases es.len(),
+{
+    if es.len() == 0 {
+        0
+    } else {
+        let b0 = seq_fv_bound(es.drop_last());
+        let b = nat_max(b0, max_fv(es.last()));
+        assert forall|i: int| 0 <= i < es.len() implies #[trigger] max_fv(es[i]) <= b by {
+            if i < es.len() - 1 {
+                assert(es.drop_last()[i] == es[i]);
+            }
+        }
+        b
+    }
+}
+
+/// A FRESH LOCAL: outside the context, mentioned by none of its entries, and
+/// free in none of the given terms.
+pub proof fn fresh_local(lctx: Map<nat, ExprSpec>, es: Seq<ExprSpec>) -> (k: nat)
+    ensures
+        !lctx.contains_key(k),
+        ctx_fresh(lctx, k),
+        forall|i: int| 0 <= i < es.len() ==> fv_absent(#[trigger] es[i], k),
+{
+    let b1 = set_bound(lctx.dom());
+    let vals = lctx.dom().map(|j: nat| max_fv(lctx[j]));
+    let b2 = set_bound(vals);
+    let b3 = seq_fv_bound(es);
+    let k = nat_max(b1, nat_max(b2, b3));
+    assert forall|j: nat| #[trigger] lctx.contains_key(j) implies fv_absent(lctx[j], k) by {
+        assert(vals.contains(max_fv(lctx[j])));
+        fv_absent_above(lctx[j], k);
+    }
+    assert forall|i: int| 0 <= i < es.len() implies fv_absent(#[trigger] es[i], k) by {
+        fv_absent_above(es[i], k);
+    }
+    k
 }
 
 } // verus!

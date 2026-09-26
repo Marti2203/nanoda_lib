@@ -320,6 +320,14 @@ The arena side keeps `u32`: `expr_id` casts to `nat`, and `raw_node` returns
 nothing for ids at or above 2^32. Spec-level only; no exec code changed, and
 every existing proof re-verified untouched.
 
+**M2 + M4 DONE.** With `ctx_fresh`, the scoped rules' freshness is
+`fv_absent`, which doesn't depend on the context (`Infer` keeps `unreach`
+for the global context). `swap_typed::fresh_local` gives a local outside
+any finite context, unused by its entries, and free in the given terms.
+`weaken.rs` proves weakening for both scoped modes, renaming-free: each
+cofinite instance in the larger context is one in the smaller, and the
+non-vacuity witness comes from `fresh_local`.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel

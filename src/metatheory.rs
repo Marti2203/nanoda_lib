@@ -456,12 +456,6 @@ pub proof fn conv_all_fresh(
 {
     assert forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) implies
         deq_p(dty, env, lctx.insert(k, ty), IoMode::Real, inst_free(b1, k), inst_free(b2, k), h) by {
-        unreach_fv_absent(lctx, k0, ty);
-        unreach_fv_absent(lctx, k0, b1);
-        unreach_fv_absent(lctx, k0, b2);
-        unreach_fv_absent(lctx, k, ty);
-        unreach_fv_absent(lctx, k, b1);
-        unreach_fv_absent(lctx, k, b2);
         crate::swap_typed::sw_deq_p(dty, env, lctx.insert(k0, ty), IoMode::Real, inst_free(b1, k0), inst_free(b2, k0), h, k0, k);
         crate::swap_model::cswap_insert(lctx, k0, ty, k0, k);
         crate::swap_typed::cswap_fixed_fresh(lctx, k0, k);
@@ -624,21 +618,21 @@ proof fn s_lam(
     let r = IoMode::Real;
     let (cod1, s1, l1) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
         real_lam_marker(cod, s, l)
-        && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body))
-        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
-            unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
+        && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k))
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) ==>
+            fv_absent(cod, k) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, env, lctx.insert(k, a), w, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, (f - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), w, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (f - 1) as nat))
         && t == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod));
     let (cod2, s2, l2) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
         real_lam_marker(cod, s, l)
-        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
-            unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) ==>
+            fv_absent(cod, k) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, env, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, (g - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (g - 1) as nat))
         && tt == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod));
     // one local fresh for everything: InferWt's own witness
-    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body);
+    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k);
     let lx = lctx.insert(k0, a);
     let ob = subst_full(body, seq![ExprSpec::Free(k0)], 0);
     let c1 = subst_full(cod1, seq![ExprSpec::Free(k0)], 0);
@@ -687,8 +681,8 @@ proof fn s_pi(
     let (bt1, dl1, cl1) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
         real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, env, lctx, w, a, bt_ty, (f - 1) as nat)
         && deq_p(dty, env, lctx, w, bt_ty, ExprSpec::Sort(dom_level), (f - 1) as nat)
-        && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body))
-        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k))
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) ==>
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, env, lctx.insert(k, a), w, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, (f - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), w, instd, ExprSpec::Sort(cod_level), (f - 1) as nat))
@@ -696,7 +690,7 @@ proof fn s_pi(
     let (bt2, dl2, cl2) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
         real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, env, lctx, r, a, bt_ty, (g - 1) as nat)
         && deq_p(dty, env, lctx, r, bt_ty, ExprSpec::Sort(dom_level), (g - 1) as nat)
-        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) ==>
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, env, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, (g - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), r, instd, ExprSpec::Sort(cod_level), (g - 1) as nat))
@@ -709,7 +703,7 @@ proof fn s_pi(
     tconv_trans(dty, env, lctx, ExprSpec::Sort(dl1), bt1, bt2);
     tconv_trans(dty, env, lctx, ExprSpec::Sort(dl1), bt2, ExprSpec::Sort(dl2));
     // the codomain's, at InferWt's own fresh local
-    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body);
+    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k);
     let lx = lctx.insert(k0, a);
     let ob = subst_full(body, seq![ExprSpec::Free(k0)], 0);
     let i1 = choose|instd: ExprSpec| #[trigger] real_body_marker(k0, instd)
