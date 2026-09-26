@@ -31,6 +31,8 @@ pub mod parser;
 pub mod pretty_printer;
 pub mod quot;
 pub mod quot_model;
+pub mod swap_model;
+pub mod swap_typed;
 pub mod tc;
 pub mod tc_model;
 #[cfg(test)]

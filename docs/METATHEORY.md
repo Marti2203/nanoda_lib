@@ -254,8 +254,19 @@ all-contexts statements (`hyps_all`), unconditionally over every map. They
 are inversion and uniqueness properties, and a context's well-formedness
 plays no part in them.
 
+**S2 DONE (equivariance).** `swap_model.rs` (untyped: `pstep`,
+`pstep_star`, `defeq`, the four untyped leaves, `deq_c`/`deq`) and
+`swap_typed.rs` (`types_to` in all three modes, `deq_p`/`deq_p_c`, the typed
+leaves and helpers, the projection walk, `wt1`/`leaf_wt`) prove that
+swapping two locals `x ↔ y` in the terms and the context preserves every
+derivation. It needs one premise: stored environment terms and declaration
+types mention no local (`env_fv_free`, `dty_fv_free`). A swap is a
+bijection, so it never collides with a local a derivation picked, and no
+rule needed a side condition. Renaming is the special case where the swap
+fixes everything but the renamed local.
+
 **Then:**
-- S2, renaming for the scoped modes (typing, conversion, leaves, and the
+- S2 (as first planned), renaming for the scoped modes (typing, conversion, leaves, and the
   untyped rules under free-variable renaming), height-preserving;
 - S3, exists-fresh ⟹ cofinite for real typing;
 - S4, the kernel's derivations as `InferWt` derivations in the live scope.
