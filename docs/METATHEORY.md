@@ -265,10 +265,14 @@ bijection, so it never collides with a local a derivation picked, and no
 rule needed a side condition. Renaming is the special case where the swap
 fixes everything but the renamed local.
 
+**S3 DONE.** `real_lam_intro` / `real_pi_intro` (`swap_typed.rs`) take a
+real derivation at ONE local outside a well-formed scoped context
+(`ctx_ok`: no outside local is reachable from any entry) and conclude the
+cofinite rule, by swapping that local with each fresh one. The context is
+fixed by the swap (`cswap_fixed`), and the binder type, body and codomain are
+fixed because their locals are in the context (`fv_in`, `scoped_unreach`).
+
 **Then:**
-- S2 (as first planned), renaming for the scoped modes (typing, conversion, leaves, and the
-  untyped rules under free-variable renaming), height-preserving;
-- S3, exists-fresh ⟹ cofinite for real typing;
 - S4, the kernel's derivations as `InferWt` derivations in the live scope.
   This re-proves `whnf`/`def_eq`/`infer` against `InferWt` (the existing
   `dbj_deep_in` scope discipline supplies the scoping) and needs subject

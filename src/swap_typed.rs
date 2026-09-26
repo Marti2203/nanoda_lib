@@ -827,4 +827,257 @@ proof fn sw_esp(
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// S3: from one local to every fresh local (real typing's cofinite rules).
+// ---------------------------------------------------------------------------
+
+/// Every free local of `e` is in the context.
+pub open spec fn fv_in(e: ExprSpec, lctx: Map<u32, ExprSpec>) -> bool {
+    forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i)
+}
+
+/// A well-formed scoped context: no local outside it is reachable from any
+/// of its entries.
+pub open spec fn ctx_ok(lctx: Map<u32, ExprSpec>) -> bool {
+    forall|j: u32, k: u32| #![trigger lctx.contains_key(j), lctx.contains_key(k)]
+        lctx.contains_key(j) && !lctx.contains_key(k) ==> unreach(lctx, k, lctx[j])
+}
+
+/// A term whose locals are in a well-formed context reaches no outside local.
+pub proof fn scoped_unreach(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec) -> (n: nat)
+    requires
+        ctx_ok(lctx),
+        !lctx.contains_key(k),
+        fv_in(e, lctx),
+    ensures
+        crate::expr_model::deep_absent(lctx, k, e, n),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(j) => {
+            assert(fv_absent(e, j) || lctx.contains_key(j));
+            assert(lctx.contains_key(j));
+            assert(unreach(lctx, k, lctx[j]));
+            let m = choose|m: nat| #[trigger] crate::expr_model::deep_absent(lctx, k, lctx[j], m);
+            m + 1
+        },
+        ExprSpec::App(f, a) => {
+            assert forall|i: u32| #[trigger] fv_absent(*f, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            assert forall|i: u32| #[trigger] fv_absent(*a, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            let n1 = scoped_unreach(lctx, k, *f);
+            let n2 = scoped_unreach(lctx, k, *a);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            crate::expr_model::deep_absent_mono(lctx, k, *f, n1, n);
+            crate::expr_model::deep_absent_mono(lctx, k, *a, n2, n);
+            n
+        },
+        ExprSpec::Bind(_, t, bd) => {
+            assert forall|i: u32| #[trigger] fv_absent(*t, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            assert forall|i: u32| #[trigger] fv_absent(*bd, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            let n1 = scoped_unreach(lctx, k, *t);
+            let n2 = scoped_unreach(lctx, k, *bd);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            crate::expr_model::deep_absent_mono(lctx, k, *t, n1, n);
+            crate::expr_model::deep_absent_mono(lctx, k, *bd, n2, n);
+            n
+        },
+        ExprSpec::Let(t, v, bd) => {
+            assert forall|i: u32| #[trigger] fv_absent(*t, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            assert forall|i: u32| #[trigger] fv_absent(*v, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            assert forall|i: u32| #[trigger] fv_absent(*bd, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            let n1 = scoped_unreach(lctx, k, *t);
+            let n2 = scoped_unreach(lctx, k, *v);
+            let n3 = scoped_unreach(lctx, k, *bd);
+            let n12 = if n1 >= n2 { n1 } else { n2 };
+            let n = if n12 >= n3 { n12 } else { n3 };
+            crate::expr_model::deep_absent_mono(lctx, k, *t, n1, n);
+            crate::expr_model::deep_absent_mono(lctx, k, *v, n2, n);
+            crate::expr_model::deep_absent_mono(lctx, k, *bd, n3, n);
+            n
+        },
+        ExprSpec::Proj(_, st) => {
+            assert forall|i: u32| #[trigger] fv_absent(*st, i) || lctx.contains_key(i) by { assert(fv_absent(e, i) || lctx.contains_key(i)); }
+            scoped_unreach(lctx, k, *st)
+        },
+        _ => 0,
+    }
+}
+
+pub proof fn scoped_unreach_p(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec)
+    requires
+        ctx_ok(lctx),
+        !lctx.contains_key(k),
+        fv_in(e, lctx),
+    ensures
+        unreach(lctx, k, e),
+{
+    let n = scoped_unreach(lctx, k, e);
+}
+
+/// Swapping two locals outside a well-formed context leaves it unchanged.
+pub proof fn cswap_fixed(lctx: Map<u32, ExprSpec>, a: u32, b: u32)
+    requires
+        ctx_ok(lctx),
+        !lctx.contains_key(a),
+        !lctx.contains_key(b),
+    ensures
+        cswap(lctx, a, b) == lctx,
+{
+    let c = cswap(lctx, a, b);
+    assert forall|j: u32| #[trigger] c.contains_key(j) == lctx.contains_key(j) by {
+        cswap_at(lctx, a, b, j);
+    }
+    assert forall|j: u32| #[trigger] c.contains_key(j) implies c[j] == lctx[j] by {
+        cswap_at(lctx, a, b, j);
+        assert(lctx.contains_key(j) && !lctx.contains_key(a));
+        assert(unreach(lctx, a, lctx[j]));
+        assert(unreach(lctx, b, lctx[j]));
+        let na = choose|n: nat| #[trigger] crate::expr_model::deep_absent(lctx, a, lctx[j], n);
+        let nb = choose|n: nat| #[trigger] crate::expr_model::deep_absent(lctx, b, lctx[j], n);
+        crate::expr_model::deep_absent_fv_absent(lctx, a, lctx[j], na);
+        crate::expr_model::deep_absent_fv_absent(lctx, b, lctx[j], nb);
+        fswap_noop(lctx[j], a, b);
+    }
+    assert(c =~= lctx);
+}
+
+/// Renaming `x` to `y` in a term mentioning neither, through `x`'s opening.
+proof fn open_rename(e: ExprSpec, x: u32, y: u32)
+    requires
+        fv_absent(e, x),
+        fv_absent(e, y),
+    ensures
+        fswap(subst_full(e, seq![ExprSpec::Free(x)], 0), x, y) == subst_full(e, seq![ExprSpec::Free(y)], 0),
+{
+    fswap_inst_free(e, x, x, y);
+    fswap_noop(e, x, y);
+}
+
+/// REAL LAMBDA INTRODUCTION from one local: a derivation at one fresh local
+/// gives the cofinite rule, by swapping that local with every other.
+pub proof fn real_lam_intro(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    a: ExprSpec,
+    body: ExprSpec,
+    cod: ExprSpec,
+    s: ExprSpec,
+    l: LevelSpec,
+    lid: u32,
+    infd: ExprSpec,
+    f: nat,
+)
+    requires
+        fv_free(dty, denv),
+        ctx_ok(lctx),
+        !lctx.contains_key(lid),
+        fv_in(a, lctx),
+        fv_in(body, lctx),
+        fv_in(cod, lctx),
+        f > 0,
+        types_to(dty, denv, lctx, IoMode::Real, a, s, (f - 1) as nat),
+        deq_p(dty, denv, lctx, IoMode::Real, s, ExprSpec::Sort(l), (f - 1) as nat),
+        types_to(dty, denv, lctx.insert(lid, a), IoMode::Real, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (f - 1) as nat),
+        deq_p(dty, denv, lctx.insert(lid, a), IoMode::Real, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (f - 1) as nat),
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            IoMode::Real,
+            ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(body)),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod)),
+            f,
+        ),
+{
+    let r = IoMode::Real;
+    let g1 = (f - 1) as nat;
+    scoped_unreach_p(lctx, lid, a);
+    scoped_unreach_p(lctx, lid, body);
+    assert(fresh_marker(lid));
+    assert forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, a) && unreach(lctx, k, body) implies
+        unreach(lctx, k, cod) && exists|infd2: ExprSpec| #[trigger] real_body_marker(k, infd2)
+        && types_to(dty, denv, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), infd2, g1)
+        && deq_p(dty, denv, lctx.insert(k, a), r, infd2, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1) by {
+        scoped_unreach_p(lctx, k, cod);
+        assert(fv_absent(a, lid) || lctx.contains_key(lid));
+        assert(fv_absent(a, k) || lctx.contains_key(k));
+        assert(fv_absent(body, lid) || lctx.contains_key(lid));
+        assert(fv_absent(body, k) || lctx.contains_key(k));
+        assert(fv_absent(cod, lid) || lctx.contains_key(lid));
+        assert(fv_absent(cod, k) || lctx.contains_key(k));
+        sw_types_to(dty, denv, lctx.insert(lid, a), r, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, g1, lid, k);
+        sw_deq_p(dty, denv, lctx.insert(lid, a), r, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), g1, lid, k);
+        cswap_insert(lctx, lid, a, lid, k);
+        cswap_fixed(lctx, lid, k);
+        fswap_noop(a, lid, k);
+        open_rename(body, lid, k);
+        open_rename(cod, lid, k);
+        assert(real_body_marker(k, fswap(infd, lid, k)));
+    }
+    assert(real_lam_marker(cod, s, l));
+}
+
+/// REAL PI INTRODUCTION from one local, likewise.
+pub proof fn real_pi_intro(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    a: ExprSpec,
+    body: ExprSpec,
+    bt_ty: ExprSpec,
+    dl: LevelSpec,
+    cl: LevelSpec,
+    lid: u32,
+    instd: ExprSpec,
+    f: nat,
+)
+    requires
+        fv_free(dty, denv),
+        ctx_ok(lctx),
+        !lctx.contains_key(lid),
+        fv_in(a, lctx),
+        fv_in(body, lctx),
+        f > 0,
+        types_to(dty, denv, lctx, IoMode::Real, a, bt_ty, (f - 1) as nat),
+        deq_p(dty, denv, lctx, IoMode::Real, bt_ty, ExprSpec::Sort(dl), (f - 1) as nat),
+        types_to(dty, denv, lctx.insert(lid, a), IoMode::Real, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, (f - 1) as nat),
+        deq_p(dty, denv, lctx.insert(lid, a), IoMode::Real, instd, ExprSpec::Sort(cl), (f - 1) as nat),
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            IoMode::Real,
+            ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(body)),
+            ExprSpec::Sort(LevelSpec::IMax(Box::new(dl), Box::new(cl))),
+            f,
+        ),
+{
+    let r = IoMode::Real;
+    let g1 = (f - 1) as nat;
+    scoped_unreach_p(lctx, lid, a);
+    scoped_unreach_p(lctx, lid, body);
+    assert(fresh_marker(lid));
+    assert forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, a) && unreach(lctx, k, body) implies
+        exists|instd2: ExprSpec| #[trigger] real_body_marker(k, instd2)
+        && types_to(dty, denv, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), instd2, g1)
+        && deq_p(dty, denv, lctx.insert(k, a), r, instd2, ExprSpec::Sort(cl), g1) by {
+        assert(fv_absent(a, lid) || lctx.contains_key(lid));
+        assert(fv_absent(a, k) || lctx.contains_key(k));
+        assert(fv_absent(body, lid) || lctx.contains_key(lid));
+        assert(fv_absent(body, k) || lctx.contains_key(k));
+        sw_types_to(dty, denv, lctx.insert(lid, a), r, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, g1, lid, k);
+        sw_deq_p(dty, denv, lctx.insert(lid, a), r, instd, ExprSpec::Sort(cl), g1, lid, k);
+        cswap_insert(lctx, lid, a, lid, k);
+        cswap_fixed(lctx, lid, k);
+        fswap_noop(a, lid, k);
+        open_rename(body, lid, k);
+        assert(real_body_marker(k, fswap(instd, lid, k)));
+    }
+    assert(real_pi_marker(bt_ty, dl, cl));
+}
+
 } // verus!
