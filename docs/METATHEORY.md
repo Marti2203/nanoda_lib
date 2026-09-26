@@ -333,6 +333,15 @@ and `metatheory::conv_all_fresh` (conversion) take one fresh local to every
 fresh local in either scoped mode. This is what the kernel side needs,
 since the kernel opens exactly one local per binder.
 
+**M5 DONE.** `rctx.rs`: `rctx(G, e)` restricts `G` to the locals `e`
+reaches (`reach_n`, an inductive path through free locals and their types).
+Three lemmas:
+- `rctx_mono`: a term's free locals include another's, so its `rctx` does too.
+- `rctx_open`: `rctx(body[lid]) ⊆ rctx(binder).insert(lid, A)` when
+  `G[lid] = A`.
+- `rctx_fresh`: a local unreachable from `e` (the kernel's `unreach` fact)
+  is outside `rctx(G, e)` and mentioned by none of its entries.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
