@@ -1252,7 +1252,7 @@ pub open spec fn types_to(
             bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
             // `InferWt` also asks the codomain not to reach the local (what
             // the kernel's in-scope inferred types satisfy)
-            && (io != IoMode::InferWt || unreach(lctx, lid, abstr_full(bt2, seq![lid], 0)))
+            && (io != IoMode::InferWt || (nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0))))
             && types_to(
                 dty,
                 denv,
@@ -1558,7 +1558,7 @@ pub proof fn types_to_mono(
             if bk == BinderKind::Lam {
                 let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
                     bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
-                    && (io != IoMode::InferWt || unreach(lctx, lid, abstr_full(bt2, seq![lid], 0))) && types_to(
+                    && (io != IoMode::InferWt || (nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0)))) && types_to(
                         dty,
                         denv,
                         lctx, io,
@@ -2277,7 +2277,7 @@ pub proof fn types_to_lambda(
         fv_absent(body, lid),
         unreach(lctx, lid, binder_type),
         unreach(lctx, lid, body),
-        io != IoMode::InferWt || unreach(lctx, lid, abstr_full(infd, seq![lid], 0)),
+        io != IoMode::InferWt || (nlbv(infd) <= 0 && depth(infd) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(infd, seq![lid], 0))),
         types_to(
             dty,
             denv,
@@ -2730,8 +2730,13 @@ pub open spec fn eta_struct_expand(
         )) && denv.struct_ctor(ind) == Some(cid)
             && denv.ctor_num_fields(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
-            params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
+            params + eta_projs(x, nf),
         )
+}
+
+/// The projections `x.0 .. x.(n-1)` a structure eta expansion applies.
+pub open spec fn eta_projs(x: ExprSpec, n: nat) -> Seq<ExprSpec> {
+    Seq::new(n, |i: int| ExprSpec::Proj(i as usize, Box::new(x)))
 }
 
 /// Symmetric, for the same reason the unit leaf is: `deq_p_c_symm` inverts
@@ -4528,7 +4533,7 @@ pub proof fn eta_struct_expand_mono(
         )) && env.struct_ctor(ind) == Some(cid)
             && env.ctor_num_fields(cid) == Some(nf as u16) && y == spine_app(
             ExprSpec::Const(cid, ls),
-            params + Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))),
+            params + eta_projs(x, nf),
         );
     if struct_type_of(dty, env, lctx, io, tx, ind, params, h1) {
         struct_type_of_mono(dty, env, lctx, io, tx, ind, params, h1, h2);

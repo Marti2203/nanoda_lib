@@ -7427,7 +7427,7 @@ pub proof fn scope_pres_of_closed(aids: (nat, nat), e: ExprSpec, r: ExprSpec)
 
 /// The projections `x.0 .. x.(n-1)` an eta expansion applies.
 pub open spec fn eta_projs(x: ExprSpec, n: nat) -> Seq<ExprSpec> {
-    Seq::new(n, |i: int| ExprSpec::Proj(i as usize, Box::new(x)))
+    crate::tc_model::eta_projs(x, n)
 }
 
 /// STRUCTURE ETA from the kernel's facts: `x` has a type convertible to the

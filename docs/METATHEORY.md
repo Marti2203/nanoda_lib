@@ -84,7 +84,8 @@ All are spec predicates, none assumed:
 | `lctx_wf` | every local's type is a type |
 | `env_wf` | every constant's type is a closed type; every definition's value has its declared type (delta needs it) |
 | `h_unique` | two real types of one term are `tconv` (in a well-formed context) |
-| `h_pi_inj` | `tconv(Π a1 b1, Π a2 b2)` between types gives `tconv(a1, a2)` and, for every fresh local `k : a1`, `tconv(b1[k], b2[k])` |
+| `h_pi_inj_app` | `tconv(Π a1 b1, Π a2 b2)`, `arg : targ`, `tconv(targ, a2)` give `tconv(b1[arg], b2[arg])` |
+| `h_sort_inj` | `tconv(Sort l1, Sort l2)` gives `l1 ≡ l2` under every assignment |
 | `h_sr` | a `pstep` keeps a term's real type (given `env_wf`, `lctx_wf`) |
 | `kconv_implies_tconv` | the phase-2 target: on well-typed `x`, `y` in a well-formed context, `kconv ⟹ tconv` |
 
@@ -167,6 +168,25 @@ not to reach the opening local: the kernel's in-scope inferred types satisfy
 this, and it is what the fresh-local congruence at that local needs. The
 renaming lemma moves to where it is standard: turning one real derivation
 into the cofinite form when real typings are produced.
+
+**Option 2 theorem, PROVEN modulo the projection case (2026-09-26).**
+`metatheory::kconv_wt_implies_tconv` requires `hyps` = `h_pi_inj_app`
+(Pi-injectivity in the application form) ∧ `h_sort_inj` (Sort-injectivity)
+∧ `proj_sound_staged`. The last is NOT a metatheory hypothesis: it is the
+projection case of `s_sound`, staged until it is proven. One mutually
+recursive group proves it:
+
+- `s_sound`: the `InferWt` type of a really typed term converts to its real
+  type. Case lemmas `s_app` (Pi-injectivity), `s_let`, `s_lam` (the real
+  rule instantiated at the kernel's own local), `s_pi` (Sort-injectivity),
+  and constants via `rel_pair_deq_c`.
+- `leaf_transfer`: proof irrelevance, unit, and structure eta, each
+  re-derived under real typing (`proof_type_transfer`,
+  `unit_like_transfer`, `eta_transfer`).
+- `transfer_c` / `transfer_p`: the congruence skeleton.
+
+Uniqueness of typing and subject reduction are not needed here. They come
+back for option 1 and for the kernel producing `InferWt` derivations.
 
 ## Proof plan for phase 2 (after phase 1)
 
