@@ -266,16 +266,18 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
 /// constructors.
 pub uninterp spec fn string_lit_expand_model(export: nat, chars: Seq<nat>) -> ExprSpec;
 
-/// The one thing about the opaque expansion that well-scopedness needs: it
-/// mentions no free variable. True by construction -- the kernel builds it
-/// from `String.ofList`, `List.cons`/`List.nil` at `Char`, `Char.ofNat` and
-/// numeral literals, and nothing else -- but the target is deliberately
+/// What the opaque expansion's clients need: it mentions no free variable
+/// and no universe parameter. True by construction -- the kernel builds it
+/// from `String.ofList`, `List.cons`/`List.nil` at `Char` (levels `[zero]`),
+/// `Char.ofNat` and numeral literals (no levels), and nothing else
+/// (`expr.rs::str_lit_to_constructor`) -- but the target is deliberately
 /// uninterpreted (see above), so it has to be said. Stated about the MODEL
 /// function once, rather than added to each exec claim that produces it.
 #[verifier::external_body]
 pub proof fn string_lit_expand_no_fv(export: nat, chars: Seq<nat>)
     ensures
         !crate::expr_model::has_fv(string_lit_expand_model(export, chars)),
+        crate::level_inst::elp_in(string_lit_expand_model(export, chars), Seq::empty()),
 {
 }
 

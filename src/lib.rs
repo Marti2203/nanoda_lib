@@ -21,6 +21,7 @@ pub mod inductive_model;
 pub mod indexmap_model;
 pub mod level;
 pub mod level_arena_bridge;
+pub mod level_inst;
 pub mod level_model;
 pub mod metatheory;
 pub mod name;
