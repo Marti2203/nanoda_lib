@@ -1107,7 +1107,10 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Let(_ty0, val, body) => exists|f2: nat| #[trigger]
+        // Real typing (`io == false`) also checks the annotation, as the
+        // kernel's `Check` mode does: it is a type, and the value's type
+        // converts to it. `InferOnly` skips both.
+        ExprSpec::Let(ty0, val, body) => exists|f2: nat| #[trigger]
             fuel_marker(f2) && f2 < fuel && types_to(
                 dty,
                 denv,
@@ -1115,7 +1118,11 @@ pub open spec fn types_to(
                 subst_full(*body, seq![*val], 0),
                 t,
                 f2,
-            ),
+            ) && (io || exists|s: ExprSpec, l: LevelSpec, vt: ExprSpec| #[trigger]
+                let_check_marker(s, l, vt) && types_to(dty, denv, lctx, io, *ty0, s, f2)
+                && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), f2)
+                && types_to(dty, denv, lctx, io, *val, vt, f2)
+                && deq_p(dty, denv, lctx, io, vt, *ty0, f2)),
         _ => false,
     })
     ||| (fuel > 0 && match e {
@@ -1123,8 +1130,14 @@ pub open spec fn types_to(
         // application rule takes its function type: the kernel abstracts the
         // type it INFERRED, which is only convertible to the one a
         // derivation assigns.
+        // Real typing also checks the binder type is a type (`Check` mode's
+        // `infer_sort_of`); `InferOnly` skips it.
         ExprSpec::Bind(binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
+            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
+            && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
+                && types_to(dty, denv, lctx, io, *binder_type, s, (fuel - 1) as nat)
+                && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (fuel - 1) as nat))
+            && types_to(
                 dty,
                 denv,
                 lctx, io,
@@ -1332,7 +1345,7 @@ pub proof fn types_to_mono(
     }
     // Let and Proj: the premise sits at a height STRICTLY below f1, so the
     // very same witness serves at f2; it only has to be re-exhibited.
-    if let ExprSpec::Let(_ty0, val, body) = e {
+    if let ExprSpec::Let(ty0, val, body) = e {
         let h = choose|h: nat| #[trigger]
             fuel_marker(h) && h < f1 && types_to(
                 dty,
@@ -1341,7 +1354,11 @@ pub proof fn types_to_mono(
                 subst_full(*body, seq![*val], 0),
                 t,
                 h,
-            );
+            ) && (io || exists|s: ExprSpec, l: LevelSpec, vt: ExprSpec| #[trigger]
+                let_check_marker(s, l, vt) && types_to(dty, denv, lctx, io, *ty0, s, h)
+                && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), h)
+                && types_to(dty, denv, lctx, io, *val, vt, h)
+                && deq_p(dty, denv, lctx, io, vt, *ty0, h));
         assert(fuel_marker(h));
         assert(types_to(dty, denv, lctx, io, e, t, f2));
     }
@@ -1391,7 +1408,10 @@ pub proof fn types_to_mono(
         let g1 = (f1 - 1) as nat;
         let g2 = (f2 - 1) as nat;
         if exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
+            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
+            && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
+                && types_to(dty, denv, lctx, io, *binder_type, s, g1)
+                && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)) && types_to(
                 dty,
                 denv,
                 lctx, io,
@@ -1403,7 +1423,10 @@ pub proof fn types_to_mono(
                 Box::new(abstr_full(bt2, seq![lid], 0)),
             ) {
             let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-                bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
+                bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
+                && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
+                && types_to(dty, denv, lctx, io, *binder_type, s, g1)
+                && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)) && types_to(
                     dty,
                     denv,
                     lctx, io,
@@ -1424,6 +1447,14 @@ pub proof fn types_to_mono(
                 g2,
             );
             deq_p_mono(dty, denv, lctx, io, infd, bt2, g1, g2);
+            if !io {
+                let (s0, l0) = choose|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
+                    && types_to(dty, denv, lctx, io, *binder_type, s, g1)
+                    && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1);
+                types_to_mono(dty, denv, lctx, io, *binder_type, s0, g1, g2);
+                deq_p_mono(dty, denv, lctx, io, s0, ExprSpec::Sort(l0), g1, g2);
+                assert(sort_check_marker(s0, l0));
+            }
             assert(bind_marker(lid, infd, bt2));
             assert(types_to(dty, denv, lctx, io, e, t, f2));
         } else {
@@ -1666,6 +1697,7 @@ pub proof fn types_to_let(
     fuel: nat,
 )
     requires
+        io,
         f2 < fuel,
         types_to(dty, denv, lctx, io, subst_full(body, seq![val], 0), t, f2),
     ensures
@@ -2035,6 +2067,7 @@ pub proof fn types_to_lambda(
     fuel: nat,
 )
     requires
+        io,
         fuel > 0,
         lctx.contains_key(lid),
         lctx[lid] == binder_type,
@@ -2195,6 +2228,16 @@ pub open spec fn proof_irrel_pair(
 /// the derivation height needs to re-exhibit these witnesses, so the binder
 /// rules now carry markers of their own.
 pub open spec fn bind_marker(lid: u32, infd: ExprSpec, bt2: ExprSpec) -> bool {
+    true
+}
+
+/// Marker triggers for the real-typing checks the `Let` and lambda rules
+/// make when `io == false`.
+pub open spec fn let_check_marker(s: ExprSpec, l: LevelSpec, vt: ExprSpec) -> bool {
+    true
+}
+
+pub open spec fn sort_check_marker(s: ExprSpec, l: LevelSpec) -> bool {
     true
 }
 
