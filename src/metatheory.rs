@@ -434,12 +434,13 @@ pub proof fn unreach_fv_absent(lctx: Map<nat, ExprSpec>, k: nat, e: ExprSpec)
     crate::expr_model::deep_absent_fv_absent(lctx, k, e, n);
 }
 
-/// A real conversion between two bodies opened at one fresh local holds at
+/// A scoped-mode conversion between two bodies opened at one fresh local holds at
 /// every fresh local, at the same height (swap the locals; `swap_typed`).
 pub proof fn conv_all_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<nat, ExprSpec>,
+    io: IoMode,
     ty: ExprSpec,
     b1: ExprSpec,
     b2: ExprSpec,
@@ -448,15 +449,16 @@ pub proof fn conv_all_fresh(
 )
     requires
         crate::swap_typed::fv_free(dty, env),
+        io != IoMode::Infer,
         bind_fresh_ok(lctx, k0, ty, b1, b2),
-        deq_p(dty, env, lctx.insert(k0, ty), IoMode::Real, inst_free(b1, k0), inst_free(b2, k0), h),
+        deq_p(dty, env, lctx.insert(k0, ty), io, inst_free(b1, k0), inst_free(b2, k0), h),
     ensures
         forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) ==>
-            deq_p(dty, env, lctx.insert(k, ty), IoMode::Real, inst_free(b1, k), inst_free(b2, k), h),
+            deq_p(dty, env, lctx.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k), h),
 {
     assert forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) implies
-        deq_p(dty, env, lctx.insert(k, ty), IoMode::Real, inst_free(b1, k), inst_free(b2, k), h) by {
-        crate::swap_typed::sw_deq_p(dty, env, lctx.insert(k0, ty), IoMode::Real, inst_free(b1, k0), inst_free(b2, k0), h, k0, k);
+        deq_p(dty, env, lctx.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k), h) by {
+        crate::swap_typed::sw_deq_p(dty, env, lctx.insert(k0, ty), io, inst_free(b1, k0), inst_free(b2, k0), h, k0, k);
         crate::swap_model::cswap_insert(lctx, k0, ty, k0, k);
         crate::swap_typed::cswap_fixed_fresh(lctx, k0, k);
         crate::swap_model::fswap_noop(ty, k0, k);
@@ -650,7 +652,7 @@ proof fn s_lam(
     // the codomains, at k0 and then at every fresh local
     let h0 = choose|hh: nat| #[trigger] deq_p(dty, env, lx, r, c1, c2, hh);
     assert(bind_fresh_ok(lctx, k0, a, cod1, cod2));
-    conv_all_fresh(dty, env, lctx, a, cod1, cod2, k0, h0);
+    conv_all_fresh(dty, env, lctx, r, a, cod1, cod2, k0, h0);
     deq_p_refl(dty, env, lctx, r, a, h0);
     deq_p_bind_cof(dty, env, lctx, r, a, a, cod1, cod2, a, k0, h0, BinderKind::Pi);
     assert(deq_p(dty, env, lctx, r, t, tt, h0 + 1));
@@ -1110,7 +1112,7 @@ pub proof fn transfer_c(
                     let lx = lctx.insert(k0, ty);
                     transfer_p(dty, env, lx, inst_free(*b1, k0), inst_free(*b2, k0), hp);
                     let h0 = choose|hh: nat| #[trigger] deq_p(dty, env, lx, r, inst_free(*b1, k0), inst_free(*b2, k0), hh);
-                    conv_all_fresh(dty, env, lctx, ty, *b1, *b2, k0, h0);
+                    conv_all_fresh(dty, env, lctx, r, ty, *b1, *b2, k0, h0);
                     let ht = choose|hh: nat| #[trigger] deq_p(dty, env, lctx, r, *t1, *t2, hh);
                     let m = if ht >= h0 { ht } else { h0 };
                     deq_p_mono(dty, env, lctx, r, *t1, *t2, ht, m);

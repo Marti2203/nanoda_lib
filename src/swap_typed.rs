@@ -1042,12 +1042,13 @@ pub proof fn open_rename(e: ExprSpec, x: nat, y: nat)
     fswap_noop(e, x, y);
 }
 
-/// REAL LAMBDA INTRODUCTION from one local: a derivation at one fresh local
+/// LAMBDA INTRODUCTION from one local (both scoped modes): a derivation at one fresh local
 /// gives the cofinite rule, by swapping that local with every other.
-pub proof fn real_lam_intro(
+pub proof fn scoped_lam_intro(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<nat, ExprSpec>,
+    io: IoMode,
     a: ExprSpec,
     body: ExprSpec,
     cod: ExprSpec,
@@ -1059,6 +1060,7 @@ pub proof fn real_lam_intro(
 )
     requires
         fv_free(dty, denv),
+        io != IoMode::Infer,
         ctx_ok(lctx),
         !lctx.contains_key(lid),
         ctx_fresh(lctx, lid),
@@ -1066,22 +1068,22 @@ pub proof fn real_lam_intro(
         fv_in(body, lctx),
         fv_in(cod, lctx),
         f > 0,
-        types_to(dty, denv, lctx, IoMode::Real, a, s, (f - 1) as nat),
-        deq_p(dty, denv, lctx, IoMode::Real, s, ExprSpec::Sort(l), (f - 1) as nat),
-        types_to(dty, denv, lctx.insert(lid, a), IoMode::Real, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (f - 1) as nat),
-        deq_p(dty, denv, lctx.insert(lid, a), IoMode::Real, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (f - 1) as nat),
+        io == IoMode::InferWt || (types_to(dty, denv, lctx, io, a, s, (f - 1) as nat)
+            && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (f - 1) as nat)),
+        types_to(dty, denv, lctx.insert(lid, a), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (f - 1) as nat),
+        deq_p(dty, denv, lctx.insert(lid, a), io, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (f - 1) as nat),
     ensures
         types_to(
             dty,
             denv,
             lctx,
-            IoMode::Real,
+            io,
             ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(body)),
             ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod)),
             f,
         ),
 {
-    let r = IoMode::Real;
+    let r = io;
     let g1 = (f - 1) as nat;
     assert(fv_absent(a, lid) || lctx.contains_key(lid));
     assert(fv_absent(body, lid) || lctx.contains_key(lid));
@@ -1109,11 +1111,12 @@ pub proof fn real_lam_intro(
     assert(real_lam_marker(cod, s, l));
 }
 
-/// REAL PI INTRODUCTION from one local, likewise.
-pub proof fn real_pi_intro(
+/// PI INTRODUCTION from one local, likewise.
+pub proof fn scoped_pi_intro(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<nat, ExprSpec>,
+    io: IoMode,
     a: ExprSpec,
     body: ExprSpec,
     bt_ty: ExprSpec,
@@ -1125,28 +1128,29 @@ pub proof fn real_pi_intro(
 )
     requires
         fv_free(dty, denv),
+        io != IoMode::Infer,
         ctx_ok(lctx),
         !lctx.contains_key(lid),
         ctx_fresh(lctx, lid),
         fv_in(a, lctx),
         fv_in(body, lctx),
         f > 0,
-        types_to(dty, denv, lctx, IoMode::Real, a, bt_ty, (f - 1) as nat),
-        deq_p(dty, denv, lctx, IoMode::Real, bt_ty, ExprSpec::Sort(dl), (f - 1) as nat),
-        types_to(dty, denv, lctx.insert(lid, a), IoMode::Real, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, (f - 1) as nat),
-        deq_p(dty, denv, lctx.insert(lid, a), IoMode::Real, instd, ExprSpec::Sort(cl), (f - 1) as nat),
+        types_to(dty, denv, lctx, io, a, bt_ty, (f - 1) as nat),
+        deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dl), (f - 1) as nat),
+        types_to(dty, denv, lctx.insert(lid, a), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, (f - 1) as nat),
+        deq_p(dty, denv, lctx.insert(lid, a), io, instd, ExprSpec::Sort(cl), (f - 1) as nat),
     ensures
         types_to(
             dty,
             denv,
             lctx,
-            IoMode::Real,
+            io,
             ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(body)),
             ExprSpec::Sort(LevelSpec::IMax(Box::new(dl), Box::new(cl))),
             f,
         ),
 {
-    let r = IoMode::Real;
+    let r = io;
     let g1 = (f - 1) as nat;
     assert(fv_absent(a, lid) || lctx.contains_key(lid));
     assert(fv_absent(body, lid) || lctx.contains_key(lid));
