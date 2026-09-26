@@ -12,6 +12,8 @@ use crate::expr_arena_bridge::EnvSpec;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
+use crate::level_model::interp;
+#[cfg(verus_only)]
 use crate::metatheory::{hyps_all, kconv_wt_implies_tconv, typed};
 #[cfg(verus_only)]
 use crate::rctx::*;
@@ -491,6 +493,315 @@ proof fn conv_all_fresh_at(
             deq_p(dty, denv, d.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k), h),
 {
     crate::metatheory::conv_all_fresh(dty, denv, d, io, ty, b1, b2, k0, h);
+}
+
+
+/// Typing transfers from `x` to `y` in every admissible context (what
+/// subject reduction and regularity give the kernel's intermediate terms).
+pub open spec fn tt_to(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    hyps_all(dty, denv) && fv_free(dty, denv) ==> forall|d: Map<nat, ExprSpec>| #![trigger rtyped(dty, denv, d, y), rtyped(dty, denv, d, x)]
+        sub(rctx(g, x), d) && rtyped(dty, denv, d, x) ==> rtyped(dty, denv, d, y)
+}
+
+pub proof fn cw_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec)
+    ensures
+        cw(dty, denv, g, x, x),
+{
+    assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x), d) && rtyped(dty, denv, d, x)
+        implies #[trigger] deq_p_any(dty, denv, d, IoMode::InferWt, x, x) by {
+        deq_p_refl(dty, denv, d, IoMode::InferWt, x, 0);
+    }
+}
+
+pub proof fn cw_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires
+        cw(dty, denv, g, x, y),
+    ensures
+        cw(dty, denv, g, y, x),
+{
+    if hyps_all(dty, denv) && fv_free(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, y), d) && sub(rctx(g, x), d) && rtyped(dty, denv, d, y) && rtyped(dty, denv, d, x)
+            implies #[trigger] deq_p_any(dty, denv, d, IoMode::InferWt, y, x) by {
+            assert(deq_p_any(dty, denv, d, IoMode::InferWt, x, y));
+            let h = choose|h: nat| #[trigger] deq_p(dty, denv, d, IoMode::InferWt, x, y, h);
+            deq_p_symm(dty, denv, d, IoMode::InferWt, x, y, h);
+        }
+    }
+}
+
+/// Transitivity through a middle term `y` whose locals are among `x`'s and
+/// whose typing follows from `x`'s (a reduct, an inferred type).
+pub proof fn cw_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+    requires
+        cw(dty, denv, g, x, y),
+        cw(dty, denv, g, y, z),
+        tt_to(dty, denv, g, x, y),
+        forall|i: nat| #[trigger] fv_absent(x, i) ==> fv_absent(y, i),
+    ensures
+        cw(dty, denv, g, x, z),
+{
+    let w = IoMode::InferWt;
+    if hyps_all(dty, denv) && fv_free(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x), d) && sub(rctx(g, z), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, z)
+            implies #[trigger] deq_p_any(dty, denv, d, w, x, z) by {
+            rctx_mono(g, y, x);
+            sub_trans(rctx(g, y), rctx(g, x), d);
+            assert(rtyped(dty, denv, d, y));
+            assert(deq_p_any(dty, denv, d, w, x, y));
+            assert(deq_p_any(dty, denv, d, w, y, z));
+            let h1 = choose|h: nat| #[trigger] deq_p(dty, denv, d, w, x, y, h);
+            let h2 = choose|h: nat| #[trigger] deq_p(dty, denv, d, w, y, z, h);
+            deq_p_mono(dty, denv, d, w, x, y, h1, h1 + h2);
+            deq_p_mono(dty, denv, d, w, y, z, h2, h1 + h2);
+            deq_p_trans(dty, denv, d, w, x, y, z, h1 + h2);
+        }
+    }
+}
+
+/// Untyped conversion holds in every context.
+pub proof fn cw_of_deq_any(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires
+        deq_any(denv, x, y),
+    ensures
+        cw(dty, denv, g, x, y),
+{
+    assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
+        implies #[trigger] deq_p_any(dty, denv, d, IoMode::InferWt, x, y) by {
+        deq_p_any_of_deq_any(dty, denv, d, IoMode::InferWt, x, y);
+    }
+}
+
+/// GENERATION for a really typed application: both parts are typed.
+pub proof fn gen_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, f: ExprSpec, a: ExprSpec)
+    requires
+        rtyped(dty, denv, d, ExprSpec::App(Box::new(f), Box::new(a))),
+    ensures
+        rtyped(dty, denv, d, f),
+        rtyped(dty, denv, d, a),
+{
+    let e = ExprSpec::App(Box::new(f), Box::new(a));
+    let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
+    let n = choose|n: nat| #[trigger] types_to(dty, denv, d, IoMode::Real, e, t, n);
+    let (ft, aty, bt, aty2) = choose|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
+        #![trigger app_marker(ft, aty, bt, aty2)]
+        app_marker(ft, aty, bt, aty2) && types_to(dty, denv, d, IoMode::Real, f, ft, n)
+            && deq_p(dty, denv, d, IoMode::Real, ft, ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)), (n - 1) as nat)
+            && (infers(IoMode::Real) || (types_to(dty, denv, d, IoMode::Real, a, aty2, n) && deq_p(dty, denv, d, IoMode::Real, aty2, aty, (n - 1) as nat)))
+            && t == subst_full(bt, seq![a], 0);
+    assert(typed(dty, denv, d, f, ft));
+    assert(typed(dty, denv, d, a, aty2));
+}
+
+/// GENERATION for a really typed projection: the structure is typed.
+pub proof fn gen_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, idx: usize, s: ExprSpec)
+    requires
+        rtyped(dty, denv, d, ExprSpec::Proj(idx, Box::new(s))),
+    ensures
+        rtyped(dty, denv, d, s),
+{
+    let e = ExprSpec::Proj(idx, Box::new(s));
+    let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
+    let n = choose|n: nat| #[trigger] types_to(dty, denv, d, IoMode::Real, e, t, n);
+    let (h, sty, ind, ls, args, cid, np, cty) = choose|h: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
+        #[trigger] proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && h < n
+        && types_to(dty, denv, d, IoMode::Real, s, sty, h);
+    assert(typed(dty, denv, d, s, sty));
+}
+
+pub proof fn cw_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
+    requires
+        cw(dty, denv, g, f1, f2),
+        cw(dty, denv, g, a1, a2),
+    ensures
+        cw(dty, denv, g, ExprSpec::App(Box::new(f1), Box::new(a1)), ExprSpec::App(Box::new(f2), Box::new(a2))),
+{
+    let x1 = ExprSpec::App(Box::new(f1), Box::new(a1));
+    let x2 = ExprSpec::App(Box::new(f2), Box::new(a2));
+    let w = IoMode::InferWt;
+    if hyps_all(dty, denv) && fv_free(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x1), d) && sub(rctx(g, x2), d) && rtyped(dty, denv, d, x1) && rtyped(dty, denv, d, x2)
+            implies #[trigger] deq_p_any(dty, denv, d, w, x1, x2) by {
+            gen_app(dty, denv, d, f1, a1);
+            gen_app(dty, denv, d, f2, a2);
+            rctx_part(g, f1, x1, d);
+            rctx_part(g, a1, x1, d);
+            rctx_part(g, f2, x2, d);
+            rctx_part(g, a2, x2, d);
+            assert(deq_p_any(dty, denv, d, w, f1, f2));
+            assert(deq_p_any(dty, denv, d, w, a1, a2));
+            deq_p_any_app_congr(dty, denv, d, w, f1, f2, a1, a2);
+        }
+    }
+}
+
+pub proof fn cw_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, idx: usize, s1: ExprSpec, s2: ExprSpec)
+    requires
+        cw(dty, denv, g, s1, s2),
+    ensures
+        cw(dty, denv, g, ExprSpec::Proj(idx, Box::new(s1)), ExprSpec::Proj(idx, Box::new(s2))),
+{
+    let x1 = ExprSpec::Proj(idx, Box::new(s1));
+    let x2 = ExprSpec::Proj(idx, Box::new(s2));
+    let w = IoMode::InferWt;
+    if hyps_all(dty, denv) && fv_free(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x1), d) && sub(rctx(g, x2), d) && rtyped(dty, denv, d, x1) && rtyped(dty, denv, d, x2)
+            implies #[trigger] deq_p_any(dty, denv, d, w, x1, x2) by {
+            gen_proj(dty, denv, d, idx, s1);
+            gen_proj(dty, denv, d, idx, s2);
+            rctx_part(g, s1, x1, d);
+            rctx_part(g, s2, x2, d);
+            assert(deq_p_any(dty, denv, d, w, s1, s2));
+            deq_p_any_proj_congr(dty, denv, d, w, idx, s1, s2);
+        }
+    }
+}
+
+
+/// THE INFERENCE CLAIM (kernel `InferOnly`): `t` reaches only what `e`
+/// reaches, and in every admissible context where `e` is really typed, `t`
+/// is really typed too (regularity) and converts to an `InferWt` type of `e`.
+pub open spec fn ci(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
+    &&& sub(rctx(g, t), rctx(g, e))
+    &&& hyps_all(dty, denv) && fv_free(dty, denv) ==> forall|d: Map<nat, ExprSpec>| #![trigger ci_at(dty, denv, d, e, t)]
+        sub(rctx(g, e), d) && rtyped(dty, denv, d, e) ==> ci_at(dty, denv, d, e, t)
+}
+
+pub open spec fn ci_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
+    rtyped(dty, denv, d, t) && exists|tt: ExprSpec, f: nat| #[trigger] wt_marker(tt, f)
+        && types_to(dty, denv, d, IoMode::InferWt, e, tt, f) && deq_p_any(dty, denv, d, IoMode::InferWt, tt, t)
+}
+
+/// `a` is a proposition: its inferred type is a sort at a level that is
+/// zero under every assignment.
+pub open spec fn cprop(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, a: ExprSpec) -> bool {
+    exists|l: LevelSpec| #[trigger] ci(dty, denv, g, a, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0)
+}
+
+/// The pieces of an inference claim at one context.
+pub proof fn ci_use(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
+    -> (res: (ExprSpec, nat, nat))
+    requires
+        hyps_all(dty, denv) && fv_free(dty, denv),
+        ci(dty, denv, g, e, t),
+        sub(rctx(g, e), d),
+        rtyped(dty, denv, d, e),
+    ensures
+        sub(rctx(g, t), d),
+        rtyped(dty, denv, d, t),
+        types_to(dty, denv, d, IoMode::InferWt, e, res.0, res.1),
+        deq_p(dty, denv, d, IoMode::InferWt, res.0, t, res.2),
+{
+    assert(ci_at(dty, denv, d, e, t));
+    sub_trans(rctx(g, t), rctx(g, e), d);
+    let (tt, f) = choose|tt: ExprSpec, f: nat| #[trigger] wt_marker(tt, f)
+        && types_to(dty, denv, d, IoMode::InferWt, e, tt, f) && deq_p_any(dty, denv, d, IoMode::InferWt, tt, t);
+    let h = choose|h: nat| #[trigger] deq_p(dty, denv, d, IoMode::InferWt, tt, t, h);
+    (tt, f, h)
+}
+
+/// A real typing below a given height, from a real typing.
+pub proof fn rt_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec) -> (res: (ExprSpec, nat))
+    requires
+        rtyped(dty, denv, d, e),
+    ensures
+        types_to(dty, denv, d, IoMode::Real, e, res.0, res.1),
+{
+    let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
+    let f = choose|f: nat| #[trigger] types_to(dty, denv, d, IoMode::Real, e, t, f);
+    (t, f)
+}
+
+/// PROOF IRRELEVANCE from the kernel's facts: `x : A`, `y : B`, `A` a
+/// proposition, `A ~ B`.
+#[verifier::spinoff_prover]
+pub proof fn cw_irrel(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, a: ExprSpec, b: ExprSpec)
+    requires
+        ci(dty, denv, g, x, a),
+        ci(dty, denv, g, y, b),
+        cprop(dty, denv, g, a),
+        cw(dty, denv, g, a, b),
+    ensures
+        cw(dty, denv, g, x, y),
+{
+    let w = IoMode::InferWt;
+    if hyps_all(dty, denv) && fv_free(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
+            implies #[trigger] deq_p_any(dty, denv, d, w, x, y) by {
+            let (tx, fx, h1) = ci_use(dty, denv, g, d, x, a);
+            let (ty, fy, h2) = ci_use(dty, denv, g, d, y, b);
+            let la = choose|l: LevelSpec| #[trigger] ci(dty, denv, g, a, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0);
+            let (ta, fa, h3) = ci_use(dty, denv, g, d, a, ExprSpec::Sort(la));
+            assert(deq_p_any(dty, denv, d, w, a, b));
+            let h5 = choose|h: nat| #[trigger] deq_p(dty, denv, d, w, a, b, h);
+            let (rxt, rxf) = rt_at(dty, denv, d, x);
+            let (ryt, ryf) = rt_at(dty, denv, d, y);
+            let (rat, raf) = rt_at(dty, denv, d, a);
+            let hh = fx + fy + h1 + h2 + fa + h3 + h5 + rxf + ryf + raf + 1;
+            deq_p_mono(dty, denv, d, w, tx, a, h1, hh);
+            deq_p_mono(dty, denv, d, w, ty, b, h2, hh);
+            deq_p_mono(dty, denv, d, w, ta, ExprSpec::Sort(la), h3, hh);
+            deq_p_mono(dty, denv, d, w, a, b, h5, hh);
+            // tx ~ a ~ b ~ ty, and ty ~ a
+            deq_p_trans(dty, denv, d, w, tx, a, b, hh);
+            deq_p_symm(dty, denv, d, w, ty, b, hh);
+            deq_p_trans(dty, denv, d, w, tx, b, ty, hh);
+            deq_p_symm(dty, denv, d, w, a, b, hh);
+            deq_p_trans(dty, denv, d, w, ty, b, a, hh);
+            assert(wt_marker(rat, raf));
+            assert(wt1(dty, denv, d, w, a, hh));
+            assert(proof_type_marker(a, ta, fa, la));
+            assert(is_proof_type_m(dty, denv, d, w, tx, hh));
+            assert(is_proof_type_m(dty, denv, d, w, ty, hh));
+            assert(irrel_marker(tx, ty, fx, fy));
+            assert(proof_irrel_pair(dty, denv, d, w, x, y, hh));
+            assert(wt_marker(rxt, rxf) && wt_marker(ryt, ryf));
+            assert(leaf_wt(dty, denv, d, w, x, y, hh));
+            deq_p_of_irrel(dty, denv, d, w, x, y, hh, hh + 1);
+        }
+    }
+}
+
+/// UNIT-LIKE TYPES from the kernel's facts: `x : A`, `y : B`, `A ~ B`,
+/// and `A` is an application of a structure with one field-free
+/// constructor.
+#[verifier::spinoff_prover]
+pub proof fn cw_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, a: ExprSpec, b: ExprSpec, ind: u64)
+    requires
+        ci(dty, denv, g, x, a),
+        ci(dty, denv, g, y, b),
+        cw(dty, denv, g, a, b),
+        unit_like_head(denv, ind),
+        exists|ls: Seq<LevelSpec>, args: Seq<ExprSpec>| #[trigger] crate::beta_model::spine_app(ExprSpec::Const(ind, ls), args) == a,
+    ensures
+        cw(dty, denv, g, x, y),
+{
+    let w = IoMode::InferWt;
+    if hyps_all(dty, denv) && fv_free(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
+            implies #[trigger] deq_p_any(dty, denv, d, w, x, y) by {
+            let (tx, fx, h1) = ci_use(dty, denv, g, d, x, a);
+            let (ty, fy, h2) = ci_use(dty, denv, g, d, y, b);
+            assert(deq_p_any(dty, denv, d, w, a, b));
+            let h5 = choose|h: nat| #[trigger] deq_p(dty, denv, d, w, a, b, h);
+            let (rxt, rxf) = rt_at(dty, denv, d, x);
+            let (ryt, ryf) = rt_at(dty, denv, d, y);
+            let hh = fx + fy + h1 + h2 + h5 + rxf + ryf + 1;
+            deq_p_mono(dty, denv, d, w, tx, a, h1, hh);
+            deq_p_mono(dty, denv, d, w, ty, b, h2, hh);
+            deq_p_mono(dty, denv, d, w, a, b, h5, hh);
+            deq_p_trans(dty, denv, d, w, tx, a, b, hh);
+            deq_p_symm(dty, denv, d, w, ty, b, hh);
+            deq_p_trans(dty, denv, d, w, tx, b, ty, hh);
+            assert(unit_like_type(denv, a));
+            assert(unit_like_marker(a));
+            assert(unit_like_type_m(dty, denv, d, w, tx, hh));
+            assert(unit_marker(tx, ty, fx, fy));
+            assert(unit_pair(dty, denv, d, w, x, y, hh));
+            assert(wt_marker(rxt, rxf) && wt_marker(ryt, ryf));
+            assert(leaf_wt(dty, denv, d, w, x, y, hh));
+            deq_p_of_unit(dty, denv, d, w, x, y, hh, hh + 1);
+        }
+    }
 }
 
 } // verus!
