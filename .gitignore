@@ -1,3 +1,4 @@
 /target
 .DS_Store
-design.md.verus-solver-log/
+design.md
+.verus-solver-log/
