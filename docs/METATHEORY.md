@@ -283,6 +283,40 @@ scoped context:
 - `in_scope_fv_in`: anything in scope mentions only `kscope` locals.
 - `real_gen::rt_fv_in`: really typed terms are scoped.
 
+**The cache problem, and the chosen route (2026-09-26).** The kernel
+caches claims and reuses them at other depths, and the arena hash-conses
+locals. So "the kernel's binder local is outside the live scope" holds when a
+claim is made but not when a cached claim is reused, and scope-relative
+kernel claims would need STRENGTHENING, which junk witnesses defeat. Two
+options were weighed: scope-keyed caches (a kernel change), or tight claims.
+The user chose to try tight claims first:
+
+- **Tight claims.** State every kernel claim in the MINIMAL context of its
+  subject, `rctx(G, e)`: the global context restricted to what `e`
+  reaches. It does not depend on the live scope, so it is cache-stable.
+  The kernel's binder local is unreachable from the binder, hence outside
+  `rctx` of it, and `rctx(body[lid]) ⊆ rctx(binder).insert(lid, A)`, so claims
+  compose by WEAKENING alone.
+- **Cofinite rules everywhere in the scoped modes** (the standard locally
+  nameless method). `InferWt` typing, and the binder congruence of `InferWt`
+  and `Real`, quantify over every fresh local. Weakening then needs no
+  renaming, only a fresh non-vacuity witness (pigeonhole over finite
+  contexts). The kernel's single-local derivations become cofinite by
+  equivariance (S2), as in S3.
+
+**M1 + M3 DONE.** `InferWt` typing and both scoped modes' binder
+congruence are cofinite. Their fresh locals are outside the context, unused
+by any entry (`ctx_fresh`), and unreachable from the binder. Option 2
+re-verifies, now also requiring environment terms to mention no local
+(`fv_free`). The lambda and Pi cases instantiate both sides at `InferWt`'s
+non-vacuity local and spread the codomain conversion to every fresh local
+by swapping (`conv_all_fresh`), so no height bound was needed.
+
+Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
+option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
+M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
+port.
+
 **Then:**
 - S4, the kernel's derivations as `InferWt` derivations in the live scope.
   This re-proves `whnf`/`def_eq`/`infer` against `InferWt` (the existing

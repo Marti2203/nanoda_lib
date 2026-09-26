@@ -6317,6 +6317,24 @@ pub proof fn binder_walk_close<'x, 't>(
         assert(crate::expr_model::nlbv(b1s[n as int]) <= n && crate::expr_model::nlbv(b2s[n as int]) <= n);
         inst_locals_closed(b1s[n as int], locals);
         inst_locals_closed(b2s[n as int], locals);
+        // telescope_ok conjunct by conjunct: asserted whole it is too heavy for one query
+        assert(b1s.len() == n + 1 && b2s.len() == n + 1);
+        assert(t1s.len() == n && t2s.len() == n && bks.len() == n && ls.len() == n && ks.len() == n);
+        assert(c0 as nat + n < 0x1_0000);
+        assert(forall|i: int| #![trigger t1s[i]] 0 <= i < n ==> b1s[i] == ExprSpec::Bind(bks[i], Box::new(t1s[i]), Box::new(b1s[i + 1])));
+        assert(forall|i: int| #![trigger t2s[i]] 0 <= i < n ==> b2s[i] == ExprSpec::Bind(bks[i], Box::new(t2s[i]), Box::new(b2s[i + 1])));
+        assert(forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[i], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[i], c0));
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] ls[i] == ExprSpec::Free(ks[i]));
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), ks[i]) == Some((c0 + i) as u16));
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]], (c0 + i) as u16));
+        assert(forall|i: int| 0 <= i < n ==> crate::expr_model::nlbv(#[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]]) <= 0);
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(ks[i])
+        && crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]] == crate::expr_model::subst_full(t1s[i], ls.subrange(0, i), 0));
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] kconv(
+        env,
+        crate::expr_model::subst_full(t1s[i], ls.subrange(0, i), 0),
+        crate::expr_model::subst_full(t2s[i], ls.subrange(0, i), 0),
+    ));
         assert(telescope_ok(env, b1s, b2s, t1s, t2s, bks, ls, ks, c0, n));
         binder_telescope_from(env, b1s, b2s, t1s, t2s, bks, ls, ks, c0, n, 0);
         assert(ls.subrange(0, 0) =~= Seq::<ExprSpec>::empty());

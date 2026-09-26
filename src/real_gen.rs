@@ -131,14 +131,14 @@ pub proof fn rt_fv_in(
             }
         },
         ExprSpec::Bind(bk, a, body) => {
-            let k = choose|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *a) && unreach(lctx, k, *body);
+            let k = choose|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body);
             unreach_fv(lctx, k, *body);
             let ob = subst_full(*body, seq![ExprSpec::Free(k)], 0);
             let lx = lctx.insert(k, *a);
             if bk == BinderKind::Lam {
                 let (cod, s0, l0) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
                     real_lam_marker(cod, s, l) && types_to(dty, denv, lctx, r, *a, s, (f - 1) as nat)
-                    && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
+                    && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
                         unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                         && types_to(dty, denv, lctx.insert(k, *a), r, subst_full(*body, seq![ExprSpec::Free(k)], 0), infd, (f - 1) as nat)
                         && deq_p(dty, denv, lctx.insert(k, *a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (f - 1) as nat));
@@ -149,7 +149,7 @@ pub proof fn rt_fv_in(
             } else {
                 let (bt_ty, dl, cl) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
                     real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, r, *a, bt_ty, (f - 1) as nat)
-                    && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
+                    && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
                         exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                         && types_to(dty, denv, lctx.insert(k, *a), r, subst_full(*body, seq![ExprSpec::Free(k)], 0), instd, (f - 1) as nat)
                         && deq_p(dty, denv, lctx.insert(k, *a), r, instd, ExprSpec::Sort(cod_level), (f - 1) as nat));
