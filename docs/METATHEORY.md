@@ -169,24 +169,27 @@ this, and it is what the fresh-local congruence at that local needs. The
 renaming lemma moves to where it is standard: turning one real derivation
 into the cofinite form when real typings are produced.
 
-**Option 2 theorem, PROVEN modulo the projection case (2026-09-26).**
+**Option 2 theorem, PROVEN (2026-09-26).**
 `metatheory::kconv_wt_implies_tconv` requires `hyps` = `h_pi_inj_app`
 (Pi-injectivity in the application form) ∧ `h_sort_inj` (Sort-injectivity)
-∧ `proj_sound_staged`. The last is NOT a metatheory hypothesis: it is the
-projection case of `s_sound`, staged until it is proven. One mutually
-recursive group proves it:
+∧ `h_unique_in` (uniqueness of real typing). One mutually recursive group
+proves it:
 
 - `s_sound`: the `InferWt` type of a really typed term converts to its real
   type. Case lemmas `s_app` (Pi-injectivity), `s_let`, `s_lam` (the real
   rule instantiated at the kernel's own local), `s_pi` (Sort-injectivity),
-  and constants via `rel_pair_deq_c`.
+  constants via `rel_pair_deq_c`, and `s_proj`: the `InferWt` derivation of a
+  projection transfers step by step (`walk_transfer`) to a real derivation
+  of the same type, which uniqueness relates to the other real type. This
+  avoids inductive-type injectivity.
 - `leaf_transfer`: proof irrelevance, unit, and structure eta, each
   re-derived under real typing (`proof_type_transfer`,
   `unit_like_transfer`, `eta_transfer`).
 - `transfer_c` / `transfer_p`: the congruence skeleton.
 
-Uniqueness of typing and subject reduction are not needed here. They come
-back for option 1 and for the kernel producing `InferWt` derivations.
+Uniqueness is used only for projections. Subject reduction is not needed
+here; it comes back for option 1 and for the kernel producing `InferWt`
+derivations.
 
 ## Proof plan for phase 2 (after phase 1)
 

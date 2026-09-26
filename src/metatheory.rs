@@ -276,17 +276,18 @@ pub open spec fn h_sort_inj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
             #[trigger] interp(l1, rho) == interp(l2, rho)
 }
 
-/// STAGED, NOT A METATHEORY HYPOTHESIS: the projection case of `s_sound`,
-/// to be proven next (it needs injectivity of inductive-type applications).
-pub open spec fn proj_sound_staged(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
-    forall|idx: usize, sx: ExprSpec, t: ExprSpec, tt: ExprSpec, f: nat, g: nat|
-        #![trigger types_to(dty, denv, lctx, IoMode::InferWt, ExprSpec::Proj(idx, Box::new(sx)), t, f), types_to(dty, denv, lctx, IoMode::Real, ExprSpec::Proj(idx, Box::new(sx)), tt, g)]
-        types_to(dty, denv, lctx, IoMode::InferWt, ExprSpec::Proj(idx, Box::new(sx)), t, f)
-            && types_to(dty, denv, lctx, IoMode::Real, ExprSpec::Proj(idx, Box::new(sx)), tt, g) ==> tconv(dty, denv, lctx, t, tt)
+/// UNIQUENESS OF TYPING in this context: two real types of one term are
+/// convertible. (The projection case of `s_sound` rests on it: the
+/// `InferWt` derivation of a projection transfers to a real derivation of
+/// the same type, which uniqueness then relates to any other real type.)
+pub open spec fn h_unique_in(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+    forall|e: ExprSpec, t1: ExprSpec, t2: ExprSpec|
+        #![trigger typed(dty, denv, lctx, e, t1), typed(dty, denv, lctx, e, t2)]
+        typed(dty, denv, lctx, e, t1) && typed(dty, denv, lctx, e, t2) ==> tconv(dty, denv, lctx, t1, t2)
 }
 
 pub open spec fn hyps(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
-    h_pi_inj_app(dty, denv, lctx) && h_sort_inj(dty, denv, lctx) && proj_sound_staged(dty, denv, lctx)
+    h_pi_inj_app(dty, denv, lctx) && h_sort_inj(dty, denv, lctx) && h_unique_in(dty, denv, lctx)
 }
 
 /// Two level-substitution instances of one term are `deq_c`-related: their
@@ -489,7 +490,7 @@ pub proof fn s_sound(
             }
         },
         ExprSpec::Proj(idx, sx) => {
-            assert(types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::Proj(idx, Box::new(*sx)), t, f));
+            s_proj(dty, env, lctx, idx, *sx, t, tt, f, g);
         },
         _ => {},
     }
@@ -684,6 +685,112 @@ proof fn s_pi(
     assert(deq_c(env, t, tt, 0));
     deq_p_c_of_deq_c(dty, env, lctx, r, t, tt, 0);
     deq_p_of_deq_p_c(dty, env, lctx, r, t, tt, 0);
+}
+
+proof fn s_proj(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    idx: usize,
+    sx: ExprSpec,
+    t: ExprSpec,
+    tt: ExprSpec,
+    f: nat,
+    g: nat,
+)
+    requires
+        hyps(dty, env, lctx),
+        types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::Proj(idx, Box::new(sx)), t, f),
+        types_to(dty, env, lctx, IoMode::Real, ExprSpec::Proj(idx, Box::new(sx)), tt, g),
+    ensures
+        tconv(dty, env, lctx, t, tt),
+    decreases f, 5int, depth(ExprSpec::Proj(idx, Box::new(sx))), 0int,
+{
+    let w = IoMode::InferWt;
+    let r = IoMode::Real;
+    let e = ExprSpec::Proj(idx, Box::new(sx));
+    let (f2, sty, ind, ls, args, cid, np, cty) = choose|f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
+        #[trigger] proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && f2 < f
+        && types_to(dty, env, lctx, w, sx, sty, f2)
+        && deq_p(dty, env, lctx, w, sty, spine_app(ExprSpec::Const(ind_id, ls), args), f2)
+        && env.struct_ctor(ind_id) == Some(ctor_id) && env.ctor_num_params(ctor_id) == Some(np)
+        && types_to(dty, env, lctx, w, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (np as nat) <= args.len()
+        && proj_field_type(dty, env, lctx, w, f2, ctor_ty0, args, np as nat, 0, idx as nat, sx, t);
+    let (g2, sty2, ind2, ls2, args2, cid2, np2, cty2) = choose|f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
+        #[trigger] proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && f2 < g
+        && types_to(dty, env, lctx, r, sx, sty, f2);
+    // the structure's real type converts to the InferWt structure type
+    s_sound(dty, env, lctx, sx, sty, sty2, f2, g2);
+    let st = spine_app(ExprSpec::Const(ind, ls), args);
+    transfer_p(dty, env, lctx, sty, st, f2);
+    tconv_symm(dty, env, lctx, sty, sty2);
+    tconv_trans(dty, env, lctx, sty2, sty, st);
+    let h1 = choose|hh: nat| #[trigger] deq_p(dty, env, lctx, r, sty2, st, hh);
+    // the field walk, step by step
+    let h2 = walk_transfer(dty, env, lctx, f2, cty, args, np as nat, 0, idx as nat, sx, t);
+    let m = max3(max3(h1, h2, g2), f2, 0);
+    deq_p_mono(dty, env, lctx, r, sty2, st, h1, m);
+    types_to_mono(dty, env, lctx, r, sx, sty2, g2, m);
+    types_to_mono(dty, env, lctx, w, ExprSpec::Const(cid, ls), cty, f2, m);
+    assert(types_to(dty, env, lctx, r, ExprSpec::Const(cid, ls), cty, m));
+    proj_field_type_mono(dty, env, lctx, r, h2, m, cty, args, np as nat, 0, idx as nat, sx, t);
+    assert(proj_marker(m, sty2, ind, ls, args, cid, np, cty));
+    assert(types_to(dty, env, lctx, r, e, t, m + 1));
+    assert(typed(dty, env, lctx, e, t));
+    assert(typed(dty, env, lctx, e, tt));
+}
+
+/// A projection's field walk under `InferWt` is one under real typing too.
+proof fn walk_transfer(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    h: nat,
+    cur: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    sx: ExprSpec,
+    t: ExprSpec,
+) -> (hh: nat)
+    requires
+        hyps(dty, env, lctx),
+        proj_field_type(dty, env, lctx, IoMode::InferWt, h, cur, args, np, fld, remaining, sx, t),
+    ensures
+        proj_field_type(dty, env, lctx, IoMode::Real, hh, cur, args, np, fld, remaining, sx, t),
+    decreases h, 2int, 3nat, np + remaining,
+{
+    let w = IoMode::InferWt;
+    let r = IoMode::Real;
+    let (bt, body) = choose|bt: ExprSpec, body: ExprSpec| #[trigger]
+        proj_step_marker(bt, body) && deq_p(dty, env, lctx, w, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h)
+        && (if np > 0 {
+            args.len() > 0 && proj_field_type(dty, env, lctx, w, h, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, sx, t)
+        } else if remaining > 0 {
+            proj_field_type(dty, env, lctx, w, h, subst_full(body, seq![ExprSpec::Proj(fld, Box::new(sx))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, sx, t)
+        } else {
+            t == bt
+        });
+    let pb = ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body));
+    transfer_p(dty, env, lctx, cur, pb, h);
+    let h1 = choose|hh: nat| #[trigger] deq_p(dty, env, lctx, r, cur, pb, hh);
+    let m: nat;
+    if np > 0 {
+        let h2 = walk_transfer(dty, env, lctx, h, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, sx, t);
+        m = max3(h1, h2, 0);
+        proj_field_type_mono(dty, env, lctx, r, h2, m, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, sx, t);
+    } else if remaining > 0 {
+        let nx = subst_full(body, seq![ExprSpec::Proj(fld, Box::new(sx))], 0);
+        let h2 = walk_transfer(dty, env, lctx, h, nx, args, 0, (fld + 1) as usize, (remaining - 1) as nat, sx, t);
+        m = max3(h1, h2, 0);
+        proj_field_type_mono(dty, env, lctx, r, h2, m, nx, args, 0, (fld + 1) as usize, (remaining - 1) as nat, sx, t);
+    } else {
+        m = h1;
+    }
+    deq_p_mono(dty, env, lctx, r, cur, pb, h1, m);
+    assert(proj_step_marker(bt, body));
+    m
 }
 
 /// LEAF TRANSFER: each typed leaf `InferWt` can fire relates terms that are
