@@ -17,6 +17,7 @@ pub mod expr;
 pub mod expr_arena_bridge;
 pub mod expr_model;
 pub mod inductive;
+pub mod kclaims;
 pub mod inductive_model;
 pub mod indexmap_model;
 pub mod level;

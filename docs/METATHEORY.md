@@ -417,6 +417,31 @@ inversion hypotheses. **Chosen: prove it.**
   plus `Pi(A, B) ~ ft ~ ft_r ~ Pi(aty_r, bt_r)` and Pi DOMAIN injectivity:
   a sibling of `h_pi_inj_app` that will be stated with the port.
 
+**M7 claim shape (settled 2026-09-26).** Stating each kernel claim in
+exactly `rctx(G, operands)` fails: a subterm's claim would need its typing
+moved from the parent's context down to the subterm's own `rctx`. That is
+STRENGTHENING, and model conversions can pass through junk terms that
+mention unrelated locals, so strengthening is a deep metatheorem at best.
+Instead every claim is quantified over contexts:
+
+    claim(x, y)  :=  forall D.  rctx(G, x) <= D  &&  rctx(G, y) <= D
+                                && x, y really typed in D
+                       ==>  deq_p_any(D, InferWt, x, y)
+
+(and likewise for `whnf` and `infer`).
+- Generation and subject reduction stay in the same `D`, so no
+  strengthening is ever needed.
+- Cache-stable: `rctx(G, e)` of an existing term does not change as the
+  arena grows, and the claim names no context.
+- Binders: in `D` the kernel's local `lid` may collide with junk. Pick a
+  far local `j` for `D`, use the body claim at `swap(D, j, lid) + {lid : A}`,
+  swap back to `j`, and M6 gives the cofinite rule.
+- Transitivity: needs the middle term's locals reached from the endpoints
+  (the kernel's `scope_pres` facts) and the middle term typed in `D`
+  (subject reduction, regularity).
+- Leaf sites get `x, y` typed in `D` from the claim's own antecedent. The
+  inferred types come from `infer`'s claim together with regularity.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
