@@ -155,6 +155,19 @@ freshness side conditions on every existential witness. The lemma is not
 research-open, but it spans the whole typed family (typing, the three
 leaves, chains, and the untyped rules under free-variable renaming).
 
+**Option 3, model step (2026-09-26).** Real typing's lambda and Pi rules
+are now cofinite: for EVERY local `k` unreachable from the binder, the body
+opened with `k` is typed in `lctx.insert(k, A)`, with one codomain (lambda)
+or one codomain level (Pi) shared by all `k`, plus a non-vacuity witness.
+The `InferOnly` rules still pick one local. Instantiated at that local
+(where `lctx[k]` already is `A`, so the insert changes nothing), the real
+rule speaks about the same term in the same context, so the soundness lemma
+needs no renaming. `InferWt`'s lambda rule also asks the abstracted codomain
+not to reach the opening local: the kernel's in-scope inferred types satisfy
+this, and it is what the fresh-local congruence at that local needs. The
+renaming lemma moves to where it is standard: turning one real derivation
+into the cofinite form when real typings are produced.
+
 ## Proof plan for phase 2 (after phase 1)
 
 Mutual induction on derivation height over `types_to` and `deq_p`, `io`
