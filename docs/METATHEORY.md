@@ -451,6 +451,36 @@ used the unexpanded side's real typing. So `eta_struct_expand` now carries
 `leaf_wt`. This only weakens what `InferWt` demands, and option 2 is
 re-proved unchanged in substance.
 
+**M7 progress and remaining plan (2026-09-26).** `kclaims.rs` holds the
+claim algebra:
+- claim shapes: `cw` (conversion), `ci` (inference, with regularity and
+  reach), `tt_to` (typing transfer);
+- structural lemmas: `cw_refl` / `cw_symm` / `cw_trans`, `cw_app` /
+  `cw_proj` / `cw_bind` (binder via swap and narrowing),
+  `cw_of_deq_any`;
+- leaves: `cw_irrel`, `cw_unit`.
+
+What remains before `tc.rs` can switch its claims:
+1. INDUCTIVE TYPING FACTS. The environment says what a structure
+   constructor's type looks like: a Pi telescope of `np + nf` binders whose
+   parameter binders are the inductive's, ending in the inductive applied to
+   those parameters. This is a kernel-checked environment condition, like
+   `env_lp_ok`. From it:
+   - a constructor application's real type converts to `I params ...`
+     (`h_pi_inj_app` once per argument);
+   - `x.k` is really typed when `x`'s type converts to `I params ...`;
+   - `C params fields` is really typed when each field has its instantiated
+     field type. This covers the eta expansion `C params (e.0) .. (e.n)`
+     and the K-like `C params`.
+   These unlock the remaining leaf sites (`try_eta_struct`,
+   `expand_eta_struct_aux`, `to_ctor_when_k`) and projection regularity.
+2. Regularity per `infer` site: App (`reg_app` plus Pi domain
+   injectivity), Proj (from 1), Const (`lt_closed` plus weakening), Lam,
+   Pi, Let, Sort and literals.
+3. Subject reduction for `whnf`'s outputs (`h_sr`, restated per context).
+4. The switch: `def_eq_claim` / `whnf_claim` / `kinfer_claim` and the cache
+   invariants restated as `cw` / `ci` / `tt_to` claims.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
