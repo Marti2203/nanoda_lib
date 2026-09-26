@@ -359,6 +359,40 @@ witness, the kernel's own inferred type. That in turn needs:
 
 Subject reduction stays a named hypothesis.
 
+**M7(a) DONE.** `subst_model.rs` (untyped): `fsubst(e, k, m)` for closed
+`m` commutes with shifting, opening, spines and the iota/nat/quot/eta
+leaves. `pstep`, `pstep_star`, `defeq`, `deq_c` and `deq` are preserved.
+The binder rule's local is renamed off `k` and `m` by `fswap_deq` when
+they clash. `subst_typed.rs` (typed, scoped modes): `st_types_to` and
+`st_deq_p`, with every typed leaf. The context becomes `sctx(G, k, m)`:
+`k` removed, `m` substituted into the other entries. Every height grows by
+`m`'s typing height, which keeps each rule's relative height side
+conditions. A cofinite instance at `k` itself comes from one at a far
+local, renamed by equivariance.
+
+**The obstacle M7(b) meets: regularity.** An `InferWt` irrelevance leaf
+needs its proof type `A` (`is_proof_type_m`) to be really typed (`wt1`).
+The kernel's witness is its own inferred type. For `x = f a` that is the
+instantiated codomain `B[a]`, where `Pi(A, B)` is `whnf` of `f`'s type.
+So the site needs REGULARITY: the type of a really typed term is itself
+really typed. In this model that holds only UP TO CONVERSION. The real
+application rule takes any `Pi(A, B)` convertible to the function's type,
+so `B` may hold a beta-redex whose argument is arbitrary (junk that
+reduction discards): `Pi(Nat, (fun _ : X => Nat) junk)` converts to
+`Pi(Nat, Nat)`, and the rule then assigns the type `(fun _ => Nat) junk`.
+Regularity up to conversion needs:
+- (i) the substitution lemma closed under conversion: `m : T'` with
+  `T' ~ G[k]`, result types up to conversion. `subst_typed` is the
+  `T' = G[k]` special case.
+- (ii) Pi-inversion on the function's typed conversion `ft ~ Pi(A, B)`.
+  It may pass through typed leaves, so confluence alone does not give it.
+  This is the `h_pi_inj_app` family.
+- (iii) level instantiation of declaration types (the `Const` case).
+
+Two ways forward: state regularity up to conversion as a named hypothesis
+next to subject reduction, or prove it from (i)-(iii) plus the existing
+inversion hypotheses.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
