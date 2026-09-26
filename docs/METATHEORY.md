@@ -113,6 +113,41 @@ counterpart. There are two options:
    `λ(x:t2). f x` with `t2` taken from the other side, and its typing needs
    `h_unique` + `h_pi_inj`.
 
+## Option 2 in progress (user choice 2026-09-26: option 2 first, then option 1)
+
+**Modes.** `io` is now `IoMode`: `Real` (was `false`), `Infer` (was `true`,
+what `def_eq` is proven against, unchanged) and `InferWt`. `InferWt` is
+`Infer` whose typed leaves also require really typed terms: both sides
+(`leaf_wt`), the proof-irrelevance witness, and the structure-eta
+constructor application (`wt1`). `metatheory::kconv_wt` is `deq_p_any` at
+`InferWt`.
+
+**B: the congruence skeleton, PROVEN.** `kconv_wt_implies_tconv`: given
+`leaf_transfer` (every `InferWt` typed leaf relates `tconv`-equal terms),
+`kconv_wt ⟹ tconv`. It is an induction over `deq_p_c`/`deq_p`. Untyped steps
+are shared, congruence (including the binder rule's fresh-local form, and a
+new `deq_p_any_let_congr`) and chains transfer directly, and leaves use the
+premise.
+
+**C: leaf transfer. Here the global local context bites.** Each leaf
+transfers from one core lemma, "InferOnly soundness": if `e` has `InferWt`
+type `t` and real type `T`, then `tconv(t, T)`. It does NOT need uniqueness
+of typing. It does need:
+
+- Pi-injectivity in substitution form (the application case);
+- injectivity of inductive-type applications (the projection case);
+- **a renaming lemma** (the lambda and Pi cases). The two derivations may open
+  the binder with different locals `lid` and `lid'`. Relating them means
+  renaming one derivation's local to the other's, together with every local
+  opened below it.
+
+The model's local context is the arena's global ambient map, whose later
+locals' types mention earlier ones. So renaming there is a simulation between
+derivations under a renaming of all locals opened inside the term, with
+freshness side conditions on every existential witness. The lemma is not
+research-open, but it spans the whole typed family (typing, the three
+leaves, chains, and the untyped rules under free-variable renaming).
+
 ## Proof plan for phase 2 (after phase 1)
 
 Mutual induction on derivation height over `types_to` and `deq_p`, `io`
