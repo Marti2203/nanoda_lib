@@ -23,6 +23,8 @@ use crate::beta_model::spine_app;
 use crate::expr_model::{abstr_full, depth, fv_absent, nlbv, subst_expr_levels_rel, subst_full, unreach};
 #[cfg(verus_only)]
 use crate::level_model::interp;
+#[cfg(verus_only)]
+use crate::expr_model::subst_expr_levels_rel_empty;
 #[allow(unused_imports)]
 use crate::tc_model::IoMode;
 #[allow(unused_imports)]
@@ -1141,6 +1143,203 @@ pub proof fn kconv_wt_implies_tconv(
 {
     let h = choose|h: nat| #[trigger] deq_p(dty, env, lctx, IoMode::InferWt, x, y, h);
     transfer_p(dty, env, lctx, x, y, h);
+}
+
+
+// ---------------------------------------------------------------------------
+// OPTION 1 IS FALSE: `kconv` over arbitrary chains does not imply `tconv`,
+// even between well-typed terms in a well-formed context.
+//
+// Two propositions `A`, `B`, proofs `p : A` and `bad : B`, one local of type
+// `A`. `InferOnly` typing does not check application arguments, so
+// `(λz:A. z) bad` has type `A`; proof irrelevance relates it to `p`, and it
+// beta-reduces to `bad`. The kernel never builds such a term (its leaves
+// compare inferred types of terms it has already checked), but `kconv`
+// alone admits the chain `bad ~ (λz:A. z) bad ~ p`.
+// ---------------------------------------------------------------------------
+
+pub open spec fn cx_a() -> ExprSpec {
+    ExprSpec::Const(1, Seq::<LevelSpec>::empty())
+}
+
+pub open spec fn cx_b() -> ExprSpec {
+    ExprSpec::Const(2, Seq::<LevelSpec>::empty())
+}
+
+pub open spec fn cx_p() -> ExprSpec {
+    ExprSpec::Const(3, Seq::<LevelSpec>::empty())
+}
+
+pub open spec fn cx_bad() -> ExprSpec {
+    ExprSpec::Const(4, Seq::<LevelSpec>::empty())
+}
+
+pub open spec fn cx_prop() -> ExprSpec {
+    ExprSpec::Sort(LevelSpec::Zero)
+}
+
+pub open spec fn cx_dty() -> Map<u64, (Seq<u64>, ExprSpec)> {
+    Map::<u64, (Seq<u64>, ExprSpec)>::empty().insert(1, (Seq::<u64>::empty(), cx_prop())).insert(
+        2,
+        (Seq::<u64>::empty(), cx_prop()),
+    ).insert(3, (Seq::<u64>::empty(), cx_a())).insert(4, (Seq::<u64>::empty(), cx_b()))
+}
+
+pub open spec fn cx_env() -> EnvSpec {
+    EnvSpec::empty_at(0)
+}
+
+pub open spec fn cx_lctx() -> Map<u32, ExprSpec> {
+    Map::<u32, ExprSpec>::empty().insert(0, cx_a())
+}
+
+pub open spec fn cx_lam() -> ExprSpec {
+    ExprSpec::Bind(BinderKind::Lam, Box::new(cx_a()), Box::new(ExprSpec::Var(0)))
+}
+
+pub open spec fn cx_m() -> ExprSpec {
+    ExprSpec::App(Box::new(cx_lam()), Box::new(cx_bad()))
+}
+
+/// A constant with no universe parameters is typed by its declared type,
+/// in any mode.
+proof fn cx_const_types(io: IoMode, cid: u64, f: nat)
+    requires
+        cx_dty().contains_key(cid),
+        cx_dty()[cid].0 == Seq::<u64>::empty(),
+    ensures
+        types_to(cx_dty(), cx_env(), cx_lctx(), io, ExprSpec::Const(cid, Seq::<LevelSpec>::empty()), cx_dty()[cid].1, f),
+{
+    subst_expr_levels_rel_empty(cx_dty()[cid].1);
+    types_to_const(cx_dty(), cx_env(), cx_lctx(), io, cid, Seq::<LevelSpec>::empty(), cx_dty()[cid].1, f);
+}
+
+/// `InferOnly`: `(λz:A. z) bad : A`, the argument unchecked.
+proof fn cx_m_types()
+    ensures
+        types_to(cx_dty(), cx_env(), cx_lctx(), IoMode::Infer, cx_m(), cx_a(), 1),
+{
+    let (dty, env, lctx, io) = (cx_dty(), cx_env(), cx_lctx(), IoMode::Infer);
+    let a = cx_a();
+    let v0 = ExprSpec::Var(0);
+    assert(crate::expr_model::deep_absent(lctx, 0, a, 0));
+    assert(crate::expr_model::deep_absent(lctx, 0, v0, 0));
+    assert(subst_full(v0, seq![ExprSpec::Free(0)], 0) == ExprSpec::Free(0));
+    types_to_free(dty, env, lctx, io, 0, 0);
+    types_to_lambda(dty, env, lctx, io, a, v0, 0, a, 1);
+    assert(fv_absent(a, 0));
+    crate::expr_model::abstr_full_absent(a, 0, 0);
+    let pa = pi(a, a);
+    assert(types_to(dty, env, lctx, io, cx_lam(), pa, 1));
+    deq_p_refl(dty, env, lctx, io, pa, 0);
+    assert(subst_full(a, seq![cx_bad()], 0) == a);
+    assert(app_marker(pa, a, a, cx_b()));
+}
+
+/// `A` is a proposition's type, at any height above zero.
+proof fn cx_a_proof_type(h: nat)
+    requires
+        h > 0,
+    ensures
+        is_proof_type_m(cx_dty(), cx_env(), cx_lctx(), IoMode::Infer, cx_a(), h),
+{
+    let (dty, env, lctx, io) = (cx_dty(), cx_env(), cx_lctx(), IoMode::Infer);
+    cx_const_types(io, 1, 0);
+    deq_p_refl(dty, env, lctx, io, cx_a(), h);
+    deq_p_refl(dty, env, lctx, io, cx_prop(), h);
+    assert(forall|rho: Map<nat, nat>| #[trigger] interp(LevelSpec::Zero, rho) <= 0);
+    assert(proof_type_marker(cx_a(), cx_prop(), 0, LevelSpec::Zero));
+}
+
+/// THE CHAIN: `kconv(bad, p)`.
+pub proof fn cx_kconv()
+    ensures
+        kconv(cx_dty(), cx_env(), cx_lctx(), cx_bad(), cx_p()),
+{
+    let (dty, env, lctx, io) = (cx_dty(), cx_env(), cx_lctx(), IoMode::Infer);
+    // (λz:A. z) bad ~ p, by proof irrelevance
+    cx_m_types();
+    cx_const_types(io, 3, 0);
+    cx_a_proof_type(3);
+    deq_p_refl(dty, env, lctx, io, cx_a(), 3);
+    assert(irrel_marker(cx_a(), cx_a(), 1, 0));
+    assert(proof_irrel_pair(dty, env, lctx, io, cx_m(), cx_p(), 3));
+    deq_p_of_irrel(dty, env, lctx, io, cx_m(), cx_p(), 3, 4);
+    assert(deq_p_any(dty, env, lctx, io, cx_m(), cx_p()));
+    // (λz:A. z) bad reduces to bad
+    assert(crate::beta_model::subst1(ExprSpec::Var(0), cx_bad()) == cx_bad()) by {
+        reveal_with_fuel(crate::beta_model::shift, 2);
+        reveal_with_fuel(crate::beta_model::subst, 2);
+    }
+    assert(crate::beta_model::pstep(env, ExprSpec::Var(0), ExprSpec::Var(0)));
+    assert(crate::beta_model::pstep(env, cx_bad(), cx_bad()));
+    assert(crate::beta_model::pstep(env, cx_m(), cx_bad()));
+    crate::beta_model::pstep_star_one(env, cx_m(), cx_bad());
+    crate::beta_model::defeq_of_pstep_star(env, cx_m(), cx_bad());
+    deq_p_any_of_defeq(dty, env, lctx, io, cx_m(), cx_bad());
+    deq_p_any_symm(dty, env, lctx, io, cx_m(), cx_bad());
+    deq_p_any_trans(dty, env, lctx, io, cx_bad(), cx_m(), cx_p());
+}
+
+/// Both ends are really well typed, in a well-formed context.
+pub proof fn cx_well_formed()
+    ensures
+        lctx_wf(cx_dty(), cx_env(), cx_lctx()),
+        typed(cx_dty(), cx_env(), cx_lctx(), cx_bad(), cx_b()),
+        typed(cx_dty(), cx_env(), cx_lctx(), cx_p(), cx_a()),
+        well_typed(cx_dty(), cx_env(), cx_lctx(), cx_bad()),
+        well_typed(cx_dty(), cx_env(), cx_lctx(), cx_p()),
+{
+    let (dty, env, lctx, r) = (cx_dty(), cx_env(), cx_lctx(), IoMode::Real);
+    cx_const_types(r, 4, 0);
+    cx_const_types(r, 3, 0);
+    cx_const_types(r, 1, 0);
+    assert(typed(dty, env, lctx, cx_bad(), cx_b()));
+    assert(typed(dty, env, lctx, cx_p(), cx_a()));
+    assert(typed(dty, env, lctx, cx_a(), cx_prop()));
+    deq_p_any_refl(dty, env, lctx, r, cx_prop());
+    assert(tconv(dty, env, lctx, cx_prop(), ExprSpec::Sort(LevelSpec::Zero)));
+    assert(typed(dty, env, lctx, cx_a(), cx_prop()) && tconv(dty, env, lctx, cx_prop(), ExprSpec::Sort(LevelSpec::Zero)));
+    assert(is_type(dty, env, lctx, cx_a()));
+    assert forall|k: u32| #[trigger] lctx.contains_key(k) implies is_type(dty, env, lctx, lctx[k]) by {
+        assert(k == 0);
+    }
+}
+
+/// CONVERSION RELATES ONLY TERMS OF CONVERTIBLE TYPES (a standard property
+/// of Lean's theory: subject reduction plus uniqueness of typing).
+pub open spec fn h_conv_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+    forall|x: ExprSpec, y: ExprSpec, tx: ExprSpec, ty: ExprSpec|
+        #![trigger tconv(dty, denv, lctx, x, y), typed(dty, denv, lctx, x, tx), typed(dty, denv, lctx, y, ty)]
+        tconv(dty, denv, lctx, x, y) && typed(dty, denv, lctx, x, tx) && typed(dty, denv, lctx, y, ty)
+            ==> tconv(dty, denv, lctx, tx, ty)
+}
+
+/// DISTINCT AXIOMS DO NOT CONVERT: two different constants without
+/// definitions (so nothing unfolds them) are not convertible (no-confusion
+/// for opaque constants, the same inversion family as Sort-injectivity).
+pub open spec fn h_axioms_distinct(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+    forall|c1: u64, c2: u64, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>|
+        #![trigger tconv(dty, denv, lctx, ExprSpec::Const(c1, l1), ExprSpec::Const(c2, l2))]
+        tconv(dty, denv, lctx, ExprSpec::Const(c1, l1), ExprSpec::Const(c2, l2)) && c1 != c2
+            && !denv.defs.contains_key(c1) && !denv.defs.contains_key(c2) ==> false
+}
+
+/// OPTION 1 REFUTED: in this environment, `kconv ⟹ tconv` on well-typed
+/// terms contradicts two standard properties of the real theory.
+pub proof fn option1_refuted()
+    ensures
+        !(kconv_implies_tconv(cx_dty(), cx_env()) && h_conv_typed(cx_dty(), cx_env(), cx_lctx())
+            && h_axioms_distinct(cx_dty(), cx_env(), cx_lctx())),
+{
+    let (dty, env, lctx) = (cx_dty(), cx_env(), cx_lctx());
+    cx_kconv();
+    cx_well_formed();
+    if kconv_implies_tconv(dty, env) && h_conv_typed(dty, env, lctx) && h_axioms_distinct(dty, env, lctx) {
+        assert(tconv(dty, env, lctx, cx_bad(), cx_p()));
+        assert(tconv(dty, env, lctx, cx_b(), cx_a()));
+        assert(false);
+    }
 }
 
 } // verus!

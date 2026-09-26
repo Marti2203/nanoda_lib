@@ -200,6 +200,32 @@ there. The binder rule now picks a local `k` and one of the two binder types
 also require `lctx[k] == ty`, where the extension is the identity, so
 nothing about `def_eq`'s proofs changed.
 
+## Option 1 is false (2026-09-26, `metatheory::option1_refuted`)
+
+`kconv ⟹ tconv` over arbitrary chains fails even between well-typed terms in
+a well-formed context. The setting: propositions `A`, `B`, axioms `p : A`
+and `bad : B`, and one local of type `A`.
+
+- `m = (λz:A. z) bad` has `InferOnly` type `A`, because arguments are not
+  checked.
+- Proof irrelevance gives `m ~ p`, and beta gives `m ~ bad`.
+- So `kconv(bad, p)` holds, and it is PROVEN outright (`cx_kconv`), as are
+  both ends' real typings and `lctx_wf` (`cx_well_formed`).
+- `option1_refuted`: `kconv_implies_tconv` contradicts `h_conv_typed`
+  (conversion relates only terms of convertible types) together with
+  `h_axioms_distinct` (distinct axioms do not convert).
+
+Those two are standard properties of the real theory, so they're the only
+premises. Proving them for this environment outright is a consistency
+argument, fragment work.
+
+Nanoda is unaffected: the kernel only compares terms it has already checked,
+and its proof-irrelevance test compares inferred types (`B` vs `A`), so it
+never builds `m`. The finding is about the SPEC. `kconv` forgets the
+kernel's invariant that compared terms are well typed, and option 2
+(`kconv_wt`) is the statement that keeps it. The remaining obligation is
+the kernel side: `def_eq` only produces `InferWt` derivations.
+
 ## Proof plan for phase 2 (after phase 1)
 
 Mutual induction on derivation height over `types_to` and `deq_p`, `io`
