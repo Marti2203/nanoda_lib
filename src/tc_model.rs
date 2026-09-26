@@ -1039,12 +1039,8 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (match e {
-        ExprSpec::Const(cid, clevels) => dty.contains_key(cid) && subst_expr_levels_rel(
-            dty[cid].1,
-            dty[cid].0,
-            clevels,
-            t,
-        ),
+        ExprSpec::Const(cid, clevels) => dty.contains_key(cid) && clevels.len() == dty[cid].0.len()
+            && subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
         _ => false,
     })
     // APPLICATION (2026-09-05, replaces a vacuous "some substitution
@@ -1530,6 +1526,7 @@ pub proof fn types_to_const(
 )
     requires
         dty.contains_key(cid),
+        clevels.len() == dty[cid].0.len(),
         subst_expr_levels_rel(dty[cid].1, dty[cid].0, clevels, t),
     ensures
         types_to(dty, denv, lctx, io, ExprSpec::Const(cid, clevels), t, fuel),
