@@ -279,8 +279,28 @@ pub open spec fn cod_vars(np: nat, n: nat) -> Seq<ExprSpec> {
 pub open spec fn ctor_cod(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ind: u64, cid: u64, ils: Seq<LevelSpec>) -> bool {
     let np = denv.ctor_np[cid] as nat;
     let n = np + denv.ctor_nf[cid] as nat;
-    &&& ils.len() == dty[cid].0.len()
+    &&& ils == params_levels(dty[cid].0)
+    &&& forall|i: int, j: int| 0 <= i < j < dty[cid].0.len() ==> dty[cid].0[i] != dty[cid].0[j]
     &&& pi_spine(dty[cid].1, n) == Some(spine_app(ExprSpec::Const(ind, ils), cod_vars(np, n)))
+}
+
+/// The universe parameters as levels.
+pub open spec fn params_levels(us: Seq<u64>) -> Seq<LevelSpec> {
+    Seq::new(us.len(), |i: int| LevelSpec::Param(us[i]))
+}
+
+/// Instantiating the parameters themselves gives the instance's levels.
+pub proof fn params_levels_inst(us: Seq<u64>, ls: Seq<LevelSpec>)
+    requires
+        us.len() == ls.len(),
+        forall|i: int, j: int| 0 <= i < j < us.len() ==> us[i] != us[j],
+    ensures
+        subst_levels_spec(params_levels(us), us, ls) == ls,
+{
+    assert forall|i: int| 0 <= i < us.len() implies subst_levels_spec(params_levels(us), us, ls)[i] == ls[i] by {
+        crate::level_model::find_level_idx_first_match(us, us[i], i as nat);
+    }
+    assert(subst_levels_spec(params_levels(us), us, ls) =~= ls);
 }
 
 pub open spec fn struct_ok1(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ind: u64, cid: u64) -> bool {
@@ -351,7 +371,7 @@ pub proof fn ctor_app_type(
         forall|i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) == 0,
         typed(dty, denv, d, spine_app(ExprSpec::Const(cid, ls), args), t),
     ensures
-        ils.len() == dty[cid].0.len(),
+        ils == ls,
         tconv(dty, denv, d, t, spine_app(ExprSpec::Const(ind, ils), args.subrange(0, denv.ctor_np[cid] as int))),
 {
     let np = denv.ctor_np[cid] as nat;
@@ -376,6 +396,7 @@ pub proof fn ctor_app_type(
     pi_spine_li(dd, n, us, ls);
     crate::level_inst::li_spine_app(ExprSpec::Const(ind, ils0), cod_vars(np, n), us, ls);
     let ils = subst_levels_spec(ils0, us, ls);
+    params_levels_inst(us, ls);
     assert(crate::level_inst::sli(cod_vars(np, n), us, ls) =~= cod_vars(np, n));
     let lbody = spine_app(ExprSpec::Const(ind, ils), cod_vars(np, n));
     assert(pi_spine(t0, n) == Some(lbody));
@@ -784,6 +805,46 @@ pub proof fn exp_fields(
             (tk, nk, hk)
         }
     }
+}
+
+
+/// A structure constructor's telescope, instantiated all the way, is the
+/// structure applied to the parameter arguments at the instance's levels.
+pub proof fn ctor_tele_end(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    full: Seq<ExprSpec>,
+)
+    requires
+        struct_ok(dty, denv),
+        denv.struct_ctor(ind) == Some(cid),
+        ls.len() == dty[cid].0.len(),
+        full.len() == denv.ctor_np[cid] as nat + denv.ctor_nf[cid] as nat,
+        forall|i: int| 0 <= i < full.len() ==> nlbv(#[trigger] full[i]) == 0,
+    ensures
+        peel_inst(ctor_ty_at(dty, cid, ls), full, full.len())
+            == spine_app(ExprSpec::Const(ind, ls), full.subrange(0, denv.ctor_np[cid] as int)),
+{
+    let np = denv.ctor_np[cid] as nat;
+    let n = full.len();
+    assert(struct_ok1(dty, denv, ind, cid));
+    let ils0 = choose|ils: Seq<LevelSpec>| #[trigger] ctor_cod(dty, denv, ind, cid, ils);
+    let us = dty[cid].0;
+    let t0 = ctor_ty_at(dty, cid, ls);
+    pi_spine_li(dty[cid].1, n, us, ls);
+    crate::level_inst::li_spine_app(ExprSpec::Const(ind, ils0), cod_vars(np, n), us, ls);
+    params_levels_inst(us, ls);
+    assert(crate::level_inst::sli(cod_vars(np, n), us, ls) =~= cod_vars(np, n));
+    let lbody = spine_app(ExprSpec::Const(ind, ls), cod_vars(np, n));
+    assert(pi_spine(t0, n) == Some(lbody));
+    assert(full.subrange(0, n as int) =~= full);
+    pi_inst(t0, full, n);
+    subst_full_spine(ExprSpec::Const(ind, ls), cod_vars(np, n), full, 0);
+    let sv = Seq::new(np, |i: int| subst_full(cod_vars(np, n)[i], full, 0));
+    assert(sv =~= full.subrange(0, np as int));
 }
 
 } // verus!

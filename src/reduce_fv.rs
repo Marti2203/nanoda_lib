@@ -353,4 +353,26 @@ proof fn chain_fv(env: EnvSpec, ch: Seq<ExprSpec>, i: nat, k: int)
     }
 }
 
+
+/// The quotient eliminator's result is built from its input's pieces.
+pub proof fn quot_result_fv(export: nat, sp: ExprSpec, i: nat)
+    requires
+        quot_ready(export, sp),
+        fv_absent(sp, i),
+    ensures
+        fv_absent(quot_result(export, sp), i),
+{
+    spine_parts_fv(sp, i);
+    let args = spine_args(sp);
+    let qi = quot_major_idx(export, sp)->Some_0;
+    let m = args[qi as int];
+    spine_parts_fv(m, i);
+    let x = spine_args(m)[2];
+    let rest = args.skip(qi as int + 1);
+    assert forall|k: int| 0 <= k < rest.len() implies fv_absent(#[trigger] rest[k], i) by {
+        assert(rest[k] == args[qi + 1 + k]);
+    }
+    spine_app_fv(ExprSpec::App(Box::new(args[3int]), Box::new(x)), rest, i);
+}
+
 } // verus!

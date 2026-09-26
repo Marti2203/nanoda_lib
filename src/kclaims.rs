@@ -53,7 +53,18 @@ verus! {
 pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     hyps_all(dty, denv) && fv_free(dty, denv) && crate::ctor_typing::struct_ok(dty, denv)
         && crate::ctor_typing::ctor_params_ok(dty, denv)
-        && crate::metatheory::env_wf(dty, denv) && crate::metatheory::h_sr(dty, denv)
+        && crate::metatheory::env_wf(dty, denv) && crate::metatheory::h_sr(dty, denv) && h_sr_leaf(dty, denv)
+}
+
+/// SUBJECT REDUCTION for the kernel's uncapped leaf steps: a recursor
+/// application on a constructor, and a quotient eliminator on `Quot.mk`,
+/// keep their type. `h_sr` covers `pstep`, whose iota carries size caps that
+/// exist only for the confluence proofs; the kernel reduces without them.
+pub open spec fn h_sr_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    forall|lctx: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec| #![trigger typed(dty, denv, lctx, e, t)]
+        crate::metatheory::env_wf(dty, denv) && lctx_wf(dty, denv, lctx) && typed(dty, denv, lctx, e, t) ==>
+            (crate::beta_model::rec_ready_u(denv, e) ==> typed(dty, denv, lctx, crate::beta_model::rec_result(denv, e), t))
+            && (quot_ready(denv.export, e) ==> typed(dty, denv, lctx, quot_result(denv.export, e), t))
 }
 
 /// `e` is really typed in `d`.
@@ -1052,6 +1063,8 @@ proof fn eta_x_struct(
     assert(typed(dty, denv, d, y, ryt));
     assert(denv.ctor_np[cid] as nat == np);
     let ils = ctor_app_type(dty, denv, d, ind, cid, ylv, am, ryt);
+    let th = crate::ctor_typing::spine_head_typed(dty, denv, d, ExprSpec::Const(cid, ylv), am, ryt);
+    crate::ctor_typing::ctor_const_type(dty, denv, d, cid, ylv, th);
     let st = spine_app(ExprSpec::Const(ind, ils), am.subrange(0, np as int));
     s_sound(dty, denv, d, x, tx, rxt, fx, rxf);
     s_sound(dty, denv, d, y, ty, ryt, fy, ryf);
@@ -1252,29 +1265,44 @@ pub proof fn cw_eta(
 }
 
 
-/// THE REDUCTION CLAIM (`whnf`): the result converts to the input, is typed
-/// wherever the input is, and reaches only what the input reaches.
-pub open spec fn cwh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, r: ExprSpec) -> bool {
-    &&& cw(dty, denv, g, e, r)
-    &&& tt_to(dty, denv, g, e, r)
-    &&& kh(dty, denv) ==> sub(rctx(g, r), rctx(g, e))
+/// TYPE-PRESERVING TRANSFER: wherever `x` has a type, `y` has a
+/// convertible one (subject reduction, and the kernel's structure steps).
+pub open spec fn tp_to(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    kh(dty, denv) ==> forall|d: Map<nat, ExprSpec>, t: ExprSpec| #![trigger typed(dty, denv, d, x, t)]
+        lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && typed(dty, denv, d, x, t)
+            ==> exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, y, t2) && tconv(dty, denv, d, t2, t)
 }
 
-/// SUBJECT REDUCTION along a chain, in claim form.
-pub proof fn tt_of_pstep_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, r: ExprSpec)
+pub proof fn tt_of_tp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires
-        pstep_star(denv, e, r),
+        tp_to(dty, denv, g, x, y),
     ensures
-        tt_to(dty, denv, g, e, r),
+        tt_to(dty, denv, g, x, y),
 {
     if kh(dty, denv) {
-        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
-            implies #[trigger] rtyped(dty, denv, d, r) by {
-            let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
-            let ch = choose|chain: Seq<ExprSpec>| chain.len() >= 1 && chain[0] == e && chain[chain.len() - 1] == r && pstep_chain_valid(denv, chain);
-            sr_chain(dty, denv, d, ch, t, (ch.len() - 1) as int);
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && rtyped(dty, denv, d, x)
+            implies #[trigger] rtyped(dty, denv, d, y) by {
+            let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, x, t);
+            let t2 = choose|t2: ExprSpec| #[trigger] typed(dty, denv, d, y, t2) && tconv(dty, denv, d, t2, t);
         }
     }
+}
+
+pub proof fn tconv_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, t: ExprSpec)
+    ensures
+        tconv(dty, denv, d, t, t),
+{
+    deq_p_refl(dty, denv, d, IoMode::Real, t, 0);
+    crate::metatheory::tconv_of(dty, denv, d, t, t, 0);
+}
+
+/// THE REDUCTION CLAIM (`whnf`): the result converts to the input, has a
+/// type convertible to the input's wherever the input is typed, and
+/// reaches only what the input reaches.
+pub open spec fn cwh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, r: ExprSpec) -> bool {
+    &&& cw(dty, denv, g, e, r)
+    &&& tp_to(dty, denv, g, e, r)
+    &&& kh(dty, denv) ==> sub(rctx(g, r), rctx(g, e))
 }
 
 proof fn sr_chain(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, ch: Seq<ExprSpec>, t: ExprSpec, k: int)
@@ -1297,6 +1325,23 @@ proof fn sr_chain(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat
     }
 }
 
+/// SUBJECT REDUCTION along a chain: the same type.
+pub proof fn tp_of_pstep_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, r: ExprSpec)
+    requires
+        pstep_star(denv, e, r),
+    ensures
+        tp_to(dty, denv, g, e, r),
+{
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, r, t2) && tconv(dty, denv, d, t2, t) by {
+            let ch = choose|chain: Seq<ExprSpec>| chain.len() >= 1 && chain[0] == e && chain[chain.len() - 1] == r && pstep_chain_valid(denv, chain);
+            sr_chain(dty, denv, d, ch, t, (ch.len() - 1) as int);
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
 /// A reduction chain gives the reduction claim.
 pub proof fn cwh_of_pstep_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, r: ExprSpec)
     requires
@@ -1304,7 +1349,7 @@ pub proof fn cwh_of_pstep_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
     ensures
         cwh(dty, denv, g, e, r),
 {
-    tt_of_pstep_star(dty, denv, g, e, r);
+    tp_of_pstep_star(dty, denv, g, e, r);
     crate::beta_model::defeq_of_pstep_star(denv, e, r);
     deq_any_of_defeq(denv, e, r);
     cw_of_deq_any(dty, denv, g, e, r);
@@ -1321,6 +1366,12 @@ pub proof fn cwh_refl(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
         cwh(dty, denv, g, e, e),
 {
     cw_refl(dty, denv, g, e);
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, e, t2) && tconv(dty, denv, d, t2, t) by {
+            tconv_refl(dty, denv, d, t);
+        }
+    }
 }
 
 /// Reduction claims compose.
@@ -1331,17 +1382,19 @@ pub proof fn cwh_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Ma
     ensures
         cwh(dty, denv, g, e, r2),
 {
+    tt_of_tp(dty, denv, g, e, r1);
     cw_trans(dty, denv, g, e, r1, r2);
     if kh(dty, denv) {
         sub_trans(rctx(g, r2), rctx(g, r1), rctx(g, e));
-        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
-            implies #[trigger] rtyped(dty, denv, d, r2) by {
-            assert(rtyped(dty, denv, d, r1));
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, r2, t2) && tconv(dty, denv, d, t2, t) by {
+            let t1 = choose|t1: ExprSpec| #[trigger] typed(dty, denv, d, r1, t1) && tconv(dty, denv, d, t1, t);
             sub_trans(rctx(g, r1), rctx(g, e), d);
+            let t2 = choose|t2: ExprSpec| #[trigger] typed(dty, denv, d, r2, t2) && tconv(dty, denv, d, t2, t1);
+            tconv_trans(dty, denv, d, t2, t1, t);
         }
     }
 }
-
 
 /// An inference claim survives reducing its type.
 pub proof fn ci_whnf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t0: ExprSpec, t1: ExprSpec)
@@ -1371,9 +1424,11 @@ pub proof fn ci_whnf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
 
 /// K-LIKE REDUCTION, the major premise's step (`to_ctor_when_k`): the
 /// major converts to the constructor built from its type's parameters (proof
-/// irrelevance: both prove the major's proposition), the constructor is
-/// typed wherever the major is (E2' on the major's type), and it reaches
-/// only what the major does.
+/// irrelevance: both prove the major's proposition), the constructor has a
+/// type convertible to the major's wherever the major is typed (E2' for its
+/// typing, the kernel's own comparison of the two types for the
+/// conversion), and it reaches only what the major does.
+#[verifier::spinoff_prover]
 pub proof fn cwh_k(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
@@ -1403,6 +1458,7 @@ pub proof fn cwh_k(
     ensures
         cwh(dty, denv, g, major, nc),
 {
+    let w = IoMode::InferWt;
     ci_whnf(dty, denv, g, major, t0, mty);
     cw_irrel(dty, denv, g, major, nc, mty, nty);
     if kh(dty, denv) {
@@ -1417,21 +1473,43 @@ pub proof fn cwh_k(
         rctx_mono(g, nc, mty);
         assert(sub(rctx(g, mty), rctx(g, major)));
         sub_trans(rctx(g, nc), rctx(g, mty), rctx(g, major));
-        // it is typed wherever the major is
         assert(denv.ctor_ind.contains_key(cid));
         assert(crate::ctor_typing::ctor_params_ok1(dty, denv, ind, cid));
         assert(denv.ctor_np[cid] as nat == params.len());
-        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, major), d) && rtyped(dty, denv, d, major)
-            implies #[trigger] rtyped(dty, denv, d, nc) by {
-            let (tt, f, h) = ci_use(dty, denv, g, d, major, mty);
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, major), d) && #[trigger] typed(dty, denv, d, major, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, nc, t2) && tconv(dty, denv, d, t2, t) by {
+            // typed, by E2' on the major's type
+            assert(rtyped(dty, denv, d, major));
+            let (tm, fm, hm) = ci_use(dty, denv, g, d, major, mty);
             let s0 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, mty, t);
             assert(typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), params + rest), s0));
             let tc = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(cid, ls), params), t);
             assert(typed(dty, denv, d, nc, tc));
+            // tc ~ Tn ~ nty ~ mty ~ Tm ~ t
+            sub_trans(rctx(g, nc), rctx(g, major), d);
+            let (tn, fnn, hn) = ci_use(dty, denv, g, d, nc, nty);
+            let ftc = choose|f: nat| #[trigger] types_to(dty, denv, d, IoMode::Real, nc, tc, f);
+            let ft = choose|f: nat| #[trigger] types_to(dty, denv, d, IoMode::Real, major, t, f);
+            s_sound(dty, denv, d, nc, tn, tc, fnn, ftc);
+            s_sound(dty, denv, d, major, tm, t, fm, ft);
+            assert(deq_p_any(dty, denv, d, w, tn, nty));
+            kconv_wt_implies_tconv(dty, denv, d, tn, nty);
+            assert(deq_p_any(dty, denv, d, w, tm, mty));
+            kconv_wt_implies_tconv(dty, denv, d, tm, mty);
+            sub_trans(rctx(g, nty), rctx(g, nc), d);
+            assert(rtyped(dty, denv, d, nty));
+            assert(deq_p_any(dty, denv, d, w, mty, nty));
+            kconv_wt_implies_tconv(dty, denv, d, mty, nty);
+            tconv_symm(dty, denv, d, tn, tc);
+            tconv_trans(dty, denv, d, tc, tn, nty);
+            tconv_symm(dty, denv, d, mty, nty);
+            tconv_trans(dty, denv, d, tc, nty, mty);
+            tconv_symm(dty, denv, d, tm, mty);
+            tconv_trans(dty, denv, d, tc, mty, tm);
+            tconv_trans(dty, denv, d, tc, tm, t);
         }
     }
 }
-
 
 /// Whatever a term reaches whose locals come from `e1` or `e2` is reached
 /// from one of them.
@@ -1458,8 +1536,10 @@ pub proof fn rctx_two(g: Map<nat, ExprSpec>, r: ExprSpec, e1: ExprSpec, e2: Expr
 }
 
 /// STRUCTURE ETA BEFORE IOTA (`expand_eta_struct_aux`): a term of a
-/// structure type converts to its expansion, which is typed wherever the
-/// term is and reaches only what it does.
+/// structure type converts to its expansion, whose type converts to the
+/// term's wherever the term is typed, and which reaches only what the term
+/// and its type reach. The structure type carries exactly the parameters,
+/// as a well-typed structure type does; the kernel tests it.
 #[verifier::spinoff_prover]
 pub proof fn cwh_eta_exp(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
@@ -1484,15 +1564,16 @@ pub proof fn cwh_eta_exp(
         denv.ctor_num_params(cid) == Some(np as u16),
         denv.ctor_num_fields(cid) == Some(nf as u16),
         np < 0x1_0000 && nf < 0x1_0000,
-        np <= args.len(),
-        r == spine_app(ExprSpec::Const(cid, ls), args.subrange(0, np as int) + eta_projs(e, nf)),
+        np == args.len(),
+        r == spine_app(ExprSpec::Const(cid, ls), args + eta_projs(e, nf)),
     ensures
         cwh(dty, denv, g, e, r),
 {
     let w = IoMode::InferWt;
-    let ps = args.subrange(0, np as int);
-    let rest = args.subrange(np as int, args.len() as int);
+    let ps = args;
+    let rest = Seq::<ExprSpec>::empty();
     assert(ps + rest =~= args);
+    assert(args.subrange(0, np as int) =~= args);
     if kh(dty, denv) {
         crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(ind, ls), args);
         // conversion: the one-sided eta leaf, through the structure type
@@ -1524,9 +1605,10 @@ pub proof fn cwh_eta_exp(
         }
         assert(sub(rctx(g, ety), rctx(g, e)));
         rctx_two(g, r, e, ety, rctx(g, e));
-        // typing: the expansion is typed wherever e is
-        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
-            implies #[trigger] rtyped(dty, denv, d, r) by {
+        // typing: the expansion is typed wherever e is, at e's structure type
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, r, t2) && tconv(dty, denv, d, t2, t) by {
+            assert(rtyped(dty, denv, d, e));
             let (tx, fx, h1) = ci_use(dty, denv, g, d, e, ety);
             let (rxt, rxf) = rt_at(dty, denv, d, e);
             s_sound(dty, denv, d, e, tx, rxt, fx, rxf);
@@ -1538,7 +1620,6 @@ pub proof fn cwh_eta_exp(
             let s0 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, ety, t);
             assert(denv.ctor_np[cid] as nat == np);
             assert(denv.ctor_nf[cid] as nat == nf);
-            // the constructor's level arity, from E2' on the structure type
             assert(crate::ctor_typing::struct_ok1(dty, denv, ind, cid));
             assert(crate::ctor_typing::ctor_params_ok1(dty, denv, ind, cid));
             assert(typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps + rest), s0));
@@ -1547,8 +1628,147 @@ pub proof fn cwh_eta_exp(
             crate::ctor_typing::ctor_const_type(dty, denv, d, cid, ls, th);
             assert(crate::ctor_typing::exp_ok(dty, denv, d, ind, cid, ls, ps, rest, e, rxt, rxf, hc));
             let (t2, n2, h2) = crate::ctor_typing::exp_fields(dty, denv, d, ind, cid, ls, ps, rest, e, rxt, rxf, hc, nf);
-            assert((ps + eta_projs(e, nf)).subrange(0, (ps.len() + nf) as int) =~= ps + eta_projs(e, nf));
+            let full = ps + eta_projs(e, nf);
+            assert(full.subrange(0, (ps.len() + nf) as int) =~= full);
             assert(typed(dty, denv, d, r, t2));
+            // its type is the structure applied to the parameters: ety
+            assert forall|k: int| 0 <= k < full.len() implies nlbv(#[trigger] full[k]) == 0 by {
+                if k >= np {
+                    assert(full[k] == ExprSpec::Proj((k - np) as usize, Box::new(e)));
+                }
+            }
+            crate::ctor_typing::ctor_tele_end(dty, denv, ind, cid, ls, full);
+            assert(full.subrange(0, np as int) =~= args);
+            crate::metatheory::tconv_of(dty, denv, d, t2, ety, h2);
+            // and e's type t converts to its real type rxt (uniqueness), so to ety
+            assert(crate::metatheory::hyps(dty, denv, d));
+            assert(typed(dty, denv, d, e, rxt));
+            assert(tconv(dty, denv, d, rxt, t));
+            tconv_symm(dty, denv, d, rxt, ety);
+            tconv_trans(dty, denv, d, t2, ety, rxt);
+            tconv_trans(dty, denv, d, t2, rxt, t);
+        }
+    }
+}
+
+
+/// Uncapped recursor iota gives the reduction claim.
+pub proof fn cwh_rec_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec)
+    requires
+        crate::beta_model::rec_ready_u(denv, e),
+    ensures
+        cwh(dty, denv, g, e, crate::beta_model::rec_result(denv, e)),
+{
+    let r = crate::beta_model::rec_result(denv, e);
+    assert(deq_rec(denv, e, r));
+    crate::tc_model::deq_of_deq_c(denv, e, r, 0);
+    assert(deq(denv, e, r, 0));
+    cw_of_deq_any(dty, denv, g, e, r);
+    if kh(dty, denv) {
+        assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(r, i) by {
+            crate::reduce_fv::rec_result_fv(denv, e, i);
+        }
+        rctx_mono(g, r, e);
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, r, t2) && tconv(dty, denv, d, t2, t) by {
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+/// Quotient reduction gives the reduction claim.
+pub proof fn cwh_quot_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec)
+    requires
+        quot_ready(denv.export, e),
+    ensures
+        cwh(dty, denv, g, e, quot_result(denv.export, e)),
+{
+    let r = quot_result(denv.export, e);
+    assert(deq_quot(denv.export, e, r));
+    deq_any_of_quot(denv, e, r);
+    cw_of_deq_any(dty, denv, g, e, r);
+    if kh(dty, denv) {
+        assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(r, i) by {
+            crate::reduce_fv::quot_result_fv(denv.export, e, i);
+        }
+        rctx_mono(g, r, e);
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, r, t2) && tconv(dty, denv, d, t2, t) by {
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+
+/// Spines with one head and pairwise convertible arguments convert (claim
+/// form).
+pub proof fn cw_spine_pairwise(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, h: ExprSpec, a1: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+    requires
+        a1.len() == a2.len(),
+        forall|i: int| 0 <= i < a1.len() ==> cw(dty, denv, g, #[trigger] a1[i], a2[i]),
+    ensures
+        cw(dty, denv, g, spine_app(h, a1), spine_app(h, a2)),
+    decreases a1.len(),
+{
+    if a1.len() == 0 {
+        cw_refl(dty, denv, g, h);
+    } else {
+        let n = a1.len() - 1;
+        cw_spine_pairwise(dty, denv, g, h, a1.subrange(0, n), a2.subrange(0, n));
+        assert(cw(dty, denv, g, a1[n], a2[n]));
+        cw_app(dty, denv, g, spine_app(h, a1.subrange(0, n)), a1[n], spine_app(h, a2.subrange(0, n)), a2[n]);
+    }
+}
+
+/// REPLACING A SPINE ARGUMENT by its reduct gives the reduction claim for
+/// the spine: the recursor application with its major premise reduced.
+#[verifier::spinoff_prover]
+pub proof fn cwh_replace(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, h: ExprSpec, args: Seq<ExprSpec>, k: int, a2: ExprSpec)
+    requires
+        0 <= k < args.len(),
+        cwh(dty, denv, g, args[k], a2),
+    ensures
+        cwh(dty, denv, g, spine_app(h, args), spine_app(h, args.update(k, a2))),
+{
+    let w = IoMode::InferWt;
+    let orig = spine_app(h, args);
+    let args2 = args.update(k, a2);
+    let nw = spine_app(h, args2);
+    assert forall|i: int| 0 <= i < args.len() implies cw(dty, denv, g, #[trigger] args[i], args2[i]) by {
+        if i != k {
+            cw_refl(dty, denv, g, args[i]);
+        }
+    }
+    cw_spine_pairwise(dty, denv, g, h, args, args2);
+    if kh(dty, denv) {
+        // reach: the new spine's locals are the old one's or a2's, and a2
+        // reaches only what args[k] does
+        spine_arg_fv(h, args, k);
+        rctx_mono(g, args[k], orig);
+        sub_trans(rctx(g, a2), rctx(g, args[k]), rctx(g, orig));
+        assert forall|i: nat| #[trigger] fv_absent(orig, i) && fv_absent(a2, i) implies fv_absent(nw, i) by {
+            crate::reduce_fv::spine_app_fv(h, args, i);
+            crate::reduce_fv::spine_app_fv(h, args2, i);
+            assert forall|j: int| 0 <= j < args2.len() implies fv_absent(#[trigger] args2[j], i) by {
+                if j != k {
+                    assert(args2[j] == args[j]);
+                }
+            }
+        }
+        rctx_two(g, nw, orig, a2, rctx(g, orig));
+        // typing: the replaced spine, at a convertible type
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, orig), d) && #[trigger] typed(dty, denv, d, orig, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, nw, t2) && tconv(dty, denv, d, t2, t) by {
+            spine_args_typed(dty, denv, d, h, args, t);
+            let tk = choose|tk: ExprSpec| #[trigger] typed(dty, denv, d, args[k], tk);
+            sub_trans(rctx(g, args[k]), rctx(g, orig), d);
+            let ta2 = choose|t2: ExprSpec| #[trigger] typed(dty, denv, d, a2, t2) && tconv(dty, denv, d, t2, tk);
+            sub_trans(rctx(g, a2), rctx(g, args[k]), d);
+            assert(rtyped(dty, denv, d, a2));
+            assert(deq_p_any(dty, denv, d, w, args[k], a2));
+            kconv_wt_implies_tconv(dty, denv, d, args[k], a2);
+            tconv_symm(dty, denv, d, args[k], a2);
+            let t2 = crate::replace::spine_replace(dty, denv, d, h, args, k, a2, ta2, tk, t);
         }
     }
 }
