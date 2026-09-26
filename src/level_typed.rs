@@ -576,9 +576,8 @@ pub proof fn lt_deq_p_c(
     } else if h > 0 && unit_pair(dty, denv, g, io, x, y, (h - 1) as nat) && leaf_wt(dty, denv, g, io, x, y, (h - 1) as nat) {
         lt_unit(dty, denv, g, io, x, y, (h - 1) as nat, ks, vs);
         lt_leaf_wt(dty, denv, g, io, x, y, (h - 1) as nat, ks, vs);
-    } else if h > 0 && eta_struct_pair(dty, denv, g, io, x, y, (h - 1) as nat) && leaf_wt(dty, denv, g, io, x, y, (h - 1) as nat) {
+    } else if h > 0 && eta_struct_pair(dty, denv, g, io, x, y, (h - 1) as nat) {
         lt_esp(dty, denv, g, io, x, y, (h - 1) as nat, ks, vs);
-        lt_leaf_wt(dty, denv, g, io, x, y, (h - 1) as nat, ks, vs);
     } else {
         let hp = (h - 1) as nat;
         match (x, y) {
@@ -885,11 +884,12 @@ proof fn lt_ese(
 {
     reveal_with_fuel(ctor_typed_like, 1);
     let (tx, f, ind, cid, ls, params, nf) = choose|tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat|
-        #[trigger] eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, denv, g, io, x, tx, f)
+        #[trigger] eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, denv, g, io, x, tx, f) && wt1(dty, denv, g, io, x, h)
         && (struct_type_of(dty, denv, g, io, tx, ind, params, h) || ctor_typed_like(dty, denv, g, io, tx, cid, params, nf, h))
         && denv.struct_ctor(ind) == Some(cid) && denv.ctor_num_fields(cid) == Some(nf as u16)
         && y == spine_app(ExprSpec::Const(cid, ls), params + eta_projs(x, nf));
     lt_types_to(dty, denv, g, io, x, tx, f, ks, vs);
+    lt_wt1(dty, denv, g, io, x, h, ks, vs);
     if struct_type_of(dty, denv, g, io, tx, ind, params, h) {
         lt_sto(dty, denv, g, io, tx, ind, params, h, ks, vs);
     } else {

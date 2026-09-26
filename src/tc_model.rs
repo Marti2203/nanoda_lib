@@ -2714,7 +2714,7 @@ pub open spec fn eta_struct_expand(
         params: Seq<ExprSpec>,
         nf: nat,
     | #[trigger]
-        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, denv, lctx, io, x, tx, f)
+        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, denv, lctx, io, x, tx, f) && wt1(dty, denv, lctx, io, x, h)
             && (struct_type_of(dty, denv, lctx, io, tx, ind, params, h) || ctor_typed_like(
             dty,
             denv,
@@ -3881,7 +3881,7 @@ pub open spec fn deq_p_c(
     ||| deq_c(env, x, y, h)
     ||| (h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat))
     ||| (h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat))
-    ||| (h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat))
+    ||| (h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_p_c(
             dty,
@@ -4041,8 +4041,7 @@ pub proof fn deq_p_c_mono(
     } else if h1 > 0 && unit_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
         leaf_wt_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
         unit_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
-    } else if h1 > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
-        leaf_wt_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
+    } else if h1 > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
         eta_struct_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
     } else {
         assert(h1 > 0);
@@ -4195,8 +4194,7 @@ pub proof fn deq_p_c_symm(
         deq_p_symm(dty, env, lctx, io, tx, ty2, hp);
         assert(unit_marker(ty2, tx, fy, fx));
         assert(unit_pair(dty, env, lctx, io, y, x, hp));
-    } else if h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat) {
-        leaf_wt_symm(dty, env, lctx, io, x, y, (h - 1) as nat);
+    } else if h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
         assert(eta_struct_pair(dty, env, lctx, io, y, x, (h - 1) as nat));
     } else {
         assert(h > 0);
@@ -4570,7 +4568,7 @@ pub proof fn eta_struct_expand_mono(
         params: Seq<ExprSpec>,
         nf: nat,
     | #[trigger]
-        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h1 && types_to(dty, env, lctx, io, x, tx, f)
+        eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h1 && types_to(dty, env, lctx, io, x, tx, f) && wt1(dty, env, lctx, io, x, h1)
             && (struct_type_of(dty, env, lctx, io, tx, ind, params, h1) || ctor_typed_like(
             dty,
             env,
@@ -4591,6 +4589,7 @@ pub proof fn eta_struct_expand_mono(
     } else {
         ctor_typed_like_mono(dty, env, lctx, io, tx, cid, params, nf, h1, h2);
     }
+    wt1_mono(dty, env, lctx, io, x, h1, h2);
     assert(eta_struct_marker(tx, f, ind, cid, ls, params, nf));
 }
 
@@ -4702,12 +4701,10 @@ pub proof fn deq_p_of_eta_struct(
     requires
         eta_struct_pair(dty, env, lctx, io, x, y, hi),
         h > hi,
-        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p(dty, env, lctx, io, x, y, h),
 {
     eta_struct_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
-    leaf_wt_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
     assert(deq_p_c(dty, env, lctx, io, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
@@ -4723,7 +4720,6 @@ pub proof fn deq_p_any_of_eta_struct(
 )
     requires
         eta_struct_pair(dty, env, lctx, io, x, y, hi),
-        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p_any(dty, env, lctx, io, x, y),
 {

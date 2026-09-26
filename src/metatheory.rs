@@ -853,8 +853,7 @@ proof fn leaf_transfer(
     requires
         hyps_all(dty, env),
         crate::swap_typed::fv_free(dty, env),
-        proof_irrel_pair(dty, env, lctx, IoMode::InferWt, x, y, h) || unit_pair(dty, env, lctx, IoMode::InferWt, x, y, h)
-            || eta_struct_pair(dty, env, lctx, IoMode::InferWt, x, y, h),
+        proof_irrel_pair(dty, env, lctx, IoMode::InferWt, x, y, h) || unit_pair(dty, env, lctx, IoMode::InferWt, x, y, h),
         leaf_wt(dty, env, lctx, IoMode::InferWt, x, y, h),
     ensures
         tconv(dty, env, lctx, x, y),
@@ -885,7 +884,7 @@ proof fn leaf_transfer(
         assert(irrel_marker(tx_r, ty_r, gx, gy));
         assert(proof_irrel_pair(dty, env, lctx, r, x, y, m));
         deq_p_any_of_irrel(dty, env, lctx, r, x, y, m);
-    } else if unit_pair(dty, env, lctx, w, x, y, h) {
+    } else {
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
             unit_marker(tx, ty2, fx, fy) && fx < h && fy < h && types_to(dty, env, lctx, w, x, tx, fx)
             && types_to(dty, env, lctx, w, y, ty2, fy)
@@ -913,13 +912,6 @@ proof fn leaf_transfer(
         assert(unit_marker(tx_r, ty_r, gx, gy));
         assert(unit_pair(dty, env, lctx, r, x, y, m));
         deq_p_any_of_unit(dty, env, lctx, r, x, y, m);
-    } else {
-        if eta_struct_expand(dty, env, lctx, w, x, y, h) {
-            eta_transfer(dty, env, lctx, x, y, tx_r, gx, h);
-        } else {
-            eta_transfer(dty, env, lctx, y, x, ty_r, gy, h);
-            tconv_symm(dty, env, lctx, y, x);
-        }
     }
 }
 
@@ -1006,15 +998,12 @@ proof fn eta_transfer(
     lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
-    tx_r: ExprSpec,
-    gx: nat,
     h: nat,
 )
     requires
         hyps_all(dty, env),
         crate::swap_typed::fv_free(dty, env),
         eta_struct_expand(dty, env, lctx, IoMode::InferWt, x, y, h),
-        types_to(dty, env, lctx, IoMode::Real, x, tx_r, gx),
     ensures
         tconv(dty, env, lctx, x, y),
     decreases h, 2int, 2nat, 0int,
@@ -1023,10 +1012,11 @@ proof fn eta_transfer(
     let r = IoMode::Real;
     reveal_with_fuel(ctor_typed_like, 1);
     let (tx, f, ind, cid, ls, params, nf) = choose|tx: ExprSpec, f: nat, ind: u64, cid: u64, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, nf: nat|
-        #[trigger] eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, env, lctx, w, x, tx, f)
+        #[trigger] eta_struct_marker(tx, f, ind, cid, ls, params, nf) && f < h && types_to(dty, env, lctx, w, x, tx, f) && wt1(dty, env, lctx, w, x, h)
         && (struct_type_of(dty, env, lctx, w, tx, ind, params, h) || ctor_typed_like(dty, env, lctx, w, tx, cid, params, nf, h))
         && env.struct_ctor(ind) == Some(cid) && env.ctor_num_fields(cid) == Some(nf as u16)
         && y == spine_app(ExprSpec::Const(cid, ls), params + eta_projs(x, nf));
+    let (tx_r, gx) = choose|t: ExprSpec, g: nat| #[trigger] wt_marker(t, g) && g < h && types_to(dty, env, lctx, r, x, t, g);
     s_sound(dty, env, lctx, x, tx, tx_r, f, gx);
     tconv_symm(dty, env, lctx, tx, tx_r);
     let m: nat;
@@ -1087,9 +1077,16 @@ pub proof fn transfer_c(
         deq_p_c_of_deq_c(dty, env, lctx, r, x, y, h);
         deq_p_of_deq_p_c(dty, env, lctx, r, x, y, h);
         assert(deq_p(dty, env, lctx, r, x, y, h));
-    } else if h > 0 && (proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) || unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat)
-        || eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat)) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat) {
+    } else if h > 0 && (proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) || unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
+        && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat) {
         leaf_transfer(dty, env, lctx, x, y, (h - 1) as nat);
+    } else if h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        if eta_struct_expand(dty, env, lctx, io, x, y, (h - 1) as nat) {
+            eta_transfer(dty, env, lctx, x, y, (h - 1) as nat);
+        } else {
+            eta_transfer(dty, env, lctx, y, x, (h - 1) as nat);
+            tconv_symm(dty, env, lctx, y, x);
+        }
     } else {
         let hp = (h - 1) as nat;
         match (x, y) {

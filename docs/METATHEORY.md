@@ -442,6 +442,15 @@ Instead every claim is quantified over contexts:
 - Leaf sites get `x, y` typed in `D` from the claim's own antecedent. The
   inferred types come from `infer`'s claim together with regularity.
 
+**Structure eta leaf, one-sided (2026-09-26).** The `InferWt` eta leaf used
+to need both sides really typed (`leaf_wt`). One side is the kernel's
+operand; the other is its expansion `C params x.0 .. x.n`, whose typing
+would take structure-typing metatheory. Option 2's `eta_transfer` only ever
+used the unexpanded side's real typing. So `eta_struct_expand` now carries
+`wt1` of that side, and the `deq_p_c` eta disjunct no longer asks for
+`leaf_wt`. This only weakens what `InferWt` demands, and option 2 is
+re-proved unchanged in substance.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
