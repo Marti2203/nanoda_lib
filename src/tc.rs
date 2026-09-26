@@ -5808,6 +5808,8 @@ pub proof fn kconv_bind_fresh<'x, 't>(
         kconv(env, t1, t2),
         crate::expr_model::fv_absent(b1, k),
         crate::expr_model::fv_absent(b2, k),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(k),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[k] == t1 || crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[k] == t2,
         kconv(env, crate::tc_model::inst_free(b1, k), crate::tc_model::inst_free(b2, k)),
     ensures
         kconv(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), ExprSpec::Bind(Box::new(t2), Box::new(b2))),
@@ -5850,6 +5852,10 @@ pub open spec fn telescope_ok<'x, 't>(
     &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), ks[i]) == Some((c0 + i) as u16)
     &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]], (c0 + i) as u16)
     &&& forall|i: int| 0 <= i < n ==> crate::expr_model::nlbv(#[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]]) <= 0
+    // each local has its binder's type, instantiated with the locals opened
+    // before it (the kernel opens with the first side's binder type)
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(ks[i])
+        && crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]] == crate::expr_model::subst_full(t1s[i], ls.subrange(0, i), 0)
     // each binder's types, instantiated with the locals opened so far
     &&& forall|i: int| 0 <= i < n ==> #[trigger] kconv(
         env,
@@ -5877,6 +5883,8 @@ pub proof fn binder_step<'x, 't>(
         crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), n1, cj),
         crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), n2, cj),
         crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), k) == Some(cj),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(k),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[k] == crate::expr_model::subst_full(t1, lj, 0),
         kconv(env, crate::expr_model::subst_full(t1, lj, 0), crate::expr_model::subst_full(t2, lj, 0)),
         kconv(env, crate::expr_model::subst_full(n1, lj.push(ExprSpec::Free(k)), 0), crate::expr_model::subst_full(n2, lj.push(ExprSpec::Free(k)), 0)),
     ensures
@@ -6013,6 +6021,10 @@ pub open spec fn binder_walk<'x, 't>(
     &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(Box::new(t2s[i]), Box::new(b2s[i + 1]))
     &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[i], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[i], c0)
     &&& opened_locals(crate::env_model::env_arena_ids(env), locals, c0, crate::expr_model::all_ids())
+    // each local has its first-side binder type, instantiated with the
+    // locals opened before it
+    &&& forall|i: int| 0 <= i < n ==> #[trigger] to_model_expr(crate::expr_arena_bridge::local_binder_type_of(locals[i]))
+        == crate::expr_model::subst_full(t1s[i], ls.subrange(0, i), 0)
     &&& closed0 ==> forall|i: int| 0 <= i <= n ==> crate::expr_model::nlbv(#[trigger] b1s[i]) <= i && crate::expr_model::nlbv(b2s[i]) <= i
     &&& closed0 ==> forall|i: int| 0 <= i < n ==> #[trigger] kconv(
         env,
@@ -6078,6 +6090,8 @@ pub proof fn binder_walk_step<'x, 't>(
             (c0 + locals.len()) as u16,
         ),
         crate::expr_model::nlbv(to_model_expr(crate::expr_arena_bridge::local_binder_type_of(loc))) <= 0,
+        to_model_expr(crate::expr_arena_bridge::local_binder_type_of(loc))
+            == crate::expr_model::subst_full(t1, crate::expr_arena_bridge::ptr_models(locals), 0),
         c0 as nat + locals.len() + 1 < 0x1_0000,
     ensures
         binder_walk(env, b1s.push(n1), b2s.push(n2), t1s.push(t1), t2s.push(t2), locals.push(loc), c0),
@@ -6088,6 +6102,18 @@ pub proof fn binder_walk_step<'x, 't>(
     let ls2 = crate::expr_arena_bridge::ptr_models(l2);
     let (b1s2, b2s2, t1s2, t2s2) = (b1s.push(n1), b2s.push(n2), t1s.push(t1), t2s.push(t2));
     opened_locals_push(crate::env_model::env_arena_ids(env), locals, c0, crate::expr_model::all_ids(), loc);
+    assert forall|i: int| 0 <= i < n + 1 implies #[trigger] to_model_expr(crate::expr_arena_bridge::local_binder_type_of(l2[i]))
+        == crate::expr_model::subst_full(t1s2[i], ls2.subrange(0, i), 0) by {
+        if i < n {
+            assert(l2[i] == locals[i]);
+            assert(t1s2[i] == t1s[i]);
+            assert(ls2.subrange(0, i) =~= ls.subrange(0, i));
+        } else {
+            assert(l2[i] == loc);
+            assert(t1s2[i] == t1);
+            assert(ls2.subrange(0, i) =~= ls);
+        }
+    }
     assert forall|i: int| 0 <= i <= n + 1 implies #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s2[i], c0)
         && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s2[i], c0) by {
         if i == n + 1 {
@@ -6188,6 +6214,11 @@ pub proof fn binder_walk_close<'x, 't>(
         assert forall|i: int| 0 <= i < n implies crate::expr_model::nlbv(
             #[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]],
         ) <= 0 by {
+            assert(crate::expr_arena_bridge::is_local_shape(locals[i]));
+            crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(env), locals[i]);
+        }
+        assert forall|i: int| 0 <= i < n implies #[trigger] crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)).contains_key(ks[i])
+            && crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[ks[i]] == crate::expr_model::subst_full(t1s[i], ls.subrange(0, i), 0) by {
             assert(crate::expr_arena_bridge::is_local_shape(locals[i]));
             crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(env), locals[i]);
         }
@@ -6646,9 +6677,48 @@ pub proof fn pi_walk_step<'x, 't>(
     }
 }
 
+/// One binder of the Pi telescope: from the rest's sort, this binder's.
+#[verifier::spinoff_prover]
+pub proof fn pi_telescope_step<'x, 't>(
+    env: Env<'x, 't>,
+    Xs: Seq<ExprSpec>,
+    As: Seq<ExprSpec>,
+    Bs: Seq<ExprSpec>,
+    locals: Seq<crate::util::ExprPtr<'t>>,
+    us: Seq<crate::level_model::LevelSpec>,
+    v: crate::level_model::LevelSpec,
+    i: nat,
+)
+    requires
+        pi_walk(env, Xs, As, Bs, locals, us),
+        i < locals.len(),
+        kinfer_claim(env, Xs[i + 1int], ExprSpec::Sort(imax_fold(us.subrange(i + 1int, us.len() as int), v))),
+    ensures
+        kinfer_claim(env, Xs[i as int], ExprSpec::Sort(imax_fold(us.subrange(i as int, us.len() as int), v))),
+{
+    let n = locals.len() as int;
+    let ii = i as int;
+    let acc = imax_fold(us.subrange(ii + 1, n), v);
+    assert(us.subrange(ii, n).len() > 0);
+    assert(us.subrange(ii, n)[0] == us[ii]);
+    assert(us.subrange(ii, n).drop_first() =~= us.subrange(ii + 1, n));
+    assert(imax_fold(us.subrange(ii, n), v) == crate::level_model::LevelSpec::IMax(Box::new(us[ii]), Box::new(acc)));
+    assert(Xs[ii] == ExprSpec::Bind(Box::new(As[ii]), Box::new(Bs[ii])));
+    assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(locals[ii]))], 0) == Xs[ii + 1]);
+    assert(kinfer_claim(env, As[ii], ExprSpec::Sort(us[ii])));
+    assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
+    assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
+    let f = pi_rule_step(env, As[ii], Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii]), us[ii], acc);
+    kinfer_of_ktypes(
+        env,
+        Xs[ii],
+        ExprSpec::Sort(crate::level_model::LevelSpec::IMax(Box::new(us[ii]), Box::new(acc))),
+        f,
+    );
+}
+
 /// THE TELESCOPE: from the innermost body's sort outwards, each binder has
 /// the sort `imax` of its type's sort and the rest.
-#[verifier::spinoff_prover]
 pub proof fn pi_telescope<'x, 't>(
     env: Env<'x, 't>,
     Xs: Seq<ExprSpec>,
@@ -6672,24 +6742,7 @@ pub proof fn pi_telescope<'x, 't>(
         assert(us.subrange(n, n) =~= Seq::<crate::level_model::LevelSpec>::empty());
     } else {
         pi_telescope(env, Xs, As, Bs, locals, us, v, i + 1);
-        let ii = i as int;
-        let acc = imax_fold(us.subrange(ii + 1, n), v);
-        assert(us.subrange(ii, n).len() > 0);
-        assert(us.subrange(ii, n)[0] == us[ii]);
-        assert(us.subrange(ii, n).drop_first() =~= us.subrange(ii + 1, n));
-        assert(imax_fold(us.subrange(ii, n), v) == crate::level_model::LevelSpec::IMax(Box::new(us[ii]), Box::new(acc)));
-        assert(Xs[ii] == ExprSpec::Bind(Box::new(As[ii]), Box::new(Bs[ii])));
-        assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(crate::expr_arena_bridge::expr_id(locals[ii]))], 0) == Xs[ii + 1]);
-        assert(kinfer_claim(env, As[ii], ExprSpec::Sort(us[ii])));
-        assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
-        assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
-        let f = pi_rule_step(env, As[i as int], Bs[i as int], crate::expr_arena_bridge::expr_id(locals[i as int]), us[i as int], acc);
-        kinfer_of_ktypes(
-            env,
-            Xs[i as int],
-            ExprSpec::Sort(crate::level_model::LevelSpec::IMax(Box::new(us[i as int]), Box::new(acc))),
-            f,
-        );
+        pi_telescope_step(env, Xs, As, Bs, locals, us, v, i);
     }
 }
 

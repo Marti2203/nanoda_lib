@@ -3622,9 +3622,10 @@ pub open spec fn deq_p_c(
         // Binder congruence, two forms as in `deq_c`: raw bodies, or the
         // bodies opened with one fresh free variable related by a `deq_p`
         // chain one height down (2026-09-06: lets proof irrelevance apply
-        // UNDER binders, the kernel's shape). The fresh variable's type in
-        // `lctx` is whatever the arena says -- the exec producer opens with
-        // the first binder's type.
+        // UNDER binders, the kernel's shape). The fresh variable has one of
+        // the two binder types (convertible to each other; the kernel opens
+        // with the first, `def_eq_binder_aux`, and the rule is symmetric), so
+        // a typed leaf under the binder types it correctly.
         (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => deq_p_c(
             dty,
             env,
@@ -3633,7 +3634,7 @@ pub open spec fn deq_p_c(
             *t2,
             (h - 1) as nat,
         ) && (deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
-            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                 dty,
                 env,
                 lctx, io,
@@ -3803,7 +3804,7 @@ pub proof fn deq_p_c_mono(
                     ));
                 } else {
                     let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                             dty,
                             env,
                             lctx, io,
@@ -3821,7 +3822,7 @@ pub proof fn deq_p_c_mono(
                         (h2 - 1) as nat,
                     );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                         dty,
                         env,
                         lctx, io,
@@ -3952,7 +3953,7 @@ pub proof fn deq_p_c_symm(
                     ));
                 } else {
                     let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq_p(
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                             dty,
                             env,
                             lctx, io,
@@ -3969,7 +3970,7 @@ pub proof fn deq_p_c_symm(
                         (h - 1) as nat,
                     );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && deq_p(
+                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && lctx.contains_key(k) && (lctx[k] == *t2 || lctx[k] == *t1) && deq_p(
                         dty,
                         env,
                         lctx, io,
@@ -5099,6 +5100,80 @@ pub proof fn deq_p_any_of_leaf(
 /// (deq_p twin, 2026-09-06) fresh-instance disjunct of `deq_p_c`'s `Bind` case takes the opened-body
 /// chain as is.
 #[verifier::spinoff_prover]
+/// Binder congruence on the binder type alone: the body stays put.
+pub proof fn deq_p_bind_type_chain(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    t1: ExprSpec,
+    t2: ExprSpec,
+    b: ExprSpec,
+    h: nat,
+)
+    requires
+        deq_p(dty, env, lctx, io, t1, t2, h),
+    ensures
+        deq_p(dty, env, lctx, io, ExprSpec::Bind(Box::new(t1), Box::new(b)), ExprSpec::Bind(Box::new(t2), Box::new(b)), h + 1),
+{
+    let cht = choose|ch: Seq<ExprSpec>|
+        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(dty, env, lctx, io, ch, h);
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b)));
+    assert(deq_p_chain_valid(dty, env, lctx, io, mt, h + 1)) by {
+        assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(dty, env, lctx, io, mt[i], mt[i + 1], h + 1) by {
+            assert(deq_p_c(dty, env, lctx, io, cht[i], cht[i + 1], h));
+            defeq_refl(env, b);
+            assert(deq_c(env, b, b, h));
+            deq_p_c_of_deq_c(dty, env, lctx, io, b, b, h);
+            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b)));
+            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b)));
+            assert(((h + 1) - 1) as nat == h);
+        }
+    }
+    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b)));
+}
+
+/// Binder congruence on the bodies alone, opened with a fresh local of the
+/// binder's type.
+pub proof fn deq_p_bind_link(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    env: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: bool,
+    t: ExprSpec,
+    b1: ExprSpec,
+    b2: ExprSpec,
+    k: u32,
+    h: nat,
+)
+    requires
+        fv_absent(b1, k),
+        fv_absent(b2, k),
+        lctx.contains_key(k),
+        lctx[k] == t,
+        deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
+    ensures
+        deq_p(dty, env, lctx, io, ExprSpec::Bind(Box::new(t), Box::new(b1)), ExprSpec::Bind(Box::new(t), Box::new(b2)), h + 1),
+{
+    let bx = ExprSpec::Bind(Box::new(t), Box::new(b1));
+    let by = ExprSpec::Bind(Box::new(t), Box::new(b2));
+    defeq_refl(env, t);
+    assert(deq_c(env, t, t, h));
+    deq_p_c_of_deq_c(dty, env, lctx, io, t, t, h);
+    assert(fresh_marker(k));
+    assert(((h + 1) - 1) as nat == h);
+    assert(deq_p_c(dty, env, lctx, io, bx, by, h + 1));
+    let link = seq![bx, by];
+    assert(deq_p_chain_valid(dty, env, lctx, io, link, h + 1)) by {
+        assert forall|i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_p_c(dty, env, lctx, io, link[i], link[i + 1], h + 1) by {
+            assert(i == 0);
+        }
+    }
+}
+
+/// Binder congruence through a fresh local, typed with either binder's type
+/// (the kernel opens with the first).
 pub proof fn deq_p_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
@@ -5115,6 +5190,8 @@ pub proof fn deq_p_bind_fresh(
         deq_p(dty, env, lctx, io, t1, t2, h),
         fv_absent(b1, k),
         fv_absent(b2, k),
+        lctx.contains_key(k),
+        lctx[k] == t1 || lctx[k] == t2,
         deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
     ensures
         deq_p(
@@ -5126,79 +5203,19 @@ pub proof fn deq_p_bind_fresh(
             h + 1,
         ),
 {
-    let cht = choose|ch: Seq<ExprSpec>|
-        ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(
-            dty,
-            env,
-            lctx, io,
-            ch,
-            h,
-        );
-    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-    assert(deq_p_chain_valid(dty, env, lctx, io, mt, h + 1)) by {
-        assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(
-            dty,
-            env,
-            lctx, io,
-            mt[i],
-            mt[i + 1],
-            h + 1,
-        ) by {
-            assert(deq_p_c(dty, env, lctx, io, cht[i], cht[i + 1], h));
-            defeq_refl(env, b1);
-            assert(deq_c(env, b1, b1, h));
-            deq_p_c_of_deq_c(dty, env, lctx, io, b1, b1, h);
-            assert(deq_p_c(dty, env, lctx, io, b1, b1, h));
-            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
-            assert(((h + 1) - 1) as nat == h);
-            assert(deq_p_c(dty, env, lctx, io, mt[i], mt[i + 1], h + 1));
-        }
+    let x = ExprSpec::Bind(Box::new(t1), Box::new(b1));
+    let y = ExprSpec::Bind(Box::new(t2), Box::new(b2));
+    if lctx[k] == t1 {
+        let m = ExprSpec::Bind(Box::new(t1), Box::new(b2));
+        deq_p_bind_link(dty, env, lctx, io, t1, b1, b2, k, h);
+        deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b2, h);
+        deq_p_trans(dty, env, lctx, io, x, m, y, h + 1);
+    } else {
+        let m = ExprSpec::Bind(Box::new(t2), Box::new(b1));
+        deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b1, h);
+        deq_p_bind_link(dty, env, lctx, io, t2, b1, b2, k, h);
+        deq_p_trans(dty, env, lctx, io, x, m, y, h + 1);
     }
-    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
-    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(deq_p(
-        dty,
-        env,
-        lctx, io,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
-        h + 1,
-    ));
-    // The fresh-instance link.
-    let bx = ExprSpec::Bind(Box::new(t2), Box::new(b1));
-    let by = ExprSpec::Bind(Box::new(t2), Box::new(b2));
-    defeq_refl(env, t2);
-    assert(deq_c(env, t2, t2, h));
-    deq_p_c_of_deq_c(dty, env, lctx, io, t2, t2, h);
-    assert(deq_p_c(dty, env, lctx, io, t2, t2, h));
-    assert(fresh_marker(k));
-    assert(fresh_marker(k) && fv_absent(b1, k) && fv_absent(b2, k) && deq_p(
-        dty,
-        env,
-        lctx, io,
-        inst_free(b1, k),
-        inst_free(b2, k),
-        h,
-    ));
-    assert(((h + 1) - 1) as nat == h);
-    assert(deq_p_c(dty, env, lctx, io, bx, by, h + 1));
-    let link = seq![bx, by];
-    assert(link.len() == 2 && link[0] == bx && link[1] == by);
-    assert(deq_p_chain_valid(dty, env, lctx, io, link, h + 1)) by {
-        assert forall|i: int| #![trigger link[i]] 0 <= i < link.len() - 1 implies deq_p_c(
-            dty,
-            env,
-            lctx, io,
-            link[i],
-            link[i + 1],
-            h + 1,
-        ) by {
-            assert(i == 0);
-        }
-    }
-    assert(deq_p(dty, env, lctx, io, bx, by, h + 1));
-    deq_p_trans(dty, env, lctx, io, ExprSpec::Bind(Box::new(t1), Box::new(b1)), bx, by, h + 1);
 }
 
 /// `deq_p_any` face of `deq_p_bind_fresh`.
@@ -5217,6 +5234,8 @@ pub proof fn deq_p_any_bind_fresh(
         deq_p_any(dty, env, lctx, io, t1, t2),
         fv_absent(b1, k),
         fv_absent(b2, k),
+        lctx.contains_key(k),
+        lctx[k] == t1 || lctx[k] == t2,
         deq_p_any(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k)),
     ensures
         deq_p_any(

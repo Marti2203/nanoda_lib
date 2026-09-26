@@ -48,6 +48,10 @@ Lean's theory in these places:
 | E | `Const` rule does not check the universe-level arity | ill-arity constants typed | small |
 | G | binder congruence in `deq_p_c` opens with a fresh local whose type in `lctx` is unconstrained (need not be the binder type) | a typed leaf under a binder may use the wrong type for the bound variable | small (the exec side already opens with the binder's type) |
 
+**Done (2026-09-26):** B (`8a5082c`), E (`91bb1fa`), C and D (`1fcc781`), G
+(this commit's successor). For G, the fresh local has EITHER binder type (they
+are convertible), which keeps the relation symmetric.
+
 B–E and G are spec tightenings. The kernel already behaves this way (literals
 are `Nat` with no levels, Check mode checks binders and let annotations,
 `infer_const` checks arity), so they cost proof work, not kernel changes. A is
