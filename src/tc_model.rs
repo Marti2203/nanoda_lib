@@ -1410,21 +1410,8 @@ pub proof fn types_to_mono(
         assert(f1 > 0);
         let g1 = (f1 - 1) as nat;
         let g2 = (f2 - 1) as nat;
-        if exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
-            && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
-                && types_to(dty, denv, lctx, io, *binder_type, s, g1)
-                && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)) && types_to(
-                dty,
-                denv,
-                lctx, io,
-                subst_full(*body, seq![ExprSpec::Free(lid)], 0),
-                infd,
-                g1,
-            ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(bk, 
-                Box::new(abstr_full(*binder_type, seq![lid], 0)),
-                Box::new(abstr_full(bt2, seq![lid], 0)),
-            ) {
+        // the binder's kind says which rule typed it
+        if bk == BinderKind::Lam {
             let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
                 bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
                 && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
@@ -1436,7 +1423,7 @@ pub proof fn types_to_mono(
                     subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                     infd,
                     g1,
-                ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(bk, 
+                ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(BinderKind::Pi, 
                     Box::new(abstr_full(*binder_type, seq![lid], 0)),
                     Box::new(abstr_full(bt2, seq![lid], 0)),
                 );

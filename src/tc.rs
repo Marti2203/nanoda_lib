@@ -6945,7 +6945,7 @@ pub open spec fn lam_close(As: Seq<ExprSpec>, ks: Seq<u32>, T: ExprSpec, i: nat)
     if i >= As.len() {
         T
     } else {
-        ExprSpec::Bind(BinderKind::Lam, 
+        ExprSpec::Bind(BinderKind::Pi, 
             Box::new(crate::expr_model::abstr_full(As[i as int], seq![ks[i as int]], 0)),
             Box::new(crate::expr_model::abstr_full(lam_close(As, ks, T, i + 1), seq![ks[i as int]], 0)),
         )
@@ -7003,7 +7003,7 @@ pub proof fn lam_telescope<'x, 't>(
         assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
         assert(crate::tc_model::bind_marker(k, T1, C1));
         let R = lam_close(As, ks, T, i);
-        assert(R == ExprSpec::Bind(BinderKind::Lam, 
+        assert(R == ExprSpec::Bind(BinderKind::Pi, 
             Box::new(crate::expr_model::abstr_full(As[ii], seq![k], 0)),
             Box::new(crate::expr_model::abstr_full(C1, seq![k], 0)),
         ));
@@ -7026,7 +7026,7 @@ pub proof fn lam_close_step(As: Seq<ExprSpec>, ks: Seq<u32>, T: ExprSpec, i: nat
         crate::expr_model::fv_absent(As[i as int], ks[i as int]),
         forall|j: int| 0 <= j < i ==> #[trigger] ks[j] != ks[i as int],
     ensures
-        ExprSpec::Bind(BinderKind::Lam, 
+        ExprSpec::Bind(BinderKind::Pi, 
             Box::new(crate::expr_model::abstr_full(As[i as int], ks.take(i as int), 0)),
             Box::new(crate::expr_model::abstr_full(lam_close(As, ks, T, i + 1), ks.take(i as int + 1), 0)),
         ) == crate::expr_model::abstr_full(lam_close(As, ks, T, i), ks.take(i as int), 0),
@@ -7160,7 +7160,7 @@ pub proof fn lam_pop_step<'t>(
         bt == to_model_expr(crate::expr_arena_bridge::local_binder_type_of(lf[i as int])),
         crate::expr_model::levels_fit(bt, (c1 + i) as u16),
     ensures
-        ExprSpec::Bind(BinderKind::Lam, 
+        ExprSpec::Bind(BinderKind::Pi, 
             Box::new(crate::expr_model::abstr_levels_full(aids, bt, c1, (c1 + i) as u16)),
             Box::new(crate::expr_model::abstr_full(
                 lam_close(As, ids_of(aids, lf), Tn, i + 1),

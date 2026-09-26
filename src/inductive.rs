@@ -401,15 +401,17 @@ pub(crate) open spec fn elim_ctor_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveChec
 
 /// A telescope over `bs` adds one binder per element (`abstr_telescope_size`,
 /// with the ids and types the kernel's telescope builders use).
-pub proof fn tele_size_step<'t>(bs: Seq<ExprPtr<'t>>, e: ExprSpec)
+pub proof fn tele_size_step<'t>(k: BinderKind, bs: Seq<ExprPtr<'t>>, e: ExprSpec)
     ensures
-        crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::abstr_pi_telescope_model(
+        crate::inductive_model::telescope_size_spec(k, crate::expr_arena_bridge::abstr_telescope_model(
+            k,
             Seq::new(bs.len(), |i: int| crate::expr_arena_bridge::expr_id(bs[i])),
             Seq::new(bs.len(), |i: int| crate::quot_model::local_type(bs[i])),
             e,
-        )) == bs.len() + crate::inductive_model::pi_telescope_size_spec(e),
+        )) == bs.len() + crate::inductive_model::telescope_size_spec(k, e),
 {
     crate::inductive_model::abstr_telescope_size(
+        k,
         Seq::new(bs.len(), |i: int| crate::expr_arena_bridge::expr_id(bs[i])),
         Seq::new(bs.len(), |i: int| crate::quot_model::local_type(bs[i])),
         e,
@@ -417,11 +419,11 @@ pub proof fn tele_size_step<'t>(bs: Seq<ExprPtr<'t>>, e: ExprSpec)
 }
 
 /// An application spine headed by a local has no leading binders.
-pub proof fn spine_free_size(h: ExprSpec, args: Seq<ExprSpec>)
+pub proof fn spine_free_size(k: BinderKind, h: ExprSpec, args: Seq<ExprSpec>)
     requires
         h is Free,
     ensures
-        crate::inductive_model::pi_telescope_size_spec(crate::beta_model::spine_app(h, args)) == 0,
+        crate::inductive_model::telescope_size_spec(k, crate::beta_model::spine_app(h, args)) == 0,
 {
     if args.len() > 0 {
         let init = args.subrange(0, args.len() - 1);
@@ -2571,7 +2573,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             result.ctor_name == ctor.name,
             crate::util_model::owns(*(*final(self)).ctx, result.val),
-            crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(result.val))
+            crate::inductive_model::telescope_size_spec(BinderKind::Lam, crate::expr_arena_bridge::to_model(result.val))
                 >= st.local_params@.len() + st.motives@.len() + flat_mapped_minors@.len(),
     {
         let (_, all_ctor_args, rec_ctor_args) = self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
@@ -5321,31 +5323,31 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
-            crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(result))
+            crate::inductive_model::telescope_size_spec(BinderKind::Lam, crate::expr_arena_bridge::to_model(result))
                 == st.local_params@.len() + st.motives@.len() + flat_mapped_minors@.len() + all_ctor_args@.len(),
     {
         let comp_rhs = self.ctx.foldl_apps(this_minor, all_ctor_args.iter().copied());
         let comp_rhs = self.ctx.foldl_apps(comp_rhs, handled_rec_args.iter().copied());
         proof {
-            spine_free_size(crate::expr_arena_bridge::to_model(this_minor),
+            spine_free_size(BinderKind::Lam, crate::expr_arena_bridge::to_model(this_minor),
                 crate::expr_arena_bridge::ptr_models(all_ctor_args@));
             crate::beta_model::spine_app_concat(crate::expr_arena_bridge::to_model(this_minor),
                 crate::expr_arena_bridge::ptr_models(all_ctor_args@), crate::expr_arena_bridge::ptr_models(handled_rec_args@));
-            spine_free_size(crate::expr_arena_bridge::to_model(this_minor),
+            spine_free_size(BinderKind::Lam, crate::expr_arena_bridge::to_model(this_minor),
                 crate::expr_arena_bridge::ptr_models(all_ctor_args@) + crate::expr_arena_bridge::ptr_models(handled_rec_args@));
         }
         let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
         let comp_rhs = self.ctx.abstr_lambda_telescope(all_ctor_args, comp_rhs);
-        proof { tele_size_step(all_ctor_args@, prev); }
+        proof { tele_size_step(BinderKind::Lam, all_ctor_args@, prev); }
         let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
         let comp_rhs = self.ctx.abstr_lambda_telescope(flat_mapped_minors, comp_rhs);
-        proof { tele_size_step(flat_mapped_minors@, prev); }
+        proof { tele_size_step(BinderKind::Lam, flat_mapped_minors@, prev); }
         let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
         let comp_rhs = self.ctx.abstr_lambda_telescope(st.motives.as_slice(), comp_rhs);
-        proof { tele_size_step(st.motives@, prev); }
+        proof { tele_size_step(BinderKind::Lam, st.motives@, prev); }
         let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
         let comp_rhs = self.ctx.abstr_lambda_telescope(st.local_params.as_slice(), comp_rhs);
-        proof { tele_size_step(st.local_params@, prev); }
+        proof { tele_size_step(BinderKind::Lam, st.local_params@, prev); }
         comp_rhs
     }
 
@@ -5391,21 +5393,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         let rec_ty = self.ctx.abstr_pi(major, motive_app);
         proof {
-            crate::inductive_model::abstr_full_telescope_size(crate::expr_arena_bridge::to_model(motive_app),
+            crate::inductive_model::abstr_full_telescope_size(BinderKind::Pi, crate::expr_arena_bridge::to_model(motive_app),
                 seq![crate::expr_arena_bridge::expr_id(major)], 0);
         }
         let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
         let rec_ty = self.ctx.abstr_pi_telescope(local_indices, rec_ty);
-        proof { tele_size_step(local_indices@, prev); }
+        proof { tele_size_step(BinderKind::Pi, local_indices@, prev); }
         let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
         let rec_ty = self.ctx.abstr_pi_telescope(flat_mapped_minors, rec_ty);
-        proof { tele_size_step(flat_mapped_minors@, prev); }
+        proof { tele_size_step(BinderKind::Pi, flat_mapped_minors@, prev); }
         let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
         let rec_ty = self.ctx.abstr_pi_telescope(st.motives.as_slice(), rec_ty);
-        proof { tele_size_step(st.motives@, prev); }
+        proof { tele_size_step(BinderKind::Pi, st.motives@, prev); }
         let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
         let rec_ty = self.ctx.abstr_pi_telescope(st.local_params.as_slice(), rec_ty);
-        proof { tele_size_step(st.local_params@, prev); }
+        proof { tele_size_step(BinderKind::Pi, st.local_params@, prev); }
         rec_ty
     }
 

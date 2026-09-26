@@ -3982,6 +3982,44 @@ pub open spec fn spine_bind(head: ExprSpec, n: nat) -> Option<ExprSpec>
     }
 }
 
+/// `spine_bind` for a Pi telescope: what peeling `n` Pi binders leaves.
+pub open spec fn pi_spine(head: ExprSpec, n: nat) -> Option<ExprSpec>
+    decreases n,
+{
+    if n == 0 {
+        Some(head)
+    } else {
+        match head {
+            ExprSpec::Bind(BinderKind::Pi, _, b) => pi_spine(*b, (n - 1) as nat),
+            _ => None,
+        }
+    }
+}
+
+/// Peeling one more Pi binder.
+pub proof fn pi_spine_step(head: ExprSpec, n: nat, t: ExprSpec, b: ExprSpec)
+    requires
+        pi_spine(head, n) == Some(ExprSpec::Bind(BinderKind::Pi, Box::new(t), Box::new(b))),
+    ensures
+        pi_spine(head, n + 1) == Some(b),
+    decreases n,
+{
+    if n == 0 {
+        assert(head == ExprSpec::Bind(BinderKind::Pi, Box::new(t), Box::new(b)));
+        assert(pi_spine(head, 1nat) == Some(b)) by {
+            reveal_with_fuel(pi_spine, 2);
+        }
+    } else {
+        match head {
+            ExprSpec::Bind(BinderKind::Pi, _, hb) => {
+                pi_spine_step(*hb, (n - 1) as nat, t, b);
+                assert(pi_spine(head, n + 1) == pi_spine(*hb, n));
+            },
+            _ => {},
+        }
+    }
+}
+
 /// Peeling one more binder: if `n` binders land on a `Bind`, then `n+1` land on
 /// its body. This is what a telescope-walking loop needs to step its invariant.
 pub proof fn spine_bind_step(head: ExprSpec, n: nat, t: ExprSpec, b: ExprSpec)

@@ -2328,6 +2328,16 @@ pub open spec fn abstr_pi_telescope_model(
     binder_ids: Seq<u32>,
     binder_tys: Seq<ExprSpec>,
     e: ExprSpec,
+) -> ExprSpec {
+    abstr_telescope_model(BinderKind::Pi, binder_ids, binder_tys, e)
+}
+
+/// The same for either binder kind (`abstr_lambda_telescope` builds lambdas).
+pub open spec fn abstr_telescope_model(
+    k: BinderKind,
+    binder_ids: Seq<u32>,
+    binder_tys: Seq<ExprSpec>,
+    e: ExprSpec,
 ) -> ExprSpec
     decreases binder_ids.len(),
 {
@@ -2338,10 +2348,11 @@ pub open spec fn abstr_pi_telescope_model(
         let last_ty = binder_tys.last();
         let rest_ids = binder_ids.drop_last();
         let rest_tys = binder_tys.drop_last();
-        abstr_pi_telescope_model(
+        abstr_telescope_model(
+            k,
             rest_ids,
             rest_tys,
-            ExprSpec::Bind(BinderKind::Pi, Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))),
+            ExprSpec::Bind(k, Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))),
         )
     }
 }
@@ -2402,13 +2413,8 @@ pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
 /// Real-arena mirror of `TcCtx::abstr_lambda_telescope` (`expr.rs:658-
 /// 664`): peels `binders` from the end via `apply_lambda`, needed by
 /// `handle_rec_ctor_args_rec_rule`/`mk_rec_rule1` (`inductive.rs:1201-
-/// 1250`). Reuses `abstr_pi_telescope_model` UNCHANGED as its closed-form
-/// model, not a separate `abstr_lambda_telescope_model` -- `apply_lambda`'s
-/// own `ensures` is IDENTICAL in shape to `abstr_pi`'s (both produce
-/// `ExprSpec::Bind`, the model never distinguishes `Pi` from `Lambda`),
-/// so the two telescope functions' closed forms are the SAME spec fn,
-/// just reached via a different real constructor underneath (invisible
-/// to the model either way).
+/// 1250`). Its closed form is `abstr_telescope_model` at `Lam`, the same
+/// recursion `abstr_pi_telescope_model` is at `Pi`.
 pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
     ctx: &mut TcCtx<'t, 'p>,
     binders: &[ExprPtr<'t>],
@@ -2427,7 +2433,7 @@ pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
         crate::util_model::owns(*final(ctx), result),
         final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
         crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        to_model(result) == abstr_pi_telescope_model(
+        to_model(result) == abstr_telescope_model(BinderKind::Lam, 
             Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
             Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
             to_model(e),

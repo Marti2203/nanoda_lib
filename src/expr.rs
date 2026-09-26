@@ -1570,12 +1570,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             result matches Some(r) ==> crate::util_model::owns(*self, r),
             result matches Some(t) ==> {
-                &&& crate::beta_model::spine_bind(
+                &&& crate::beta_model::pi_spine(
                     crate::expr_arena_bridge::to_model(e0),
                     n as nat,
                 ) is Some
                 &&& crate::expr_model::bind_dom(
-                    crate::beta_model::spine_bind(
+                    crate::beta_model::pi_spine(
                         crate::expr_arena_bridge::to_model(e0),
                         n as nat,
                     ).unwrap(),
@@ -1587,13 +1587,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 crate::util_model::owns(*self, e0),
                 crate::util_model::owns(*self, e),
-                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), i as nat)
+                crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(e0), i as nat)
                     == Some(crate::expr_arena_bridge::to_model(e)),
         {
             match self.read_expr(e) {
                 Pi { binder_type, body, .. } => {
                     proof {
-                        crate::beta_model::spine_bind_step(
+                        crate::beta_model::pi_spine_step(
                             crate::expr_arena_bridge::to_model(e0),
                             i as nat,
                             crate::expr_arena_bridge::to_model(binder_type),
@@ -1613,19 +1613,15 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
     /// Verified in place.
     ///
-    /// The contract is deliberately ONE-DIRECTIONAL: the result is a count of
-    /// binders that can actually be peeled, not the maximal one. The model
-    /// cannot say more -- `to_model_of_expr` sends both `Pi` and `Lambda` to
-    /// `ExprSpec::Bind`, so a telescope that stops at a `Lambda` is
-    /// indistinguishable in the model from one that ran out of binders. Claiming
-    /// maximality here would be claiming something false.
+    /// The contract is ONE-DIRECTIONAL: the result is a count of Pi binders
+    /// that can actually be peeled; nothing needs its maximality.
     ///
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn pi_telescope_size(&self, e0: ExprPtr<'t>) -> (result: u16)
         requires
             crate::util_model::owns(*self, e0),
         ensures
-            crate::beta_model::spine_bind(
+            crate::beta_model::pi_spine(
                 crate::expr_arena_bridge::to_model(e0),
                 result as nat,
             ) is Some,
@@ -1636,11 +1632,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 crate::util_model::owns(*self, e0),
                 crate::util_model::owns(*self, e),
-                crate::beta_model::spine_bind(crate::expr_arena_bridge::to_model(e0), size as nat)
+                crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(e0), size as nat)
                     == Some(crate::expr_arena_bridge::to_model(e)),
         {
             proof {
-                crate::beta_model::spine_bind_step(
+                crate::beta_model::pi_spine_step(
                     crate::expr_arena_bridge::to_model(e0),
                     size as nat,
                     crate::expr_arena_bridge::to_model(binder_type),
@@ -1912,7 +1908,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam, 
                 Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
     {
         let mut e = e0;
@@ -1926,11 +1922,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 crate::util_model::same_arenas(*old(self), *self),
                 n <= binders@.len(),
-                crate::expr_arena_bridge::abstr_pi_telescope_model(
+                crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam, 
                     Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])),
                     Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i])),
                     crate::expr_arena_bridge::to_model(e),
-                ) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
+                ) == crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam, Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
                 (forall|i: int|
                     #![trigger binders@[i]]
                     0 <= i < binders@.len() ==> {

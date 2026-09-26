@@ -272,65 +272,74 @@ pub fn name_in_slice<'t>(target_names: &[NamePtr<'t>], name: NamePtr<'t>) -> (re
 /// bails with `None` instead of asserting a value the proof can't actually
 /// back, rather than silently returning a number that doesn't match the
 /// spec formula.
-pub open spec fn pi_telescope_size_spec(e: ExprSpec) -> nat
+pub open spec fn pi_telescope_size_spec(e: ExprSpec) -> nat {
+    telescope_size_spec(BinderKind::Pi, e)
+}
+
+/// The number of leading binders of kind `k` (a recursor's type is a Pi
+/// telescope, its rules' values lambda telescopes).
+pub open spec fn telescope_size_spec(k: BinderKind, e: ExprSpec) -> nat
     decreases e,
 {
     match e {
-        ExprSpec::Bind(BinderKind::Pi, _, b) => 1 + pi_telescope_size_spec(*b),
+        ExprSpec::Bind(bk, _, b) => if bk == k {
+            1 + telescope_size_spec(k, *b)
+        } else {
+            0
+        },
         _ => 0,
     }
 }
 
 /// Abstracting locals never touches the leading binder spine.
-pub proof fn abstr_full_telescope_size(e: ExprSpec, locals: Seq<u32>, offset: nat)
+pub proof fn abstr_full_telescope_size(k: BinderKind, e: ExprSpec, locals: Seq<u32>, offset: nat)
     ensures
-        pi_telescope_size_spec(abstr_full(e, locals, offset)) == pi_telescope_size_spec(e),
+        telescope_size_spec(k, abstr_full(e, locals, offset)) == telescope_size_spec(k, e),
     decreases e,
 {
     match e {
         ExprSpec::Bind(bk, _t, b) => {
-            abstr_full_telescope_size(*b, locals, offset + 1);
+            abstr_full_telescope_size(k, *b, locals, offset + 1);
         },
         _ => {},
     }
 }
 
-/// A telescope adds exactly one binder per element. `abstr_pi_telescope_model`
-/// is what BOTH `abstr_pi_telescope` and `abstr_lambda_telescope` produce --
-/// the model erases which binder it was -- so this serves the recursor's type
-/// and its rules alike.
-pub proof fn abstr_telescope_size(binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec>, e: ExprSpec)
+/// A telescope adds exactly one binder of its kind per element (the
+/// recursor's type through `abstr_pi_telescope`, its rules through
+/// `abstr_lambda_telescope`).
+pub proof fn abstr_telescope_size(k: BinderKind, binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec>, e: ExprSpec)
     requires
         binder_ids.len() == binder_tys.len(),
     ensures
-        pi_telescope_size_spec(abstr_pi_telescope_model(binder_ids, binder_tys, e))
-            == binder_ids.len() + pi_telescope_size_spec(e),
+        telescope_size_spec(k, crate::expr_arena_bridge::abstr_telescope_model(k, binder_ids, binder_tys, e))
+            == binder_ids.len() + telescope_size_spec(k, e),
     decreases binder_ids.len(),
 {
     if binder_ids.len() == 0 {
     } else {
         let last_ty = binder_tys.last();
-        let inner = ExprSpec::Bind(BinderKind::Pi, 
+        let inner = ExprSpec::Bind(k,
             Box::new(last_ty),
             Box::new(abstr_full(e, seq![binder_ids.last()], 0)),
         );
-        abstr_telescope_size(binder_ids.drop_last(), binder_tys.drop_last(), inner);
-        abstr_full_telescope_size(e, seq![binder_ids.last()], 0);
-        assert(pi_telescope_size_spec(inner) == 1 + pi_telescope_size_spec(e));
+        abstr_telescope_size(k, binder_ids.drop_last(), binder_tys.drop_last(), inner);
+        abstr_full_telescope_size(k, e, seq![binder_ids.last()], 0);
+        assert(telescope_size_spec(k, inner) == 1 + telescope_size_spec(k, e));
     }
 }
 
 /// A spine of applications never starts with a binder.
-pub proof fn spine_app_telescope_size(base: ExprSpec, args: Seq<ExprSpec>)
+pub proof fn spine_app_telescope_size(k: BinderKind, base: ExprSpec, args: Seq<ExprSpec>)
     requires
-        pi_telescope_size_spec(base) == 0,
+        telescope_size_spec(k, base) == 0,
     ensures
-        pi_telescope_size_spec(spine_app(base, args)) == 0,
+        telescope_size_spec(k, spine_app(base, args)) == 0,
     decreases args.len(),
 {
     if args.len() == 0 {
     } else {
-        spine_app_telescope_size(base, args.subrange(0, args.len() - 1));
+        spine_app_telescope_size(k, base, args.subrange(0, args.len() - 1));
     }
 }
 
