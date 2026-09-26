@@ -279,7 +279,8 @@ pub open spec fn cod_vars(np: nat, n: nat) -> Seq<ExprSpec> {
 pub open spec fn ctor_cod(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ind: u64, cid: u64, ils: Seq<LevelSpec>) -> bool {
     let np = denv.ctor_np[cid] as nat;
     let n = np + denv.ctor_nf[cid] as nat;
-    pi_spine(dty[cid].1, n) == Some(spine_app(ExprSpec::Const(ind, ils), cod_vars(np, n)))
+    &&& ils.len() == dty[cid].0.len()
+    &&& pi_spine(dty[cid].1, n) == Some(spine_app(ExprSpec::Const(ind, ils), cod_vars(np, n)))
 }
 
 pub open spec fn struct_ok1(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ind: u64, cid: u64) -> bool {
@@ -349,6 +350,7 @@ pub proof fn ctor_app_type(
         forall|i: int| 0 <= i < args.len() ==> nlbv(#[trigger] args[i]) == 0,
         typed(dty, denv, d, spine_app(ExprSpec::Const(cid, ls), args), t),
     ensures
+        ils.len() == dty[cid].0.len(),
         tconv(dty, denv, d, t, spine_app(ExprSpec::Const(ind, ils), args.subrange(0, denv.ctor_np[cid] as int))),
 {
     let np = denv.ctor_np[cid] as nat;
@@ -387,6 +389,129 @@ pub proof fn ctor_app_type(
     let sv = Seq::new(np, |i: int| subst_full(cod_vars(np, n)[i], args, 0));
     assert(sv =~= args.subrange(0, np as int));
     ils
+}
+
+
+/// Substitution keeps a Pi telescope's length.
+pub proof fn pi_spine_subst(t: ExprSpec, n: nat, ss: Seq<ExprSpec>, off: nat)
+    requires
+        pi_spine(t, n) is Some,
+    ensures
+        pi_spine(subst_full(t, ss, off), n) is Some,
+    decreases n,
+{
+    if n > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, _, b) = t {
+            pi_spine_subst(*b, (n - 1) as nat, ss, off + 1);
+        }
+    }
+}
+
+/// A telescope of `n` binders is one of every shorter length.
+pub proof fn pi_spine_shorter(t: ExprSpec, m: nat, n: nat)
+    requires
+        pi_spine(t, n) is Some,
+        m <= n,
+    ensures
+        pi_spine(t, m) is Some,
+    decreases m,
+{
+    if m > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, _, b) = t {
+            pi_spine_shorter(*b, (m - 1) as nat, (n - 1) as nat);
+        }
+    }
+}
+
+/// A projection's field type through a literal Pi telescope: every step's
+/// conversion is reflexivity. Returns the field type.
+pub proof fn pft_intro(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    io: IoMode,
+    h: nat,
+    cur: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+) -> (t: ExprSpec)
+    requires
+        pi_spine(cur, np + remaining + 1) is Some,
+        args.len() >= np,
+        fld as nat + remaining < 0x1_0000_0000,
+    ensures
+        proj_field_type(dty, denv, d, io, h, cur, args, np, fld, remaining, s, t),
+    decreases np + remaining,
+{
+    if let ExprSpec::Bind(BinderKind::Pi, bt, body) = cur {
+        deq_p_refl(dty, denv, d, io, cur, h);
+        let t = if np > 0 {
+            pi_spine_subst(*body, (np - 1 + remaining + 1) as nat, seq![args[0]], 0);
+            pft_intro(dty, denv, d, io, h, subst_full(*body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, s)
+        } else if remaining > 0 {
+            pi_spine_subst(*body, remaining, seq![ExprSpec::Proj(fld, Box::new(s))], 0);
+            pft_intro(dty, denv, d, io, h, subst_full(*body, seq![ExprSpec::Proj(fld, Box::new(s))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, s)
+        } else {
+            *bt
+        };
+        assert(proj_step_marker(*bt, *body));
+        t
+    } else {
+        ExprSpec::Closed
+    }
+}
+
+/// PROJECTION TYPING: a field of a term whose real type converts to a
+/// structure application is really typed.
+pub proof fn proj_typed(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    params: Seq<ExprSpec>,
+    x: ExprSpec,
+    sty: ExprSpec,
+    fx: nat,
+    hx: nat,
+    idx: nat,
+) -> (t: ExprSpec)
+    requires
+        struct_ok(dty, denv),
+        denv.struct_ctor(ind) == Some(cid),
+        params.len() == denv.ctor_np[cid] as nat,
+        idx < denv.ctor_nf[cid] as nat,
+        ls.len() == dty[cid].0.len(),
+        types_to(dty, denv, d, IoMode::Real, x, sty, fx),
+        deq_p(dty, denv, d, IoMode::Real, sty, spine_app(ExprSpec::Const(ind, ls), params), hx),
+    ensures
+        typed(dty, denv, d, ExprSpec::Proj(idx as usize, Box::new(x)), t),
+{
+    let r = IoMode::Real;
+    assert(struct_ok1(dty, denv, ind, cid));
+    let ils0 = choose|ils: Seq<LevelSpec>| #[trigger] ctor_cod(dty, denv, ind, cid, ils);
+    let np = denv.ctor_np[cid] as nat;
+    let nf = denv.ctor_nf[cid] as nat;
+    let dd = dty[cid].1;
+    let us = dty[cid].0;
+    let cty = subst_expr_levels(dd, us, ls);
+    subst_expr_levels_sat_rel(dd, us, ls);
+    let f2 = fx + hx;
+    assert(types_to(dty, denv, d, r, ExprSpec::Const(cid, ls), cty, f2));
+    types_to_mono(dty, denv, d, r, x, sty, fx, f2);
+    deq_p_mono(dty, denv, d, r, sty, spine_app(ExprSpec::Const(ind, ls), params), hx, f2);
+    pi_spine_li(dd, np + nf, us, ls);
+    pi_spine_shorter(cty, np + idx + 1, np + nf);
+    let t = pft_intro(dty, denv, d, r, f2, cty, params, np, 0, idx, x);
+    assert(proj_marker(f2, sty, ind, ls, params, cid, np as u16, cty));
+    let e = ExprSpec::Proj(idx as usize, Box::new(x));
+    assert(types_to(dty, denv, d, r, e, t, f2 + 1));
+    assert(typed(dty, denv, d, e, t));
+    t
 }
 
 } // verus!
