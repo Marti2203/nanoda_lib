@@ -47,10 +47,12 @@ use vstd::prelude::*;
 verus! {
 
 /// What every kernel claim assumes: the named metatheory hypotheses, closed
-/// declarations, and well-shaped structure constructors (an environment
-/// invariant the inductive checker is to establish).
+/// declarations, and the constructor facts `struct_ok` and
+/// `ctor_params_ok` (environment invariants the inductive checker is to
+/// establish).
 pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     hyps_all(dty, denv) && fv_free(dty, denv) && crate::ctor_typing::struct_ok(dty, denv)
+        && crate::ctor_typing::ctor_params_ok(dty, denv)
 }
 
 /// `e` is really typed in `d`.
@@ -970,6 +972,7 @@ proof fn eta_proj_convs(
     requires
         kh(dty, denv),
         eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
+        nlbv(x) <= 0,
         ils.len() == dty[cid].0.len(),
         types_to(dty, denv, d, IoMode::Real, x, rxt, rxf),
         deq_p(dty, denv, d, IoMode::Real, rxt, spine_app(ExprSpec::Const(ind, ils), am.subrange(0, np as int)), hc),
@@ -984,6 +987,10 @@ proof fn eta_proj_convs(
     let params = am.subrange(0, np as int);
     let ryt = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, y, t);
     spine_args_typed(dty, denv, d, ExprSpec::Const(cid, ylv), am, ryt);
+    crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(cid, ylv), am);
+    assert forall|i: int| 0 <= i < params.len() implies nlbv(#[trigger] params[i]) == 0 by {
+        assert(params[i] == am[i]);
+    }
     assert(denv.ctor_np[cid] as nat == np);
     assert(denv.ctor_nf[cid] as nat == nf);
     assert forall|i: int| 0 <= i < nf implies deq_p_any(dty, denv, d, IoMode::InferWt, #[trigger] projs[i], am[np + i]) by {
@@ -1081,6 +1088,7 @@ pub proof fn cw_eta(
         ci(dty, denv, g, y, b),
         cw(dty, denv, g, a, b),
         eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
+        nlbv(x) <= 0,
         forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
     ensures
         cw(dty, denv, g, x, y),

@@ -329,6 +329,7 @@ pub open spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
         ctor_np: to_model_of_ctor_num_params(env),
         struct_ctor: to_model_of_struct_ctor(env),
         ctor_nf: to_model_of_ctor_num_fields(env),
+        ctor_ind: to_model_of_ctor_ind(env),
     }
 }
 
@@ -357,6 +358,7 @@ pub open spec fn env_model_nofv<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
         ctor_np: m.ctor_np,
         struct_ctor: m.struct_ctor,
         ctor_nf: m.ctor_nf,
+        ctor_ind: m.ctor_ind,
     }
 }
 
@@ -670,6 +672,46 @@ pub(crate) fn get_structure_first_ctor<'x, 'a>(
 }
 
 /// A constructor's field count.
+pub open spec fn ctor_ind_entry<'a>(d: Declar<'a>) -> Option<u64> {
+    match d {
+        Declar::Constructor(c) => Some(name_id(c.inductive_name)),
+        _ => None,
+    }
+}
+
+/// Constructor -> its inductive, by name id: a K-like recursor's
+/// constructor is the one of the major premise's inductive.
+pub closed spec fn to_model_of_ctor_ind<'x, 'a>(env: Env<'x, 'a>) -> Map<u64, u64> {
+    Map::new(
+        env.ids().filter(|id: u64| env.find(id) is Some && ctor_ind_entry(env.find(id)->0) is Some),
+        |id: u64| ctor_ind_entry(env.find(id)->0)->0,
+    )
+}
+
+pub proof fn to_model_of_ctor_ind_at<'x, 'a>(env: Env<'x, 'a>, id: u64)
+    ensures
+        to_model_of_ctor_ind(env).contains_key(id) == (env.find(id) is Some && ctor_ind_entry(env.find(id)->0) is Some),
+        to_model_of_ctor_ind(env).contains_key(id) ==> to_model_of_ctor_ind(env)[id] == ctor_ind_entry(env.find(id)->0)->0,
+{
+    env.find_in_ids(id);
+}
+
+/// `Env::get_constructor`'s `inductive_name`, as a name id. Verified against
+/// the map.
+pub(crate) fn get_constructor_inductive_is<'x, 'a>(env: &Env<'x, 'a>, n: &NamePtr<'a>, ind: &NamePtr<'a>) -> (result: bool)
+    requires
+        env_owns(*env, *n),
+    ensures
+        result ==> to_model_of_ctor_ind(*env).contains_key(name_id(*n))
+            && to_model_of_ctor_ind(*env)[name_id(*n)] == name_id(*ind),
+{
+    proof { to_model_of_ctor_ind_at(*env, name_id(*n)); }
+    match env.get_constructor(n) {
+        Some(cd) => cd.inductive_name == *ind,
+        None => false,
+    }
+}
+
 pub open spec fn ctor_nf_entry<'a>(d: Declar<'a>) -> Option<u16> {
     match d {
         Declar::Constructor(c) => Some(c.num_fields),

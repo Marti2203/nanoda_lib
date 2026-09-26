@@ -1455,6 +1455,8 @@ pub ghost struct EnvSpec {
     pub ctor_np: Map<u64, u16>,
     pub struct_ctor: Map<u64, u64>,
     pub ctor_nf: Map<u64, u16>,
+    /// Constructor -> its inductive.
+    pub ctor_ind: Map<u64, u64>,
 }
 
 impl EnvSpec {
@@ -1468,6 +1470,7 @@ impl EnvSpec {
             ctor_np: Map::empty(),
             struct_ctor: Map::empty(),
             ctor_nf: Map::empty(),
+            ctor_ind: Map::empty(),
         }
     }
 
@@ -1489,6 +1492,10 @@ impl EnvSpec {
 
     pub open spec fn struct_ctor(self, id: u64) -> Option<u64> {
         if self.struct_ctor.contains_key(id) { Some(self.struct_ctor[id]) } else { None }
+    }
+
+    pub open spec fn ctor_inductive(self, id: u64) -> Option<u64> {
+        if self.ctor_ind.contains_key(id) { Some(self.ctor_ind[id]) } else { None }
     }
 
     pub open spec fn ctor_num_fields(self, id: u64) -> Option<u16> {

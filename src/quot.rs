@@ -487,6 +487,7 @@ proof fn lift_s2(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, i
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
+#[verifier::spinoff_prover]
 proof fn lift_s3(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
