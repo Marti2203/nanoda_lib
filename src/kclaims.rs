@@ -656,14 +656,14 @@ pub proof fn cw_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
     }
 }
 
-/// Transitivity through a middle term `y` whose locals are among `x`'s and
-/// whose typing follows from `x`'s (a reduct, an inferred type).
+/// Transitivity through a middle term `y` that reaches only what `x`
+/// reaches and whose typing follows from `x`'s (a reduct, an inferred type).
 pub proof fn cw_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
     requires
         cw(dty, denv, g, x, y),
         cw(dty, denv, g, y, z),
         tt_to(dty, denv, g, x, y),
-        kh(dty, denv) ==> forall|i: nat| #[trigger] fv_absent(x, i) ==> fv_absent(y, i),
+        kh(dty, denv) ==> sub(rctx(g, y), rctx(g, x)),
     ensures
         cw(dty, denv, g, x, z),
 {
@@ -671,7 +671,6 @@ pub proof fn cw_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
     if kh(dty, denv) {
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && sub(rctx(g, z), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, z)
             implies #[trigger] deq_p_any(dty, denv, d, w, x, z) by {
-            rctx_mono(g, y, x);
             sub_trans(rctx(g, y), rctx(g, x), d);
             assert(rtyped(dty, denv, d, y));
             assert(deq_p_any(dty, denv, d, w, x, y));
@@ -788,7 +787,7 @@ pub proof fn cw_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
 /// reaches, and in every admissible context where `e` is really typed, `t`
 /// is really typed too (regularity) and converts to an `InferWt` type of `e`.
 pub open spec fn ci(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
-    &&& sub(rctx(g, t), rctx(g, e))
+    &&& kh(dty, denv) ==> sub(rctx(g, t), rctx(g, e))
     &&& kh(dty, denv) ==> forall|d: Map<nat, ExprSpec>| #![trigger ci_at(dty, denv, d, e, t)]
         lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e) ==> ci_at(dty, denv, d, e, t)
 }
@@ -1254,11 +1253,11 @@ pub proof fn cw_eta(
 
 
 /// THE REDUCTION CLAIM (`whnf`): the result converts to the input, is typed
-/// wherever the input is, and mentions no local the input does not.
+/// wherever the input is, and reaches only what the input reaches.
 pub open spec fn cwh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, r: ExprSpec) -> bool {
     &&& cw(dty, denv, g, e, r)
     &&& tt_to(dty, denv, g, e, r)
-    &&& kh(dty, denv) ==> forall|i: nat| #[trigger] fv_absent(e, i) ==> fv_absent(r, i)
+    &&& kh(dty, denv) ==> sub(rctx(g, r), rctx(g, e))
 }
 
 /// SUBJECT REDUCTION along a chain, in claim form.
@@ -1313,6 +1312,7 @@ pub proof fn cwh_of_pstep_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
         assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(r, i) by {
             crate::reduce_fv::pstep_star_fv(denv, e, r, i);
         }
+        rctx_mono(g, r, e);
     }
 }
 
@@ -1333,11 +1333,101 @@ pub proof fn cwh_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Ma
 {
     cw_trans(dty, denv, g, e, r1, r2);
     if kh(dty, denv) {
+        sub_trans(rctx(g, r2), rctx(g, r1), rctx(g, e));
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
             implies #[trigger] rtyped(dty, denv, d, r2) by {
             assert(rtyped(dty, denv, d, r1));
-            rctx_mono(g, r1, e);
             sub_trans(rctx(g, r1), rctx(g, e), d);
+        }
+    }
+}
+
+
+/// An inference claim survives reducing its type.
+pub proof fn ci_whnf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t0: ExprSpec, t1: ExprSpec)
+    requires
+        ci(dty, denv, g, e, t0),
+        cwh(dty, denv, g, t0, t1),
+    ensures
+        ci(dty, denv, g, e, t1),
+{
+    let w = IoMode::InferWt;
+    if kh(dty, denv) {
+        sub_trans(rctx(g, t1), rctx(g, t0), rctx(g, e));
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
+            implies #[trigger] ci_at(dty, denv, d, e, t1) by {
+            let (tt, f, h) = ci_use(dty, denv, g, d, e, t0);
+            sub_trans(rctx(g, t1), rctx(g, t0), d);
+            assert(rtyped(dty, denv, d, t1));
+            assert(deq_p_any(dty, denv, d, w, t0, t1));
+            let h2 = choose|hh: nat| #[trigger] deq_p(dty, denv, d, w, t0, t1, hh);
+            deq_p_mono(dty, denv, d, w, tt, t0, h, h + h2);
+            deq_p_mono(dty, denv, d, w, t0, t1, h2, h + h2);
+            deq_p_trans(dty, denv, d, w, tt, t0, t1, h + h2);
+            assert(wt_marker(tt, f));
+        }
+    }
+}
+
+/// K-LIKE REDUCTION, the major premise's step (`to_ctor_when_k`): the
+/// major converts to the constructor built from its type's parameters (proof
+/// irrelevance: both prove the major's proposition), the constructor is
+/// typed wherever the major is (E2' on the major's type), and it reaches
+/// only what the major does.
+pub proof fn cwh_k(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    major: ExprSpec,
+    t0: ExprSpec,
+    mty: ExprSpec,
+    nc: ExprSpec,
+    nty: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    params: Seq<ExprSpec>,
+    rest: Seq<ExprSpec>,
+)
+    requires
+        ci(dty, denv, g, major, t0),
+        cwh(dty, denv, g, t0, mty),
+        mty == spine_app(ExprSpec::Const(ind, ls), params + rest),
+        denv.ctor_inductive(cid) == Some(ind),
+        denv.ctor_num_params(cid) == Some(params.len() as u16),
+        params.len() < 0x1_0000,
+        nc == spine_app(ExprSpec::Const(cid, ls), params),
+        ci(dty, denv, g, nc, nty),
+        cw(dty, denv, g, mty, nty),
+        cprop(dty, denv, g, mty),
+    ensures
+        cwh(dty, denv, g, major, nc),
+{
+    ci_whnf(dty, denv, g, major, t0, mty);
+    cw_irrel(dty, denv, g, major, nc, mty, nty);
+    if kh(dty, denv) {
+        // the constructor reaches only what the major's type does
+        assert forall|i: nat| #[trigger] fv_absent(mty, i) implies fv_absent(nc, i) by {
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(ind, ls), params + rest, i);
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(cid, ls), params, i);
+            assert forall|k: int| 0 <= k < params.len() implies fv_absent(#[trigger] params[k], i) by {
+                assert((params + rest)[k] == params[k]);
+            }
+        }
+        rctx_mono(g, nc, mty);
+        assert(sub(rctx(g, mty), rctx(g, major)));
+        sub_trans(rctx(g, nc), rctx(g, mty), rctx(g, major));
+        // it is typed wherever the major is
+        assert(denv.ctor_ind.contains_key(cid));
+        assert(crate::ctor_typing::ctor_params_ok1(dty, denv, ind, cid));
+        assert(denv.ctor_np[cid] as nat == params.len());
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, major), d) && rtyped(dty, denv, d, major)
+            implies #[trigger] rtyped(dty, denv, d, nc) by {
+            let (tt, f, h) = ci_use(dty, denv, g, d, major, mty);
+            let s0 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, mty, t);
+            assert(typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), params + rest), s0));
+            let tc = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(cid, ls), params), t);
+            assert(typed(dty, denv, d, nc, tc));
         }
     }
 }
