@@ -481,6 +481,34 @@ What remains before `tc.rs` can switch its claims:
 4. The switch: `def_eq_claim` / `whnf_claim` / `kinfer_claim` and the cache
    invariants restated as `cw` / `ci` / `tt_to` claims.
 
+**M7 model side COMPLETE (2026-09-26, through 6d5310c).** `kclaims.rs` has
+every claim and every step lemma the port needs:
+- claim shapes: `cw` (conversion), `ci` (inference), `cwh` (reduction:
+  conversion, type-preserving transfer `tp_to`, reach containment), `cprop`;
+- algebra: refl/symm/trans, app/proj/bind congruence (`cw_bind`: swap plus
+  narrowing), spine congruence;
+- typed leaves: `cw_irrel`, `cw_unit`, `cw_eta`;
+- `whnf` steps: reduction chains, K-like (`cwh_k`), eta before iota
+  (`cwh_eta_exp`), major replacement (`cwh_replace`), uncapped iota and
+  quotient (`cwh_rec_leaf`, `cwh_quot_leaf`).
+
+Supporting modules:
+- `ctor_typing.rs`: spine typing, constructor-application types, projection
+  typing, expansion typing;
+- `replace.rs`: substitutivity, argument replacement;
+- `reduce_fv.rs`: reduction adds no local;
+- `telescope.rs`.
+
+Every claim assumes `kh`:
+- the named hypotheses (`hyps_all`, and subject reduction `h_sr` with its
+  companion `h_sr_leaf` for the uncapped iota and quotient steps);
+- closed, well-typed declarations (`fv_free`, `env_wf`);
+- the constructor conditions `struct_ok` and `ctor_params_ok`, environment
+  invariants the ported inductive checker is to establish.
+
+Admissible contexts are well formed (`lctx_wf`). The model's `InferWt` eta
+leaf is one-sided (71d63a3). Next: the `tc.rs` switch, then the checker port.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel
