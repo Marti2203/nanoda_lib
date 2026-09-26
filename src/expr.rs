@@ -710,9 +710,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 Some(local) => local,
                 None => {
                     proof {
-                        assert(Seq::new(rem.len(), |i: int| crate::expr_arena_bridge::expr_id(rem[i])) =~= Seq::<u32>::empty());
+                        assert(Seq::new(rem.len(), |i: int| crate::expr_arena_bridge::expr_id(rem[i])) =~= Seq::<nat>::empty());
                         assert(Seq::new(rem.len(), |i: int| crate::quot_model::local_type(rem[i])) =~= Seq::<crate::expr_model::ExprSpec>::empty());
-                        assert(crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::<u32>::empty(), Seq::<crate::expr_model::ExprSpec>::empty(),
+                        assert(crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::<nat>::empty(), Seq::<crate::expr_model::ExprSpec>::empty(),
                             crate::expr_arena_bridge::to_model(body)) == crate::expr_arena_bridge::to_model(body));
                     }
                     break;

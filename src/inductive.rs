@@ -175,7 +175,7 @@ pub struct TeleCert {
     pub cursors: Seq<ExprSpec>,
     pub bts: Seq<ExprSpec>,
     pub bodies: Seq<ExprSpec>,
-    pub locals: Seq<u32>,
+    pub locals: Seq<nat>,
     pub sort: LevelSpec,
 }
 
@@ -192,7 +192,7 @@ pub open spec fn tele_ok<'x, 't>(env: crate::env::Env<'x, 't>, c: TeleCert) -> b
     &&& crate::tc::kconv(env, c.cursors.last(), ExprSpec::Sort(c.sort))
 }
 
-pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<u32> {
+pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
 }
 
@@ -351,7 +351,7 @@ pub struct ElimCert {
     pub cursors: Seq<ExprSpec>,
     pub bts: Seq<ExprSpec>,
     pub bodies: Seq<ExprSpec>,
-    pub locals: Seq<u32>,
+    pub locals: Seq<nat>,
     pub sorts: Seq<LevelSpec>,
     pub head: ExprSpec,
     pub args: Seq<ExprSpec>,
@@ -1746,7 +1746,7 @@ pub struct PosCert {
     pub ws: Seq<ExprSpec>,
     pub bts: Seq<ExprSpec>,
     pub bodies: Seq<ExprSpec>,
-    pub locals: Seq<u32>,
+    pub locals: Seq<nat>,
 }
 
 /// Strict positivity: every domain along the walk mentions no block inductive,
@@ -1777,7 +1777,7 @@ pub struct CtorCert {
     pub cursors: Seq<ExprSpec>,
     pub bts: Seq<ExprSpec>,
     pub bodies: Seq<ExprSpec>,
-    pub locals: Seq<u32>,
+    pub locals: Seq<nat>,
     pub sorts: Seq<LevelSpec>,
 }
 
@@ -5448,7 +5448,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut cs: Seq<ExprSpec> = seq![crate::expr_arena_bridge::to_model(ctor_type_in)];
         let ghost mut bts: Seq<ExprSpec> = Seq::empty();
         let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
-        let ghost mut locs: Seq<u32> = Seq::empty();
+        let ghost mut locs: Seq<nat> = Seq::empty();
         let ghost mut sorts: Seq<LevelSpec> = Seq::empty();
         self.tc_cache.clear();
         for i in 0..st.local_params.len()
@@ -5667,7 +5667,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut ws: Seq<ExprSpec> = Seq::empty();
         let ghost mut bts: Seq<ExprSpec> = Seq::empty();
         let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
-        let ghost mut locs: Seq<u32> = Seq::empty();
+        let ghost mut locs: Seq<nat> = Seq::empty();
         loop
             invariant
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
@@ -6123,7 +6123,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut cs: Seq<ExprSpec> = seq![ty0];
         let ghost mut bts: Seq<ExprSpec> = Seq::empty();
         let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
-        let ghost mut locs: Seq<u32> = Seq::empty();
+        let ghost mut locs: Seq<nat> = Seq::empty();
         let ghost mut lptrs: Seq<ExprPtr<'t>> = Seq::empty();
         let ghost mut sorts: Seq<LevelSpec> = Seq::empty();
         loop
@@ -6473,9 +6473,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut cs: Seq<ExprSpec> = seq![crate::expr_arena_bridge::to_model(ty0)];
         let ghost mut bts: Seq<ExprSpec> = Seq::empty();
         let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
-        let ghost mut locs: Seq<u32> = Seq::empty();
+        let ghost mut locs: Seq<nat> = Seq::empty();
         proof {
-            assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<u32>::empty());
+            assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<nat>::empty());
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
@@ -6590,7 +6590,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(local_ids(indices_locals@) =~= local_ids(old_idx).push(crate::expr_arena_bridge::expr_id(local_)));
                     if i == st.local_params@.len() {
                         assert(st.local_params@.subrange(0, i as int) =~= st.local_params@);
-                        assert(local_ids(old_idx) =~= Seq::<u32>::empty());
+                        assert(local_ids(old_idx) =~= Seq::<nat>::empty());
                     }
                 }
             }
@@ -6686,9 +6686,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut cs: Seq<ExprSpec> = seq![crate::expr_arena_bridge::to_model(ty0)];
         let ghost mut bts: Seq<ExprSpec> = Seq::empty();
         let ghost mut bodies: Seq<ExprSpec> = Seq::empty();
-        let ghost mut locs: Seq<u32> = Seq::empty();
+        let ghost mut locs: Seq<nat> = Seq::empty();
         proof {
-            assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<u32>::empty());
+            assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<nat>::empty());
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
@@ -6791,7 +6791,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(local_ids(indices_locals@) =~= local_ids(old_idx).push(crate::expr_arena_bridge::expr_id(local_)));
                     if i == st.local_params@.len() {
                         assert(st.local_params@.subrange(0, i as int) =~= st.local_params@);
-                        assert(local_ids(old_idx) =~= Seq::<u32>::empty());
+                        assert(local_ids(old_idx) =~= Seq::<nat>::empty());
                     }
                 }
             }

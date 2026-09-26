@@ -312,6 +312,14 @@ re-verifies, now also requiring environment terms to mention no local
 non-vacuity local and spread the codomain conversion to every fresh local
 by swapping (`conv_all_fresh`), so no height bound was needed.
 
+**Local ids are `nat` (2026-09-26).** Weakening needs a local fresh for any
+finite context at every binder. With `u32` ids that supply is finite while
+derivation heights are unbounded, so weakening was unprovable. `ExprSpec::Free`,
+the context maps, fresh-local parameters, id sequences and sets are now `nat`.
+The arena side keeps `u32`: `expr_id` casts to `nat`, and `raw_node` returns
+nothing for ids at or above 2^32. Spec-level only; no exec code changed, and
+every existing proof re-verified untouched.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel

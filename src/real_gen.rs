@@ -18,7 +18,7 @@ use vstd::prelude::*;
 verus! {
 
 /// Substitution never removes a free variable that was already there.
-pub proof fn subst_keeps_fv(e: ExprSpec, s: Seq<ExprSpec>, off: nat, i: u32)
+pub proof fn subst_keeps_fv(e: ExprSpec, s: Seq<ExprSpec>, off: nat, i: nat)
     requires
         fv_absent(subst_full(e, s, off), i),
     ensures
@@ -46,7 +46,7 @@ pub proof fn subst_keeps_fv(e: ExprSpec, s: Seq<ExprSpec>, off: nat, i: u32)
     }
 }
 
-pub proof fn unreach_fv(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec)
+pub proof fn unreach_fv(lctx: Map<nat, ExprSpec>, k: nat, e: ExprSpec)
     requires
         unreach(lctx, k, e),
     ensures
@@ -58,14 +58,14 @@ pub proof fn unreach_fv(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec)
 
 /// A body opened at a local `k` it does not mention, scoped in the context
 /// extended with `k`, is scoped in the context itself.
-proof fn open_scoped(lctx: Map<u32, ExprSpec>, k: u32, a: ExprSpec, body: ExprSpec)
+proof fn open_scoped(lctx: Map<nat, ExprSpec>, k: nat, a: ExprSpec, body: ExprSpec)
     requires
         fv_absent(body, k),
         fv_in(subst_full(body, seq![ExprSpec::Free(k)], 0), lctx.insert(k, a)),
     ensures
         fv_in(body, lctx),
 {
-    assert forall|i: u32| #[trigger] fv_absent(body, i) || lctx.contains_key(i) by {
+    assert forall|i: nat| #[trigger] fv_absent(body, i) || lctx.contains_key(i) by {
         if !lctx.contains_key(i) && i != k {
             assert(fv_absent(subst_full(body, seq![ExprSpec::Free(k)], 0), i) || lctx.insert(k, a).contains_key(i));
             subst_keeps_fv(body, seq![ExprSpec::Free(k)], 0, i);
@@ -77,7 +77,7 @@ proof fn open_scoped(lctx: Map<u32, ExprSpec>, k: u32, a: ExprSpec, body: ExprSp
 pub proof fn rt_fv_in(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     e: ExprSpec,
     t: ExprSpec,
     f: nat,
@@ -91,7 +91,7 @@ pub proof fn rt_fv_in(
     let r = IoMode::Real;
     match e {
         ExprSpec::Free(j) => {
-            assert forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {}
+            assert forall|i: nat| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {}
         },
         ExprSpec::App(fx, ax) => {
             let (ft, aty, bt, aty2) = choose|ft: ExprSpec, aty: ExprSpec, bt: ExprSpec, aty2: ExprSpec|
@@ -100,7 +100,7 @@ pub proof fn rt_fv_in(
                     && types_to(dty, denv, lctx, r, *ax, aty2, f);
             rt_fv_in(dty, denv, lctx, *fx, ft, f);
             rt_fv_in(dty, denv, lctx, *ax, aty2, f);
-            assert forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
+            assert forall|i: nat| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
                 assert(fv_absent(*fx, i) || lctx.contains_key(i));
                 assert(fv_absent(*ax, i) || lctx.contains_key(i));
             }
@@ -121,7 +121,7 @@ pub proof fn rt_fv_in(
             rt_fv_in(dty, denv, lctx, sb, t, h);
             rt_fv_in(dty, denv, lctx, *ty0, s, h);
             rt_fv_in(dty, denv, lctx, *v, vt, h);
-            assert forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
+            assert forall|i: nat| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
                 if !lctx.contains_key(i) {
                     assert(fv_absent(sb, i) || lctx.contains_key(i));
                     subst_keeps_fv(*b, seq![*v], 0, i);
@@ -131,14 +131,14 @@ pub proof fn rt_fv_in(
             }
         },
         ExprSpec::Bind(bk, a, body) => {
-            let k = choose|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body);
+            let k = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body);
             unreach_fv(lctx, k, *body);
             let ob = subst_full(*body, seq![ExprSpec::Free(k)], 0);
             let lx = lctx.insert(k, *a);
             if bk == BinderKind::Lam {
                 let (cod, s0, l0) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
                     real_lam_marker(cod, s, l) && types_to(dty, denv, lctx, r, *a, s, (f - 1) as nat)
-                    && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
+                    && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
                         unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                         && types_to(dty, denv, lctx.insert(k, *a), r, subst_full(*body, seq![ExprSpec::Free(k)], 0), infd, (f - 1) as nat)
                         && deq_p(dty, denv, lctx.insert(k, *a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (f - 1) as nat));
@@ -149,7 +149,7 @@ pub proof fn rt_fv_in(
             } else {
                 let (bt_ty, dl, cl) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
                     real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, r, *a, bt_ty, (f - 1) as nat)
-                    && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
+                    && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, *a) && unreach(lctx, k, *body) ==>
                         exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                         && types_to(dty, denv, lctx.insert(k, *a), r, subst_full(*body, seq![ExprSpec::Free(k)], 0), instd, (f - 1) as nat)
                         && deq_p(dty, denv, lctx.insert(k, *a), r, instd, ExprSpec::Sort(cod_level), (f - 1) as nat));
@@ -159,7 +159,7 @@ pub proof fn rt_fv_in(
                 rt_fv_in(dty, denv, lx, ob, instd, (f - 1) as nat);
             }
             open_scoped(lctx, k, *a, *body);
-            assert forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
+            assert forall|i: nat| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
                 assert(fv_absent(*a, i) || lctx.contains_key(i));
                 assert(fv_absent(*body, i) || lctx.contains_key(i));
             }
@@ -169,12 +169,12 @@ pub proof fn rt_fv_in(
                 #[trigger] proj_marker(h, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && h < f
                 && types_to(dty, denv, lctx, r, *sx, sty, h);
             rt_fv_in(dty, denv, lctx, *sx, sty, h);
-            assert forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
+            assert forall|i: nat| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {
                 assert(fv_absent(*sx, i) || lctx.contains_key(i));
             }
         },
         _ => {
-            assert forall|i: u32| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {}
+            assert forall|i: nat| #[trigger] fv_absent(e, i) || lctx.contains_key(i) by {}
         },
     }
 }

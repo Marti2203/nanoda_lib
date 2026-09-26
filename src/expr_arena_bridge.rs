@@ -223,7 +223,7 @@ pub proof fn to_model_shape<'a>(p: ExprPtr<'a>)
 /// ONE case of `to_model_of_expr` that cannot be structural: a `Local`'s
 /// model is `Free(expr_id(ptr))`, keyed by the POINTER, which a function of
 /// the shallow value cannot see. Everything else below is determined.
-pub uninterp spec fn local_fvar_id_of<'a>(e: Expr<'a>) -> u32;
+pub uninterp spec fn local_fvar_id_of<'a>(e: Expr<'a>) -> nat;
 
 /// What a *shallow* `Expr` value (as returned by `read_expr`, before
 /// following any of its child pointers) denotes.
@@ -624,8 +624,8 @@ pub proof fn expr_model_at_append<'a>(es: Seq<Expr<'a>>, e: Expr<'a>, i: nat)
 
 /// A `Local` pointer's free-variable identity, standing in for genuine
 /// `ExprPtr` identity (see the module doc comment).
-pub open spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> u32 {
-    crate::util_model::ptr_raw(ptr)
+pub open spec fn expr_id<'a>(ptr: ExprPtr<'a>) -> nat {
+    crate::util_model::ptr_raw(ptr) as nat
 }
 
 /// Within one context (see `name_id_injective`).
@@ -678,10 +678,11 @@ pub open spec fn fvar_dbj_serial(id: FVarId) -> Option<u16> {
 
 /// The node a raw id names in the arena pair `aids`: the tier bit picks the
 /// arena, the rest is the index into its history.
-pub open spec fn raw_node(aids: (nat, nat), id: u32) -> Option<Expr<'static>> {
-    let h = crate::arena_history::arena_hist::<Expr<'static>>(if id >= 0x8000_0000u32 { aids.0 } else { aids.1 });
-    let i = (id & 0x7FFF_FFFFu32) as nat;
-    if i < h.len() {
+pub open spec fn raw_node(aids: (nat, nat), id: nat) -> Option<Expr<'static>> {
+    let r = id as u32;
+    let h = crate::arena_history::arena_hist::<Expr<'static>>(if r >= 0x8000_0000u32 { aids.0 } else { aids.1 });
+    let i = (r & 0x7FFF_FFFFu32) as nat;
+    if id < 0x1_0000_0000 && i < h.len() {
         Some(h[i as int])
     } else {
         None
@@ -691,7 +692,7 @@ pub open spec fn raw_node(aids: (nat, nat), id: u32) -> Option<Expr<'static>> {
 /// The same, keyed by the id a `Free` node carries in the model: the level a
 /// stored `DbjLevel` local was made at. Keyed by the context's arena pair
 /// too: two contexts reuse the same local ids for different de Bruijn levels.
-pub closed spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16> {
+pub closed spec fn dbj_serial(aids: (nat, nat), id: nat) -> Option<u16> {
     match raw_node(aids, id) {
         Some(Expr::Local { id: fid, .. }) => fvar_dbj_serial(fid),
         _ => None,
@@ -701,7 +702,7 @@ pub closed spec fn dbj_serial(aids: (nat, nat), id: u32) -> Option<u16> {
 /// The same for a `Unique` local: the counter value it was created with.
 /// `mk_unique` numbers them; two uniques from one context with different
 /// serials are therefore different locals.
-pub closed spec fn unique_serial(aids: (nat, nat), id: u32) -> Option<u32> {
+pub closed spec fn unique_serial(aids: (nat, nat), id: nat) -> Option<u32> {
     match raw_node(aids, id) {
         Some(Expr::Local { id: fid, .. }) => fvar_unique_serial(fid),
         _ => None,
@@ -733,7 +734,7 @@ pub open spec fn fvar_unique_serial(id: FVarId) -> Option<u32> {
 /// printer's `swap_local_binding_name` renames a local under the same id, in
 /// its own context after checking; no checker context holds such a pair.
 #[verifier::external_body]
-pub proof fn unique_serial_injective(aids: (nat, nat), x: u32, y: u32)
+pub proof fn unique_serial_injective(aids: (nat, nat), x: nat, y: nat)
     requires
         unique_serial(aids, x) is Some,
         unique_serial(aids, x) == unique_serial(aids, y),
@@ -804,9 +805,9 @@ pub open spec fn abstr_cache_sound<'t, 'p>(ctx: TcCtx<'t, 'p>, locals: Seq<ExprP
             && crate::util_model::owns(ctx, ctx.expr_cache.abstr_cache@[k])
 }
 
-/// The `expr_id`s of a list of locals -- `abstr_full`'s own `Seq<u32>` argument.
+/// The `expr_id`s of a list of locals -- `abstr_full`'s own `Seq<nat>` argument.
 /// Named rather than written inline so it can be a quantifier trigger.
-pub open spec fn local_ids<'t>(locals: Seq<ExprPtr<'t>>) -> Seq<u32> {
+pub open spec fn local_ids<'t>(locals: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(locals.len(), |i: int| expr_id(locals[i]))
 }
 
@@ -1190,9 +1191,9 @@ pub open spec fn local_binder_type_of<'a>(ptr: ExprPtr<'a>) -> ExprPtr<'a> {
 }
 
 /// The ids naming a stored local in the arena pair `aids`.
-pub open spec fn lctx_ids(aids: (nat, nat)) -> Set<u32> {
-    vstd::set_lib::set_int_range(0, 0x1_0000_0000).map(|i: int| i as u32).filter(
-        |id: u32| raw_node(aids, id) matches Some(Expr::Local { .. }),
+pub open spec fn lctx_ids(aids: (nat, nat)) -> Set<nat> {
+    vstd::set_lib::set_int_range(0, 0x1_0000_0000).map(|i: int| i as nat).filter(
+        |id: nat| raw_node(aids, id) matches Some(Expr::Local { .. }),
     )
 }
 
@@ -1202,10 +1203,10 @@ pub open spec fn lctx_ids(aids: (nat, nat)) -> Set<u32> {
 /// lets the model-level typing relation (`types_to`) give `Free` leaves a type
 /// without reaching back into ptr-land. One map per arena pair: two contexts
 /// give the same local id different types.
-pub closed spec fn arena_lctx(aids: (nat, nat)) -> Map<u32, ExprSpec> {
+pub closed spec fn arena_lctx(aids: (nat, nat)) -> Map<nat, ExprSpec> {
     Map::new(
         lctx_ids(aids),
-        |id: u32| match raw_node(aids, id) {
+        |id: nat| match raw_node(aids, id) {
             Some(Expr::Local { binder_type, .. }) => to_model(binder_type),
             _ => ExprSpec::Closed,
         },
@@ -1213,7 +1214,7 @@ pub closed spec fn arena_lctx(aids: (nat, nat)) -> Map<u32, ExprSpec> {
 }
 
 /// A unique local is in the local context.
-pub proof fn unique_in_lctx(aids: (nat, nat), id: u32)
+pub proof fn unique_in_lctx(aids: (nat, nat), id: nat)
     requires
         unique_serial(aids, id) is Some,
     ensures
@@ -1223,7 +1224,7 @@ pub proof fn unique_in_lctx(aids: (nat, nat), id: u32)
     vstd::set_lib::lemma_int_range(0, 0x1_0000_0000);
     let r = vstd::set_lib::set_int_range(0, 0x1_0000_0000);
     assert(r.contains(id as int));
-    assert(r.map(|i: int| i as u32).contains((id as int) as u32));
+    assert(r.map(|i: int| i as nat).contains((id as int) as nat));
 }
 
 /// An owned local's id is in the local context, with its binder type.
@@ -1241,7 +1242,7 @@ pub proof fn arena_lctx_local<'a>(aids: (nat, nat), ptr: ExprPtr<'a>)
     vstd::set_lib::lemma_int_range(0, 0x1_0000_0000);
     let r = vstd::set_lib::set_int_range(0, 0x1_0000_0000);
     assert(r.contains(id as int));
-    assert(r.map(|i: int| i as u32).contains((id as int) as u32));
+    assert(r.map(|i: int| i as nat).contains((id as int) as nat));
     assert(raw_node(aids, id) == expr_node_at(ptr));
 }
 
@@ -2339,7 +2340,7 @@ pub fn verified_inst<'t, 'p: 't>(
 /// `binder_ids[0]`/`binder_tys[0]`, matching `[a, b, c], e ~> Pi(a, Pi(b,
 /// Pi(c, e)))` exactly as the doc comment there describes.
 pub open spec fn abstr_pi_telescope_model(
-    binder_ids: Seq<u32>,
+    binder_ids: Seq<nat>,
     binder_tys: Seq<ExprSpec>,
     e: ExprSpec,
 ) -> ExprSpec {
@@ -2349,7 +2350,7 @@ pub open spec fn abstr_pi_telescope_model(
 /// The same for either binder kind (`abstr_lambda_telescope` builds lambdas).
 pub open spec fn abstr_telescope_model(
     k: BinderKind,
-    binder_ids: Seq<u32>,
+    binder_ids: Seq<nat>,
     binder_tys: Seq<ExprSpec>,
     e: ExprSpec,
 ) -> ExprSpec

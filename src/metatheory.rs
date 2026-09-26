@@ -38,7 +38,7 @@ verus! {
 pub open spec fn typed(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     e: ExprSpec,
     t: ExprSpec,
 ) -> bool {
@@ -50,7 +50,7 @@ pub open spec fn typed(
 pub open spec fn tconv(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
@@ -62,7 +62,7 @@ pub open spec fn tconv(
 pub open spec fn kconv(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
@@ -75,7 +75,7 @@ pub open spec fn kconv(
 pub open spec fn kconv_wt(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
@@ -85,7 +85,7 @@ pub open spec fn kconv_wt(
 pub open spec fn well_typed(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     e: ExprSpec,
 ) -> bool {
     exists|t: ExprSpec| #[trigger] typed(dty, denv, lctx, e, t)
@@ -95,7 +95,7 @@ pub open spec fn well_typed(
 pub open spec fn is_type(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     t: ExprSpec,
 ) -> bool {
     exists|s: ExprSpec, l: LevelSpec|
@@ -107,9 +107,9 @@ pub open spec fn is_type(
 pub open spec fn lctx_wf(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
 ) -> bool {
-    forall|k: u32| #[trigger] lctx.contains_key(k) ==> is_type(dty, denv, lctx, lctx[k])
+    forall|k: nat| #[trigger] lctx.contains_key(k) ==> is_type(dty, denv, lctx, lctx[k])
 }
 
 /// Every declared constant's type is a closed type, and every definition's
@@ -125,7 +125,7 @@ pub open spec fn env_wf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> b
 
 /// UNIQUENESS OF TYPING: two real types of one term are convertible.
 pub open spec fn h_unique(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    forall|lctx: Map<u32, ExprSpec>, e: ExprSpec, t1: ExprSpec, t2: ExprSpec|
+    forall|lctx: Map<nat, ExprSpec>, e: ExprSpec, t1: ExprSpec, t2: ExprSpec|
         #![trigger typed(dty, denv, lctx, e, t1), typed(dty, denv, lctx, e, t2)]
         lctx_wf(dty, denv, lctx) && typed(dty, denv, lctx, e, t1) && typed(dty, denv, lctx, e, t2)
             ==> tconv(dty, denv, lctx, t1, t2)
@@ -137,7 +137,7 @@ pub open spec fn pi(a: ExprSpec, b: ExprSpec) -> ExprSpec {
 
 /// SUBJECT REDUCTION: a (parallel) reduction step keeps a term's real type.
 pub open spec fn h_sr(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    forall|lctx: Map<u32, ExprSpec>, e1: ExprSpec, e2: ExprSpec, t: ExprSpec|
+    forall|lctx: Map<nat, ExprSpec>, e1: ExprSpec, e2: ExprSpec, t: ExprSpec|
         #![trigger typed(dty, denv, lctx, e1, t), pstep(denv, e1, e2)]
         env_wf(dty, denv) && lctx_wf(dty, denv, lctx) && typed(dty, denv, lctx, e1, t) && pstep(
             denv,
@@ -149,7 +149,7 @@ pub open spec fn h_sr(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> boo
 /// The phase-2 target: under the hypotheses, the kernel's conversion
 /// implies real conversion on well-typed terms.
 pub open spec fn kconv_implies_tconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    forall|lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec|
+    forall|lctx: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec|
         #![trigger kconv(dty, denv, lctx, x, y)]
         lctx_wf(dty, denv, lctx) && well_typed(dty, denv, lctx, x) && well_typed(dty, denv, lctx, y)
             && kconv(dty, denv, lctx, x, y) ==> tconv(dty, denv, lctx, x, y)
@@ -180,7 +180,7 @@ pub open spec fn let_at(pos: nat, e: ExprSpec, t: ExprSpec, v: ExprSpec, b: Expr
 pub proof fn deq_p_let_pos(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     io: IoMode,
     pos: nat,
     x: ExprSpec,
@@ -220,7 +220,7 @@ pub proof fn deq_p_let_pos(
 pub proof fn deq_p_any_let_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     io: IoMode,
     t1: ExprSpec,
     t2: ExprSpec,
@@ -263,7 +263,7 @@ pub proof fn deq_p_any_let_congr(
 /// PI-INJECTIVITY, in the form the application rule uses: convertible Pi
 /// types give convertible codomains once instantiated with an argument whose
 /// type converts to the domain.
-pub open spec fn h_pi_inj_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+pub open spec fn h_pi_inj_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     forall|a1: ExprSpec, b1: ExprSpec, a2: ExprSpec, b2: ExprSpec, arg: ExprSpec, targ: ExprSpec|
         #![trigger tconv(dty, denv, lctx, pi(a1, b1), pi(a2, b2)), typed(dty, denv, lctx, arg, targ)]
         tconv(dty, denv, lctx, pi(a1, b1), pi(a2, b2)) && typed(dty, denv, lctx, arg, targ) && tconv(dty, denv, lctx, targ, a2)
@@ -271,7 +271,7 @@ pub open spec fn h_pi_inj_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec
 }
 
 /// SORT-INJECTIVITY: convertible sorts have equivalent levels.
-pub open spec fn h_sort_inj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+pub open spec fn h_sort_inj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     forall|l1: LevelSpec, l2: LevelSpec|
         #![trigger tconv(dty, denv, lctx, ExprSpec::Sort(l1), ExprSpec::Sort(l2))]
         tconv(dty, denv, lctx, ExprSpec::Sort(l1), ExprSpec::Sort(l2)) ==> forall|rho: Map<nat, nat>|
@@ -282,20 +282,20 @@ pub open spec fn h_sort_inj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
 /// convertible. (The projection case of `s_sound` rests on it: the
 /// `InferWt` derivation of a projection transfers to a real derivation of
 /// the same type, which uniqueness then relates to any other real type.)
-pub open spec fn h_unique_in(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+pub open spec fn h_unique_in(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     forall|e: ExprSpec, t1: ExprSpec, t2: ExprSpec|
         #![trigger typed(dty, denv, lctx, e, t1), typed(dty, denv, lctx, e, t2)]
         typed(dty, denv, lctx, e, t1) && typed(dty, denv, lctx, e, t2) ==> tconv(dty, denv, lctx, t1, t2)
 }
 
-pub open spec fn hyps(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+pub open spec fn hyps(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     h_pi_inj_app(dty, denv, lctx) && h_sort_inj(dty, denv, lctx) && h_unique_in(dty, denv, lctx)
 }
 
 /// The hypotheses in every context: the scoped theories extend the context
 /// at binders, so the proof meets contexts other than the one it starts in.
 pub open spec fn hyps_all(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    forall|lctx: Map<u32, ExprSpec>| #[trigger] hyps(dty, denv, lctx)
+    forall|lctx: Map<nat, ExprSpec>| #[trigger] hyps(dty, denv, lctx)
 }
 
 /// Two level-substitution instances of one term are `deq_c`-related: their
@@ -396,7 +396,7 @@ pub proof fn rel_pair_deq_c(env: EnvSpec, e: ExprSpec, ks: Seq<u64>, vs: Seq<Lev
 }
 
 /// `tconv` from a real `deq_p` at any height.
-pub proof fn tconv_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn tconv_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         deq_p(dty, env, lctx, IoMode::Real, x, y, h),
     ensures
@@ -405,7 +405,7 @@ pub proof fn tconv_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: M
 }
 
 /// `tconv` is transitive and symmetric (`deq_p_any_*` at `Real`).
-pub proof fn tconv_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+pub proof fn tconv_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
     requires
         tconv(dty, env, lctx, x, y),
         tconv(dty, env, lctx, y, z),
@@ -415,7 +415,7 @@ pub proof fn tconv_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx
     deq_p_any_trans(dty, env, lctx, IoMode::Real, x, y, z);
 }
 
-pub proof fn tconv_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<u32, ExprSpec>, x: ExprSpec, y: ExprSpec)
+pub proof fn tconv_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires
         tconv(dty, env, lctx, x, y),
     ensures
@@ -424,7 +424,7 @@ pub proof fn tconv_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx:
     deq_p_any_symm(dty, env, lctx, IoMode::Real, x, y);
 }
 
-pub proof fn unreach_fv_absent(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec)
+pub proof fn unreach_fv_absent(lctx: Map<nat, ExprSpec>, k: nat, e: ExprSpec)
     requires
         unreach(lctx, k, e),
     ensures
@@ -439,11 +439,11 @@ pub proof fn unreach_fv_absent(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec)
 pub proof fn conv_all_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     ty: ExprSpec,
     b1: ExprSpec,
     b2: ExprSpec,
-    k0: u32,
+    k0: nat,
     h: nat,
 )
     requires
@@ -451,10 +451,10 @@ pub proof fn conv_all_fresh(
         bind_fresh_ok(lctx, k0, ty, b1, b2),
         deq_p(dty, env, lctx.insert(k0, ty), IoMode::Real, inst_free(b1, k0), inst_free(b2, k0), h),
     ensures
-        forall|k: u32| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) ==>
+        forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) ==>
             deq_p(dty, env, lctx.insert(k, ty), IoMode::Real, inst_free(b1, k), inst_free(b2, k), h),
 {
-    assert forall|k: u32| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) implies
+    assert forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, b1, b2) implies
         deq_p(dty, env, lctx.insert(k, ty), IoMode::Real, inst_free(b1, k), inst_free(b2, k), h) by {
         unreach_fv_absent(lctx, k0, ty);
         unreach_fv_absent(lctx, k0, b1);
@@ -477,7 +477,7 @@ pub proof fn conv_all_fresh(
 pub proof fn s_sound(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     e: ExprSpec,
     t: ExprSpec,
     tt: ExprSpec,
@@ -534,7 +534,7 @@ pub proof fn s_sound(
 proof fn s_app(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     fx: ExprSpec,
     ax: ExprSpec,
     t: ExprSpec,
@@ -576,7 +576,7 @@ proof fn s_app(
 proof fn s_let(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     ty0: ExprSpec,
     val: ExprSpec,
     body: ExprSpec,
@@ -603,7 +603,7 @@ proof fn s_let(
 proof fn s_lam(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     a: ExprSpec,
     body: ExprSpec,
     t: ExprSpec,
@@ -624,21 +624,21 @@ proof fn s_lam(
     let r = IoMode::Real;
     let (cod1, s1, l1) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
         real_lam_marker(cod, s, l)
-        && (exists|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body))
-        && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body))
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
             unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, env, lctx.insert(k, a), w, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, (f - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), w, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (f - 1) as nat))
         && t == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod));
     let (cod2, s2, l2) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
         real_lam_marker(cod, s, l)
-        && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
             unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, env, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, (g - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (g - 1) as nat))
         && tt == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod));
     // one local fresh for everything: InferWt's own witness
-    let k0 = choose|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body);
+    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body);
     let lx = lctx.insert(k0, a);
     let ob = subst_full(body, seq![ExprSpec::Free(k0)], 0);
     let c1 = subst_full(cod1, seq![ExprSpec::Free(k0)], 0);
@@ -665,7 +665,7 @@ proof fn s_lam(
 proof fn s_pi(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     a: ExprSpec,
     body: ExprSpec,
     t: ExprSpec,
@@ -687,8 +687,8 @@ proof fn s_pi(
     let (bt1, dl1, cl1) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
         real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, env, lctx, w, a, bt_ty, (f - 1) as nat)
         && deq_p(dty, env, lctx, w, bt_ty, ExprSpec::Sort(dom_level), (f - 1) as nat)
-        && (exists|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body))
-        && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (exists|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body))
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, env, lctx.insert(k, a), w, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, (f - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), w, instd, ExprSpec::Sort(cod_level), (f - 1) as nat))
@@ -696,7 +696,7 @@ proof fn s_pi(
     let (bt2, dl2, cl2) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
         real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, env, lctx, r, a, bt_ty, (g - 1) as nat)
         && deq_p(dty, env, lctx, r, bt_ty, ExprSpec::Sort(dom_level), (g - 1) as nat)
-        && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, env, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, (g - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), r, instd, ExprSpec::Sort(cod_level), (g - 1) as nat))
@@ -709,7 +709,7 @@ proof fn s_pi(
     tconv_trans(dty, env, lctx, ExprSpec::Sort(dl1), bt1, bt2);
     tconv_trans(dty, env, lctx, ExprSpec::Sort(dl1), bt2, ExprSpec::Sort(dl2));
     // the codomain's, at InferWt's own fresh local
-    let k0 = choose|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body);
+    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && unreach(lctx, k, a) && unreach(lctx, k, body);
     let lx = lctx.insert(k0, a);
     let ob = subst_full(body, seq![ExprSpec::Free(k0)], 0);
     let i1 = choose|instd: ExprSpec| #[trigger] real_body_marker(k0, instd)
@@ -738,7 +738,7 @@ proof fn s_pi(
 proof fn s_proj(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     idx: usize,
     sx: ExprSpec,
     t: ExprSpec,
@@ -794,7 +794,7 @@ proof fn s_proj(
 proof fn walk_transfer(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     h: nat,
     cur: ExprSpec,
     args: Seq<ExprSpec>,
@@ -849,7 +849,7 @@ proof fn walk_transfer(
 proof fn leaf_transfer(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -937,7 +937,7 @@ pub open spec fn max3(a: nat, b: nat, c: nat) -> nat {
 proof fn proof_type_transfer(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     tx: ExprSpec,
     tx_r: ExprSpec,
     h: nat,
@@ -979,7 +979,7 @@ proof fn proof_type_transfer(
 proof fn unit_like_transfer(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     tx: ExprSpec,
     tx_r: ExprSpec,
     h: nat,
@@ -1007,7 +1007,7 @@ proof fn unit_like_transfer(
 proof fn eta_transfer(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
     tx_r: ExprSpec,
@@ -1072,7 +1072,7 @@ proof fn eta_transfer(
 pub proof fn transfer_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -1109,10 +1109,10 @@ pub proof fn transfer_c(
                     deq_p_any_bind_congr(dty, env, lctx, r, *t1, *t2, *b1, *b2, bk1);
                 } else {
                     let ty = choose|ty: ExprSpec| #[trigger] bind_ty_marker(ty) && (ty == *t1 || ty == *t2)
-                        && (exists|k: u32| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2))
-                        && (forall|k: u32| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2) ==>
+                        && (exists|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2))
+                        && (forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2) ==>
                             deq_p(dty, env, lctx.insert(k, ty), io, inst_free(*b1, k), inst_free(*b2, k), hp));
-                    let k0 = choose|k: u32| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2);
+                    let k0 = choose|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2);
                     let lx = lctx.insert(k0, ty);
                     transfer_p(dty, env, lx, inst_free(*b1, k0), inst_free(*b2, k0), hp);
                     let h0 = choose|hh: nat| #[trigger] deq_p(dty, env, lx, r, inst_free(*b1, k0), inst_free(*b2, k0), hh);
@@ -1120,7 +1120,7 @@ pub proof fn transfer_c(
                     let ht = choose|hh: nat| #[trigger] deq_p(dty, env, lctx, r, *t1, *t2, hh);
                     let m = if ht >= h0 { ht } else { h0 };
                     deq_p_mono(dty, env, lctx, r, *t1, *t2, ht, m);
-                    assert forall|k: u32| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2) implies
+                    assert forall|k: nat| #[trigger] fresh_marker(k) && bind_fresh_ok(lctx, k, ty, *b1, *b2) implies
                         deq_p(dty, env, lctx.insert(k, ty), r, inst_free(*b1, k), inst_free(*b2, k), m) by {
                         deq_p_mono(dty, env, lctx.insert(k, ty), r, inst_free(*b1, k), inst_free(*b2, k), h0, m);
                     }
@@ -1147,7 +1147,7 @@ pub proof fn transfer_c(
 pub proof fn transfer_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -1168,7 +1168,7 @@ pub proof fn transfer_p(
 proof fn transfer_chain(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     ch: Seq<ExprSpec>,
     h: nat,
     i: nat,
@@ -1199,7 +1199,7 @@ proof fn transfer_chain(
 pub proof fn kconv_wt_implies_tconv(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
-    lctx: Map<u32, ExprSpec>,
+    lctx: Map<nat, ExprSpec>,
     x: ExprSpec,
     y: ExprSpec,
 )
@@ -1258,8 +1258,8 @@ pub open spec fn cx_env() -> EnvSpec {
     EnvSpec::empty_at(0)
 }
 
-pub open spec fn cx_lctx() -> Map<u32, ExprSpec> {
-    Map::<u32, ExprSpec>::empty().insert(0, cx_a())
+pub open spec fn cx_lctx() -> Map<nat, ExprSpec> {
+    Map::<nat, ExprSpec>::empty().insert(0, cx_a())
 }
 
 pub open spec fn cx_lam() -> ExprSpec {
@@ -1370,14 +1370,14 @@ pub proof fn cx_well_formed()
     assert(tconv(dty, env, lctx, cx_prop(), ExprSpec::Sort(LevelSpec::Zero)));
     assert(typed(dty, env, lctx, cx_a(), cx_prop()) && tconv(dty, env, lctx, cx_prop(), ExprSpec::Sort(LevelSpec::Zero)));
     assert(is_type(dty, env, lctx, cx_a()));
-    assert forall|k: u32| #[trigger] lctx.contains_key(k) implies is_type(dty, env, lctx, lctx[k]) by {
+    assert forall|k: nat| #[trigger] lctx.contains_key(k) implies is_type(dty, env, lctx, lctx[k]) by {
         assert(k == 0);
     }
 }
 
 /// CONVERSION RELATES ONLY TERMS OF CONVERTIBLE TYPES (a standard property
 /// of Lean's theory: subject reduction plus uniqueness of typing).
-pub open spec fn h_conv_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+pub open spec fn h_conv_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     forall|x: ExprSpec, y: ExprSpec, tx: ExprSpec, ty: ExprSpec|
         #![trigger tconv(dty, denv, lctx, x, y), typed(dty, denv, lctx, x, tx), typed(dty, denv, lctx, y, ty)]
         tconv(dty, denv, lctx, x, y) && typed(dty, denv, lctx, x, tx) && typed(dty, denv, lctx, y, ty)
@@ -1387,7 +1387,7 @@ pub open spec fn h_conv_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec
 /// DISTINCT AXIOMS DO NOT CONVERT: two different constants without
 /// definitions (so nothing unfolds them) are not convertible (no-confusion
 /// for opaque constants, the same inversion family as Sort-injectivity).
-pub open spec fn h_axioms_distinct(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<u32, ExprSpec>) -> bool {
+pub open spec fn h_axioms_distinct(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     forall|c1: u64, c2: u64, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>|
         #![trigger tconv(dty, denv, lctx, ExprSpec::Const(c1, l1), ExprSpec::Const(c2, l2))]
         tconv(dty, denv, lctx, ExprSpec::Const(c1, l1), ExprSpec::Const(c2, l2)) && c1 != c2

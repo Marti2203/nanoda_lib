@@ -292,7 +292,7 @@ pub open spec fn telescope_size_spec(k: BinderKind, e: ExprSpec) -> nat
 }
 
 /// Abstracting locals never touches the leading binder spine.
-pub proof fn abstr_full_telescope_size(k: BinderKind, e: ExprSpec, locals: Seq<u32>, offset: nat)
+pub proof fn abstr_full_telescope_size(k: BinderKind, e: ExprSpec, locals: Seq<nat>, offset: nat)
     ensures
         telescope_size_spec(k, abstr_full(e, locals, offset)) == telescope_size_spec(k, e),
     decreases e,
@@ -308,7 +308,7 @@ pub proof fn abstr_full_telescope_size(k: BinderKind, e: ExprSpec, locals: Seq<u
 /// A telescope adds exactly one binder of its kind per element (the
 /// recursor's type through `abstr_pi_telescope`, its rules through
 /// `abstr_lambda_telescope`).
-pub proof fn abstr_telescope_size(k: BinderKind, binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec>, e: ExprSpec)
+pub proof fn abstr_telescope_size(k: BinderKind, binder_ids: Seq<nat>, binder_tys: Seq<ExprSpec>, e: ExprSpec)
     requires
         binder_ids.len() == binder_tys.len(),
     ensures

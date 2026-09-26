@@ -135,7 +135,7 @@ pub enum BinderKind {
 // payload is a `Seq<LevelSpec>`, which has no runtime representation.)
 pub enum ExprSpec {
     Var(u32),
-    Free(u32),
+    Free(nat),
     /// No longer stands in for anything -- `Sort`/`Const`/`NatLit`/
     /// `StringLit` used to all collapse into this (their payload was
     /// irrelevant to pure de-Bruijn substitution), but each now carries
@@ -346,7 +346,7 @@ pub proof fn mul_pred_step(n: nat, k: nat)
 /// Abstraction does not change depth: it rewrites `Free` leaves into `Var`
 /// leaves, and both are depth 0. Needed by any ceiling that has to survive a
 /// telescope of `abstr_pi` steps.
-pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
+pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<nat>, offset: nat)
     ensures
         depth(abstr_full(e, locals, offset)) == depth(e),
     decreases e,
@@ -386,8 +386,8 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
 /// The `nob + offset` parameterisation is what makes the two sides step
 /// together at a `Bind`: the level walk increments its binder count, the list
 /// walk increments its offset.
-pub open spec fn serial_determines_id(aids: (nat, nat), ids: Seq<u32>, start_pos: u16) -> bool {
-    forall|id: u32, k: int|
+pub open spec fn serial_determines_id(aids: (nat, nat), ids: Seq<nat>, start_pos: u16) -> bool {
+    forall|id: nat, k: int|
         #![trigger crate::expr_arena_bridge::dbj_serial(aids, id), ids[k]]
         0 <= k < ids.len() && crate::expr_arena_bridge::dbj_serial(aids, id) == Some(
             (start_pos + k) as u16,
@@ -397,7 +397,7 @@ pub open spec fn serial_determines_id(aids: (nat, nat), ids: Seq<u32>, start_pos
 pub proof fn abstr_levels_full_eq_abstr_full(
     aids: (nat, nat),
     e: ExprSpec,
-    ids: Seq<u32>,
+    ids: Seq<nat>,
     start_pos: u16,
     nob: u16,
     offset: nat,
@@ -531,7 +531,7 @@ pub proof fn dbj_serials_below_mono(aids: (nat, nat), e: ExprSpec, b1: u16, b2: 
 }
 
 /// A level-local id whose level is below `c`.
-pub open spec fn serial_below(aids: (nat, nat), id: u32, c: u16) -> bool {
+pub open spec fn serial_below(aids: (nat, nat), id: nat, c: u16) -> bool {
     match crate::expr_arena_bridge::dbj_serial(aids, id) {
         Some(s) => s < c,
         None => false,
@@ -559,7 +559,7 @@ pub open spec fn serial_below(aids: (nat, nat), id: u32, c: u16) -> bool {
 /// Unique locals (`dbj_serial` = None) are in scope when they are well
 /// founded (`unique_deep`): not tied to a level or to the live set, they are
 /// global to the context, like constants.
-pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16) -> bool
+pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<nat>, c: u16) -> bool
     decreases c, e,
 {
     match e {
@@ -582,7 +582,7 @@ pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
 
 /// A `Unique` local (`mk_unique`) is in scope when it is well founded: its
 /// type is closed and mentions only uniques that are, to some finite depth.
-pub open spec fn unique_deep(aids: (nat, nat), id: u32) -> bool {
+pub open spec fn unique_deep(aids: (nat, nat), id: nat) -> bool {
     exists|n: nat| #[trigger] unique_ty_deep(aids, ExprSpec::Free(id), n)
 }
 
@@ -606,7 +606,7 @@ pub open spec fn unique_ty_deep(aids: (nat, nat), e: ExprSpec, n: nat) -> bool
 }
 
 /// Only well-founded uniques: in scope at any depth, in any live set.
-pub proof fn unique_ty_deep_in(aids: (nat, nat), e: ExprSpec, n: nat, S: ISet<u32>, c: u16)
+pub proof fn unique_ty_deep_in(aids: (nat, nat), e: ExprSpec, n: nat, S: ISet<nat>, c: u16)
     requires
         unique_ty_deep(aids, e, n),
     ensures
@@ -717,7 +717,7 @@ pub proof fn unique_fuel(aids: (nat, nat), e: ExprSpec) -> (n: nat)
 }
 
 /// A level-local id whose level is at least `c`.
-pub open spec fn serial_at_least(aids: (nat, nat), id: u32, c: u16) -> bool {
+pub open spec fn serial_at_least(aids: (nat, nat), id: nat, c: u16) -> bool {
     match crate::expr_arena_bridge::dbj_serial(aids, id) {
         Some(s) => s >= c,
         None => false,
@@ -725,8 +725,8 @@ pub open spec fn serial_at_least(aids: (nat, nat), id: u32, c: u16) -> bool {
 }
 
 /// Every node.
-pub open spec fn all_ids() -> ISet<u32> {
-    ISet::new(|t: u32| true)
+pub open spec fn all_ids() -> ISet<nat> {
+    ISet::new(|t: nat| true)
 }
 
 /// Deep scope with every node allowed: the bound alone.
@@ -735,7 +735,7 @@ pub open spec fn dbj_deep(aids: (nat, nat), e: ExprSpec, c: u16) -> bool {
 }
 
 /// Deep scope implies shallow scope.
-pub proof fn dbj_deep_in_below(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
+pub proof fn dbj_deep_in_below(aids: (nat, nat), e: ExprSpec, S: ISet<nat>, c: u16)
     requires
         dbj_deep_in(aids, e, S, c),
     ensures
@@ -775,10 +775,10 @@ pub proof fn dbj_deep_below(aids: (nat, nat), e: ExprSpec, c: u16)
 /// Weakening: every node allowed before (in `S1`, below `c1`) is allowed
 /// after. A local's own type is judged at the local's level, which does not
 /// move, so the condition restricted to below that level carries down.
-pub proof fn dbj_deep_in_weaken(aids: (nat, nat), e: ExprSpec, S1: ISet<u32>, c1: u16, S2: ISet<u32>, c2: u16)
+pub proof fn dbj_deep_in_weaken(aids: (nat, nat), e: ExprSpec, S1: ISet<nat>, c1: u16, S2: ISet<nat>, c2: u16)
     requires
         dbj_deep_in(aids, e, S1, c1),
-        forall|t: u32| #[trigger] S1.contains(t) && serial_below(aids, t, c1) ==> S2.contains(t) && serial_below(aids, t, c2),
+        forall|t: nat| #[trigger] S1.contains(t) && serial_below(aids, t, c1) ==> S2.contains(t) && serial_below(aids, t, c2),
     ensures
         dbj_deep_in(aids, e, S2, c2),
     decreases c1, e,
@@ -787,7 +787,7 @@ pub proof fn dbj_deep_in_weaken(aids: (nat, nat), e: ExprSpec, S1: ISet<u32>, c1
         ExprSpec::Free(id) => {
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
                 assert(S1.contains(id) && serial_below(aids, id, c1));
-                assert forall|t: u32| #[trigger] S1.contains(t) && serial_below(aids, t, s) implies S2.contains(t) && serial_below(aids, t, s) by {
+                assert forall|t: nat| #[trigger] S1.contains(t) && serial_below(aids, t, s) implies S2.contains(t) && serial_below(aids, t, s) by {
                     assert(serial_below(aids, t, c1));
                 }
                 dbj_deep_in_weaken(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S1, s, S2, s);
@@ -827,7 +827,7 @@ pub proof fn dbj_deep_mono(aids: (nat, nat), e: ExprSpec, c1: u16, c2: u16)
 }
 
 /// No free variables: deep-in-scope everywhere.
-pub proof fn no_fv_dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
+pub proof fn no_fv_dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<nat>, c: u16)
     requires
         !has_fv(e),
     ensures
@@ -870,7 +870,7 @@ pub proof fn subst_full_dbj_deep_in(
     e: ExprSpec,
     substs: Seq<ExprSpec>,
     offset: nat,
-    S: ISet<u32>,
+    S: ISet<nat>,
     c: u16,
 )
     requires
@@ -922,7 +922,7 @@ pub proof fn subst_full_dbj_deep(aids: (nat, nat), e: ExprSpec, substs: Seq<Expr
 
 /// Node `t` occurs in `e` deeply: as a level-local below `c`, or in the type
 /// of one (judged below that local's level).
-pub open spec fn occurs_deep(aids: (nat, nat), e: ExprSpec, c: u16, t: u32) -> bool
+pub open spec fn occurs_deep(aids: (nat, nat), e: ExprSpec, c: u16, t: nat) -> bool
     decreases c, e,
 {
     match e {
@@ -947,15 +947,15 @@ pub open spec fn occurs_deep(aids: (nat, nat), e: ExprSpec, c: u16, t: u32) -> b
 }
 
 /// The nodes a term actually uses.
-pub open spec fn occ(aids: (nat, nat), e: ExprSpec, c: u16) -> ISet<u32> {
-    ISet::new(|t: u32| occurs_deep(aids, e, c, t))
+pub open spec fn occ(aids: (nat, nat), e: ExprSpec, c: u16) -> ISet<nat> {
+    ISet::new(|t: nat| occurs_deep(aids, e, c, t))
 }
 
 /// A deep-in-scope term is deep-in-scope in any set holding what it uses.
-pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16, O: ISet<u32>)
+pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<nat>, c: u16, O: ISet<nat>)
     requires
         dbj_deep_in(aids, e, S, c),
-        forall|t: u32| #[trigger] occurs_deep(aids, e, c, t) ==> O.contains(t),
+        forall|t: nat| #[trigger] occurs_deep(aids, e, c, t) ==> O.contains(t),
     ensures
         dbj_deep_in(aids, e, O, c),
     decreases c, e,
@@ -965,40 +965,40 @@ pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
                 let ty = crate::expr_arena_bridge::arena_lctx(aids)[id];
                 assert(occurs_deep(aids, e, c, id));
-                assert forall|t: u32| #[trigger] occurs_deep(aids, ty, s, t) implies O.contains(t) by {
+                assert forall|t: nat| #[trigger] occurs_deep(aids, ty, s, t) implies O.contains(t) by {
                     assert(occurs_deep(aids, e, c, t));
                 }
                 dbj_deep_in_occ(aids, ty, S, s, O);
             }
         },
         ExprSpec::App(f, a) => {
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *f, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *f, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *a, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *a, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
             dbj_deep_in_occ(aids, *f, S, c, O);
             dbj_deep_in_occ(aids, *a, S, c, O);
         },
         ExprSpec::Bind(bk, ty, b) => {
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *b, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *b, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
             dbj_deep_in_occ(aids, *ty, S, c, O);
             dbj_deep_in_occ(aids, *b, S, c, O);
         },
         ExprSpec::Let(ty, v, b) => {
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *v, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *v, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *b, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *b, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
             dbj_deep_in_occ(aids, *ty, S, c, O);
@@ -1006,7 +1006,7 @@ pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
             dbj_deep_in_occ(aids, *b, S, c, O);
         },
         ExprSpec::Proj(_, st) => {
-            assert forall|t: u32| #[trigger] occurs_deep(aids, *st, c, t) implies O.contains(t) by {
+            assert forall|t: nat| #[trigger] occurs_deep(aids, *st, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
             dbj_deep_in_occ(aids, *st, S, c, O);
@@ -1016,7 +1016,7 @@ pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
 }
 
 /// What a term uses is allowed by any scope the term is in.
-pub proof fn occurs_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16, c1: u16, t: u32)
+pub proof fn occurs_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<nat>, c: u16, c1: u16, t: nat)
     requires
         dbj_deep_in(aids, e, S, c),
         occurs_deep(aids, e, c1, t),
@@ -1067,16 +1067,16 @@ pub proof fn occurs_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16,
 pub proof fn abstr_levels_dbj_deep_in(
     aids: (nat, nat),
     e: ExprSpec,
-    S: ISet<u32>,
+    S: ISet<nat>,
     b: u16,
     start: u16,
     n: u16,
-    S2: ISet<u32>,
+    S2: ISet<nat>,
     c2: u16,
 )
     requires
         dbj_deep_in(aids, e, S, b),
-        forall|t: u32| #[trigger] S.contains(t) && serial_below(aids, t, b) && serial_below(aids, t, start) ==> S2.contains(t) && serial_below(aids, t, c2),
+        forall|t: nat| #[trigger] S.contains(t) && serial_below(aids, t, b) && serial_below(aids, t, start) ==> S2.contains(t) && serial_below(aids, t, c2),
     ensures
         dbj_deep_in(aids, abstr_levels_full(aids, e, start, n), S2, c2),
     decreases e,
@@ -1086,7 +1086,7 @@ pub proof fn abstr_levels_dbj_deep_in(
             if let Some(s) = crate::expr_arena_bridge::dbj_serial(aids, id) {
                 if s < start {
                     assert(S.contains(id) && serial_below(aids, id, b) && serial_below(aids, id, start));
-                    assert forall|t: u32| #[trigger] S.contains(t) && serial_below(aids, t, s) implies S2.contains(t) && serial_below(aids, t, s) by {
+                    assert forall|t: nat| #[trigger] S.contains(t) && serial_below(aids, t, s) implies S2.contains(t) && serial_below(aids, t, s) by {
                         assert(serial_below(aids, t, b) && serial_below(aids, t, start));
                     }
                     dbj_deep_in_weaken(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], S, s, S2, s);
@@ -1153,7 +1153,7 @@ pub proof fn abstr_levels_nlbv(aids: (nat, nat), e: ExprSpec, start: u16, nob: u
 }
 
 /// A term in scope is in scope in exactly what it uses.
-pub proof fn occ_self(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
+pub proof fn occ_self(aids: (nat, nat), e: ExprSpec, S: ISet<nat>, c: u16)
     requires
         dbj_deep_in(aids, e, S, c),
     ensures
@@ -1165,7 +1165,7 @@ pub proof fn occ_self(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16)
 }
 
 /// Freshness from deep scope.
-pub proof fn dbj_deep_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
+pub proof fn dbj_deep_fv_absent(aids: (nat, nat), e: ExprSpec, k: nat, c: u16)
     requires
         crate::expr_arena_bridge::dbj_serial(aids, k) == Some(c),
         dbj_deep(aids, e, c),
@@ -1178,7 +1178,7 @@ pub proof fn dbj_deep_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
 
 /// Unique locals only reach unique locals, so a level-local is unreachable
 /// from them.
-pub proof fn unique_ty_deep_absent(aids: (nat, nat), k: u32, e: ExprSpec, n: nat)
+pub proof fn unique_ty_deep_absent(aids: (nat, nat), k: nat, e: ExprSpec, n: nat)
     requires
         crate::expr_arena_bridge::dbj_serial(aids, k) is Some,
         unique_ty_deep(aids, e, n),
@@ -1215,7 +1215,7 @@ pub proof fn unique_ty_deep_absent(aids: (nat, nat), k: u32, e: ExprSpec, n: nat
 /// level-local at level `c` is unreachable from a term deep in scope below
 /// `c`: everything the term reaches is a level-local below its own level, or
 /// a unique local.
-pub proof fn dbj_deep_in_absent(aids: (nat, nat), k: u32, e: ExprSpec, S: ISet<u32>, c: u16, kc: u16) -> (n: nat)
+pub proof fn dbj_deep_in_absent(aids: (nat, nat), k: nat, e: ExprSpec, S: ISet<nat>, c: u16, kc: u16) -> (n: nat)
     requires
         crate::expr_arena_bridge::dbj_serial(aids, k) == Some(kc),
         c <= kc,
@@ -1272,7 +1272,7 @@ pub proof fn dbj_deep_in_absent(aids: (nat, nat), k: u32, e: ExprSpec, S: ISet<u
     }
 }
 
-pub proof fn dbj_deep_unreach(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
+pub proof fn dbj_deep_unreach(aids: (nat, nat), e: ExprSpec, k: nat, c: u16)
     requires
         crate::expr_arena_bridge::dbj_serial(aids, k) == Some(c),
         dbj_deep(aids, e, c),
@@ -1334,7 +1334,7 @@ pub proof fn subst_full_push(e: ExprSpec, l: Seq<ExprSpec>, s: ExprSpec, offset:
 /// term whose level-locals are all below `c`. The arena is hash-consed, so a
 /// newly made local can be the very node an old term mentions -- freshness has
 /// to come from the level, and this is where it does.
-pub proof fn dbj_serials_below_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
+pub proof fn dbj_serials_below_fv_absent(aids: (nat, nat), e: ExprSpec, k: nat, c: u16)
     requires
         crate::expr_arena_bridge::dbj_serial(aids, k) == Some(c),
         dbj_serials_below(aids, e, c),
@@ -1689,7 +1689,7 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
 /// `locals` to the first (scanning backward) occurrence of `id`, i.e. `Some(0)`
 /// if `locals`'s last element is `id`, `Some(1)` if its second-to-last is,
 /// etc.
-pub open spec fn find_from_end(locals: Seq<u32>, id: u32) -> Option<nat>
+pub open spec fn find_from_end(locals: Seq<nat>, id: nat) -> Option<nat>
     decreases locals.len(),
 {
     if locals.len() == 0 {
@@ -1708,7 +1708,7 @@ pub open spec fn find_from_end(locals: Seq<u32>, id: u32) -> Option<nat>
 /// `subst_full_noop`, and what discharges `abstr_aux`'s `!has_fvars(e)`
 /// short-circuit.
 /// Abstracting an id that does not occur changes nothing.
-pub proof fn abstr_full_absent(e: ExprSpec, x: u32, off: nat)
+pub proof fn abstr_full_absent(e: ExprSpec, x: nat, off: nat)
     requires
         fv_absent(e, x),
     ensures
@@ -1742,12 +1742,12 @@ pub proof fn abstr_full_absent(e: ExprSpec, x: u32, off: nat)
 /// Abstracting nothing changes nothing.
 pub proof fn abstr_full_empty(e: ExprSpec, off: nat)
     ensures
-        abstr_full(e, Seq::<u32>::empty(), off) == e,
+        abstr_full(e, Seq::<nat>::empty(), off) == e,
     decreases e,
 {
     match e {
         ExprSpec::Free(id) => {
-            find_from_end_no_match(Seq::<u32>::empty(), id);
+            find_from_end_no_match(Seq::<nat>::empty(), id);
         },
         ExprSpec::App(f, a) => {
             abstr_full_empty(*f, off);
@@ -1771,7 +1771,7 @@ pub proof fn abstr_full_empty(e: ExprSpec, off: nat)
 
 /// Abstracting the innermost id first, then the rest one binder further out,
 /// is abstracting them all at once.
-pub proof fn abstr_full_compose(e: ExprSpec, ids: Seq<u32>, x: u32, off: nat)
+pub proof fn abstr_full_compose(e: ExprSpec, ids: Seq<nat>, x: nat, off: nat)
     requires
         forall|j: int| 0 <= j < ids.len() ==> ids[j] != x,
     ensures
@@ -1811,7 +1811,7 @@ pub proof fn abstr_full_compose(e: ExprSpec, ids: Seq<u32>, x: u32, off: nat)
 }
 
 /// Abstract, then instantiate with the same local: the round trip.
-pub proof fn abstr_inst_roundtrip(e: ExprSpec, x: u32, off: nat)
+pub proof fn abstr_inst_roundtrip(e: ExprSpec, x: nat, off: nat)
     requires
         nlbv(e) <= off,
         off + depth(e) < 0x1_0000_0000,
@@ -1849,7 +1849,7 @@ pub proof fn abstr_inst_roundtrip(e: ExprSpec, x: u32, off: nat)
 }
 
 /// The abstracted id is gone.
-pub proof fn abstr_full_removes(e: ExprSpec, x: u32, off: nat)
+pub proof fn abstr_full_removes(e: ExprSpec, x: nat, off: nat)
     ensures
         fv_absent(abstr_full(e, seq![x], off), x),
     decreases e,
@@ -1883,7 +1883,7 @@ pub proof fn abstr_full_removes(e: ExprSpec, x: u32, off: nat)
 }
 
 /// Abstracting one id adds one loose index at most.
-pub proof fn abstr_full_nlbv1(e: ExprSpec, x: u32, off: nat)
+pub proof fn abstr_full_nlbv1(e: ExprSpec, x: nat, off: nat)
     requires
         nlbv(e) <= off,
     ensures
@@ -1924,8 +1924,8 @@ pub proof fn abstr_full_nlbv1(e: ExprSpec, x: u32, off: nat)
 pub proof fn abstr_levels_eq_abstr_full_in(
     aids: (nat, nat),
     e: ExprSpec,
-    ids: Seq<u32>,
-    S: ISet<u32>,
+    ids: Seq<nat>,
+    S: ISet<nat>,
     start_pos: u16,
     nob: u16,
     offset: nat,
@@ -1937,7 +1937,7 @@ pub proof fn abstr_levels_eq_abstr_full_in(
             0 <= k < ids.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, ids[k]) == Some(
                 (start_pos + k) as u16,
             ),
-        forall|id: u32, k: int|
+        forall|id: nat, k: int|
             #![trigger S.contains(id), ids[k]]
             0 <= k < ids.len() && S.contains(id) && crate::expr_arena_bridge::dbj_serial(aids, id) == Some(
                 (start_pos + k) as u16,
@@ -2013,7 +2013,7 @@ pub proof fn abstr_levels_eq_abstr_full_in(
     }
 }
 
-pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
+pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<nat>, offset: nat)
     requires
         !has_fv(e),
     ensures
@@ -2046,7 +2046,7 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
 /// with nothing matching nearer the end, is what the search reports. The index
 /// direction is the whole difference between the two -- `find_from_end` peels
 /// `locals[len-1]` first, so position `p` is element `len-1-p`.
-pub proof fn find_from_end_first_match(locals: Seq<u32>, id: u32, p: nat)
+pub proof fn find_from_end_first_match(locals: Seq<nat>, id: nat, p: nat)
     requires
         p < locals.len(),
         locals[(locals.len() - 1 - p) as int] == id,
@@ -2075,7 +2075,7 @@ pub proof fn find_from_end_first_match(locals: Seq<u32>, id: u32, p: nat)
 /// The other converse: nothing in `locals` matches, so the search reports
 /// `None`. Stated over plain indices -- which direction they are counted in
 /// does not matter when the quantifier covers the whole sequence.
-pub proof fn find_from_end_no_match(locals: Seq<u32>, id: u32)
+pub proof fn find_from_end_no_match(locals: Seq<nat>, id: nat)
     requires
         forall|j: int| 0 <= j < locals.len() ==> locals[j] != id,
     ensures
@@ -2097,7 +2097,7 @@ pub proof fn find_from_end_no_match(locals: Seq<u32>, id: u32)
 /// short-circuiting, no caching): replace each `Free(id)` where `id` is in
 /// `locals` with `Var(offset + <id's distance from the end of locals>)`,
 /// leave everything else as-is, and increment `offset` under each `Bind`.
-pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprSpec
+pub open spec fn abstr_full(e: ExprSpec, locals: Seq<nat>, offset: nat) -> ExprSpec
     decreases e,
 {
     match e {
@@ -2131,7 +2131,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
 /// `k` does not occur as a free variable in `e` -- the freshness a
 /// binder's fresh-instance rule needs (checkable at run time by pointer
 /// comparison, unlike an id ordering).
-pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
+pub open spec fn fv_absent(e: ExprSpec, k: nat) -> bool
     decreases e,
 {
     match e {
@@ -2155,7 +2155,7 @@ pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
 /// holds for some `n`: `fv_absent` alone lets a binder reuse an outer local
 /// that a local in the body depends on, and abstracting the body's type then
 /// captures that outer local.
-pub open spec fn deep_absent(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat) -> bool
+pub open spec fn deep_absent(G: Map<nat, ExprSpec>, k: nat, e: ExprSpec, n: nat) -> bool
     decreases n, e,
 {
     match e {
@@ -2168,11 +2168,11 @@ pub open spec fn deep_absent(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat)
     }
 }
 
-pub open spec fn unreach(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec) -> bool {
+pub open spec fn unreach(G: Map<nat, ExprSpec>, k: nat, e: ExprSpec) -> bool {
     exists|n: nat| #[trigger] deep_absent(G, k, e, n)
 }
 
-pub proof fn deep_absent_mono(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat, m: nat)
+pub proof fn deep_absent_mono(G: Map<nat, ExprSpec>, k: nat, e: ExprSpec, n: nat, m: nat)
     requires
         deep_absent(G, k, e, n),
         n <= m,
@@ -2206,7 +2206,7 @@ pub proof fn deep_absent_mono(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat
     }
 }
 
-pub proof fn deep_absent_fv_absent(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat)
+pub proof fn deep_absent_fv_absent(G: Map<nat, ExprSpec>, k: nat, e: ExprSpec, n: nat)
     requires
         deep_absent(G, k, e, n),
     ensures

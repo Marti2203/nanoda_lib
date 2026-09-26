@@ -367,19 +367,19 @@ pub open spec fn quot_expected_ty(which: u8, n: QuotNames) -> ExprSpec {
     }
 }
 
-pub open spec fn qf(i: u32) -> ExprSpec {
+pub open spec fn qf(i: nat) -> ExprSpec {
     ExprSpec::Free(i)
 }
 
 /// Abstract one local at offset 0, as `abstr_pi` does.
-pub open spec fn qab(k: u32, e: ExprSpec) -> ExprSpec {
+pub open spec fn qab(k: nat, e: ExprSpec) -> ExprSpec {
     crate::expr_model::abstr_full(e, seq![k], 0)
 }
 
 /// `Quot.lift`'s type as `quot_expected_type` builds it, step by step: each
 /// `abstr_pi` abstracts its local out of what it wraps, each `arrow!` is a
 /// plain Pi. `lift_layered_eq` evaluates it to `quot_lift_ty`.
-pub open spec fn lift_layered(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_layered(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     let rab = qa(qa(qf(ir), qf(ia1)), qf(ib1));
     let eq_app = qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qf(ia1))), qa(qf(i_f), qf(ib1)));
     let lift_inner = qb(qf(ia), qab(ia1, qb(qf(ia), qab(ib1, qb(rab, eq_app)))));
@@ -393,7 +393,7 @@ pub open spec fn lift_layered(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32
 /// The layered construction evaluates to `Quot.lift`'s type, one abstraction
 /// at a time (each step is its own lemma: evaluating them all at once is too
 /// much for one query).
-pub proof fn lift_layered_eq(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+pub proof fn lift_layered_eq(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -406,44 +406,44 @@ pub proof fn lift_layered_eq(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32,
     lift_s1(n, ia, ir, ibb, i_f, ia1, ib1); lift_s2(n, ia, ir, ibb, i_f, ia1, ib1); lift_s3(n, ia, ir, ibb, i_f, ia1, ib1); lift_s4(n, ia, ir, ibb, i_f, ia1, ib1); lift_s5(n, ia, ir, ibb, i_f, ia1, ib1); lift_s6(n, ia, ir, ibb, i_f, ia1, ib1);
 }
 
-pub open spec fn lift_t_l_rab(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_rab(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qa(qa(qf(ir), qf(ia1)), qf(ib1))
 }
 
-pub open spec fn lift_t_l_eq(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_eq(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qf(ia1))), qa(qf(i_f), qf(ib1)))
 }
 
-pub open spec fn lift_t_l_x1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_x1(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qb(qa(qa(qf(ir), qf(ia1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qf(ia1))), qa(qf(i_f), qv(1))))
 }
 
-pub open spec fn lift_t_l_x2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_x2(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qb(qf(ia), qb(qa(qa(qf(ir), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qv(2))), qa(qf(i_f), qv(1)))))
 }
 
-pub open spec fn lift_t_l_qar(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_qar(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir))
 }
 
-pub open spec fn lift_t_l_b4(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_b4(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qb(qb(qf(ia), qb(qf(ia), qb(qa(qa(qf(ir), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qv(3), qv(2))), qa(qv(3), qv(1)))))), qb(lift_t_l_qar(n, ia, ir, ibb, i_f, ia1, ib1), qf(ibb)))
 }
 
-pub open spec fn lift_t_l_b3(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_b3(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qb(qb(qf(ia), qv(1)), qb(qb(qf(ia), qb(qf(ia), qb(qa(qa(qf(ir), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qv(4)), qa(qv(3), qv(2))), qa(qv(3), qv(1)))))), qb(lift_t_l_qar(n, ia, ir, ibb, i_f, ia1, ib1), qv(3))))
 }
 
-pub open spec fn lift_t_l_b2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_b2(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qb(qsort(n.v), qb(qb(qf(ia), qv(1)), qb(qb(qf(ia), qb(qf(ia), qb(qa(qa(qv(4), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qv(4)), qa(qv(3), qv(2))), qa(qv(3), qv(1)))))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qv(3)), qv(3)))))
 }
 
-pub open spec fn lift_t_l_b1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+pub open spec fn lift_t_l_b1(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat) -> ExprSpec {
     qb(rel_ty(), qb(qsort(n.v), qb(qb(qv(2), qv(1)), qb(lift_inner_ty(n), qb(qa(qa(qconst(n.quot, n.u), qv(4)), qv(3)), qv(3))))))
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
-proof fn lift_s1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+proof fn lift_s1(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -465,7 +465,7 @@ proof fn lift_s1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, i
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
-proof fn lift_s2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+proof fn lift_s2(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -487,7 +487,7 @@ proof fn lift_s2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, i
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
-proof fn lift_s3(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+proof fn lift_s3(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -509,7 +509,7 @@ proof fn lift_s3(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, i
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
-proof fn lift_s4(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+proof fn lift_s4(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -531,7 +531,7 @@ proof fn lift_s4(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, i
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
-proof fn lift_s5(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+proof fn lift_s5(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -553,7 +553,7 @@ proof fn lift_s5(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, i
 }
 
 /// One abstraction step of `lift_layered_eq`, its own query.
-proof fn lift_s6(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+proof fn lift_s6(n: QuotNames, ia: nat, ir: nat, ibb: nat, i_f: nat, ia1: nat, ib1: nat)
     requires
         ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
         ir != ibb, ir != i_f, ir != ia1, ir != ib1,
@@ -575,7 +575,7 @@ proof fn lift_s6(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, i
 }
 
 /// `Quot.ind`'s type as built, step by step (see `lift_layered`).
-pub open spec fn ind_layered(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32) -> ExprSpec {
+pub open spec fn ind_layered(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat) -> ExprSpec {
     let quot_a_r = qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir));
     let quot_mk_app = qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qf(ia1));
     let lhs = qb(qf(ia), qab(ia1, qa(qf(ibl), quot_mk_app)));
@@ -585,7 +585,7 @@ pub open spec fn ind_layered(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32,
 }
 
 /// As `lift_layered_eq`, for `Quot.ind`.
-pub proof fn ind_layered_eq(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+pub proof fn ind_layered_eq(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat)
     requires
         ia != ir, ia != ibl, ia != ia1, ia != iq,
         ir != ibl, ir != ia1, ir != iq,
@@ -597,16 +597,16 @@ pub proof fn ind_layered_eq(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, 
     ind_s1(n, ia, ir, ibl, ia1, iq); ind_s2(n, ia, ir, ibl, ia1, iq); ind_s3(n, ia, ir, ibl, ia1, iq); ind_s4(n, ia, ir, ibl, ia1, iq); ind_s5(n, ia, ir, ibl, ia1, iq);
 }
 
-pub open spec fn ind_t_i_b3(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32) -> ExprSpec {
+pub open spec fn ind_t_i_b3(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat) -> ExprSpec {
     qb(qb(qf(ia), qa(qv(1), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qv(0)))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir)), qa(qv(2), qv(0))))
 }
 
-pub open spec fn ind_t_i_b2(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32) -> ExprSpec {
+pub open spec fn ind_t_i_b2(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat) -> ExprSpec {
     qb(qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qv(0)), qprop()), qb(qb(qf(ia), qa(qv(1), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qv(2)), qv(0)))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qv(2)), qa(qv(2), qv(0)))))
 }
 
 /// One abstraction step of `ind_layered_eq`, its own query.
-proof fn ind_s1(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+proof fn ind_s1(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat)
     requires
         ia != ir, ia != ibl, ia != ia1, ia != iq,
         ir != ibl, ir != ia1, ir != iq,
@@ -620,7 +620,7 @@ proof fn ind_s1(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
 }
 
 /// One abstraction step of `ind_layered_eq`, its own query.
-proof fn ind_s2(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+proof fn ind_s2(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat)
     requires
         ia != ir, ia != ibl, ia != ia1, ia != iq,
         ir != ibl, ir != ia1, ir != iq,
@@ -634,7 +634,7 @@ proof fn ind_s2(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
 }
 
 /// One abstraction step of `ind_layered_eq`, its own query.
-proof fn ind_s3(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+proof fn ind_s3(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat)
     requires
         ia != ir, ia != ibl, ia != ia1, ia != iq,
         ir != ibl, ir != ia1, ir != iq,
@@ -648,7 +648,7 @@ proof fn ind_s3(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
 }
 
 /// One abstraction step of `ind_layered_eq`, its own query.
-proof fn ind_s4(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+proof fn ind_s4(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat)
     requires
         ia != ir, ia != ibl, ia != ia1, ia != iq,
         ir != ibl, ir != ia1, ir != iq,
@@ -662,7 +662,7 @@ proof fn ind_s4(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
 }
 
 /// One abstraction step of `ind_layered_eq`, its own query.
-proof fn ind_s5(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+proof fn ind_s5(n: QuotNames, ia: nat, ir: nat, ibl: nat, ia1: nat, iq: nat)
     requires
         ia != ir, ia != ibl, ia != ia1, ia != iq,
         ir != ibl, ir != ia1, ir != iq,
@@ -675,7 +675,7 @@ proof fn ind_s5(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
     reveal_with_fuel(crate::expr_model::abstr_full, 9);
 }
 
-proof fn find1(x: u32, y: u32)
+proof fn find1(x: nat, y: nat)
     ensures
         crate::expr_model::find_from_end(seq![x], y) == (if x == y {
             Some(0nat)
@@ -684,11 +684,11 @@ proof fn find1(x: u32, y: u32)
         }),
 {
     reveal_with_fuel(crate::expr_model::find_from_end, 2);
-    assert(seq![x].subrange(0, 0) =~= Seq::<u32>::empty());
+    assert(seq![x].subrange(0, 0) =~= Seq::<nat>::empty());
 }
 
 /// Two `Unique` locals of one context with different serials are different.
-proof fn serial_distinct(aids: (nat, nat), x: u32, y: u32, kx: u32, ky: u32)
+proof fn serial_distinct(aids: (nat, nat), x: nat, y: nat, kx: u32, ky: u32)
     requires
         crate::expr_arena_bridge::unique_serial(aids, x) == Some(kx),
         crate::expr_arena_bridge::unique_serial(aids, y) == Some(ky),

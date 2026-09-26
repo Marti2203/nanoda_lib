@@ -26,7 +26,7 @@ use vstd::prelude::*;
 verus! {
 
 /// The swap `x ↔ y` on one id.
-pub open spec fn sw(i: u32, x: u32, y: u32) -> u32 {
+pub open spec fn sw(i: nat, x: nat, y: nat) -> nat {
     if i == x {
         y
     } else if i == y {
@@ -37,7 +37,7 @@ pub open spec fn sw(i: u32, x: u32, y: u32) -> u32 {
 }
 
 /// The swap on a term: every free variable renamed by `sw`.
-pub open spec fn fswap(e: ExprSpec, x: u32, y: u32) -> ExprSpec
+pub open spec fn fswap(e: ExprSpec, x: nat, y: nat) -> ExprSpec
     decreases e,
 {
     match e {
@@ -55,39 +55,39 @@ pub open spec fn fswap(e: ExprSpec, x: u32, y: u32) -> ExprSpec
 }
 
 /// The swap on a sequence of terms.
-pub open spec fn sswap(s: Seq<ExprSpec>, x: u32, y: u32) -> Seq<ExprSpec> {
+pub open spec fn sswap(s: Seq<ExprSpec>, x: nat, y: nat) -> Seq<ExprSpec> {
     Seq::new(s.len(), |i: int| fswap(s[i], x, y))
 }
 
 /// The swap on a sequence of ids.
-pub open spec fn iswap(s: Seq<u32>, x: u32, y: u32) -> Seq<u32> {
+pub open spec fn iswap(s: Seq<nat>, x: nat, y: nat) -> Seq<nat> {
     Seq::new(s.len(), |i: int| sw(s[i], x, y))
 }
 
 /// The swap on a context: keys renamed, values swapped.
-pub open spec fn cswap(lctx: Map<u32, ExprSpec>, x: u32, y: u32) -> Map<u32, ExprSpec> {
-    Map::new(lctx.dom().map(|k: u32| sw(k, x, y)), |k: u32| fswap(lctx[sw(k, x, y)], x, y))
+pub open spec fn cswap(lctx: Map<nat, ExprSpec>, x: nat, y: nat) -> Map<nat, ExprSpec> {
+    Map::new(lctx.dom().map(|k: nat| sw(k, x, y)), |k: nat| fswap(lctx[sw(k, x, y)], x, y))
 }
 
 /// What the swapped context holds.
-pub proof fn cswap_at(lctx: Map<u32, ExprSpec>, x: u32, y: u32, k: u32)
+pub proof fn cswap_at(lctx: Map<nat, ExprSpec>, x: nat, y: nat, k: nat)
     ensures
         cswap(lctx, x, y).contains_key(k) == lctx.contains_key(sw(k, x, y)),
         lctx.contains_key(sw(k, x, y)) ==> cswap(lctx, x, y)[k] == fswap(lctx[sw(k, x, y)], x, y),
 {
     if lctx.contains_key(sw(k, x, y)) {
         assert(sw(sw(k, x, y), x, y) == k);
-        assert(lctx.dom().map(|j: u32| sw(j, x, y)).contains(k));
+        assert(lctx.dom().map(|j: nat| sw(j, x, y)).contains(k));
     }
 }
 
-pub proof fn sw_invol(i: u32, x: u32, y: u32)
+pub proof fn sw_invol(i: nat, x: nat, y: nat)
     ensures
         sw(sw(i, x, y), x, y) == i,
 {
 }
 
-pub proof fn fswap_invol(e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_invol(e: ExprSpec, x: nat, y: nat)
     ensures
         fswap(fswap(e, x, y), x, y) == e,
     decreases e,
@@ -114,7 +114,7 @@ pub proof fn fswap_invol(e: ExprSpec, x: u32, y: u32)
 }
 
 /// A term mentioning neither id is fixed.
-pub proof fn fswap_noop(e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_noop(e: ExprSpec, x: nat, y: nat)
     requires
         fv_absent(e, x),
         fv_absent(e, y),
@@ -144,7 +144,7 @@ pub proof fn fswap_noop(e: ExprSpec, x: u32, y: u32)
 }
 
 /// A term without free variables is fixed.
-pub proof fn fswap_closed(e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_closed(e: ExprSpec, x: nat, y: nat)
     requires
         !has_fv(e),
     ensures
@@ -172,7 +172,7 @@ pub proof fn fswap_closed(e: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_fv_absent(e: ExprSpec, k: u32, x: u32, y: u32)
+pub proof fn fswap_fv_absent(e: ExprSpec, k: nat, x: nat, y: nat)
     ensures
         fv_absent(fswap(e, x, y), sw(k, x, y)) == fv_absent(e, k),
     decreases e,
@@ -198,7 +198,7 @@ pub proof fn fswap_fv_absent(e: ExprSpec, k: u32, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_has_fv(e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_has_fv(e: ExprSpec, x: nat, y: nat)
     ensures
         has_fv(fswap(e, x, y)) == has_fv(e),
     decreases e,
@@ -224,7 +224,7 @@ pub proof fn fswap_has_fv(e: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_nlbv_depth(e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_nlbv_depth(e: ExprSpec, x: nat, y: nat)
     ensures
         nlbv(fswap(e, x, y)) == nlbv(e),
         depth(fswap(e, x, y)) == depth(e),
@@ -251,7 +251,7 @@ pub proof fn fswap_nlbv_depth(e: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_shift(d: int, c: nat, e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_shift(d: int, c: nat, e: ExprSpec, x: nat, y: nat)
     ensures
         fswap(crate::beta_model::shift(d, c, e), x, y) == crate::beta_model::shift(d, c, fswap(e, x, y)),
     decreases e,
@@ -278,7 +278,7 @@ pub proof fn fswap_shift(d: int, c: nat, e: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_subst(j: nat, s: ExprSpec, e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_subst(j: nat, s: ExprSpec, e: ExprSpec, x: nat, y: nat)
     ensures
         fswap(crate::beta_model::subst(j, s, e), x, y) == crate::beta_model::subst(j, fswap(s, x, y), fswap(e, x, y)),
     decreases e,
@@ -307,7 +307,7 @@ pub proof fn fswap_subst(j: nat, s: ExprSpec, e: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_subst1(body: ExprSpec, arg: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_subst1(body: ExprSpec, arg: ExprSpec, x: nat, y: nat)
     ensures
         fswap(crate::beta_model::subst1(body, arg), x, y) == crate::beta_model::subst1(fswap(body, x, y), fswap(arg, x, y)),
 {
@@ -316,7 +316,7 @@ pub proof fn fswap_subst1(body: ExprSpec, arg: ExprSpec, x: u32, y: u32)
     fswap_shift(-1, 0, crate::beta_model::subst(0, crate::beta_model::shift(1, 0, arg), body), x, y);
 }
 
-pub proof fn fswap_subst_full(e: ExprSpec, s: Seq<ExprSpec>, off: nat, x: u32, y: u32)
+pub proof fn fswap_subst_full(e: ExprSpec, s: Seq<ExprSpec>, off: nat, x: nat, y: nat)
     ensures
         fswap(subst_full(e, s, off), x, y) == subst_full(fswap(e, x, y), sswap(s, x, y), off),
     decreases e,
@@ -342,7 +342,7 @@ pub proof fn fswap_subst_full(e: ExprSpec, s: Seq<ExprSpec>, off: nat, x: u32, y
     }
 }
 
-pub proof fn find_from_end_swap(ids: Seq<u32>, id: u32, x: u32, y: u32)
+pub proof fn find_from_end_swap(ids: Seq<nat>, id: nat, x: nat, y: nat)
     ensures
         find_from_end(iswap(ids, x, y), sw(id, x, y)) == find_from_end(ids, id),
     decreases ids.len(),
@@ -355,7 +355,7 @@ pub proof fn find_from_end_swap(ids: Seq<u32>, id: u32, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_abstr_full(e: ExprSpec, ids: Seq<u32>, off: nat, x: u32, y: u32)
+pub proof fn fswap_abstr_full(e: ExprSpec, ids: Seq<nat>, off: nat, x: nat, y: nat)
     ensures
         fswap(abstr_full(e, ids, off), x, y) == abstr_full(fswap(e, x, y), iswap(ids, x, y), off),
     decreases e,
@@ -385,7 +385,7 @@ pub proof fn fswap_abstr_full(e: ExprSpec, ids: Seq<u32>, off: nat, x: u32, y: u
 }
 
 /// Opening a binder commutes with the swap.
-pub proof fn fswap_inst_free(b: ExprSpec, k: u32, x: u32, y: u32)
+pub proof fn fswap_inst_free(b: ExprSpec, k: nat, x: nat, y: nat)
     ensures
         fswap(subst_full(b, seq![ExprSpec::Free(k)], 0), x, y) == subst_full(fswap(b, x, y), seq![ExprSpec::Free(sw(k, x, y))], 0),
 {
@@ -394,7 +394,7 @@ pub proof fn fswap_inst_free(b: ExprSpec, k: u32, x: u32, y: u32)
 }
 
 /// Closing a binder over one local commutes with the swap.
-pub proof fn fswap_abstr1(e: ExprSpec, k: u32, x: u32, y: u32)
+pub proof fn fswap_abstr1(e: ExprSpec, k: nat, x: nat, y: nat)
     ensures
         fswap(abstr_full(e, seq![k], 0), x, y) == abstr_full(fswap(e, x, y), seq![sw(k, x, y)], 0),
 {
@@ -402,7 +402,7 @@ pub proof fn fswap_abstr1(e: ExprSpec, k: u32, x: u32, y: u32)
     assert(iswap(seq![k], x, y) =~= seq![sw(k, x, y)]);
 }
 
-pub proof fn fswap_spine_app(h: ExprSpec, args: Seq<ExprSpec>, x: u32, y: u32)
+pub proof fn fswap_spine_app(h: ExprSpec, args: Seq<ExprSpec>, x: nat, y: nat)
     ensures
         fswap(crate::beta_model::spine_app(h, args), x, y) == crate::beta_model::spine_app(fswap(h, x, y), sswap(args, x, y)),
     decreases args.len(),
@@ -414,7 +414,7 @@ pub proof fn fswap_spine_app(h: ExprSpec, args: Seq<ExprSpec>, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_spine(e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_spine(e: ExprSpec, x: nat, y: nat)
     ensures
         crate::beta_model::spine_head(fswap(e, x, y)) == fswap(crate::beta_model::spine_head(e), x, y),
         crate::beta_model::spine_args(fswap(e, x, y)) == sswap(crate::beta_model::spine_args(e), x, y),
@@ -435,14 +435,14 @@ pub open spec fn env_fv_free(env: EnvSpec) -> bool {
         ==> !has_fv(env.recs[id].rules[i].rhs))
 }
 
-pub proof fn sswap_len_index(s: Seq<ExprSpec>, x: u32, y: u32)
+pub proof fn sswap_len_index(s: Seq<ExprSpec>, x: nat, y: nat)
     ensures
         sswap(s, x, y).len() == s.len(),
         forall|i: int| 0 <= i < s.len() ==> #[trigger] sswap(s, x, y)[i] == fswap(s[i], x, y),
 {
 }
 
-pub proof fn sswap_subrange(s: Seq<ExprSpec>, a: int, b: int, x: u32, y: u32)
+pub proof fn sswap_subrange(s: Seq<ExprSpec>, a: int, b: int, x: nat, y: nat)
     requires
         0 <= a <= b <= s.len(),
     ensures
@@ -451,7 +451,7 @@ pub proof fn sswap_subrange(s: Seq<ExprSpec>, a: int, b: int, x: u32, y: u32)
     assert(sswap(s, x, y).subrange(a, b) =~= sswap(s.subrange(a, b), x, y));
 }
 
-pub proof fn fswap_nat_value(export: nat, e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_nat_value(export: nat, e: ExprSpec, x: nat, y: nat)
     ensures
         nat_value(export, fswap(e, x, y)) == nat_value(export, e),
     decreases e,
@@ -475,7 +475,7 @@ pub proof fn fswap_nat_value(export: nat, e: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_nat_fold(export: nat, s: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_nat_fold(export: nat, s: ExprSpec, x: nat, y: nat)
     ensures
         nat_fold_ready(export, fswap(s, x, y)) == nat_fold_ready(export, s),
         nat_fold_ready(export, s) ==> fswap(nat_fold_result(export, s), x, y) == nat_fold_result(export, fswap(s, x, y)),
@@ -488,7 +488,7 @@ pub proof fn fswap_nat_fold(export: nat, s: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_rec(env: EnvSpec, s: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_rec(env: EnvSpec, s: ExprSpec, x: nat, y: nat)
     ensures
         rec_ready(env, fswap(s, x, y)) == rec_ready(env, s),
         rec_ready_u(env, fswap(s, x, y)) == rec_ready_u(env, s),
@@ -544,7 +544,7 @@ pub proof fn fswap_rec(env: EnvSpec, s: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_iota_extract(env: EnvSpec, pidx: usize, inner2: ExprSpec, e2: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_iota_extract(env: EnvSpec, pidx: usize, inner2: ExprSpec, e2: ExprSpec, x: nat, y: nat)
     requires
         iota_extract(env, pidx, inner2, e2),
     ensures
@@ -561,7 +561,7 @@ pub proof fn fswap_iota_extract(env: EnvSpec, pidx: usize, inner2: ExprSpec, e2:
 }
 
 /// PARALLEL REDUCTION IS EQUIVARIANT.
-pub proof fn fswap_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: nat, y: nat)
     requires
         env_fv_free(env),
         pstep(env, e1, e2),
@@ -680,7 +680,7 @@ pub proof fn fswap_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: u32, y: u3
 }
 
 
-pub proof fn fswap_pstep_star(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_pstep_star(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: nat, y: nat)
     requires
         env_fv_free(env),
         pstep_star(env, e1, e2),
@@ -698,7 +698,7 @@ pub proof fn fswap_pstep_star(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: u32, 
     assert(ch2[ch2.len() - 1] == fswap(e2, x, y));
 }
 
-pub proof fn fswap_defeq(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_defeq(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: nat, y: nat)
     requires
         env_fv_free(env),
         defeq(env, e1, e2),
@@ -710,7 +710,7 @@ pub proof fn fswap_defeq(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: u32, y: u3
     fswap_pstep_star(env, e2, z, x, y);
 }
 
-pub proof fn fswap_quot(export: nat, s0: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_quot(export: nat, s0: ExprSpec, x: nat, y: nat)
     ensures
         quot_ready(export, fswap(s0, x, y)) == quot_ready(export, s0),
         quot_ready(export, s0) ==> fswap(quot_result(export, s0), x, y) == quot_result(export, fswap(s0, x, y)),
@@ -733,7 +733,7 @@ pub proof fn fswap_quot(export: nat, s0: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_eta(lam: ExprSpec, f: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_eta(lam: ExprSpec, f: ExprSpec, x: nat, y: nat)
     requires
         eta_expands_to(lam, f),
     ensures
@@ -749,7 +749,7 @@ pub proof fn fswap_eta(lam: ExprSpec, f: ExprSpec, x: u32, y: u32)
     }
 }
 
-pub proof fn fswap_leaves(env: EnvSpec, a: ExprSpec, b: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_leaves(env: EnvSpec, a: ExprSpec, b: ExprSpec, x: nat, y: nat)
     requires
         env_fv_free(env),
     ensures
@@ -771,7 +771,7 @@ pub proof fn fswap_leaves(env: EnvSpec, a: ExprSpec, b: ExprSpec, x: u32, y: u32
 }
 
 /// UNTYPED CONVERSION IS EQUIVARIANT (one step and chains).
-pub proof fn fswap_deq_c(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: u32, y: u32)
+pub proof fn fswap_deq_c(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: nat, y: nat)
     requires
         env_fv_free(env),
         deq_c(env, a, b, h),
@@ -795,7 +795,7 @@ pub proof fn fswap_deq_c(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: u32,
                 if deq_c(env, *b1, *b2, hp) {
                     fswap_deq_c(env, *b1, *b2, hp, x, y);
                 } else {
-                    let k = choose|k: u32| #[trigger] fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k)
+                    let k = choose|k: nat| #[trigger] fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k)
                         && deq(env, inst_free(*b1, k), inst_free(*b2, k), hp);
                     fswap_deq(env, inst_free(*b1, k), inst_free(*b2, k), hp, x, y);
                     fswap_inst_free(*b1, k, x, y);
@@ -818,7 +818,7 @@ pub proof fn fswap_deq_c(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: u32,
     }
 }
 
-pub proof fn fswap_deq(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: u32, y: u32)
+pub proof fn fswap_deq(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: nat, y: nat)
     requires
         env_fv_free(env),
         deq(env, a, b, h),
@@ -838,17 +838,17 @@ pub proof fn fswap_deq(env: EnvSpec, a: ExprSpec, b: ExprSpec, h: nat, x: u32, y
 }
 
 
-pub proof fn cswap_invol(lctx: Map<u32, ExprSpec>, x: u32, y: u32)
+pub proof fn cswap_invol(lctx: Map<nat, ExprSpec>, x: nat, y: nat)
     ensures
         cswap(cswap(lctx, x, y), x, y) == lctx,
 {
     let c2 = cswap(cswap(lctx, x, y), x, y);
-    assert forall|k: u32| #[trigger] c2.contains_key(k) == lctx.contains_key(k) by {
+    assert forall|k: nat| #[trigger] c2.contains_key(k) == lctx.contains_key(k) by {
         cswap_at(cswap(lctx, x, y), x, y, k);
         cswap_at(lctx, x, y, sw(k, x, y));
         sw_invol(k, x, y);
     }
-    assert forall|k: u32| #[trigger] c2.contains_key(k) implies c2[k] == lctx[k] by {
+    assert forall|k: nat| #[trigger] c2.contains_key(k) implies c2[k] == lctx[k] by {
         cswap_at(cswap(lctx, x, y), x, y, k);
         cswap_at(lctx, x, y, sw(k, x, y));
         sw_invol(k, x, y);
@@ -857,19 +857,19 @@ pub proof fn cswap_invol(lctx: Map<u32, ExprSpec>, x: u32, y: u32)
     assert(c2 =~= lctx);
 }
 
-pub proof fn cswap_insert(lctx: Map<u32, ExprSpec>, k: u32, a: ExprSpec, x: u32, y: u32)
+pub proof fn cswap_insert(lctx: Map<nat, ExprSpec>, k: nat, a: ExprSpec, x: nat, y: nat)
     ensures
         cswap(lctx.insert(k, a), x, y) == cswap(lctx, x, y).insert(sw(k, x, y), fswap(a, x, y)),
 {
     let l = cswap(lctx.insert(k, a), x, y);
     let r = cswap(lctx, x, y).insert(sw(k, x, y), fswap(a, x, y));
-    assert forall|j: u32| #[trigger] l.contains_key(j) == r.contains_key(j) by {
+    assert forall|j: nat| #[trigger] l.contains_key(j) == r.contains_key(j) by {
         cswap_at(lctx.insert(k, a), x, y, j);
         cswap_at(lctx, x, y, j);
         sw_invol(j, x, y);
         sw_invol(k, x, y);
     }
-    assert forall|j: u32| #[trigger] l.contains_key(j) implies l[j] == r[j] by {
+    assert forall|j: nat| #[trigger] l.contains_key(j) implies l[j] == r[j] by {
         cswap_at(lctx.insert(k, a), x, y, j);
         cswap_at(lctx, x, y, j);
         sw_invol(j, x, y);
@@ -878,7 +878,7 @@ pub proof fn cswap_insert(lctx: Map<u32, ExprSpec>, k: u32, a: ExprSpec, x: u32,
     assert(l =~= r);
 }
 
-pub proof fn cswap_key(lctx: Map<u32, ExprSpec>, k: u32, x: u32, y: u32)
+pub proof fn cswap_key(lctx: Map<nat, ExprSpec>, k: nat, x: nat, y: nat)
     ensures
         cswap(lctx, x, y).contains_key(sw(k, x, y)) == lctx.contains_key(k),
         lctx.contains_key(k) ==> cswap(lctx, x, y)[sw(k, x, y)] == fswap(lctx[k], x, y),
@@ -887,7 +887,7 @@ pub proof fn cswap_key(lctx: Map<u32, ExprSpec>, k: u32, x: u32, y: u32)
     sw_invol(k, x, y);
 }
 
-pub proof fn fswap_deep_absent(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat, x: u32, y: u32)
+pub proof fn fswap_deep_absent(lctx: Map<nat, ExprSpec>, k: nat, e: ExprSpec, n: nat, x: nat, y: nat)
     requires
         crate::expr_model::deep_absent(lctx, k, e, n),
     ensures
@@ -925,7 +925,7 @@ pub proof fn fswap_deep_absent(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n:
     }
 }
 
-pub proof fn fswap_unreach(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_unreach(lctx: Map<nat, ExprSpec>, k: nat, e: ExprSpec, x: nat, y: nat)
     requires
         crate::expr_model::unreach(lctx, k, e),
     ensures
@@ -936,7 +936,7 @@ pub proof fn fswap_unreach(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec, x: u32
 }
 
 /// The converse, by the involution.
-pub proof fn fswap_unreach_back(lctx: Map<u32, ExprSpec>, k: u32, e: ExprSpec, x: u32, y: u32)
+pub proof fn fswap_unreach_back(lctx: Map<nat, ExprSpec>, k: nat, e: ExprSpec, x: nat, y: nat)
     requires
         crate::expr_model::unreach(cswap(lctx, x, y), k, e),
     ensures
@@ -975,21 +975,21 @@ pub proof fn rel_has_fv(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, t: ExprSp
     }
 }
 
-pub proof fn sswap_add(a: Seq<ExprSpec>, b: Seq<ExprSpec>, x: u32, y: u32)
+pub proof fn sswap_add(a: Seq<ExprSpec>, b: Seq<ExprSpec>, x: nat, y: nat)
     ensures
         sswap(a + b, x, y) == sswap(a, x, y) + sswap(b, x, y),
 {
     assert(sswap(a + b, x, y) =~= sswap(a, x, y) + sswap(b, x, y));
 }
 
-pub proof fn fswap_eta_projs(e: ExprSpec, n: nat, x: u32, y: u32)
+pub proof fn fswap_eta_projs(e: ExprSpec, n: nat, x: nat, y: nat)
     ensures
         sswap(eta_projs(e, n), x, y) == eta_projs(fswap(e, x, y), n),
 {
     assert(sswap(eta_projs(e, n), x, y) =~= eta_projs(fswap(e, x, y), n));
 }
 
-pub proof fn sswap_one(a: ExprSpec, x: u32, y: u32)
+pub proof fn sswap_one(a: ExprSpec, x: nat, y: nat)
     ensures
         sswap(seq![a], x, y) == seq![fswap(a, x, y)],
 {
