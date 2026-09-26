@@ -256,7 +256,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::nat_type_id(crate::util_model::export_id(*final(self))),
+                    == crate::expr_arena_bridge::nat_type_id(crate::util_model::export_id(*final(self)))
+                    && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,
@@ -280,7 +281,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match result {
                 Some(e) => crate::expr_arena_bridge::is_const_shape(e)
                     && crate::expr_arena_bridge::const_id(e)
-                    == crate::expr_arena_bridge::string_type_id(crate::util_model::export_id(*final(self))),
+                    == crate::expr_arena_bridge::string_type_id(crate::util_model::export_id(*final(self)))
+                    && crate::expr_arena_bridge::const_levels_vec(e).len() == 0,
                 None => true,
             },
             final(self).dbj_level_counter == old(self).dbj_level_counter,

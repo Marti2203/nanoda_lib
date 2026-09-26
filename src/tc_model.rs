@@ -1103,11 +1103,11 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (matches!(e, ExprSpec::NatLit(_)) && match t {
-        ExprSpec::Const(cid, _) => cid == nat_type_id(denv.export),
+        ExprSpec::Const(cid, ls) => cid == nat_type_id(denv.export) && ls.len() == 0,
         _ => false,
     })
     ||| (matches!(e, ExprSpec::StringLit(_)) && match t {
-        ExprSpec::Const(cid, _) => cid == string_type_id(denv.export),
+        ExprSpec::Const(cid, ls) => cid == string_type_id(denv.export) && ls.len() == 0,
         _ => false,
     })
     ||| (fuel > 0 && match e {
@@ -1221,7 +1221,7 @@ pub proof fn types_to_nat_lit(
         matches!(e, ExprSpec::NatLit(_)),
         matches!(t, ExprSpec::Const(_, _)),
         (match t {
-            ExprSpec::Const(cid, _) => cid == nat_type_id(denv.export),
+            ExprSpec::Const(cid, ls) => cid == nat_type_id(denv.export) && ls.len() == 0,
             _ => false,
         }),
     ensures
@@ -1242,7 +1242,7 @@ pub proof fn types_to_string_lit(
         matches!(e, ExprSpec::StringLit(_)),
         matches!(t, ExprSpec::Const(_, _)),
         (match t {
-            ExprSpec::Const(cid, _) => cid == string_type_id(denv.export),
+            ExprSpec::Const(cid, ls) => cid == string_type_id(denv.export) && ls.len() == 0,
             _ => false,
         }),
     ensures
