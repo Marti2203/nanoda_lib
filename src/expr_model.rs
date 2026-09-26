@@ -1176,6 +1176,113 @@ pub proof fn dbj_deep_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
     dbj_serials_below_fv_absent(aids, e, k, c);
 }
 
+/// Unique locals only reach unique locals, so a level-local is unreachable
+/// from them.
+pub proof fn unique_ty_deep_absent(aids: (nat, nat), k: u32, e: ExprSpec, n: nat)
+    requires
+        crate::expr_arena_bridge::dbj_serial(aids, k) is Some,
+        unique_ty_deep(aids, e, n),
+    ensures
+        deep_absent(crate::expr_arena_bridge::arena_lctx(aids), k, e, n),
+    decreases n, e,
+{
+    let G = crate::expr_arena_bridge::arena_lctx(aids);
+    match e {
+        ExprSpec::Free(j) => {
+            unique_ty_deep_absent(aids, k, G[j], (n - 1) as nat);
+        },
+        ExprSpec::App(f, a) => {
+            unique_ty_deep_absent(aids, k, *f, n);
+            unique_ty_deep_absent(aids, k, *a, n);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            unique_ty_deep_absent(aids, k, *t, n);
+            unique_ty_deep_absent(aids, k, *b, n);
+        },
+        ExprSpec::Let(t, v, b) => {
+            unique_ty_deep_absent(aids, k, *t, n);
+            unique_ty_deep_absent(aids, k, *v, n);
+            unique_ty_deep_absent(aids, k, *b, n);
+        },
+        ExprSpec::Proj(_, st) => {
+            unique_ty_deep_absent(aids, k, *st, n);
+        },
+        _ => {},
+    }
+}
+
+/// UNREACHABILITY FROM SCOPE: the deep form of `dbj_deep_fv_absent`. A
+/// level-local at level `c` is unreachable from a term deep in scope below
+/// `c`: everything the term reaches is a level-local below its own level, or
+/// a unique local.
+pub proof fn dbj_deep_in_absent(aids: (nat, nat), k: u32, e: ExprSpec, S: ISet<u32>, c: u16, kc: u16) -> (n: nat)
+    requires
+        crate::expr_arena_bridge::dbj_serial(aids, k) == Some(kc),
+        c <= kc,
+        dbj_deep_in(aids, e, S, c),
+    ensures
+        deep_absent(crate::expr_arena_bridge::arena_lctx(aids), k, e, n),
+    decreases c, e,
+{
+    let G = crate::expr_arena_bridge::arena_lctx(aids);
+    match e {
+        ExprSpec::Free(j) => {
+            match crate::expr_arena_bridge::dbj_serial(aids, j) {
+                Some(s) => {
+                    let m = dbj_deep_in_absent(aids, k, G[j], S, s, kc);
+                    assert(deep_absent(G, k, ExprSpec::Free(j), m + 1));
+                    m + 1
+                },
+                None => {
+                    let m = choose|m: nat| #[trigger] unique_ty_deep(aids, ExprSpec::Free(j), m);
+                    unique_ty_deep_absent(aids, k, ExprSpec::Free(j), m);
+                    m
+                },
+            }
+        },
+        ExprSpec::App(f, a) => {
+            let n1 = dbj_deep_in_absent(aids, k, *f, S, c, kc);
+            let n2 = dbj_deep_in_absent(aids, k, *a, S, c, kc);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            deep_absent_mono(G, k, *f, n1, n);
+            deep_absent_mono(G, k, *a, n2, n);
+            n
+        },
+        ExprSpec::Bind(_, t, b) => {
+            let n1 = dbj_deep_in_absent(aids, k, *t, S, c, kc);
+            let n2 = dbj_deep_in_absent(aids, k, *b, S, c, kc);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            deep_absent_mono(G, k, *t, n1, n);
+            deep_absent_mono(G, k, *b, n2, n);
+            n
+        },
+        ExprSpec::Let(t, v, b) => {
+            let n1 = dbj_deep_in_absent(aids, k, *t, S, c, kc);
+            let n2 = dbj_deep_in_absent(aids, k, *v, S, c, kc);
+            let n3 = dbj_deep_in_absent(aids, k, *b, S, c, kc);
+            let n12 = if n1 >= n2 { n1 } else { n2 };
+            let n = if n12 >= n3 { n12 } else { n3 };
+            deep_absent_mono(G, k, *t, n1, n);
+            deep_absent_mono(G, k, *v, n2, n);
+            deep_absent_mono(G, k, *b, n3, n);
+            n
+        },
+        ExprSpec::Proj(_, st) => dbj_deep_in_absent(aids, k, *st, S, c, kc),
+        _ => 0,
+    }
+}
+
+pub proof fn dbj_deep_unreach(aids: (nat, nat), e: ExprSpec, k: u32, c: u16)
+    requires
+        crate::expr_arena_bridge::dbj_serial(aids, k) == Some(c),
+        dbj_deep(aids, e, c),
+    ensures
+        unreach(crate::expr_arena_bridge::arena_lctx(aids), k, e),
+{
+    let n = dbj_deep_in_absent(aids, k, e, all_ids(), c, c);
+    assert(deep_absent(crate::expr_arena_bridge::arena_lctx(aids), k, e, n));
+}
+
 /// Substituting a prefix `l` under one binder, then `s` at the binder itself,
 /// is substituting the extended prefix `l.push(s)` -- provided every value is
 /// closed, so the second pass cannot reach inside what the first put in. This
@@ -2039,6 +2146,91 @@ pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
         ExprSpec::Bind(bk, t, bd) => fv_absent(*t, k) && fv_absent(*bd, k),
         ExprSpec::Let(t, v, bd) => fv_absent(*t, k) && fv_absent(*v, k) && fv_absent(*bd, k),
         ExprSpec::Proj(pidx, s) => fv_absent(*s, k),
+    }
+}
+
+/// `k` is not reachable from `e` within `n` steps through the local
+/// context: it is not a local of `e`, nor of the type of any local of `e`,
+/// and so on `n` levels down. A binder may be opened with `k` only when this
+/// holds for some `n`: `fv_absent` alone lets a binder reuse an outer local
+/// that a local in the body depends on, and abstracting the body's type then
+/// captures that outer local.
+pub open spec fn deep_absent(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat) -> bool
+    decreases n, e,
+{
+    match e {
+        ExprSpec::Free(j) => j != k && (G.contains_key(j) ==> n > 0 && deep_absent(G, k, G[j], (n - 1) as nat)),
+        ExprSpec::App(f, a) => deep_absent(G, k, *f, n) && deep_absent(G, k, *a, n),
+        ExprSpec::Bind(_, t, b) => deep_absent(G, k, *t, n) && deep_absent(G, k, *b, n),
+        ExprSpec::Let(t, v, b) => deep_absent(G, k, *t, n) && deep_absent(G, k, *v, n) && deep_absent(G, k, *b, n),
+        ExprSpec::Proj(_, st) => deep_absent(G, k, *st, n),
+        _ => true,
+    }
+}
+
+pub open spec fn unreach(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec) -> bool {
+    exists|n: nat| #[trigger] deep_absent(G, k, e, n)
+}
+
+pub proof fn deep_absent_mono(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat, m: nat)
+    requires
+        deep_absent(G, k, e, n),
+        n <= m,
+    ensures
+        deep_absent(G, k, e, m),
+    decreases n, e,
+{
+    match e {
+        ExprSpec::Free(j) => {
+            if G.contains_key(j) {
+                deep_absent_mono(G, k, G[j], (n - 1) as nat, (m - 1) as nat);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            deep_absent_mono(G, k, *f, n, m);
+            deep_absent_mono(G, k, *a, n, m);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            deep_absent_mono(G, k, *t, n, m);
+            deep_absent_mono(G, k, *b, n, m);
+        },
+        ExprSpec::Let(t, v, b) => {
+            deep_absent_mono(G, k, *t, n, m);
+            deep_absent_mono(G, k, *v, n, m);
+            deep_absent_mono(G, k, *b, n, m);
+        },
+        ExprSpec::Proj(_, st) => {
+            deep_absent_mono(G, k, *st, n, m);
+        },
+        _ => {},
+    }
+}
+
+pub proof fn deep_absent_fv_absent(G: Map<u32, ExprSpec>, k: u32, e: ExprSpec, n: nat)
+    requires
+        deep_absent(G, k, e, n),
+    ensures
+        fv_absent(e, k),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            deep_absent_fv_absent(G, k, *f, n);
+            deep_absent_fv_absent(G, k, *a, n);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            deep_absent_fv_absent(G, k, *t, n);
+            deep_absent_fv_absent(G, k, *b, n);
+        },
+        ExprSpec::Let(t, v, b) => {
+            deep_absent_fv_absent(G, k, *t, n);
+            deep_absent_fv_absent(G, k, *v, n);
+            deep_absent_fv_absent(G, k, *b, n);
+        },
+        ExprSpec::Proj(_, st) => {
+            deep_absent_fv_absent(G, k, *st, n);
+        },
+        _ => {},
     }
 }
 

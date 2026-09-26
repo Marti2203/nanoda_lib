@@ -46,6 +46,7 @@ Lean's theory in these places:
 | C | `Let` rule ignores the annotation (`val : ty0` unchecked, `ty0` not checked to be a type), even with `io == false` | ill-typed lets are "well-typed" | small (io = false only) |
 | D | lambda rule does not check the binder type is a type (a `Sort`), even with `io == false` | as C | small (io = false only) |
 | E | `Const` rule does not check the universe-level arity | ill-arity constants typed | small |
+| H | binder rules (lambda/Pi typing, `deq_p_c`'s fresh-local congruence) only require the opening local to be absent from the body, not unreachable through the types of the body's locals | an outer local's id can be reused as the bound variable. With `a : A` and `j : P a`, `λx:A. j` got type `Πx:A. P x`; the conversion rule could likewise equate lambdas whose bodies have different types | small in the model (`unreach`); kernel side discharged from the existing scope discipline (`dbj_deep_unreach`) |
 | G | binder congruence in `deq_p_c` opens with a fresh local whose type in `lctx` is unconstrained (need not be the binder type) | a typed leaf under a binder may use the wrong type for the bound variable | small (the exec side already opens with the binder's type) |
 
 **Done (2026-09-26):** B (`8a5082c`), E (`91bb1fa`), C and D (`1fcc781`), G
@@ -60,6 +61,12 @@ kind. Telescopes are kind-indexed (`telescope_size_spec(k, ..)`,
 `abstr_telescope_model(k, ..)`); Pi-peeling uses `pi_spine`. No kernel change:
 the exec side already distinguished the two, and the def_eq binder walk only
 gained a ghost `bks: Seq<BinderKind>`.
+
+**H done (2026-09-26, found while planning option 3):** the rules require
+`unreach(lctx, k, _)` (`expr_model::deep_absent` to some depth) for the
+binder type(s) and body(ies). The kernel always opens with a level-local
+one level above everything in scope, and `dbj_deep_unreach` turns the
+existing deep-scope facts into unreachability, so no kernel code changed.
 
 B–E and G are spec tightenings. The kernel already behaves this way (literals
 are `Nat` with no levels, Check mode checks binders and let annotations,

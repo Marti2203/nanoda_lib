@@ -88,7 +88,7 @@ use crate::expr_model::ExprSpec;
 use crate::expr_model::BinderKind;
 use crate::expr_model::NatLitPayload;
 #[cfg(verus_only)]
-use crate::expr_model::{abstr_full, depth, fv_absent, nlbv, subst_expr_levels_rel, subst_full};
+use crate::expr_model::{abstr_full, depth, fv_absent, nlbv, subst_expr_levels_rel, subst_full, unreach};
 #[cfg(verus_only)]
 use crate::expr_model::{subst_expr_levels, subst_expr_levels_empty, subst_expr_levels_rel_empty};
 #[cfg(verus_only)]
@@ -1249,7 +1249,7 @@ pub open spec fn types_to(
         // Real typing also checks the binder type is a type (`Check` mode's
         // `infer_sort_of`); `InferOnly` skips it.
         ExprSpec::Bind(BinderKind::Lam, binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
+            bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
             && (infers(io) || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
                 && types_to(dty, denv, lctx, io, *binder_type, s, (fuel - 1) as nat)
                 && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (fuel - 1) as nat))
@@ -1274,7 +1274,7 @@ pub open spec fn types_to(
             instd_ty: ExprSpec,
             cod_level: LevelSpec,
         | #[trigger]
-            pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
+            pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body) && types_to(
                 dty,
                 denv,
                 lctx, io,
@@ -1526,7 +1526,7 @@ pub proof fn types_to_mono(
         // the binder's kind says which rule typed it
         if bk == BinderKind::Lam {
             let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-                bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
+                bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
                 && (infers(io) || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
                 && types_to(dty, denv, lctx, io, *binder_type, s, g1)
                 && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)) && types_to(
@@ -1568,7 +1568,7 @@ pub proof fn types_to_mono(
                 instd_ty: ExprSpec,
                 cod_level: LevelSpec,
             | #[trigger]
-                pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && types_to(
+                pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body) && types_to(
                     dty,
                     denv,
                     lctx, io,
@@ -2175,6 +2175,8 @@ pub proof fn types_to_lambda(
         lctx.contains_key(lid),
         lctx[lid] == binder_type,
         fv_absent(body, lid),
+        unreach(lctx, lid, binder_type),
+        unreach(lctx, lid, body),
         types_to(
             dty,
             denv,
@@ -2219,6 +2221,8 @@ pub proof fn types_to_pi(
         lctx.contains_key(lid),
         lctx[lid] == binder_type,
         fv_absent(body, lid),
+        unreach(lctx, lid, binder_type),
+        unreach(lctx, lid, body),
         types_to(dty, denv, lctx, io, binder_type, bt_ty, (fuel - 1) as nat),
         pstep_star(denv, bt_ty, ExprSpec::Sort(dom_level)),
         types_to(
@@ -3742,7 +3746,7 @@ pub open spec fn deq_p_c(
             *t2,
             (h - 1) as nat,
         ) && (deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
-            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                 dty,
                 env,
                 lctx, io,
@@ -3915,7 +3919,7 @@ pub proof fn deq_p_c_mono(
                     ));
                 } else {
                     let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                             dty,
                             env,
                             lctx, io,
@@ -3933,7 +3937,7 @@ pub proof fn deq_p_c_mono(
                         (h2 - 1) as nat,
                     );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                         dty,
                         env,
                         lctx, io,
@@ -4067,7 +4071,7 @@ pub proof fn deq_p_c_symm(
                     ));
                 } else {
                     let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
                             dty,
                             env,
                             lctx, io,
@@ -4084,7 +4088,7 @@ pub proof fn deq_p_c_symm(
                         (h - 1) as nat,
                     );
                     assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && lctx.contains_key(k) && (lctx[k] == *t2 || lctx[k] == *t1) && deq_p(
+                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && unreach(lctx, k, *t2) && unreach(lctx, k, *t1) && unreach(lctx, k, *b2) && unreach(lctx, k, *b1) && lctx.contains_key(k) && (lctx[k] == *t2 || lctx[k] == *t1) && deq_p(
                         dty,
                         env,
                         lctx, io,
@@ -5278,6 +5282,9 @@ pub proof fn deq_p_bind_link(
     requires
         fv_absent(b1, k),
         fv_absent(b2, k),
+        unreach(lctx, k, t),
+        unreach(lctx, k, b1),
+        unreach(lctx, k, b2),
         lctx.contains_key(k),
         lctx[k] == t,
         deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
@@ -5319,6 +5326,10 @@ pub proof fn deq_p_bind_fresh(
         deq_p(dty, env, lctx, io, t1, t2, h),
         fv_absent(b1, k),
         fv_absent(b2, k),
+        unreach(lctx, k, t1),
+        unreach(lctx, k, t2),
+        unreach(lctx, k, b1),
+        unreach(lctx, k, b2),
         lctx.contains_key(k),
         lctx[k] == t1 || lctx[k] == t2,
         deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
@@ -5364,6 +5375,10 @@ pub proof fn deq_p_any_bind_fresh(
         deq_p_any(dty, env, lctx, io, t1, t2),
         fv_absent(b1, k),
         fv_absent(b2, k),
+        unreach(lctx, k, t1),
+        unreach(lctx, k, t2),
+        unreach(lctx, k, b1),
+        unreach(lctx, k, b2),
         lctx.contains_key(k),
         lctx[k] == t1 || lctx[k] == t2,
         deq_p_any(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k)),

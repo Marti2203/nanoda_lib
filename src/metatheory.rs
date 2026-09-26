@@ -18,7 +18,7 @@ use crate::tc_model::*;
 #[cfg(verus_only)]
 use crate::beta_model::defeq_refl;
 #[cfg(verus_only)]
-use crate::expr_model::fv_absent;
+use crate::expr_model::{fv_absent, unreach};
 #[allow(unused_imports)]
 use crate::tc_model::IoMode;
 #[allow(unused_imports)]
@@ -329,7 +329,7 @@ pub proof fn transfer_c(
                     deq_p_any_bind_congr(dty, env, lctx, r, *t1, *t2, *b1, *b2, bk1);
                 } else {
                     let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2)
+                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2)
                             && deq_p(dty, env, lctx, io, inst_free(*b1, k), inst_free(*b2, k), hp);
                     transfer_p(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), hp);
                     deq_p_any_bind_fresh(dty, env, lctx, r, *t1, *t2, *b1, *b2, k, bk1);
