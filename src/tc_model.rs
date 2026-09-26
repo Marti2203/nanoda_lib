@@ -1248,11 +1248,8 @@ pub open spec fn types_to(
         // derivation assigns.
         // Real typing also checks the binder type is a type (`Check` mode's
         // `infer_sort_of`); `InferOnly` skips it.
-        ExprSpec::Bind(BinderKind::Lam, binder_type, body) => infers(io) && exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+        ExprSpec::Bind(BinderKind::Lam, binder_type, body) => io == IoMode::Infer && exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
             bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
-            // `InferWt` also asks the codomain not to reach the local (what
-            // the kernel's in-scope inferred types satisfy)
-            && (io != IoMode::InferWt || (nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0))))
             && types_to(
                 dty,
                 denv,
@@ -1267,7 +1264,7 @@ pub open spec fn types_to(
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Bind(BinderKind::Pi, binder_type, body) => infers(io) && exists|
+        ExprSpec::Bind(BinderKind::Pi, binder_type, body) => io == IoMode::Infer && exists|
             lid: u32,
             bt_ty: ExprSpec,
             dom_level: LevelSpec,
@@ -1293,6 +1290,27 @@ pub open spec fn types_to(
             ),
         _ => false,
     })
+    // `InferWt`'s binder rules are SCOPED: the local is outside the context
+    // and the body is typed in the context extended with it. The codomain
+    // witness is closed and does not reach the local, as the kernel's
+    // in-scope inferred types are.
+    ||| (fuel > 0 && io == IoMode::InferWt && match e {
+        ExprSpec::Bind(BinderKind::Lam, binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+            bind_marker(lid, infd, bt2) && !lctx.contains_key(lid) && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
+            && nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0))
+            && types_to(dty, denv, lctx.insert(lid, *binder_type), io, subst_full(*body, seq![ExprSpec::Free(lid)], 0), infd, (fuel - 1) as nat)
+            && deq_p(dty, denv, lctx.insert(lid, *binder_type), io, infd, bt2, (fuel - 1) as nat)
+            && t == ExprSpec::Bind(BinderKind::Pi, Box::new(abstr_full(*binder_type, seq![lid], 0)), Box::new(abstr_full(bt2, seq![lid], 0))),
+        ExprSpec::Bind(BinderKind::Pi, binder_type, body) => exists|lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
+            #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && !lctx.contains_key(lid) && fv_absent(*body, lid)
+            && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
+            && types_to(dty, denv, lctx, io, *binder_type, bt_ty, (fuel - 1) as nat)
+            && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), (fuel - 1) as nat)
+            && types_to(dty, denv, lctx.insert(lid, *binder_type), io, subst_full(*body, seq![ExprSpec::Free(lid)], 0), instd_ty, (fuel - 1) as nat)
+            && deq_p(dty, denv, lctx.insert(lid, *binder_type), io, instd_ty, ExprSpec::Sort(cod_level), (fuel - 1) as nat)
+            && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
+        _ => false,
+    })
     // REAL typing's binder rules quantify over EVERY local unreachable from
     // the binder (the textbook cofinite form), opening the context with it at
     // the binder type. The `InferOnly` rules pick one local; instantiated at
@@ -1304,8 +1322,8 @@ pub open spec fn types_to(
         ExprSpec::Bind(BinderKind::Lam, binder_type, body) => exists|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
             real_lam_marker(cod, s, l) && types_to(dty, denv, lctx, io, *binder_type, s, (fuel - 1) as nat)
             && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (fuel - 1) as nat)
-            && (exists|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body))
-            && (forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body) ==>
+            && (exists|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body))
+            && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body) ==>
                 unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                 && types_to(dty, denv, lctx.insert(k, *binder_type), io, subst_full(*body, seq![ExprSpec::Free(k)], 0), infd, (fuel - 1) as nat)
                 && deq_p(dty, denv, lctx.insert(k, *binder_type), io, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (fuel - 1) as nat))
@@ -1313,8 +1331,8 @@ pub open spec fn types_to(
         ExprSpec::Bind(BinderKind::Pi, binder_type, body) => exists|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
             real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, io, *binder_type, bt_ty, (fuel - 1) as nat)
             && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), (fuel - 1) as nat)
-            && (exists|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body))
-            && (forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body) ==>
+            && (exists|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body))
+            && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, *binder_type) && unreach(lctx, k, *body) ==>
                 exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                 && types_to(dty, denv, lctx.insert(k, *binder_type), io, subst_full(*body, seq![ExprSpec::Free(k)], 0), instd, (fuel - 1) as nat)
                 && deq_p(dty, denv, lctx.insert(k, *binder_type), io, instd, ExprSpec::Sort(cod_level), (fuel - 1) as nat))
@@ -1553,12 +1571,14 @@ pub proof fn types_to_mono(
         let g2 = (f2 - 1) as nat;
         if !infers(io) {
             types_to_mono_real_bind(dty, denv, lctx, bk, *binder_type, *body, t, f1, f2);
+        } else if io == IoMode::InferWt {
+            types_to_mono_wt_bind(dty, denv, lctx, bk, *binder_type, *body, t, f1, f2);
         } else {
             // the binder's kind says which rule typed it
             if bk == BinderKind::Lam {
                 let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
                     bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid) && unreach(lctx, lid, *binder_type) && unreach(lctx, lid, *body)
-                    && (io != IoMode::InferWt || (nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0)))) && types_to(
+                    && types_to(
                         dty,
                         denv,
                         lctx, io,
@@ -1634,6 +1654,59 @@ pub proof fn types_to_mono(
     }
 }
 
+/// `types_to_mono` for `InferWt`'s scoped binder rules.
+pub proof fn types_to_mono_wt_bind(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    bk: BinderKind,
+    binder_type: ExprSpec,
+    body: ExprSpec,
+    t: ExprSpec,
+    f1: nat,
+    f2: nat,
+)
+    requires
+        types_to(dty, denv, lctx, IoMode::InferWt, ExprSpec::Bind(bk, Box::new(binder_type), Box::new(body)), t, f1),
+        f1 <= f2,
+    ensures
+        types_to(dty, denv, lctx, IoMode::InferWt, ExprSpec::Bind(bk, Box::new(binder_type), Box::new(body)), t, f2),
+    decreases f1, ExprSpec::Bind(bk, Box::new(binder_type), Box::new(body)), 0int,
+{
+    let io = IoMode::InferWt;
+    let e = ExprSpec::Bind(bk, Box::new(binder_type), Box::new(body));
+    let g1 = (f1 - 1) as nat;
+    let g2 = (f2 - 1) as nat;
+    let bt = binder_type;
+    if bk == BinderKind::Lam {
+        let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+            bind_marker(lid, infd, bt2) && !lctx.contains_key(lid) && fv_absent(body, lid) && unreach(lctx, lid, bt) && unreach(lctx, lid, body)
+            && nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0))
+            && types_to(dty, denv, lctx.insert(lid, bt), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, g1)
+            && deq_p(dty, denv, lctx.insert(lid, bt), io, infd, bt2, g1)
+            && t == ExprSpec::Bind(BinderKind::Pi, Box::new(abstr_full(bt, seq![lid], 0)), Box::new(abstr_full(bt2, seq![lid], 0)));
+        types_to_mono(dty, denv, lctx.insert(lid, bt), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, g1, g2);
+        deq_p_mono(dty, denv, lctx.insert(lid, bt), io, infd, bt2, g1, g2);
+        assert(bind_marker(lid, infd, bt2));
+        assert(types_to(dty, denv, lctx, io, e, t, f2));
+    } else {
+        let (lid, bt_ty, dl, instd, cl) = choose|lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
+            #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && !lctx.contains_key(lid) && fv_absent(body, lid)
+            && unreach(lctx, lid, bt) && unreach(lctx, lid, body)
+            && types_to(dty, denv, lctx, io, bt, bt_ty, g1)
+            && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), g1)
+            && types_to(dty, denv, lctx.insert(lid, bt), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd_ty, g1)
+            && deq_p(dty, denv, lctx.insert(lid, bt), io, instd_ty, ExprSpec::Sort(cod_level), g1)
+            && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
+        types_to_mono(dty, denv, lctx, io, bt, bt_ty, g1, g2);
+        deq_p_mono(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dl), g1, g2);
+        types_to_mono(dty, denv, lctx.insert(lid, bt), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, g1, g2);
+        deq_p_mono(dty, denv, lctx.insert(lid, bt), io, instd, ExprSpec::Sort(cl), g1, g2);
+        assert(pi_marker(lid, bt_ty, dl, instd, cl));
+        assert(types_to(dty, denv, lctx, io, e, t, f2));
+    }
+}
+
 /// `types_to_mono` for real typing's binder rules: every per-local premise
 /// moves up one height, in its own extended context.
 pub proof fn types_to_mono_real_bind(
@@ -1663,15 +1736,15 @@ pub proof fn types_to_mono_real_bind(
         let (cod, s0, l0) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
             real_lam_marker(cod, s, l) && types_to(dty, denv, lctx, io, bt, s, g1)
             && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)
-            && (exists|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, bt) && unreach(lctx, k, body))
-            && (forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) ==>
+            && (exists|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, bt) && unreach(lctx, k, body))
+            && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) ==>
                 unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
                 && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, g1)
                 && deq_p(dty, denv, lctx.insert(k, bt), io, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1))
             && t == ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(cod));
         types_to_mono(dty, denv, lctx, io, bt, s0, g1, g2);
         deq_p_mono(dty, denv, lctx, io, s0, ExprSpec::Sort(l0), g1, g2);
-        assert forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) implies
+        assert forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) implies
             unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, g2)
             && deq_p(dty, denv, lctx.insert(k, bt), io, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), g2) by {
@@ -1688,15 +1761,15 @@ pub proof fn types_to_mono_real_bind(
         let (bt_ty, dl, cl) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
             real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, denv, lctx, io, bt, bt_ty, g1)
             && deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dom_level), g1)
-            && (exists|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, bt) && unreach(lctx, k, body))
-            && (forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) ==>
+            && (exists|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, bt) && unreach(lctx, k, body))
+            && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) ==>
                 exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
                 && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, g1)
                 && deq_p(dty, denv, lctx.insert(k, bt), io, instd, ExprSpec::Sort(cod_level), g1))
             && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
         types_to_mono(dty, denv, lctx, io, bt, bt_ty, g1, g2);
         deq_p_mono(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dl), g1, g2);
-        assert forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) implies
+        assert forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, bt) && unreach(lctx, k, body) implies
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, denv, lctx.insert(k, bt), io, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, g2)
             && deq_p(dty, denv, lctx.insert(k, bt), io, instd, ExprSpec::Sort(cl), g2) by {
@@ -2270,14 +2343,13 @@ pub proof fn types_to_lambda(
     fuel: nat,
 )
     requires
-        infers(io),
+        io == IoMode::Infer,
         fuel > 0,
         lctx.contains_key(lid),
         lctx[lid] == binder_type,
         fv_absent(body, lid),
         unreach(lctx, lid, binder_type),
         unreach(lctx, lid, body),
-        io != IoMode::InferWt || (nlbv(infd) <= 0 && depth(infd) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(infd, seq![lid], 0))),
         types_to(
             dty,
             denv,
@@ -2318,7 +2390,7 @@ pub proof fn types_to_pi(
     fuel: nat,
 )
     requires
-        infers(io),
+        io == IoMode::Infer,
         fuel > 0,
         lctx.contains_key(lid),
         lctx[lid] == binder_type,
@@ -2870,6 +2942,14 @@ pub open spec fn inst_free(b: ExprSpec, k: u32) -> ExprSpec {
 /// Marker trigger for the typed binder congruence's local and its type.
 pub open spec fn fresh_ty_marker(k: u32, ty: ExprSpec) -> bool {
     true
+}
+
+/// Which local a typed binder congruence may open with: in the kernel's
+/// global context (`Infer`), one that already has the binder type; in the
+/// scoped contexts of `InferWt` and `Real`, one outside the context, which
+/// the rule then extends.
+pub open spec fn bind_local_ok(lctx: Map<u32, ExprSpec>, io: IoMode, k: u32, ty: ExprSpec) -> bool {
+    (io == IoMode::Infer && lctx.contains_key(k) && lctx[k] == ty) || (io != IoMode::Infer && !lctx.contains_key(k))
 }
 
 /// Extending a context at a local with the type it already has changes
@@ -3883,7 +3963,7 @@ pub open spec fn deq_p_c(
             *t2,
             (h - 1) as nat,
         ) && (deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) || (exists|k: u32, ty: ExprSpec| #[trigger]
-            fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty)) && deq_p(
+            fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && bind_local_ok(lctx, io, k, ty) && deq_p(
                 dty,
                 env,
                 lctx.insert(k, ty), io,
@@ -4056,7 +4136,7 @@ pub proof fn deq_p_c_mono(
                     ));
                 } else {
                     let (k, ty) = choose|k: u32, ty: ExprSpec| #[trigger]
-                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty)) && deq_p(
+                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && bind_local_ok(lctx, io, k, ty) && deq_p(
                             dty,
                             env,
                             lctx.insert(k, ty), io,
@@ -4200,7 +4280,7 @@ pub proof fn deq_p_c_symm(
                     ));
                 } else {
                     let (k, ty) = choose|k: u32, ty: ExprSpec| #[trigger]
-                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty)) && deq_p(
+                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && bind_local_ok(lctx, io, k, ty) && deq_p(
                             dty,
                             env,
                             lctx.insert(k, ty), io,
@@ -5406,9 +5486,8 @@ pub proof fn deq_p_bind_link(
         unreach(lctx, k, t),
         unreach(lctx, k, b1),
         unreach(lctx, k, b2),
-        lctx.contains_key(k),
-        lctx[k] == t,
-        deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
+        bind_local_ok(lctx, io, k, t),
+        deq_p(dty, env, lctx.insert(k, t), io, inst_free(b1, k), inst_free(b2, k), h),
     ensures
         deq_p(dty, env, lctx, io, ExprSpec::Bind(bkind, Box::new(t), Box::new(b1)), ExprSpec::Bind(bkind, Box::new(t), Box::new(b2)), h + 1),
 {
@@ -5417,7 +5496,6 @@ pub proof fn deq_p_bind_link(
     defeq_refl(env, t);
     assert(deq_c(env, t, t, h));
     deq_p_c_of_deq_c(dty, env, lctx, io, t, t, h);
-    lctx_insert_same(lctx, k, t);
     assert(fresh_ty_marker(k, t));
     assert(((h + 1) - 1) as nat == h);
     assert(deq_p_c(dty, env, lctx, io, bx, by, h + 1));
@@ -5441,6 +5519,7 @@ pub proof fn deq_p_bind_fresh(
     b1: ExprSpec,
     b2: ExprSpec,
     k: u32,
+    ty: ExprSpec,
     h: nat,
     bkind: BinderKind,
 )
@@ -5452,9 +5531,9 @@ pub proof fn deq_p_bind_fresh(
         unreach(lctx, k, t2),
         unreach(lctx, k, b1),
         unreach(lctx, k, b2),
-        lctx.contains_key(k),
-        lctx[k] == t1 || lctx[k] == t2,
-        deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
+        ty == t1 || ty == t2,
+        bind_local_ok(lctx, io, k, ty),
+        deq_p(dty, env, lctx.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k), h),
     ensures
         deq_p(
             dty,
@@ -5467,7 +5546,7 @@ pub proof fn deq_p_bind_fresh(
 {
     let x = ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1));
     let y = ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2));
-    if lctx[k] == t1 {
+    if ty == t1 {
         let m = ExprSpec::Bind(bkind, Box::new(t1), Box::new(b2));
         deq_p_bind_link(dty, env, lctx, io, t1, b1, b2, k, h, bkind);
         deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b2, h, bkind);
@@ -5491,6 +5570,7 @@ pub proof fn deq_p_any_bind_fresh(
     b1: ExprSpec,
     b2: ExprSpec,
     k: u32,
+    ty: ExprSpec,
     bkind: BinderKind,
 )
     requires
@@ -5501,9 +5581,9 @@ pub proof fn deq_p_any_bind_fresh(
         unreach(lctx, k, t2),
         unreach(lctx, k, b1),
         unreach(lctx, k, b2),
-        lctx.contains_key(k),
-        lctx[k] == t1 || lctx[k] == t2,
-        deq_p_any(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k)),
+        ty == t1 || ty == t2,
+        bind_local_ok(lctx, io, k, ty),
+        deq_p_any(dty, env, lctx.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k)),
     ensures
         deq_p_any(
             dty,
@@ -5514,15 +5594,15 @@ pub proof fn deq_p_any_bind_fresh(
         ),
 {
     let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, t1, t2, h);
-    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h);
+    let h2 = choose|h: nat| #[trigger] deq_p(dty, env, lctx.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k), h);
     let hm = if h1 >= h2 {
         h1
     } else {
         h2
     };
     deq_p_mono(dty, env, lctx, io, t1, t2, h1, hm);
-    deq_p_mono(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h2, hm);
-    deq_p_bind_fresh(dty, env, lctx, io, t1, t2, b1, b2, k, hm, bkind);
+    deq_p_mono(dty, env, lctx.insert(k, ty), io, inst_free(b1, k), inst_free(b2, k), h2, hm);
+    deq_p_bind_fresh(dty, env, lctx, io, t1, t2, b1, b2, k, ty, hm, bkind);
     assert(deq_p(
         dty,
         env,

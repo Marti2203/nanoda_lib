@@ -5842,6 +5842,8 @@ pub proof fn kconv_bind_fresh<'x, 't>(
     ensures
         kconv(env, ExprSpec::Bind(bk, Box::new(t1), Box::new(b1)), ExprSpec::Bind(bk, Box::new(t2), Box::new(b2))),
 {
+    let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
+    crate::tc_model::lctx_insert_same(lctx, k, lctx[k]);
     crate::tc_model::deq_p_any_bind_fresh(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
@@ -5852,6 +5854,7 @@ pub proof fn kconv_bind_fresh<'x, 't>(
         b1,
         b2,
         k,
+        lctx[k],
         bk,
     );
 }

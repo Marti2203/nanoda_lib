@@ -226,6 +226,43 @@ kernel's invariant that compared terms are well typed, and option 2
 (`kconv_wt`) is the statement that keeps it. The remaining obligation is
 the kernel side: `def_eq` only produces `InferWt` derivations.
 
+## Kernel side: scoped real contexts (design, user choice 2026-09-26)
+
+**Why.** To show `def_eq` only produces `InferWt` derivations, the kernel
+must produce REAL typings, and turning its one-local derivations into the
+cofinite form needs a renaming lemma. In the global arena context, renaming
+a local `x` breaks. Existential witnesses may mention later locals whose
+global types mention `x`, and typed leaves on those terms stop matching. In
+a SCOPED context (only in-scope locals, each entry mentioning only earlier
+ones, the opening local outside the domain), no entry mentions `x`, and
+renaming is the standard locally nameless lemma.
+
+**The model change (S1).** `Infer`, the kernel's spec, keeps the global
+context and its rules, so `def_eq`'s proofs are untouched. `InferWt` and
+`Real` become scoped. Their binder rules open with a local NOT in the
+context's domain (plus `unreach`) and extend the context with it:
+
+| rule | `InferWt` | `Real` |
+|---|---|---|
+| lambda / Pi typing | ∃ `k ∉ dom Γ`, body typed in `Γ.insert(k, A)` | ∀ such `k` (cofinite), plus one exists |
+| binder congruence | ∃ `k ∉ dom Γ`, `ty`, bodies related in `Γ.insert(k, ty)` | same (∃) |
+
+**S1 DONE.** Option 2's proof carries over with the context threaded
+through the recursion. The lambda case instantiates the real rule at `InferWt`'s own
+local, and congruence reuses the same `k`. The hypotheses become
+all-contexts statements (`hyps_all`), unconditionally over every map. They
+are inversion and uniqueness properties, and a context's well-formedness
+plays no part in them.
+
+**Then:**
+- S2, renaming for the scoped modes (typing, conversion, leaves, and the
+  untyped rules under free-variable renaming), height-preserving;
+- S3, exists-fresh ⟹ cofinite for real typing;
+- S4, the kernel's derivations as `InferWt` derivations in the live scope.
+  This re-proves `whnf`/`def_eq`/`infer` against `InferWt` (the existing
+  `dbj_deep_in` scope discipline supplies the scoping) and needs subject
+  reduction as a named hypothesis.
+
 ## Proof plan for phase 2 (after phase 1)
 
 Mutual induction on derivation height over `types_to` and `deq_p`, `io`

@@ -292,6 +292,12 @@ pub open spec fn hyps(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     h_pi_inj_app(dty, denv, lctx) && h_sort_inj(dty, denv, lctx) && h_unique_in(dty, denv, lctx)
 }
 
+/// The hypotheses in every context: the scoped theories extend the context
+/// at binders, so the proof meets contexts other than the one it starts in.
+pub open spec fn hyps_all(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    forall|lctx: Map<u32, ExprSpec>| #[trigger] hyps(dty, denv, lctx)
+}
+
 /// Two level-substitution instances of one term are `deq_c`-related: their
 /// sorts and constants' levels agree under every assignment.
 pub proof fn rel_pair_deq_c(env: EnvSpec, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, a: ExprSpec, b: ExprSpec) -> (h: nat)
@@ -453,7 +459,7 @@ pub proof fn s_sound(
     g: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         types_to(dty, env, lctx, IoMode::InferWt, e, t, f),
         types_to(dty, env, lctx, IoMode::Real, e, tt, g),
     ensures
@@ -510,7 +516,7 @@ proof fn s_app(
     g: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::App(Box::new(fx), Box::new(ax)), t, f),
         types_to(dty, env, lctx, IoMode::Real, ExprSpec::App(Box::new(fx), Box::new(ax)), tt, g),
     ensures
@@ -528,6 +534,7 @@ proof fn s_app(
         app_marker(ft, aty, bt, aty2) && types_to(dty, env, lctx, r, fx, ft, g)
             && deq_p(dty, env, lctx, r, ft, pi(aty, bt), (g - 1) as nat) && types_to(dty, env, lctx, r, ax, aty2, g)
             && deq_p(dty, env, lctx, r, aty2, aty, (g - 1) as nat) && tt == subst_full(bt, seq![ax], 0);
+    assert(hyps(dty, env, lctx));
     s_sound(dty, env, lctx, fx, ft, ft2, f, g);
     transfer_p(dty, env, lctx, ft, pi(aty, bt), (f - 1) as nat);
     tconv_of(dty, env, lctx, ft2, pi(atyr, btr), (g - 1) as nat);
@@ -551,7 +558,7 @@ proof fn s_let(
     g: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)), t, f),
         types_to(dty, env, lctx, IoMode::Real, ExprSpec::Let(Box::new(ty0), Box::new(val), Box::new(body)), tt, g),
     ensures
@@ -576,7 +583,7 @@ proof fn s_lam(
     g: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(body)), t, f),
         types_to(dty, env, lctx, IoMode::Real, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(body)), tt, g),
     ensures
@@ -586,30 +593,30 @@ proof fn s_lam(
     let w = IoMode::InferWt;
     let r = IoMode::Real;
     let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
-        bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == a && fv_absent(body, lid) && unreach(lctx, lid, a) && unreach(lctx, lid, body)
-        && (nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0)))
-        && types_to(dty, env, lctx, w, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (f - 1) as nat)
-        && deq_p(dty, env, lctx, w, infd, bt2, (f - 1) as nat)
+        bind_marker(lid, infd, bt2) && !lctx.contains_key(lid) && fv_absent(body, lid) && unreach(lctx, lid, a) && unreach(lctx, lid, body)
+        && nlbv(bt2) <= 0 && depth(bt2) < 0x1_0000_0000 && unreach(lctx, lid, abstr_full(bt2, seq![lid], 0))
+        && types_to(dty, env, lctx.insert(lid, a), w, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (f - 1) as nat)
+        && deq_p(dty, env, lctx.insert(lid, a), w, infd, bt2, (f - 1) as nat)
         && t == ExprSpec::Bind(BinderKind::Pi, Box::new(abstr_full(a, seq![lid], 0)), Box::new(abstr_full(bt2, seq![lid], 0)));
     let (cod, s0, l0) = choose|cod: ExprSpec, s: ExprSpec, l: LevelSpec| #[trigger]
         real_lam_marker(cod, s, l)
-        && (forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
             unreach(lctx, k, cod) && exists|infd: ExprSpec| #[trigger] real_body_marker(k, infd)
             && types_to(dty, env, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), infd, (g - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), r, infd, subst_full(cod, seq![ExprSpec::Free(k)], 0), (g - 1) as nat))
         && tt == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod));
     assert(fresh_marker(lid));
-    insert_same(lctx, lid, a);
+    let lx = lctx.insert(lid, a);
     let ob = subst_full(body, seq![ExprSpec::Free(lid)], 0);
     let infd2 = choose|infd: ExprSpec| #[trigger] real_body_marker(lid, infd)
-        && types_to(dty, env, lctx, r, ob, infd, (g - 1) as nat)
-        && deq_p(dty, env, lctx, r, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (g - 1) as nat);
-    s_sound(dty, env, lctx, ob, infd, infd2, (f - 1) as nat, (g - 1) as nat);
-    transfer_p(dty, env, lctx, infd, bt2, (f - 1) as nat);
-    tconv_of(dty, env, lctx, infd2, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (g - 1) as nat);
-    tconv_symm(dty, env, lctx, infd, bt2);
-    tconv_trans(dty, env, lctx, bt2, infd, infd2);
-    tconv_trans(dty, env, lctx, bt2, infd2, subst_full(cod, seq![ExprSpec::Free(lid)], 0));
+        && types_to(dty, env, lx, r, ob, infd, (g - 1) as nat)
+        && deq_p(dty, env, lx, r, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (g - 1) as nat);
+    s_sound(dty, env, lx, ob, infd, infd2, (f - 1) as nat, (g - 1) as nat);
+    transfer_p(dty, env, lx, infd, bt2, (f - 1) as nat);
+    tconv_of(dty, env, lx, infd2, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (g - 1) as nat);
+    tconv_symm(dty, env, lx, infd, bt2);
+    tconv_trans(dty, env, lx, bt2, infd, infd2);
+    tconv_trans(dty, env, lx, bt2, infd2, subst_full(cod, seq![ExprSpec::Free(lid)], 0));
     let x = abstr_full(bt2, seq![lid], 0);
     crate::expr_model::abstr_inst_roundtrip(bt2, lid, 0);
     unreach_fv_absent(lctx, lid, a);
@@ -618,7 +625,7 @@ proof fn s_lam(
     crate::expr_model::abstr_full_removes(bt2, lid, 0);
     deq_p_any_refl(dty, env, lctx, r, a);
     assert(inst_free(x, lid) == bt2);
-    deq_p_any_bind_fresh(dty, env, lctx, r, a, a, x, cod, lid, BinderKind::Pi);
+    deq_p_any_bind_fresh(dty, env, lctx, r, a, a, x, cod, lid, a, BinderKind::Pi);
 }
 
 proof fn s_pi(
@@ -633,7 +640,7 @@ proof fn s_pi(
     g: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(body)), t, f),
         types_to(dty, env, lctx, IoMode::Real, ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(body)), tt, g),
     ensures
@@ -643,17 +650,17 @@ proof fn s_pi(
     let w = IoMode::InferWt;
     let r = IoMode::Real;
     let (lid, bt_ty, dl, instd, cl) = choose|lid: u32, bt_ty: ExprSpec, dom_level: LevelSpec, instd_ty: ExprSpec, cod_level: LevelSpec|
-        #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && lctx.contains_key(lid) && lctx[lid] == a
+        #[trigger] pi_marker(lid, bt_ty, dom_level, instd_ty, cod_level) && !lctx.contains_key(lid) && fv_absent(body, lid)
         && unreach(lctx, lid, a) && unreach(lctx, lid, body)
         && types_to(dty, env, lctx, w, a, bt_ty, (f - 1) as nat)
         && deq_p(dty, env, lctx, w, bt_ty, ExprSpec::Sort(dom_level), (f - 1) as nat)
-        && types_to(dty, env, lctx, w, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd_ty, (f - 1) as nat)
-        && deq_p(dty, env, lctx, w, instd_ty, ExprSpec::Sort(cod_level), (f - 1) as nat)
+        && types_to(dty, env, lctx.insert(lid, a), w, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd_ty, (f - 1) as nat)
+        && deq_p(dty, env, lctx.insert(lid, a), w, instd_ty, ExprSpec::Sort(cod_level), (f - 1) as nat)
         && t == ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level)));
     let (bt_ty2, dl2, cl2) = choose|bt_ty: ExprSpec, dom_level: LevelSpec, cod_level: LevelSpec| #[trigger]
         real_pi_marker(bt_ty, dom_level, cod_level) && types_to(dty, env, lctx, r, a, bt_ty, (g - 1) as nat)
         && deq_p(dty, env, lctx, r, bt_ty, ExprSpec::Sort(dom_level), (g - 1) as nat)
-        && (forall|k: u32| #[trigger] fresh_marker(k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
+        && (forall|k: u32| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && unreach(lctx, k, a) && unreach(lctx, k, body) ==>
             exists|instd: ExprSpec| #[trigger] real_body_marker(k, instd)
             && types_to(dty, env, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), instd, (g - 1) as nat)
             && deq_p(dty, env, lctx.insert(k, a), r, instd, ExprSpec::Sort(cod_level), (g - 1) as nat))
@@ -665,19 +672,21 @@ proof fn s_pi(
     tconv_symm(dty, env, lctx, bt_ty, ExprSpec::Sort(dl));
     tconv_trans(dty, env, lctx, ExprSpec::Sort(dl), bt_ty, bt_ty2);
     tconv_trans(dty, env, lctx, ExprSpec::Sort(dl), bt_ty2, ExprSpec::Sort(dl2));
-    // the codomain's, at the kernel's own local
+    // the codomain's, at InferWt's own local
     assert(fresh_marker(lid));
-    insert_same(lctx, lid, a);
+    let lx = lctx.insert(lid, a);
     let ob = subst_full(body, seq![ExprSpec::Free(lid)], 0);
     let instd2 = choose|instd: ExprSpec| #[trigger] real_body_marker(lid, instd)
-        && types_to(dty, env, lctx, r, ob, instd, (g - 1) as nat)
-        && deq_p(dty, env, lctx, r, instd, ExprSpec::Sort(cl2), (g - 1) as nat);
-    s_sound(dty, env, lctx, ob, instd, instd2, (f - 1) as nat, (g - 1) as nat);
-    transfer_p(dty, env, lctx, instd, ExprSpec::Sort(cl), (f - 1) as nat);
-    tconv_of(dty, env, lctx, instd2, ExprSpec::Sort(cl2), (g - 1) as nat);
-    tconv_symm(dty, env, lctx, instd, ExprSpec::Sort(cl));
-    tconv_trans(dty, env, lctx, ExprSpec::Sort(cl), instd, instd2);
-    tconv_trans(dty, env, lctx, ExprSpec::Sort(cl), instd2, ExprSpec::Sort(cl2));
+        && types_to(dty, env, lx, r, ob, instd, (g - 1) as nat)
+        && deq_p(dty, env, lx, r, instd, ExprSpec::Sort(cl2), (g - 1) as nat);
+    s_sound(dty, env, lx, ob, instd, instd2, (f - 1) as nat, (g - 1) as nat);
+    transfer_p(dty, env, lx, instd, ExprSpec::Sort(cl), (f - 1) as nat);
+    tconv_of(dty, env, lx, instd2, ExprSpec::Sort(cl2), (g - 1) as nat);
+    tconv_symm(dty, env, lx, instd, ExprSpec::Sort(cl));
+    tconv_trans(dty, env, lx, ExprSpec::Sort(cl), instd, instd2);
+    tconv_trans(dty, env, lx, ExprSpec::Sort(cl), instd2, ExprSpec::Sort(cl2));
+    assert(hyps(dty, env, lctx));
+    assert(hyps(dty, env, lx));
     assert forall|rho: Map<nat, nat>| #[trigger] interp(LevelSpec::IMax(Box::new(dl), Box::new(cl)), rho)
         == interp(LevelSpec::IMax(Box::new(dl2), Box::new(cl2)), rho) by {
         assert(interp(dl, rho) == interp(dl2, rho));
@@ -701,7 +710,7 @@ proof fn s_proj(
     g: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         types_to(dty, env, lctx, IoMode::InferWt, ExprSpec::Proj(idx, Box::new(sx)), t, f),
         types_to(dty, env, lctx, IoMode::Real, ExprSpec::Proj(idx, Box::new(sx)), tt, g),
     ensures
@@ -738,6 +747,7 @@ proof fn s_proj(
     proj_field_type_mono(dty, env, lctx, r, h2, m, cty, args, np as nat, 0, idx as nat, sx, t);
     assert(proj_marker(m, sty2, ind, ls, args, cid, np, cty));
     assert(types_to(dty, env, lctx, r, e, t, m + 1));
+    assert(hyps(dty, env, lctx));
     assert(typed(dty, env, lctx, e, t));
     assert(typed(dty, env, lctx, e, tt));
 }
@@ -757,7 +767,7 @@ proof fn walk_transfer(
     t: ExprSpec,
 ) -> (hh: nat)
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         proj_field_type(dty, env, lctx, IoMode::InferWt, h, cur, args, np, fld, remaining, sx, t),
     ensures
         proj_field_type(dty, env, lctx, IoMode::Real, hh, cur, args, np, fld, remaining, sx, t),
@@ -806,7 +816,7 @@ proof fn leaf_transfer(
     h: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         proof_irrel_pair(dty, env, lctx, IoMode::InferWt, x, y, h) || unit_pair(dty, env, lctx, IoMode::InferWt, x, y, h)
             || eta_struct_pair(dty, env, lctx, IoMode::InferWt, x, y, h),
         leaf_wt(dty, env, lctx, IoMode::InferWt, x, y, h),
@@ -893,7 +903,7 @@ proof fn proof_type_transfer(
     h: nat,
 ) -> (hh: nat)
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         is_proof_type_m(dty, env, lctx, IoMode::InferWt, tx, h),
         tconv(dty, env, lctx, tx, tx_r),
     ensures
@@ -934,7 +944,7 @@ proof fn unit_like_transfer(
     h: nat,
 ) -> (hh: nat)
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         unit_like_type_m(dty, env, lctx, IoMode::InferWt, tx, h),
         tconv(dty, env, lctx, tx, tx_r),
     ensures
@@ -963,7 +973,7 @@ proof fn eta_transfer(
     h: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         eta_struct_expand(dty, env, lctx, IoMode::InferWt, x, y, h),
         types_to(dty, env, lctx, IoMode::Real, x, tx_r, gx),
     ensures
@@ -1025,7 +1035,7 @@ pub proof fn transfer_c(
     h: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         deq_p_c(dty, env, lctx, IoMode::InferWt, x, y, h),
     ensures
         tconv(dty, env, lctx, x, y),
@@ -1055,11 +1065,10 @@ pub proof fn transfer_c(
                     deq_p_any_bind_congr(dty, env, lctx, r, *t1, *t2, *b1, *b2, bk1);
                 } else {
                     let (k, ty) = choose|k: u32, ty: ExprSpec| #[trigger]
-                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty))
+                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && bind_local_ok(lctx, io, k, ty)
                             && deq_p(dty, env, lctx.insert(k, ty), io, inst_free(*b1, k), inst_free(*b2, k), hp);
-                    insert_same(lctx, k, ty);
-                    transfer_p(dty, env, lctx, inst_free(*b1, k), inst_free(*b2, k), hp);
-                    deq_p_any_bind_fresh(dty, env, lctx, r, *t1, *t2, *b1, *b2, k, bk1);
+                    transfer_p(dty, env, lctx.insert(k, ty), inst_free(*b1, k), inst_free(*b2, k), hp);
+                    deq_p_any_bind_fresh(dty, env, lctx, r, *t1, *t2, *b1, *b2, k, ty, bk1);
                 }
             },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
@@ -1087,7 +1096,7 @@ pub proof fn transfer_p(
     h: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         deq_p(dty, env, lctx, IoMode::InferWt, x, y, h),
     ensures
         tconv(dty, env, lctx, x, y),
@@ -1107,7 +1116,7 @@ proof fn transfer_chain(
     i: nat,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         ch.len() >= 1,
         i < ch.len(),
         deq_p_chain_valid(dty, env, lctx, IoMode::InferWt, ch, h),
@@ -1136,7 +1145,7 @@ pub proof fn kconv_wt_implies_tconv(
     y: ExprSpec,
 )
     requires
-        hyps(dty, env, lctx),
+        hyps_all(dty, env),
         kconv_wt(dty, env, lctx, x, y),
     ensures
         tconv(dty, env, lctx, x, y),
