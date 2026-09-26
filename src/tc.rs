@@ -1495,7 +1495,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost ls = crate::level_arena_bridge::to_model_of_levels(struct_ty_levels);
         let ghost (Ts, fs) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env0, s_m, T, f)
             && kconv(env0, T, to_model_expr(structure_ty));
-        let ghost hs = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Ts, to_model_expr(structure_ty), h);
+        let ghost hs = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ts, to_model_expr(structure_ty), h);
         proof {
             crate::expr_arena_bridge::is_const_shape_model(sf);
             crate::expr_arena_bridge::const_levels_vec_model(sf);
@@ -1622,8 +1622,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 np == *num_params,
                 pi == i as int,
                 forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
-                    dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
-                ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
+                    dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
+                ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
         {
             proof {
                 in_scope_of_deep_in(*self, ctor_ty, L);
@@ -1643,7 +1643,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         // one parameter step, at any height above both floors
                         let cur = to_model_expr(ct0);
                         let wb = ExprSpec::Bind(BinderKind::Pi, Box::new(btm), Box::new(bm));
-                        let hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, cur, wb, h);
+                        let hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, cur, wb, h);
                         let H2: nat = if H >= hw { H } else { hw };
                         assert(am.skip(i as int)[0] == am[i as int]);
                         assert(am[i as int] == to_model_expr(a));
@@ -1653,11 +1653,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(to_model_expr(ctor_ty) == crate::expr_model::subst_full(bm, seq![am.skip(i as int)[0]], 0));
                         assert((np - (i + 1)) as nat == ((np - i) as nat - 1) as nat);
                         assert forall|tt: ExprSpec, h: nat| h >= H2 && #[trigger] crate::tc_model::proj_field_type(
-                            dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(pi + 1), (np - (pi + 1)) as nat, 0, idx as nat, s_m, tt,
-                        ) implies crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
-                            crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, h);
+                            dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(pi + 1), (np - (pi + 1)) as nat, 0, idx as nat, s_m, tt,
+                        ) implies crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
+                            crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, cur, wb, hw, h);
                             crate::tc_model::proj_field_type_param_step_p(
-                                dty, denv, lctx, true, h, cur, btm, bm, am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
+                                dty, denv, lctx, crate::tc_model::IoMode::Infer, h, cur, btm, bm, am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
                             );
                         }
                         H = H2;
@@ -1679,12 +1679,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // in loop 2's terms (quantifier matching does no arithmetic)
             assert(pi == np as int);
             assert forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
-                dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
-            ) implies crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
+                dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
+            ) implies crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
                 assert(am.skip(pi) == am.skip(np as int));
                 assert((np - pi) as nat == 0);
                 assert(fi as usize == 0usize && (idx - fi) as nat == idx as nat);
-                assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt));
+                assert(crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt));
             }
         }
         for i in 0..idx
@@ -1713,8 +1713,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 s_m == to_model_expr(structure),
                 fi == i as int,
                 forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
-                    dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
-                ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
+                    dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
+                ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
         {
             proof {
                 in_scope_of_deep_in(*self, ctor_ty, L);
@@ -1729,7 +1729,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Pi { binder_type, body, .. } => {
                     let ghost cur = to_model_expr(ct0);
                     let ghost wb = ExprSpec::Bind(BinderKind::Pi, Box::new(to_model_expr(binder_type)), Box::new(to_model_expr(body)));
-                    let ghost hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, cur, wb, h);
+                    let ghost hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, cur, wb, h);
                     let ghost pj = ExprSpec::Proj(i, Box::new(s_m));
                     if self.ctx.num_loose_bvars(body) != 0 {
                         proof {
@@ -1759,11 +1759,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         let H2: nat = if H0 >= hw { H0 } else { hw };
                         assert(to_model_expr(ctor_ty) == crate::expr_model::subst_full(to_model_expr(body), seq![pj], 0));
                         assert forall|tt: ExprSpec, h: nat| h >= H2 && #[trigger] crate::tc_model::proj_field_type(
-                            dty, denv, lctx, true, h, to_model_expr(ctor_ty), am.skip(np as int), 0, (fi + 1) as usize, (idx - (fi + 1)) as nat, s_m, tt,
-                        ) implies crate::tc_model::proj_field_type(dty, denv, lctx, true, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
-                            crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, h);
+                            dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(np as int), 0, (fi + 1) as usize, (idx - (fi + 1)) as nat, s_m, tt,
+                        ) implies crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt) by {
+                            crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, cur, wb, hw, h);
                             crate::tc_model::proj_field_type_field_step_p(
-                                dty, denv, lctx, true, h, cur, to_model_expr(binder_type), to_model_expr(body),
+                                dty, denv, lctx, crate::tc_model::IoMode::Infer, h, cur, to_model_expr(binder_type), to_model_expr(body),
                                 am.skip(np as int), fi as usize, (idx - fi) as nat, s_m, tt,
                             );
                         }
@@ -1796,21 +1796,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let cur = to_model_expr(ctor_ty);
                     let btm = to_model_expr(binder_type);
                     let wb = to_model_expr(reduced);
-                    let hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, cur, wb, h);
+                    let hw = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, cur, wb, h);
                     let (bt_r, body_r) = (btm, match wb { ExprSpec::Bind(bk, _, b) => *b, _ => wb });
                     assert(wb == ExprSpec::Bind(BinderKind::Pi, Box::new(bt_r), Box::new(body_r)));
                     let m1: nat = if H >= hw { H } else { hw };
                     let m2: nat = if fs >= hs { fs } else { hs };
                     let f2: nat = if m1 >= m2 { m1 } else { m2 };
-                    crate::tc_model::deq_p_mono(dty, denv, lctx, true, cur, wb, hw, f2);
-                    crate::tc_model::proj_field_type_final_p(dty, denv, lctx, true, f2, cur, bt_r, body_r, am.skip(np as int), idx, s_m);
+                    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, cur, wb, hw, f2);
+                    crate::tc_model::proj_field_type_final_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, f2, cur, bt_r, body_r, am.skip(np as int), idx, s_m);
                     assert(fi == idx as int);
                     assert(fi as usize == idx && (idx - fi) as nat == 0);
-                    assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, f2, cur, am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, btm));
-                    assert(crate::tc_model::proj_field_type(dty, denv, lctx, true, f2, ctm, am, np as nat, 0, idx as nat, s_m, btm));
-                    crate::tc_model::types_to_mono(dty, denv, lctx, true, s_m, Ts, fs, f2);
-                    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ts, to_model_expr(structure_ty), hs, f2);
-                    crate::tc_model::types_to_mono(dty, denv, lctx, true, ExprSpec::Const(ctor_id, ls), ctm, 0, f2);
+                    assert(crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, f2, cur, am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, btm));
+                    assert(crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, f2, ctm, am, np as nat, 0, idx as nat, s_m, btm));
+                    crate::tc_model::types_to_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, s_m, Ts, fs, f2);
+                    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ts, to_model_expr(structure_ty), hs, f2);
+                    crate::tc_model::types_to_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, ExprSpec::Const(ctor_id, ls), ctm, 0, f2);
                     assert(crate::tc_model::proj_marker(f2, Ts, ind_id, ls, am, ctor_id, np, ctm));
                     assert(ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1));
                     kinfer_of_ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1);
@@ -5414,7 +5414,7 @@ pub open spec fn kconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bo
     crate::tc_model::deq_p_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         x,
         y,
     )
@@ -5427,7 +5427,7 @@ pub open spec fn tconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bo
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        false,
+        crate::tc_model::IoMode::Real,
         x,
         y,
     )
@@ -5440,7 +5440,7 @@ pub proof fn kconv_refl<'x, 't>(env: Env<'x, 't>, x: ExprSpec)
     crate::tc_model::deq_p_any_refl(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         x,
     );
 }
@@ -5455,7 +5455,7 @@ pub proof fn kconv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: 
     crate::tc_model::deq_p_any_trans(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         x,
         y,
         z,
@@ -5472,7 +5472,7 @@ pub proof fn kconv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     crate::tc_model::deq_p_any_of_deq_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         x,
         y,
     );
@@ -5487,7 +5487,7 @@ pub proof fn kconv_proj_congr<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec
     crate::tc_model::deq_p_any_proj_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         idx,
         s1,
         s2,
@@ -5504,7 +5504,7 @@ pub proof fn kconv_spine_congr<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpe
     crate::tc_model::deq_p_any_spine_congr(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         x,
         y,
         rest,
@@ -5532,7 +5532,7 @@ pub proof fn kconv_spine_update<'x, 't>(
     crate::tc_model::deq_p_any_spine_update(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         head,
         args,
         i,
@@ -5613,7 +5613,7 @@ pub proof fn kconv_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     crate::tc_model::deq_p_any_symm(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), true,
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::tc_model::IoMode::Infer,
         x,
         y,
     );
@@ -5830,7 +5830,7 @@ pub proof fn kconv_bind_fresh<'x, 't>(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        true,
+        crate::tc_model::IoMode::Infer,
         t1,
         t2,
         b1,
@@ -6456,7 +6456,7 @@ pub open spec fn ktypes<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec, f: n
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        true,
+        crate::tc_model::IoMode::Infer,
         e,
         t,
         f,
@@ -6565,15 +6565,15 @@ pub proof fn pi_rule_step<'x, 't>(
         && kconv(env, T, ExprSpec::Sort(u));
     let (TB, fB) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, ob, T, f)
         && kconv(env, T, ExprSpec::Sort(acc));
-    let hA = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, TA, ExprSpec::Sort(u), h);
-    let hB = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, TB, ExprSpec::Sort(acc), h);
+    let hA = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, TA, ExprSpec::Sort(u), h);
+    let hB = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, TB, ExprSpec::Sort(acc), h);
     let m1: nat = if fA >= fB { fA } else { fB };
     let m2: nat = if hA >= hB { hA } else { hB };
     let g: nat = if m1 >= m2 { m1 } else { m2 };
-    crate::tc_model::types_to_mono(dty, denv, lctx, true, A, TA, fA, g);
-    crate::tc_model::types_to_mono(dty, denv, lctx, true, ob, TB, fB, g);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, TA, ExprSpec::Sort(u), hA, g);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, TB, ExprSpec::Sort(acc), hB, g);
+    crate::tc_model::types_to_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, TA, fA, g);
+    crate::tc_model::types_to_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, ob, TB, fB, g);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, TA, ExprSpec::Sort(u), hA, g);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, TB, ExprSpec::Sort(acc), hB, g);
     assert(crate::tc_model::pi_marker(lid, TA, u, TB, acc));
     g + 1
 }
@@ -6999,10 +6999,10 @@ pub proof fn lam_telescope<'x, 't>(
         let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
         let (T1, f) = choose|T1: ExprSpec, f: nat| #[trigger] ktc_marker(T1, f) && ktypes(env, Xs[ii + 1], T1, f)
             && crate::expr_model::nlbv(T1) <= 0 && kconv(env, T1, C1);
-        let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T1, C1, h);
+        let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, T1, C1, h);
         let g: nat = if f >= h { f } else { h };
-        crate::tc_model::types_to_mono(dty, denv, lctx, true, Xs[ii + 1], T1, f, g);
-        crate::tc_model::deq_p_mono(dty, denv, lctx, true, T1, C1, h, g);
+        crate::tc_model::types_to_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Xs[ii + 1], T1, f, g);
+        crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, T1, C1, h, g);
         assert(Xs[ii] == ExprSpec::Bind(BinderKind::Lam, Box::new(As[ii]), Box::new(Bs[ii])));
         assert(crate::expr_model::subst_full(Bs[ii], seq![ExprSpec::Free(k)], 0) == Xs[ii + 1]);
         assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
@@ -7381,18 +7381,18 @@ pub proof fn eta_expand_claim<'x, 't>(
     let lctx = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, x, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, tm);
-    let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T, tm, h);
+    let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, T, tm, h);
     let params = am.subrange(0, np as int);
     let rest = am.subrange(np as int, am.len() as int);
     assert(params + rest =~= am);
     assert(crate::tc_model::struct_type_marker(lv, rest));
-    assert(crate::tc_model::struct_type_of(dty, denv, lctx, true, T, ind, params, h));
+    assert(crate::tc_model::struct_type_of(dty, denv, lctx, crate::tc_model::IoMode::Infer, T, ind, params, h));
     let H: nat = if f + 1 >= h { f + 1 } else { h };
-    crate::tc_model::struct_type_of_mono(dty, denv, lctx, true, T, ind, params, h, H);
+    crate::tc_model::struct_type_of_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, T, ind, params, h, H);
     assert(crate::tc_model::eta_struct_marker(T, f, ind, cid, ls, params, nf));
     assert(eta_projs(x, nf) =~= Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))));
-    assert(crate::tc_model::eta_struct_expand(dty, denv, lctx, true, x, r, H));
-    crate::tc_model::deq_p_any_of_eta_struct(dty, denv, lctx, true, x, r, H);
+    assert(crate::tc_model::eta_struct_expand(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, r, H));
+    crate::tc_model::deq_p_any_of_eta_struct(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, r, H);
 }
 
 /// `A` is a proposition: it has a `Prop`-level sort, up to conversion.
@@ -7426,11 +7426,11 @@ pub proof fn irrel_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: 
         #[trigger] crate::level_model::interp(l, rho) <= 0);
     let (TA, fa) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, A, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, ExprSpec::Sort(la));
-    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Tx, A, h);
-    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Ty, B, h);
-    let h3 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, TA, ExprSpec::Sort(la), h);
+    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, h);
+    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, h);
+    let h3 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, TA, ExprSpec::Sort(la), h);
     assert(kconv(env, A, B));
-    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, A, B, h);
+    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, h);
     let m1: nat = if fx >= fy { fx } else { fy };
     let m2: nat = fa;
     let m3: nat = if h1 >= h2 { h1 } else { h2 };
@@ -7439,22 +7439,22 @@ pub proof fn irrel_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: 
     let m6: nat = if m3 >= m4 { m3 } else { m4 };
     let m7: nat = if m5 >= m6 { m5 } else { m6 };
     let H: nat = (if m7 >= h5 { m7 } else { h5 }) + 1;
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Tx, A, h1, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ty, B, h2, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, TA, ExprSpec::Sort(la), h3, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, A, B, h5, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, h1, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, h2, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, TA, ExprSpec::Sort(la), h3, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, h5, H);
     // Tx ~ A ~ B ~ Ty, and both types convert to the proposition A
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, A, B, H);
-    crate::tc_model::deq_p_symm(dty, denv, lctx, true, Ty, B, H);
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, B, Ty, H);
-    crate::tc_model::deq_p_symm(dty, denv, lctx, true, A, B, H);
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Ty, B, A, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, B, H);
+    crate::tc_model::deq_p_symm(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, B, Ty, H);
+    crate::tc_model::deq_p_symm(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, A, H);
     assert(crate::tc_model::proof_type_marker(A, TA, fa, la));
-    assert(crate::tc_model::is_proof_type_m(dty, denv, lctx, true, Tx, H));
-    assert(crate::tc_model::is_proof_type_m(dty, denv, lctx, true, Ty, H));
+    assert(crate::tc_model::is_proof_type_m(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, H));
+    assert(crate::tc_model::is_proof_type_m(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, H));
     assert(crate::tc_model::irrel_marker(Tx, Ty, fx, fy));
-    assert(crate::tc_model::proof_irrel_pair(dty, denv, lctx, true, x, y, H));
-    crate::tc_model::deq_p_any_of_irrel(dty, denv, lctx, true, x, y, H);
+    assert(crate::tc_model::proof_irrel_pair(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, y, H));
+    crate::tc_model::deq_p_any_of_irrel(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, y, H);
 }
 
 /// THE UNIT RULE from the kernel's facts: `x : A`, `y : B`, `A ~ B`, and
@@ -7480,27 +7480,27 @@ pub proof fn unit_claim<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, A: E
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, A);
     let (Ty, fy) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, y, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, B);
-    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Tx, A, h);
-    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Ty, B, h);
+    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, h);
+    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, h);
     assert(kconv(env, A, B));
-    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, A, B, h);
+    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, h);
     let m1: nat = if fx >= fy { fx } else { fy };
     let m3: nat = if h1 >= h2 { h1 } else { h2 };
     let m7: nat = if m1 >= m3 { m1 } else { m3 };
     let H: nat = (if m7 >= h5 { m7 } else { h5 }) + 1;
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Tx, A, h1, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ty, B, h2, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, A, B, h5, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, h1, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, h2, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, h5, H);
     // Tx ~ A ~ B ~ Ty
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, A, B, H);
-    crate::tc_model::deq_p_symm(dty, denv, lctx, true, Ty, B, H);
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, B, Ty, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, B, H);
+    crate::tc_model::deq_p_symm(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, B, Ty, H);
     assert(crate::tc_model::unit_like_type(crate::env_model::to_model_of_env(env), A));
     assert(crate::tc_model::unit_like_marker(A));
-    assert(crate::tc_model::unit_like_type_m(dty, denv, lctx, true, Tx, H));
+    assert(crate::tc_model::unit_like_type_m(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, H));
     assert(crate::tc_model::unit_marker(Tx, Ty, fx, fy));
-    assert(crate::tc_model::unit_pair(dty, denv, lctx, true, x, y, H));
-    crate::tc_model::deq_p_any_of_unit(dty, denv, lctx, true, x, y, H);
+    assert(crate::tc_model::unit_pair(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, y, H));
+    crate::tc_model::deq_p_any_of_unit(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, y, H);
 }
 
 /// STRUCTURE ETA between `x` and a constructor application `y`, from the
@@ -7548,34 +7548,34 @@ pub proof fn struct_eta_claim<'x, 't>(
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, A);
     let (Ty, fy) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, y, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, B);
-    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Tx, A, h);
-    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, Ty, B, h);
+    let h1 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, h);
+    let h2 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, h);
     assert(kconv(env, A, B));
-    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, A, B, h);
+    let h5 = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, h);
     let m1: nat = if fx >= fy { fx } else { fy };
     let m3: nat = if h1 >= h2 { h1 } else { h2 };
     let m7: nat = if m1 >= m3 { m1 } else { m3 };
     let H: nat = (if m7 >= h5 { m7 } else { h5 }) + 1;
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Tx, A, h1, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, Ty, B, h2, H);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, A, B, h5, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, h1, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, h2, H);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, A, B, h5, H);
     // Tx ~ A ~ B ~ Ty
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, A, B, H);
-    crate::tc_model::deq_p_symm(dty, denv, lctx, true, Ty, B, H);
-    crate::tc_model::deq_p_trans(dty, denv, lctx, true, Tx, B, Ty, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, A, B, H);
+    crate::tc_model::deq_p_symm(dty, denv, lctx, crate::tc_model::IoMode::Infer, Ty, B, H);
+    crate::tc_model::deq_p_trans(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, B, Ty, H);
     // x's type is that of a constructor application: y itself
     let params = am.subrange(0, np as int);
     let fields = am.subrange(np as int, am.len() as int);
     assert(params + fields =~= am);
     assert(crate::tc_model::eta_ctor_marker(ylv, fields, Ty, fy));
     reveal_with_fuel(crate::tc_model::ctor_typed_like, 1);
-    assert(crate::tc_model::ctor_typed_like(dty, denv, lctx, true, Tx, cid, params, nf, H));
+    assert(crate::tc_model::ctor_typed_like(dty, denv, lctx, crate::tc_model::IoMode::Infer, Tx, cid, params, nf, H));
     // x converts to its own expansion ...
     let y2 = crate::beta_model::spine_app(ExprSpec::Const(cid, ylv), params + eta_projs(x, nf));
     assert(crate::tc_model::eta_struct_marker(Tx, fx, ind, cid, ylv, params, nf));
     assert(eta_projs(x, nf) =~= Seq::new(nf, |i: int| ExprSpec::Proj(i as usize, Box::new(x))));
-    assert(crate::tc_model::eta_struct_expand(dty, denv, lctx, true, x, y2, H));
-    crate::tc_model::deq_p_any_of_eta_struct(dty, denv, lctx, true, x, y2, H);
+    assert(crate::tc_model::eta_struct_expand(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, y2, H));
+    crate::tc_model::deq_p_any_of_eta_struct(dty, denv, lctx, crate::tc_model::IoMode::Infer, x, y2, H);
     // ... which agrees with y argument by argument
     let a1 = params + eta_projs(x, nf);
     assert forall|i: int| 0 <= i < a1.len() implies kconv(env, #[trigger] a1[i], am[i]) by {
@@ -7748,16 +7748,16 @@ pub proof fn infer_app_step<'x, 't>(
     let bt2 = crate::expr_model::subst_full(body, ctxm, 1);
     let F = ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt2));
     assert(crate::expr_model::subst_full(ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), ctxm, 0) == F);
-    let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, true, T, F, h);
+    let h = choose|h: nat| #[trigger] crate::tc_model::deq_p(dty, denv, lctx, crate::tc_model::IoMode::Infer, T, F, h);
     let f2: nat = (if fT >= h { fT } else { h }) + 1;
-    crate::tc_model::types_to_mono(dty, denv, lctx, true, sp, T, fT, f2);
-    crate::tc_model::deq_p_mono(dty, denv, lctx, true, T, F, h, (f2 - 1) as nat);
+    crate::tc_model::types_to_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, sp, T, fT, f2);
+    crate::tc_model::deq_p_mono(dty, denv, lctx, crate::tc_model::IoMode::Infer, T, F, h, (f2 - 1) as nat);
     assert(crate::tc_model::app_marker(T, aty, bt2, aty));
     assert(crate::tc_model::types_to(
         dty,
         denv,
         lctx,
-        true,
+        crate::tc_model::IoMode::Infer,
         ExprSpec::App(Box::new(sp), Box::new(a)),
         crate::expr_model::subst_full(bt2, seq![a], 0),
         f2,

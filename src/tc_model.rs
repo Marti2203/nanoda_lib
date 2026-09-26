@@ -125,6 +125,119 @@ verus! {
 
 broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
 
+/// Which typing the typed leaves of conversion consult. `Real` checks
+/// application arguments against the domain; `Infer` is the kernel's
+/// `InferOnly` mode, which does not; `InferWt` is `Infer` whose typed leaves
+/// also require both sides to be really well-typed (the metatheory's
+/// well-typed-chain form, `docs/METATHEORY.md`).
+#[derive(PartialEq, Eq, Structural)]
+pub enum IoMode {
+    Real,
+    Infer,
+    InferWt,
+}
+
+/// `InferWt`'s condition on a term a typed leaf types internally: it has a
+/// real type, below the leaf's height.
+pub open spec fn wt1(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: IoMode,
+    e: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 2int, 0nat,
+{
+    io != IoMode::InferWt || exists|t: ExprSpec, f: nat| #[trigger] wt_marker(t, f) && f < h && types_to(dty, denv, lctx, IoMode::Real, e, t, f)
+}
+
+pub proof fn wt1_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: IoMode,
+    e: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        wt1(dty, denv, lctx, io, e, h1),
+        h1 <= h2,
+    ensures
+        wt1(dty, denv, lctx, io, e, h2),
+{
+    if io == IoMode::InferWt {
+        let (t, f) = choose|t: ExprSpec, f: nat| #[trigger] wt_marker(t, f) && f < h1 && types_to(dty, denv, lctx, IoMode::Real, e, t, f);
+        assert(wt_marker(t, f));
+    }
+}
+
+pub proof fn leaf_wt_mono(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: IoMode,
+    x: ExprSpec,
+    y: ExprSpec,
+    h1: nat,
+    h2: nat,
+)
+    requires
+        leaf_wt(dty, denv, lctx, io, x, y, h1),
+        h1 <= h2,
+    ensures
+        leaf_wt(dty, denv, lctx, io, x, y, h2),
+{
+    if io == IoMode::InferWt {
+        let (tx, fx) = choose|tx: ExprSpec, fx: nat| #[trigger] wt_marker(tx, fx) && fx <= h1 && types_to(dty, denv, lctx, IoMode::Real, x, tx, fx);
+        let (ty, fy) = choose|ty: ExprSpec, fy: nat| #[trigger] wt_marker(ty, fy) && fy <= h1 && types_to(dty, denv, lctx, IoMode::Real, y, ty, fy);
+        assert(wt_marker(tx, fx) && wt_marker(ty, fy));
+    }
+}
+
+pub proof fn leaf_wt_symm(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: IoMode,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+)
+    requires
+        leaf_wt(dty, denv, lctx, io, x, y, h),
+    ensures
+        leaf_wt(dty, denv, lctx, io, y, x, h),
+{
+}
+
+pub open spec fn infers(io: IoMode) -> bool {
+    io != IoMode::Real
+}
+
+/// Marker trigger for the real-typing witnesses of `leaf_wt` and `wt1`
+/// (`types_to` is in their recursive group, so it cannot trigger).
+pub open spec fn wt_marker(t: ExprSpec, f: nat) -> bool {
+    true
+}
+
+/// The leaf condition `InferWt` adds: `x` and `y` both have real types.
+pub open spec fn leaf_wt(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    io: IoMode,
+    x: ExprSpec,
+    y: ExprSpec,
+    h: nat,
+) -> bool
+    decreases h, 7int, 0nat,
+{
+    io != IoMode::InferWt || ((exists|tx: ExprSpec, fx: nat| #[trigger] wt_marker(tx, fx) && fx <= h && types_to(dty, denv, lctx, IoMode::Real, x, tx, fx))
+        && (exists|ty: ExprSpec, fy: nat| #[trigger] wt_marker(ty, fy) && fy <= h && types_to(dty, denv, lctx, IoMode::Real, y, ty, fy)))
+}
+
 
 /// TRANSPARENT. Its three fields are already `pub`, so nothing had to change
 /// in the kernel: opaque, each accessor needed an uninterpreted `*_of` keyed by
@@ -213,7 +326,7 @@ pub open spec fn infer_types_to<'t, 'x>(
     types_to(
         to_model_of_declar_ty(env),
         to_model_of_env(env),
-        arena_lctx(crate::env_model::env_arena_ids(env)), false,
+        arena_lctx(crate::env_model::env_arena_ids(env)), IoMode::Real,
         to_model(e),
         to_model(r),
         fuel,
@@ -966,7 +1079,7 @@ pub open spec fn proj_field_type(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     args: Seq<ExprSpec>,
@@ -1026,7 +1139,7 @@ pub open spec fn types_to(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     e: ExprSpec,
     t: ExprSpec,
     fuel: nat,
@@ -1089,7 +1202,7 @@ pub open spec fn types_to(
             // argument, so neither the argument's type nor its agreement with
             // the domain is part of the derivation. `io == false` is real
             // typing. Everything else about the rule is shared.
-             && (io || (types_to(dty, denv, lctx, io, *a, aty2, fuel) && deq_p(
+             && (infers(io) || (types_to(dty, denv, lctx, io, *a, aty2, fuel) && deq_p(
                 dty,
                 denv,
                 lctx,
@@ -1121,7 +1234,7 @@ pub open spec fn types_to(
                 subst_full(*body, seq![*val], 0),
                 t,
                 f2,
-            ) && (io || exists|s: ExprSpec, l: LevelSpec, vt: ExprSpec| #[trigger]
+            ) && (infers(io) || exists|s: ExprSpec, l: LevelSpec, vt: ExprSpec| #[trigger]
                 let_check_marker(s, l, vt) && types_to(dty, denv, lctx, io, *ty0, s, f2)
                 && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), f2)
                 && types_to(dty, denv, lctx, io, *val, vt, f2)
@@ -1137,7 +1250,7 @@ pub open spec fn types_to(
         // `infer_sort_of`); `InferOnly` skips it.
         ExprSpec::Bind(BinderKind::Lam, binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
             bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
-            && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
+            && (infers(io) || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
                 && types_to(dty, denv, lctx, io, *binder_type, s, (fuel - 1) as nat)
                 && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (fuel - 1) as nat))
             && types_to(
@@ -1224,7 +1337,7 @@ pub proof fn types_to_nat_lit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     e: ExprSpec,
     t: ExprSpec,
     fuel: nat,
@@ -1245,7 +1358,7 @@ pub proof fn types_to_string_lit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     e: ExprSpec,
     t: ExprSpec,
     fuel: nat,
@@ -1276,7 +1389,7 @@ pub proof fn types_to_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     e: ExprSpec,
     t: ExprSpec,
     f1: nat,
@@ -1301,7 +1414,7 @@ pub proof fn types_to_mono(
                 ft,
                 ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)),
                 (f1 - 1) as nat,
-            ) && (io || (types_to(dty, denv, lctx, io, *a, aty2, f1) && deq_p(
+            ) && (infers(io) || (types_to(dty, denv, lctx, io, *a, aty2, f1) && deq_p(
                 dty,
                 denv,
                 lctx,
@@ -1323,7 +1436,7 @@ pub proof fn types_to_mono(
         );
         // the ARGUMENT's derivation has to be lifted too, in the mode that
         // has one
-        if !io {
+        if !infers(io) {
             types_to_mono(dty, denv, lctx, io, *a, aty2, f1, f2);
             deq_p_mono(dty, denv, lctx, io, aty2, aty, (f1 - 1) as nat, (f2 - 1) as nat);
             assert(types_to(dty, denv, lctx, io, *a, aty2, f2));
@@ -1357,7 +1470,7 @@ pub proof fn types_to_mono(
                 subst_full(*body, seq![*val], 0),
                 t,
                 h,
-            ) && (io || exists|s: ExprSpec, l: LevelSpec, vt: ExprSpec| #[trigger]
+            ) && (infers(io) || exists|s: ExprSpec, l: LevelSpec, vt: ExprSpec| #[trigger]
                 let_check_marker(s, l, vt) && types_to(dty, denv, lctx, io, *ty0, s, h)
                 && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), h)
                 && types_to(dty, denv, lctx, io, *val, vt, h)
@@ -1414,7 +1527,7 @@ pub proof fn types_to_mono(
         if bk == BinderKind::Lam {
             let (lid, infd, bt2) = choose|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
                 bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
-                && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
+                && (infers(io) || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
                 && types_to(dty, denv, lctx, io, *binder_type, s, g1)
                 && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1)) && types_to(
                     dty,
@@ -1437,7 +1550,7 @@ pub proof fn types_to_mono(
                 g2,
             );
             deq_p_mono(dty, denv, lctx, io, infd, bt2, g1, g2);
-            if !io {
+            if !infers(io) {
                 let (s0, l0) = choose|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
                     && types_to(dty, denv, lctx, io, *binder_type, s, g1)
                     && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), g1);
@@ -1504,7 +1617,7 @@ pub proof fn types_to_free(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     lid: u32,
     fuel: nat,
 )
@@ -1519,7 +1632,7 @@ pub proof fn types_to_sort(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     l: LevelSpec,
     fuel: nat,
 )
@@ -1539,7 +1652,7 @@ pub proof fn types_to_const(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     cid: u64,
     clevels: Seq<LevelSpec>,
     t: ExprSpec,
@@ -1566,7 +1679,7 @@ pub proof fn types_to_app(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     f: ExprSpec,
     a: ExprSpec,
     ft: ExprSpec,
@@ -1602,7 +1715,7 @@ pub proof fn types_to_app_lift(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     f: ExprSpec,
     a: ExprSpec,
     ft: ExprSpec,
@@ -1639,7 +1752,7 @@ pub proof fn types_to_app_lift_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     f: ExprSpec,
     a: ExprSpec,
     ft: ExprSpec,
@@ -1678,7 +1791,7 @@ pub proof fn types_to_let(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     ty0: ExprSpec,
     val: ExprSpec,
     body: ExprSpec,
@@ -1687,7 +1800,7 @@ pub proof fn types_to_let(
     fuel: nat,
 )
     requires
-        io,
+        infers(io),
         f2 < fuel,
         types_to(dty, denv, lctx, io, subst_full(body, seq![val], 0), t, f2),
     ensures
@@ -1708,7 +1821,7 @@ pub proof fn types_to_proj(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     idx: usize,
     s: ExprSpec,
     t: ExprSpec,
@@ -1743,7 +1856,7 @@ pub proof fn proj_field_type_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h1: nat,
     h2: nat,
     cur: ExprSpec,
@@ -1845,7 +1958,7 @@ pub proof fn proj_field_type_param_step_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
@@ -1885,7 +1998,7 @@ pub proof fn proj_field_type_field_step_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
@@ -1923,7 +2036,7 @@ pub proof fn proj_field_type_final_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
@@ -1945,7 +2058,7 @@ pub proof fn proj_field_type_param_step(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
@@ -1987,7 +2100,7 @@ pub proof fn proj_field_type_field_step(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
@@ -2027,7 +2140,7 @@ pub proof fn proj_field_type_final(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h: nat,
     cur: ExprSpec,
     bt: ExprSpec,
@@ -2049,7 +2162,7 @@ pub proof fn types_to_lambda(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     binder_type: ExprSpec,
     body: ExprSpec,
     lid: u32,
@@ -2057,7 +2170,7 @@ pub proof fn types_to_lambda(
     fuel: nat,
 )
     requires
-        io,
+        infers(io),
         fuel > 0,
         lctx.contains_key(lid),
         lctx[lid] == binder_type,
@@ -2091,7 +2204,7 @@ pub proof fn types_to_pi(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     binder_type: ExprSpec,
     body: ExprSpec,
     lid: u32,
@@ -2158,14 +2271,14 @@ pub open spec fn is_proof_type_m(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     ty: ExprSpec,
     h: nat,
 ) -> bool
     decreases h, 3int, 0nat,
 {
     exists|a: ExprSpec, tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
-        proof_type_marker(a, tt, f, l) && deq_p(dty, denv, lctx, io, ty, a, h) && f < h && types_to(dty, denv, lctx, io, a, tt, f) && deq_p(
+        proof_type_marker(a, tt, f, l) && deq_p(dty, denv, lctx, io, ty, a, h) && f < h && types_to(dty, denv, lctx, io, a, tt, f) && wt1(dty, denv, lctx, io, a, h) && deq_p(
             dty,
             denv,
             lctx,
@@ -2185,7 +2298,7 @@ pub open spec fn proof_irrel_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -2260,7 +2373,7 @@ pub open spec fn unit_like_type_m(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     h: nat,
 ) -> bool
@@ -2307,7 +2420,7 @@ pub proof fn unit_like_type_of_u(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     h: nat,
 )
@@ -2326,7 +2439,7 @@ pub proof fn struct_type_of_lift(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     ind: u64,
     params: Seq<ExprSpec>,
@@ -2371,7 +2484,7 @@ pub open spec fn struct_type_of(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     ind: u64,
     params: Seq<ExprSpec>,
@@ -2398,7 +2511,7 @@ pub open spec fn ctor_typed_like(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     cid: u64,
     params: Seq<ExprSpec>,
@@ -2416,14 +2529,14 @@ pub open spec fn ctor_typed_like(
             spine_app(ExprSpec::Const(cid, cls), params + fields),
             ty0,
             f0,
-        ) && deq_p(dty, denv, lctx, io, tx, ty0, h)
+        ) && wt1(dty, denv, lctx, io, spine_app(ExprSpec::Const(cid, cls), params + fields), h) && deq_p(dty, denv, lctx, io, tx, ty0, h)
 }
 
 pub proof fn ctor_typed_like_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     cid: u64,
     params: Seq<ExprSpec>,
@@ -2448,7 +2561,8 @@ pub proof fn ctor_typed_like_mono(
             spine_app(ExprSpec::Const(cid, cls), params + fields),
             ty0,
             f0,
-        ) && deq_p(dty, env, lctx, io, tx, ty0, h1);
+        ) && wt1(dty, env, lctx, io, spine_app(ExprSpec::Const(cid, cls), params + fields), h1) && deq_p(dty, env, lctx, io, tx, ty0, h1);
+    wt1_mono(dty, env, lctx, io, spine_app(ExprSpec::Const(cid, cls), params + fields), h1, h2);
     deq_p_mono(dty, env, lctx, io, tx, ty0, h1, h2);
     assert(eta_ctor_marker(cls, fields, ty0, f0));
 }
@@ -2467,7 +2581,7 @@ pub open spec fn eta_struct_expand(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -2507,7 +2621,7 @@ pub open spec fn eta_struct_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -2528,7 +2642,7 @@ pub open spec fn unit_pair(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -3593,7 +3707,7 @@ pub open spec fn deq_p_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -3601,9 +3715,9 @@ pub open spec fn deq_p_c(
     decreases h, 0int, 0nat,
 {
     ||| deq_c(env, x, y, h)
-    ||| (h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
-    ||| (h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
-    ||| (h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat))
+    ||| (h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat))
+    ||| (h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat))
+    ||| (h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat))
     ||| (h > 0 && match (x, y) {
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => deq_p_c(
             dty,
@@ -3668,7 +3782,7 @@ pub open spec fn deq_p_chain_valid(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     ch: Seq<ExprSpec>,
     h: nat,
 ) -> bool
@@ -3687,7 +3801,7 @@ pub open spec fn deq_p(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -3709,7 +3823,7 @@ pub open spec fn deq_p_any(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
@@ -3721,7 +3835,7 @@ pub proof fn deq_p_c_of_deq_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -3738,7 +3852,7 @@ pub proof fn deq_p_c_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -3753,11 +3867,14 @@ pub proof fn deq_p_c_mono(
 {
     if deq_c(env, x, y, h1) {
         deq_c_mono(env, x, y, h1, h2);
-    } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+    } else if h1 > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+        leaf_wt_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
         proof_irrel_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
-    } else if h1 > 0 && unit_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+    } else if h1 > 0 && unit_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+        leaf_wt_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
         unit_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
-    } else if h1 > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+    } else if h1 > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h1 - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h1 - 1) as nat) {
+        leaf_wt_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
         eta_struct_pair_mono(dty, env, lctx, io, x, y, (h1 - 1) as nat, (h2 - 1) as nat);
     } else {
         assert(h1 > 0);
@@ -3869,7 +3986,7 @@ pub proof fn deq_p_c_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -3882,7 +3999,8 @@ pub proof fn deq_p_c_symm(
 {
     if deq_c(env, x, y, h) {
         deq_c_symm(env, x, y, h);
-    } else if h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+    } else if h > 0 && proof_irrel_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        leaf_wt_symm(dty, env, lctx, io, x, y, (h - 1) as nat);
         let hp = (h - 1) as nat;
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
             irrel_marker(tx, ty2, fx, fy) && fx < hp && fy < hp && types_to(dty, env, lctx, io, x, tx, fx) && types_to(
@@ -3897,7 +4015,8 @@ pub proof fn deq_p_c_symm(
         deq_p_symm(dty, env, lctx, io, tx, ty2, hp);
         assert(irrel_marker(ty2, tx, fy, fx));
         assert(proof_irrel_pair(dty, env, lctx, io, y, x, hp));
-    } else if h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+    } else if h > 0 && unit_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        leaf_wt_symm(dty, env, lctx, io, x, y, (h - 1) as nat);
         let hp = (h - 1) as nat;
         let (tx, ty2, fx, fy) = choose|tx: ExprSpec, ty2: ExprSpec, fx: nat, fy: nat| #[trigger]
             unit_marker(tx, ty2, fx, fy) && fx < hp && fy < hp && types_to(dty, env, lctx, io, x, tx, fx)
@@ -3906,7 +4025,8 @@ pub proof fn deq_p_c_symm(
         deq_p_symm(dty, env, lctx, io, tx, ty2, hp);
         assert(unit_marker(ty2, tx, fy, fx));
         assert(unit_pair(dty, env, lctx, io, y, x, hp));
-    } else if h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) {
+    } else if h > 0 && eta_struct_pair(dty, env, lctx, io, x, y, (h - 1) as nat) && leaf_wt(dty, env, lctx, io, x, y, (h - 1) as nat) {
+        leaf_wt_symm(dty, env, lctx, io, x, y, (h - 1) as nat);
         assert(eta_struct_pair(dty, env, lctx, io, y, x, (h - 1) as nat));
     } else {
         assert(h > 0);
@@ -4015,7 +4135,7 @@ pub proof fn deq_p_of_deq_p_c(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -4049,7 +4169,7 @@ pub proof fn deq_p_of_pstep_star(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -4071,7 +4191,7 @@ pub proof fn deq_p_of_deq(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -4104,7 +4224,7 @@ pub proof fn proof_irrel_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -4145,7 +4265,7 @@ pub proof fn is_proof_type_m_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     ty: ExprSpec,
     h1: nat,
     h2: nat,
@@ -4158,7 +4278,7 @@ pub proof fn is_proof_type_m_mono(
     decreases h1, 2int,
 {
     let (a, tt, f, l) = choose|a: ExprSpec, tt: ExprSpec, f: nat, l: LevelSpec| #[trigger]
-        proof_type_marker(a, tt, f, l) && deq_p(dty, env, lctx, io, ty, a, h1) && f < h1 && types_to(dty, env, lctx, io, a, tt, f) && deq_p(
+        proof_type_marker(a, tt, f, l) && deq_p(dty, env, lctx, io, ty, a, h1) && f < h1 && types_to(dty, env, lctx, io, a, tt, f) && wt1(dty, env, lctx, io, a, h1) && deq_p(
             dty,
             env,
             lctx,
@@ -4169,6 +4289,7 @@ pub proof fn is_proof_type_m_mono(
         ) && (forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) <= 0);
     deq_p_mono(dty, env, lctx, io, tt, ExprSpec::Sort(l), h1, h2);
     deq_p_mono(dty, env, lctx, io, ty, a, h1, h2);
+    wt1_mono(dty, env, lctx, io, a, h1, h2);
     assert(proof_type_marker(a, tt, f, l));
 }
 
@@ -4176,7 +4297,7 @@ pub proof fn unit_like_type_m_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     h1: nat,
     h2: nat,
@@ -4197,7 +4318,7 @@ pub proof fn struct_type_of_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     tx: ExprSpec,
     ind: u64,
     params: Seq<ExprSpec>,
@@ -4221,7 +4342,7 @@ pub proof fn unit_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -4251,7 +4372,7 @@ pub proof fn eta_struct_expand_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -4302,7 +4423,7 @@ pub proof fn eta_struct_pair_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -4327,7 +4448,7 @@ pub proof fn deq_p_of_irrel(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
@@ -4336,10 +4457,12 @@ pub proof fn deq_p_of_irrel(
     requires
         proof_irrel_pair(dty, env, lctx, io, x, y, hi),
         h > hi,
+        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p(dty, env, lctx, io, x, y, h),
 {
     proof_irrel_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
+    leaf_wt_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
     assert(deq_p_c(dty, env, lctx, io, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
@@ -4351,7 +4474,7 @@ pub proof fn deq_p_of_unit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
@@ -4360,10 +4483,12 @@ pub proof fn deq_p_of_unit(
     requires
         unit_pair(dty, env, lctx, io, x, y, hi),
         h > hi,
+        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p(dty, env, lctx, io, x, y, h),
 {
     unit_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
+    leaf_wt_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
     assert(deq_p_c(dty, env, lctx, io, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
@@ -4372,13 +4497,14 @@ pub proof fn deq_p_any_of_unit(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
 )
     requires
         unit_pair(dty, env, lctx, io, x, y, hi),
+        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p_any(dty, env, lctx, io, x, y),
 {
@@ -4392,7 +4518,7 @@ pub proof fn deq_p_of_eta_struct(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
@@ -4401,10 +4527,12 @@ pub proof fn deq_p_of_eta_struct(
     requires
         eta_struct_pair(dty, env, lctx, io, x, y, hi),
         h > hi,
+        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p(dty, env, lctx, io, x, y, h),
 {
     eta_struct_pair_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
+    leaf_wt_mono(dty, env, lctx, io, x, y, hi, (h - 1) as nat);
     assert(deq_p_c(dty, env, lctx, io, x, y, h));
     deq_p_of_deq_p_c(dty, env, lctx, io, x, y, h);
 }
@@ -4413,13 +4541,14 @@ pub proof fn deq_p_any_of_eta_struct(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
 )
     requires
         eta_struct_pair(dty, env, lctx, io, x, y, hi),
+        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p_any(dty, env, lctx, io, x, y),
 {
@@ -4432,7 +4561,7 @@ pub proof fn deq_p_refl(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     h: nat,
 )
@@ -4451,7 +4580,7 @@ pub proof fn deq_p_mono(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h1: nat,
@@ -4492,7 +4621,7 @@ pub proof fn deq_p_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     h: nat,
@@ -4538,7 +4667,7 @@ pub proof fn deq_p_trans(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     z: ExprSpec,
@@ -4619,7 +4748,7 @@ pub proof fn deq_p_app_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     f1: ExprSpec,
     f2: ExprSpec,
     a1: ExprSpec,
@@ -4731,7 +4860,7 @@ pub proof fn deq_p_bind_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -4844,7 +4973,7 @@ pub proof fn deq_p_proj_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     pidx: usize,
     s1: ExprSpec,
     s2: ExprSpec,
@@ -4904,7 +5033,7 @@ pub proof fn deq_p_any_of_deq_any(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
 )
@@ -4922,7 +5051,7 @@ pub proof fn deq_p_any_of_defeq(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
 )
@@ -4939,13 +5068,14 @@ pub proof fn deq_p_any_of_irrel(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     hi: nat,
 )
     requires
         proof_irrel_pair(dty, env, lctx, io, x, y, hi),
+        leaf_wt(dty, env, lctx, io, x, y, hi),
     ensures
         deq_p_any(dty, env, lctx, io, x, y),
 {
@@ -4959,7 +5089,7 @@ pub proof fn deq_p_any_app_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     f1: ExprSpec,
     f2: ExprSpec,
     a1: ExprSpec,
@@ -5001,7 +5131,7 @@ pub proof fn deq_p_any_bind_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5044,7 +5174,7 @@ pub proof fn deq_p_any_proj_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     pidx: usize,
     s1: ExprSpec,
     s2: ExprSpec,
@@ -5076,7 +5206,7 @@ pub proof fn deq_p_any_of_leaf(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
 )
@@ -5101,7 +5231,7 @@ pub proof fn deq_p_bind_type_chain(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     t1: ExprSpec,
     t2: ExprSpec,
     b: ExprSpec,
@@ -5137,7 +5267,7 @@ pub proof fn deq_p_bind_link(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     t: ExprSpec,
     b1: ExprSpec,
     b2: ExprSpec,
@@ -5176,7 +5306,7 @@ pub proof fn deq_p_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5222,7 +5352,7 @@ pub proof fn deq_p_any_bind_fresh(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     t1: ExprSpec,
     t2: ExprSpec,
     b1: ExprSpec,
@@ -5271,7 +5401,7 @@ pub proof fn deq_p_any_spine_congr_args(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     h1: ExprSpec,
     h2: ExprSpec,
     a1: Seq<ExprSpec>,
@@ -5311,7 +5441,7 @@ pub proof fn deq_p_any_spine_congr(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     rest: Seq<ExprSpec>,
@@ -5343,7 +5473,7 @@ pub proof fn deq_p_any_spine_update(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     head: ExprSpec,
     args: Seq<ExprSpec>,
     i: int,
@@ -5381,7 +5511,7 @@ pub proof fn deq_p_any_refl(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
 )
     ensures
@@ -5395,7 +5525,7 @@ pub proof fn deq_p_any_symm(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
 )
@@ -5413,7 +5543,7 @@ pub proof fn deq_p_any_trans(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     env: EnvSpec,
     lctx: Map<u32, ExprSpec>,
-    io: bool,
+    io: IoMode,
     x: ExprSpec,
     y: ExprSpec,
     z: ExprSpec,

@@ -14,6 +14,8 @@ use crate::beta_model::pstep;
 #[cfg(verus_only)]
 use crate::tc_model::{deq_p_any, inst_free, types_to};
 #[allow(unused_imports)]
+use crate::tc_model::IoMode;
+#[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[allow(unused_imports)]
 use vstd::prelude::*;
@@ -28,7 +30,7 @@ pub open spec fn typed(
     e: ExprSpec,
     t: ExprSpec,
 ) -> bool {
-    exists|f: nat| #[trigger] types_to(dty, denv, lctx, false, e, t, f)
+    exists|f: nat| #[trigger] types_to(dty, denv, lctx, IoMode::Real, e, t, f)
 }
 
 /// Real conversion: typed definitional equality whose typed leaves consult
@@ -40,7 +42,7 @@ pub open spec fn tconv(
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
-    deq_p_any(dty, denv, lctx, false, x, y)
+    deq_p_any(dty, denv, lctx, IoMode::Real, x, y)
 }
 
 /// The kernel's conversion (`InferOnly` typing in the typed leaves), which
@@ -52,7 +54,20 @@ pub open spec fn kconv(
     x: ExprSpec,
     y: ExprSpec,
 ) -> bool {
-    deq_p_any(dty, denv, lctx, true, x, y)
+    deq_p_any(dty, denv, lctx, IoMode::Infer, x, y)
+}
+
+/// The kernel's conversion restricted to derivations whose typed leaves
+/// relate really well-typed terms (`IoMode::InferWt`): the premise of the
+/// well-typed-chain form of the phase-2 theorem.
+pub open spec fn kconv_wt(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<u32, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+) -> bool {
+    deq_p_any(dty, denv, lctx, IoMode::InferWt, x, y)
 }
 
 pub open spec fn well_typed(
@@ -160,3 +175,4 @@ pub proof fn lctx_wf_empty(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
 }
 
 } // verus!
+
