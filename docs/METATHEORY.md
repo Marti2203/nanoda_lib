@@ -342,6 +342,23 @@ Three lemmas:
 - `rctx_fresh`: a local unreachable from `e` (the kernel's `unreach` fact)
   is outside `rctx(G, e)` and mentioned by none of its entries.
 
+**M7 roadmap (the kernel port).** Typed leaves are produced at exactly five
+kernel sites: `proof_irrel_eq`, `def_eq_unit`, `try_eta_struct_aux`, and
+inside `whnf`'s iota `to_ctor_when_k` (K-like recursors) and
+`expand_eta_struct_aux`. Everything else is reduction, congruence and
+untyped leaves, which translate structurally from `Infer` in `G` to
+`InferWt` in `rctx`. The leaf sites need real typings of their operands (from
+the inputs' real typedness by generation and subject reduction) and of their
+witness, the kernel's own inferred type. That in turn needs:
+- (a) a SUBSTITUTION LEMMA for the scoped modes: typing and conversion
+  survive replacing a local by a term of its type, because inferred
+  application types are instantiated codomains;
+- (b) the five leaf sites;
+- (c) the structural translation of the remaining contracts and the cache
+  invariants.
+
+Subject reduction stays a named hypothesis.
+
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
 M6 one local ⟹ cofinite for `InferWt` typing and conversion; M7 kernel

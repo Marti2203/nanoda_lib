@@ -33,6 +33,7 @@ pub mod quot;
 pub mod quot_model;
 pub mod rctx;
 pub mod real_gen;
+pub mod subst_model;
 pub mod swap_model;
 pub mod swap_typed;
 pub mod tc;
