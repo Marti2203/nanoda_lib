@@ -57,6 +57,7 @@ use crate::expr_model::abstr_full;
 use crate::expr_model::subst_expr_levels_rel;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 #[cfg(verus_only)]
 use crate::expr_model::{depth, nlbv, subst_full};
 use crate::level_arena_bridge::name_ptr_eq;
@@ -203,7 +204,7 @@ pub open spec fn contains_const_named(e: ExprSpec, target_ids: Seq<u64>) -> bool
             *a,
             target_ids,
         ),
-        ExprSpec::Bind(t, b) => contains_const_named(*t, target_ids) || contains_const_named(
+        ExprSpec::Bind(bk, t, b) => contains_const_named(*t, target_ids) || contains_const_named(
             *b,
             target_ids,
         ),
@@ -275,7 +276,7 @@ pub open spec fn pi_telescope_size_spec(e: ExprSpec) -> nat
     decreases e,
 {
     match e {
-        ExprSpec::Bind(_, b) => 1 + pi_telescope_size_spec(*b),
+        ExprSpec::Bind(BinderKind::Pi, _, b) => 1 + pi_telescope_size_spec(*b),
         _ => 0,
     }
 }
@@ -287,7 +288,7 @@ pub proof fn abstr_full_telescope_size(e: ExprSpec, locals: Seq<u32>, offset: na
     decreases e,
 {
     match e {
-        ExprSpec::Bind(_t, b) => {
+        ExprSpec::Bind(bk, _t, b) => {
             abstr_full_telescope_size(*b, locals, offset + 1);
         },
         _ => {},
@@ -309,7 +310,7 @@ pub proof fn abstr_telescope_size(binder_ids: Seq<u32>, binder_tys: Seq<ExprSpec
     if binder_ids.len() == 0 {
     } else {
         let last_ty = binder_tys.last();
-        let inner = ExprSpec::Bind(
+        let inner = ExprSpec::Bind(BinderKind::Pi, 
             Box::new(last_ty),
             Box::new(abstr_full(e, seq![binder_ids.last()], 0)),
         );

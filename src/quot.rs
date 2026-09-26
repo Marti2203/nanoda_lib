@@ -11,6 +11,7 @@ use crate::expr_arena_bridge::{expr_id, to_model};
 #[cfg(verus_only)]
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 #[cfg(verus_only)]
 #[allow(unused_imports)]
 use crate::level_arena_bridge::name_id;
@@ -290,7 +291,7 @@ pub open spec fn names_owned<'t, 'p>(ctx: TcCtx<'t, 'p>, n: QuotNames<'t>) -> bo
 }
 
 pub open spec fn qb(t: ExprSpec, b: ExprSpec) -> ExprSpec {
-    ExprSpec::Bind(Box::new(t), Box::new(b))
+    ExprSpec::Bind(BinderKind::Pi, Box::new(t), Box::new(b))
 }
 
 pub open spec fn qa(f: ExprSpec, a: ExprSpec) -> ExprSpec {

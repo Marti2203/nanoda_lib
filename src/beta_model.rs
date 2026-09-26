@@ -40,6 +40,7 @@ use crate::expr_model::subst_full;
 use crate::expr_model::subst_full_noop;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 #[cfg(verus_only)]
 use crate::expr_model::NatLitPayload;
 #[cfg(verus_only)]
@@ -79,7 +80,7 @@ pub open spec fn shift(d: int, cutoff: nat, e: ExprSpec) -> ExprSpec
             Box::new(shift(d, cutoff, *f)),
             Box::new(shift(d, cutoff, *a)),
         ),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => ExprSpec::Bind(bk, 
             Box::new(shift(d, cutoff, *t)),
             Box::new(shift(d, (cutoff + 1) as nat, *b)),
         ),
@@ -114,7 +115,7 @@ pub open spec fn subst(j: nat, s: ExprSpec, e: ExprSpec) -> ExprSpec
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => e,
         ExprSpec::App(f, a) => ExprSpec::App(Box::new(subst(j, s, *f)), Box::new(subst(j, s, *a))),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => ExprSpec::Bind(bk, 
             Box::new(subst(j, s, *t)),
             Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
         ),
@@ -285,7 +286,7 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
     ||| match e1 {
         ExprSpec::App(f, a) => {
             ||| (match *f {
-                ExprSpec::Bind(_, body) => exists|body2: ExprSpec, a2: ExprSpec|
+                ExprSpec::Bind(BinderKind::Lam, _, body) => exists|body2: ExprSpec, a2: ExprSpec|
                     #![trigger subst1(body2, a2)]
                     pstep(env, *body, body2) && pstep(env, *a, a2) && e2 == subst1(body2, a2),
                 _ => false,
@@ -317,9 +318,9 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
                     && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
                     == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))))
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             exists|t2: ExprSpec, b2: ExprSpec|
-                pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(
+                pstep(env, *t, t2) && pstep(env, *b, b2) && e2 == ExprSpec::Bind(bk, 
                     Box::new(t2),
                     Box::new(b2),
                 )
@@ -1618,7 +1619,7 @@ pub open spec fn string_lits_ok(export: nat, e: ExprSpec, cap: nat) -> bool
             string_lit_expand_model(export, len.0@),
         ) <= size_growth(cap + 1),
         ExprSpec::App(f, a) => string_lits_ok(export, *f, cap) && string_lits_ok(export, *a, cap),
-        ExprSpec::Bind(t, b) => string_lits_ok(export, *t, cap) && string_lits_ok(export, *b, cap),
+        ExprSpec::Bind(bk, t, b) => string_lits_ok(export, *t, cap) && string_lits_ok(export, *b, cap),
         ExprSpec::Let(t, v, b) => string_lits_ok(export, *t, cap) && string_lits_ok(export, *v, cap)
             && string_lits_ok(export, *b, cap),
         ExprSpec::Proj(pidx, s) => string_lits_ok(export, *s, cap),
@@ -1639,7 +1640,7 @@ pub open spec fn string_free(e: ExprSpec) -> bool
     match e {
         ExprSpec::StringLit(_) => false,
         ExprSpec::App(f, a) => string_free(*f) && string_free(*a),
-        ExprSpec::Bind(t, b) => string_free(*t) && string_free(*b),
+        ExprSpec::Bind(bk, t, b) => string_free(*t) && string_free(*b),
         ExprSpec::Let(t, v, b) => string_free(*t) && string_free(*v) && string_free(*b),
         ExprSpec::Proj(pidx, s) => string_free(*s),
         _ => true,
@@ -1660,7 +1661,7 @@ pub proof fn string_free_lits_ok(export: nat, e: ExprSpec, cap: nat)
             string_free_lits_ok(export, *f, cap);
             string_free_lits_ok(export, *a, cap);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             string_free_lits_ok(export, *t, cap);
             string_free_lits_ok(export, *b, cap);
         },
@@ -1697,7 +1698,7 @@ pub proof fn subst_expr_levels_string_lits_ok(
             subst_expr_levels_string_lits_ok(export, *f, ks, vs, cap);
             subst_expr_levels_string_lits_ok(export, *a, ks, vs, cap);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_expr_levels_string_lits_ok(export, *t, ks, vs, cap);
             subst_expr_levels_string_lits_ok(export, *b, ks, vs, cap);
         },
@@ -1746,13 +1747,13 @@ pub proof fn pstep_env_weaken(
                 if exists|body2: ExprSpec, a2: ExprSpec|
                     #![trigger subst1(body2, a2)]
                     (match *f {
-                        ExprSpec::Bind(_, body) => pstep(env1, *body, body2) && pstep(env1, *a, a2),
+                        ExprSpec::Bind(BinderKind::Lam, _, body) => pstep(env1, *body, body2) && pstep(env1, *a, a2),
                         _ => false,
                     }) && e2 == subst1(body2, a2) {
                     let (body2, a2) = choose|body2: ExprSpec, a2: ExprSpec|
                         #![trigger subst1(body2, a2)]
                         (match *f {
-                            ExprSpec::Bind(_, body) => pstep(env1, *body, body2) && pstep(
+                            ExprSpec::Bind(BinderKind::Lam, _, body) => pstep(env1, *body, body2) && pstep(
                                 env1,
                                 *a,
                                 a2,
@@ -1760,7 +1761,7 @@ pub proof fn pstep_env_weaken(
                             _ => false,
                         }) && e2 == subst1(body2, a2);
                     match *f {
-                        ExprSpec::Bind(_, body) => {
+                        ExprSpec::Bind(BinderKind::Lam, _, body) => {
                             pstep_env_weaken(env1, env2, *body, body2);
                             pstep_env_weaken(env1, env2, *a, a2);
                         },
@@ -1797,9 +1798,9 @@ pub proof fn pstep_env_weaken(
                     pstep_env_weaken(env1, env2, *a, a2);
                 }
             },
-            ExprSpec::Bind(t, b) => {
+            ExprSpec::Bind(bk, t, b) => {
                 let (t2, b2) = choose|t2: ExprSpec, b2: ExprSpec|
-                    pstep(env1, *t, t2) && pstep(env1, *b, b2) && e2 == ExprSpec::Bind(
+                    pstep(env1, *t, t2) && pstep(env1, *b, b2) && e2 == ExprSpec::Bind(bk, 
                         Box::new(t2),
                         Box::new(b2),
                     );
@@ -1904,7 +1905,7 @@ pub open spec fn max_var_below(e: ExprSpec, bound: nat) -> bool
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => true,
         ExprSpec::App(f, a) => max_var_below(*f, bound) && max_var_below(*a, bound),
-        ExprSpec::Bind(t, b) => max_var_below(*t, bound) && max_var_below(*b, bound),
+        ExprSpec::Bind(bk, t, b) => max_var_below(*t, bound) && max_var_below(*b, bound),
         ExprSpec::Let(t, v, b) => max_var_below(*t, bound) && max_var_below(*v, bound)
             && max_var_below(*b, bound),
         ExprSpec::Proj(pidx, s) => max_var_below(*s, bound),
@@ -1933,7 +1934,7 @@ pub proof fn shift_up_max_var_below(c: nat, bound: nat, e: ExprSpec)
             shift_up_max_var_below(c, bound, *f);
             shift_up_max_var_below(c, bound, *a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             shift_up_max_var_below(c, bound, *t);
             shift_up_max_var_below((c + 1) as nat, bound, *b);
         },
@@ -1971,7 +1972,7 @@ pub proof fn max_var_below_mono(e: ExprSpec, b1: nat, b2: nat)
             max_var_below_mono(*f, b1, b2);
             max_var_below_mono(*a, b1, b2);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             max_var_below_mono(*t, b1, b2);
             max_var_below_mono(*b, b1, b2);
         },
@@ -2023,7 +2024,7 @@ pub proof fn nlbv_bound_implies_max_var_below(e: ExprSpec, k: nat)
             max_var_below_mono(*f, (depth(*f) + k) as nat, (depth(e) + k) as nat);
             max_var_below_mono(*a, (depth(*a) + k) as nat, (depth(e) + k) as nat);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             nlbv_bound_implies_max_var_below(*t, k);
             nlbv_bound_implies_max_var_below(*b, (k + 1) as nat);
             max_var_below_mono(*t, (depth(*t) + k) as nat, (depth(e) + k) as nat);
@@ -2091,8 +2092,8 @@ pub proof fn subst_max_var_below(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
                 (bound + depth(e)) as nat,
             );
         },
-        ExprSpec::Bind(t, b) => {
-            assert(subst(j, s, e) == ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(bk, 
                 Box::new(subst(j, s, *t)),
                 Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
             ));
@@ -2194,7 +2195,7 @@ pub proof fn shift_cancel(c: nat, e: ExprSpec)
             shift_cancel(c, *f);
             shift_cancel(c, *a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             shift_cancel(c, *t);
             shift_cancel((c + 1) as nat, *b);
         },
@@ -2248,7 +2249,7 @@ pub open spec fn min_escaping(e: ExprSpec) -> Option<nat>
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => None,
         ExprSpec::App(f, a) => opt_min(min_escaping(*f), min_escaping(*a)),
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             let bb = match min_escaping(*b) {
                 Some(i) if i == 0 => None,
                 Some(i) => Some((i - 1) as nat),
@@ -2323,7 +2324,7 @@ pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
             shift_down_max_var_below(c0, bound, *f);
             shift_down_max_var_below(c0, bound, *a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             if c0 == 0 {
                 assert(no_escaping_below(*t, 1));
             }
@@ -2405,8 +2406,8 @@ pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
             shift_up_min_escaping(bound, c0, *f);
             shift_up_min_escaping(bound, c0, *a);
         },
-        ExprSpec::Bind(t, b) => {
-            assert(shift(1, c0, s) == ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => {
+            assert(shift(1, c0, s) == ExprSpec::Bind(bk, 
                 Box::new(shift(1, c0, *t)),
                 Box::new(shift(1, (c0 + 1) as nat, *b)),
             ));
@@ -2475,7 +2476,7 @@ pub open spec fn has_escaping_ref(e: ExprSpec, k: nat) -> bool
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => false,
         ExprSpec::App(f, a) => has_escaping_ref(*f, k) || has_escaping_ref(*a, k),
-        ExprSpec::Bind(t, b) => has_escaping_ref(*t, k) || has_escaping_ref(*b, (k + 1) as nat),
+        ExprSpec::Bind(bk, t, b) => has_escaping_ref(*t, k) || has_escaping_ref(*b, (k + 1) as nat),
         ExprSpec::Let(t, v, b) => has_escaping_ref(*t, k) || has_escaping_ref(*v, k)
             || has_escaping_ref(*b, (k + 1) as nat),
         ExprSpec::Proj(pidx, s) => has_escaping_ref(*s, k),
@@ -2531,8 +2532,8 @@ pub proof fn subst_no_escape_at(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
             subst_no_escape_at(bound, j, s, *f);
             subst_no_escape_at(bound, j, s, *a);
         },
-        ExprSpec::Bind(t, b) => {
-            assert(subst(j, s, e) == ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(bk, 
                 Box::new(subst(j, s, *t)),
                 Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
             ));
@@ -2654,7 +2655,7 @@ pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
             shift_shift_aligned_up(c_top, c0, *f);
             shift_shift_aligned_up(c_top, c0, *a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             shift_shift_aligned_up(c_top, c0, *t);
             shift_shift_aligned_up(c_top, (c0 + 1) as nat, *b);
         },
@@ -2727,7 +2728,7 @@ pub proof fn shift_preserves_depth(d: int, c: nat, e: ExprSpec)
             shift_preserves_depth(d, c, *f);
             shift_preserves_depth(d, c, *a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             shift_preserves_depth(d, c, *t);
             shift_preserves_depth(d, (c + 1) as nat, *b);
         },
@@ -2782,8 +2783,8 @@ pub proof fn subst_depth_bound(j: nat, s: ExprSpec, e: ExprSpec)
             subst_depth_bound(j, s, *f);
             subst_depth_bound(j, s, *a);
         },
-        ExprSpec::Bind(t, b) => {
-            assert(subst(j, s, e) == ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => {
+            assert(subst(j, s, e) == ExprSpec::Bind(bk, 
                 Box::new(subst(j, s, *t)),
                 Box::new(subst((j + 1) as nat, shift(1, 0, s), *b)),
             ));
@@ -2840,7 +2841,7 @@ pub open spec fn size(e: ExprSpec) -> nat
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => 1,
         ExprSpec::App(f, a) => 1 + size(*f) + size(*a),
-        ExprSpec::Bind(t, b) => 1 + size(*t) + size(*b),
+        ExprSpec::Bind(bk, t, b) => 1 + size(*t) + size(*b),
         ExprSpec::Let(t, v, b) => 1 + size(*t) + size(*v) + size(*b),
         ExprSpec::Proj(pidx, s) => 1 + size(*s),
     }
@@ -2866,7 +2867,7 @@ pub proof fn depth_le_size(e: ExprSpec)
             depth_le_size(*f);
             depth_le_size(*a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             depth_le_size(*t);
             depth_le_size(*b);
         },
@@ -2971,8 +2972,8 @@ pub proof fn subst_expr_levels_rel_size(e: ExprSpec, ks: Seq<u64>, vs: Seq<Level
             },
             _ => {},
         },
-        ExprSpec::Bind(t, b) => match e2 {
-            ExprSpec::Bind(t2, b2) => {
+        ExprSpec::Bind(bk, t, b) => match e2 {
+            ExprSpec::Bind(bk, t2, b2) => {
                 subst_expr_levels_rel_size(*t, ks, vs, *t2);
                 subst_expr_levels_rel_size(*b, ks, vs, *b2);
             },
@@ -3021,8 +3022,8 @@ pub proof fn subst_expr_levels_rel_nlbv(e: ExprSpec, ks: Seq<u64>, vs: Seq<Level
             },
             _ => {},
         },
-        ExprSpec::Bind(t, b) => match e2 {
-            ExprSpec::Bind(t2, b2) => {
+        ExprSpec::Bind(bk, t, b) => match e2 {
+            ExprSpec::Bind(bk, t2, b2) => {
                 subst_expr_levels_rel_nlbv(*t, ks, vs, *t2);
                 subst_expr_levels_rel_nlbv(*b, ks, vs, *b2);
             },
@@ -3073,8 +3074,8 @@ pub proof fn subst_expr_levels_rel_depth(
             },
             _ => {},
         },
-        ExprSpec::Bind(t, b) => match e2 {
-            ExprSpec::Bind(t2, b2) => {
+        ExprSpec::Bind(bk, t, b) => match e2 {
+            ExprSpec::Bind(bk, t2, b2) => {
                 subst_expr_levels_rel_depth(*t, ks, vs, *t2);
                 subst_expr_levels_rel_depth(*b, ks, vs, *b2);
             },
@@ -3118,7 +3119,7 @@ pub proof fn subst_full_empty(e: ExprSpec, offset: nat)
             subst_full_empty(*f, offset);
             subst_full_empty(*a, offset);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_empty(*t, offset);
             subst_full_empty(*b, (offset + 1) as nat);
         },
@@ -3159,7 +3160,7 @@ pub proof fn nlbv_shift_noop(d: int, c: nat, e: ExprSpec)
             nlbv_shift_noop(d, c, *f);
             nlbv_shift_noop(d, c, *a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             nlbv_shift_noop(d, c, *t);
             nlbv_shift_noop(d, (c + 1) as nat, *b);
         },
@@ -3201,7 +3202,7 @@ pub proof fn nlbv_no_escaping_ref(e: ExprSpec, k: nat)
             nlbv_no_escaping_ref(*f, k);
             nlbv_no_escaping_ref(*a, k);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             nlbv_no_escaping_ref(*t, k);
             nlbv_no_escaping_ref(*b, (k + 1) as nat);
         },
@@ -3289,18 +3290,18 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
                 Box::new(subst_c(*g, a, c)),
             ));
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_c_eq_subst_full(*t, a, c, bound);
             nlbv_shift_noop(1, 0, a);
             assert(shift(1, 0, a) == a);
             subst_c_eq_subst_full(*b, a, (c + 1) as nat, bound);
 
             let s = shift(1, c, a);
-            assert(subst(c, s, e) == ExprSpec::Bind(
+            assert(subst(c, s, e) == ExprSpec::Bind(bk, 
                 Box::new(subst(c, s, *t)),
                 Box::new(subst((c + 1) as nat, shift(1, 0, s), *b)),
             ));
-            assert(subst_c(e, a, c) == ExprSpec::Bind(
+            assert(subst_c(e, a, c) == ExprSpec::Bind(bk, 
                 Box::new(shift(-1, c, subst(c, s, *t))),
                 Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
             ));
@@ -3317,7 +3318,7 @@ pub proof fn subst_c_eq_subst_full(e: ExprSpec, a: ExprSpec, c: nat, bound: nat)
             ));
             assert(subst_c(*t, a, c) == shift(-1, c, subst(c, s, *t)));
 
-            assert(subst_c(e, a, c) == ExprSpec::Bind(
+            assert(subst_c(e, a, c) == ExprSpec::Bind(bk, 
                 Box::new(subst_c(*t, a, c)),
                 Box::new(subst_c(*b, a, (c + 1) as nat)),
             ));
@@ -3407,16 +3408,16 @@ pub proof fn subst_c_spine_reduce_eq(
         assert(subst_c(t0, a, c) == subst_full(body, seq![a], c));
     } else {
         match t0 {
-            ExprSpec::Bind(t, b) => {
+            ExprSpec::Bind(BinderKind::Lam, t, b) => {
                 assert(spine_bind(t0, k) == spine_bind(*b, (k - 1) as nat));
                 assert(spine_bind(*b, (k - 1) as nat) == Some(body));
 
                 let s = shift(1, c, a);
-                assert(subst(c, s, t0) == ExprSpec::Bind(
+                assert(subst(c, s, t0) == ExprSpec::Bind(BinderKind::Lam, 
                     Box::new(subst(c, s, *t)),
                     Box::new(subst((c + 1) as nat, shift(1, 0, s), *b)),
                 ));
-                assert(subst_c(t0, a, c) == ExprSpec::Bind(
+                assert(subst_c(t0, a, c) == ExprSpec::Bind(BinderKind::Lam, 
                     Box::new(shift(-1, c, subst(c, s, *t))),
                     Box::new(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))),
                 ));
@@ -3432,7 +3433,7 @@ pub proof fn subst_c_spine_reduce_eq(
                 assert(shift(-1, (c + 1) as nat, subst((c + 1) as nat, shift(1, 0, s), *b))
                     == subst_c(*b, a, (c + 1) as nat));
 
-                assert(subst_c(t0, a, c) == ExprSpec::Bind(
+                assert(subst_c(t0, a, c) == ExprSpec::Bind(BinderKind::Lam, 
                     Box::new(shift(-1, c, subst(c, s, *t))),
                     Box::new(subst_c(*b, a, (c + 1) as nat)),
                 ));
@@ -3501,10 +3502,10 @@ pub proof fn subst_full_nlbv_bound(e: ExprSpec, s: ExprSpec, offset: nat)
                 Box::new(subst_full(*a, seq![s], offset)),
             ));
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_nlbv_bound(*t, s, offset);
             subst_full_nlbv_bound(*b, s, (offset + 1) as nat);
-            assert(subst_full(e, seq![s], offset) == ExprSpec::Bind(
+            assert(subst_full(e, seq![s], offset) == ExprSpec::Bind(bk, 
                 Box::new(subst_full(*t, seq![s], offset)),
                 Box::new(subst_full(*b, seq![s], (offset + 1) as nat)),
             ));
@@ -3573,10 +3574,10 @@ pub proof fn subst_full_nlbv_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset:
                 Box::new(subst_full(*a, substs, offset)),
             ));
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_nlbv_bound_n(*t, substs, offset);
             subst_full_nlbv_bound_n(*b, substs, (offset + 1) as nat);
-            assert(subst_full(e, substs, offset) == ExprSpec::Bind(
+            assert(subst_full(e, substs, offset) == ExprSpec::Bind(bk, 
                 Box::new(subst_full(*t, substs, offset)),
                 Box::new(subst_full(*b, substs, (offset + 1) as nat)),
             ));
@@ -3653,10 +3654,10 @@ pub proof fn subst_full_depth_bound_n(e: ExprSpec, substs: Seq<ExprSpec>, offset
                 Box::new(subst_full(*a, substs, offset)),
             ));
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_depth_bound_n(*t, substs, offset, m);
             subst_full_depth_bound_n(*b, substs, (offset + 1) as nat, m);
-            assert(subst_full(e, substs, offset) == ExprSpec::Bind(
+            assert(subst_full(e, substs, offset) == ExprSpec::Bind(bk, 
                 Box::new(subst_full(*t, substs, offset)),
                 Box::new(subst_full(*b, substs, (offset + 1) as nat)),
             ));
@@ -3796,7 +3797,7 @@ pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k
                 Box::new(subst_full(*a, seq![s] + rest, offset)),
             ));
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_compose(*t, s, rest, k, offset);
             subst_full_compose(*b, s, rest, k, (offset + 1) as nat);
             assert((offset + 1 + k) as nat == (offset + k + 1) as nat);
@@ -3808,15 +3809,15 @@ pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k
 
             let tx = subst_full(*t, seq![s], (offset + k) as nat);
             let bx = subst_full(*b, seq![s], (offset + k + 1) as nat);
-            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::Bind(
+            assert(subst_full(e, seq![s], (offset + k) as nat) == ExprSpec::Bind(bk, 
                 Box::new(tx),
                 Box::new(bx),
             ));
 
             assert(subst_full(subst_full(e, seq![s], (offset + k) as nat), rest, offset)
-                == subst_full(ExprSpec::Bind(Box::new(tx), Box::new(bx)), rest, offset));
-            assert(subst_full(ExprSpec::Bind(Box::new(tx), Box::new(bx)), rest, offset)
-                == ExprSpec::Bind(
+                == subst_full(ExprSpec::Bind(bk, Box::new(tx), Box::new(bx)), rest, offset));
+            assert(subst_full(ExprSpec::Bind(bk, Box::new(tx), Box::new(bx)), rest, offset)
+                == ExprSpec::Bind(bk, 
                 Box::new(subst_full(tx, rest, offset)),
                 Box::new(subst_full(bx, rest, (offset + 1) as nat)),
             ));
@@ -3827,7 +3828,7 @@ pub proof fn subst_full_compose(e: ExprSpec, s: ExprSpec, rest: Seq<ExprSpec>, k
                 (offset + 1) as nat,
             ));
 
-            assert(subst_full(e, seq![s] + rest, offset) == ExprSpec::Bind(
+            assert(subst_full(e, seq![s] + rest, offset) == ExprSpec::Bind(bk, 
                 Box::new(subst_full(*t, seq![s] + rest, offset)),
                 Box::new(subst_full(*b, seq![s] + rest, (offset + 1) as nat)),
             ));
@@ -3927,7 +3928,7 @@ pub proof fn spine_bind_nlbv(head: ExprSpec, k: nat, body: ExprSpec, m: nat)
         assert(head == body);
     } else {
         match head {
-            ExprSpec::Bind(t, b) => {
+            ExprSpec::Bind(BinderKind::Lam, t, b) => {
                 assert(spine_bind(head, k) == spine_bind(*b, (k - 1) as nat));
                 assert(nlbv(*b) <= m + 1);
                 spine_bind_nlbv(*b, (k - 1) as nat, body, (m + 1) as nat);
@@ -3956,7 +3957,7 @@ pub proof fn spine_bind_depth(head: ExprSpec, k: nat, body: ExprSpec)
         assert(head == body);
     } else {
         match head {
-            ExprSpec::Bind(t, b) => {
+            ExprSpec::Bind(BinderKind::Lam, t, b) => {
                 assert(spine_bind(head, k) == spine_bind(*b, (k - 1) as nat));
                 assert(depth(*b) <= depth(head));
                 spine_bind_depth(*b, (k - 1) as nat, body);
@@ -3975,7 +3976,7 @@ pub open spec fn spine_bind(head: ExprSpec, n: nat) -> Option<ExprSpec>
         Some(head)
     } else {
         match head {
-            ExprSpec::Bind(_, b) => spine_bind(*b, (n - 1) as nat),
+            ExprSpec::Bind(BinderKind::Lam, _, b) => spine_bind(*b, (n - 1) as nat),
             _ => None,
         }
     }
@@ -3985,21 +3986,21 @@ pub open spec fn spine_bind(head: ExprSpec, n: nat) -> Option<ExprSpec>
 /// its body. This is what a telescope-walking loop needs to step its invariant.
 pub proof fn spine_bind_step(head: ExprSpec, n: nat, t: ExprSpec, b: ExprSpec)
     requires
-        spine_bind(head, n) == Some(ExprSpec::Bind(Box::new(t), Box::new(b))),
+        spine_bind(head, n) == Some(ExprSpec::Bind(BinderKind::Lam, Box::new(t), Box::new(b))),
     ensures
         spine_bind(head, n + 1) == Some(b),
     decreases n,
 {
     if n == 0 {
-        assert(head == ExprSpec::Bind(Box::new(t), Box::new(b)));
+        assert(head == ExprSpec::Bind(BinderKind::Lam, Box::new(t), Box::new(b)));
         assert(spine_bind(head, 1nat) == Some(b)) by {
             reveal_with_fuel(spine_bind, 2);
         }
     } else {
         match head {
-            ExprSpec::Bind(_, hb) => {
+            ExprSpec::Bind(BinderKind::Lam, _, hb) => {
                 assert(spine_bind(*hb, (n - 1) as nat) == Some(
-                    ExprSpec::Bind(Box::new(t), Box::new(b)),
+                    ExprSpec::Bind(BinderKind::Lam, Box::new(t), Box::new(b)),
                 ));
                 spine_bind_step(*hb, (n - 1) as nat, t, b);
                 assert(spine_bind(head, n + 1) == spine_bind(*hb, n));
@@ -4345,7 +4346,7 @@ pub proof fn spine_reduce_bounds(head: ExprSpec, args: Seq<ExprSpec>, bound: nat
         {}
     } else {
         match head {
-            ExprSpec::Bind(t, b) => {
+            ExprSpec::Bind(BinderKind::Lam, t, b) => {
                 let k1: nat = (k - 1) as nat;
                 assert(max_var_below(*b, bound));
                 assert(depth(*b) + 1 <= depth(head));
@@ -4426,7 +4427,7 @@ pub open spec fn spine_reduce(head: ExprSpec, args: Seq<ExprSpec>) -> ExprSpec
         head
     } else {
         match head {
-            ExprSpec::Bind(_, b) => spine_reduce(
+            ExprSpec::Bind(BinderKind::Lam, _, b) => spine_reduce(
                 subst1(*b, args[0]),
                 args.subrange(1, args.len() as int),
             ),
@@ -4486,7 +4487,7 @@ pub proof fn spine_reduce_eq_subst_full(
         let n = rest.len();
 
         match head {
-            ExprSpec::Bind(ht, hb) => {
+            ExprSpec::Bind(BinderKind::Lam, ht, hb) => {
                 assert(spine_bind(head, args.len()) == spine_bind(*hb, n));
                 assert(spine_bind(*hb, n) == Some(body));
 
@@ -5253,7 +5254,7 @@ pub proof fn pstep_star_spine_reduce(
         let rest = args.subrange(1, args.len() as int);
 
         match head {
-            ExprSpec::Bind(bt, b) => {
+            ExprSpec::Bind(BinderKind::Lam, bt, b) => {
                 let beta_target = subst1(*b, a0);
                 assert(pstep(env, ExprSpec::App(Box::new(head), Box::new(a0)), beta_target)) by {
                     assert(pstep(env, *b, *b));

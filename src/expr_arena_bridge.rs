@@ -42,6 +42,7 @@ use crate::expr::{BinderStyle, Expr, FVarId};
 use crate::expr_model::fv_absent;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 use crate::expr_model::NatLitPayload;
 use crate::expr_model::StringLitPayload;
 #[cfg(verus_only)]
@@ -164,9 +165,13 @@ pub closed spec fn to_model<'a>(ptr: ExprPtr<'a>) -> ExprSpec
             } else {
                 ExprSpec::Closed
             },
-            Expr::Pi { binder_type, body, .. } | Expr::Lambda { binder_type, body, .. } =>
-                if child_ok(binder_type, tc, i) && child_ok(body, tc, i) {
-                ExprSpec::Bind(Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            Expr::Pi { binder_type, body, .. } => if child_ok(binder_type, tc, i) && child_ok(body, tc, i) {
+                ExprSpec::Bind(BinderKind::Pi, Box::new(to_model(binder_type)), Box::new(to_model(body)))
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Lambda { binder_type, body, .. } => if child_ok(binder_type, tc, i) && child_ok(body, tc, i) {
+                ExprSpec::Bind(BinderKind::Lam, Box::new(to_model(binder_type)), Box::new(to_model(body)))
             } else {
                 ExprSpec::Closed
             },
@@ -246,11 +251,11 @@ pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
             Box::new(to_model(fun)),
             Box::new(to_model(arg)),
         ),
-        Expr::Pi { binder_type, body, .. } => ExprSpec::Bind(
+        Expr::Pi { binder_type, body, .. } => ExprSpec::Bind(BinderKind::Pi, 
             Box::new(to_model(binder_type)),
             Box::new(to_model(body)),
         ),
-        Expr::Lambda { binder_type, body, .. } => ExprSpec::Bind(
+        Expr::Lambda { binder_type, body, .. } => ExprSpec::Bind(BinderKind::Lam, 
             Box::new(to_model(binder_type)),
             Box::new(to_model(body)),
         ),
@@ -329,7 +334,7 @@ pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
             },
             Expr::Pi { binder_type, body, .. } => if ptr_index(binder_type) < i && ptr_index(body)
                 < i {
-                ExprSpec::Bind(
+                ExprSpec::Bind(BinderKind::Pi, 
                     Box::new(expr_model_at(es, ptr_index(binder_type))),
                     Box::new(expr_model_at(es, ptr_index(body))),
                 )
@@ -339,7 +344,7 @@ pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
             Expr::Lambda { binder_type, body, .. } => if ptr_index(binder_type) < i && ptr_index(
                 body,
             ) < i {
-                ExprSpec::Bind(
+                ExprSpec::Bind(BinderKind::Lam, 
                     Box::new(expr_model_at(es, ptr_index(binder_type))),
                     Box::new(expr_model_at(es, ptr_index(body))),
                 )
@@ -381,12 +386,12 @@ pub proof fn expr_model_at_unfold<'a>(es: Seq<Expr<'a>>, i: nat)
                 Box::new(expr_model_at(es, ptr_index(arg))),
             ))
             &&& (e matches Expr::Pi { binder_type, body, .. } ==> expr_model_at(es, i)
-                == ExprSpec::Bind(
+                == ExprSpec::Bind(BinderKind::Pi, 
                 Box::new(expr_model_at(es, ptr_index(binder_type))),
                 Box::new(expr_model_at(es, ptr_index(body))),
             ))
             &&& (e matches Expr::Lambda { binder_type, body, .. } ==> expr_model_at(es, i)
-                == ExprSpec::Bind(
+                == ExprSpec::Bind(BinderKind::Lam, 
                 Box::new(expr_model_at(es, ptr_index(binder_type))),
                 Box::new(expr_model_at(es, ptr_index(body))),
             ))
@@ -479,10 +484,20 @@ pub open spec fn expr_model_at2<'a>(
             } else {
                 ExprSpec::Closed
             },
-            Expr::Pi { binder_type, body, .. }
-            | Expr::Lambda { binder_type, body, .. } => if child_ok(binder_type, is_tc, i)
+            Expr::Pi { binder_type, body, .. } => if child_ok(binder_type, is_tc, i)
                 && child_ok(body, is_tc, i) {
-                ExprSpec::Bind(
+                ExprSpec::Bind(BinderKind::Pi, 
+                    Box::new(
+                        expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type)),
+                    ),
+                    Box::new(expr_model_at2(ef, tc, ptr_is_tc(body), ptr_index(body))),
+                )
+            } else {
+                ExprSpec::Closed
+            },
+            Expr::Lambda { binder_type, body, .. } => if child_ok(binder_type, is_tc, i)
+                && child_ok(body, is_tc, i) {
+                ExprSpec::Bind(BinderKind::Lam, 
                     Box::new(
                         expr_model_at2(ef, tc, ptr_is_tc(binder_type), ptr_index(binder_type)),
                     ),
@@ -1018,7 +1033,7 @@ pub fn expr_is_local<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, ptr: ExprPtr<'t>) -> (resu
 #[allow(dead_code)]
 pub fn expr_is_bind_shape<'t>(e: &Expr<'t>) -> (result: bool)
     ensures
-        result == matches!(to_model_of_expr(*e), ExprSpec::Bind(_, _)),
+        result == matches!(to_model_of_expr(*e), ExprSpec::Bind(bk, _, _)),
 {
     matches!(e, Expr::Pi { .. } | Expr::Lambda { .. })
 }
@@ -2151,7 +2166,7 @@ pub fn expr_as_pi<'t>(e: &Expr<'t>) -> (result: Option<
     ensures
         result matches Some((n, _, ty, b)) ==> (*e matches Expr::Pi { binder_name, binder_type, body, .. } && binder_name == n && binder_type == ty && body == b),
         match result {
-            Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(
+            Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(BinderKind::Pi, 
                 Box::new(to_model(ty)),
                 Box::new(to_model(body)),
             ),
@@ -2173,7 +2188,7 @@ pub fn expr_as_lambda<'t>(e: &Expr<'t>) -> (result: Option<
     ensures
         result matches Some((n, _, ty, b)) ==> (*e matches Expr::Lambda { binder_name, binder_type, body, .. } && binder_name == n && binder_type == ty && body == b),
         match result {
-            Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(
+            Some((_, _, ty, body)) => to_model_of_expr(*e) == ExprSpec::Bind(BinderKind::Lam, 
                 Box::new(to_model(ty)),
                 Box::new(to_model(body)),
             ),
@@ -2326,7 +2341,7 @@ pub open spec fn abstr_pi_telescope_model(
         abstr_pi_telescope_model(
             rest_ids,
             rest_tys,
-            ExprSpec::Bind(Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(last_ty), Box::new(abstr_full(e, seq![last_id], 0))),
         )
     }
 }
@@ -2619,7 +2634,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(
         };
     }
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_pi(&el) {
-        assert(to_model(e) == ExprSpec::Bind(
+        assert(to_model(e) == ExprSpec::Bind(BinderKind::Pi, 
             Box::new(to_model(binder_type)),
             Box::new(to_model(body)),
         ));
@@ -2632,7 +2647,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(
         };
     }
     if let Some((binder_name, binder_style, binder_type, body)) = expr_as_lambda(&el) {
-        assert(to_model(e) == ExprSpec::Bind(
+        assert(to_model(e) == ExprSpec::Bind(BinderKind::Lam, 
             Box::new(to_model(binder_type)),
             Box::new(to_model(body)),
         ));
@@ -2828,7 +2843,7 @@ pub fn verified_peel_lambdas<'t, 'p: 't>(
     let fuel1 = fuel - 1;
     let el = ctx.read_expr(e);
     if let Some((_, _, ty, body)) = expr_as_lambda(&el) {
-        assert(to_model(e) == ExprSpec::Bind(Box::new(to_model(ty)), Box::new(to_model(body))));
+        assert(to_model(e) == ExprSpec::Bind(BinderKind::Lam, Box::new(to_model(ty)), Box::new(to_model(body))));
         match verified_peel_lambdas(ctx, body, args_len - 1, fuel1) {
             Some((b2, n2)) => {
                 assert(spine_bind(to_model(e), (n2 + 1) as nat) == spine_bind(

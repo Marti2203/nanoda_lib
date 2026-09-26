@@ -1708,7 +1708,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Pi, 
                 Box::new(crate::quot_model::local_type(binder)),
                 Box::new(
                     crate::expr_model::abstr_full(
@@ -1733,7 +1733,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let res = self.mk_pi(binder_name, binder_style, binder_type, body_abstr);
                 proof {
                     assert(crate::expr_arena_bridge::to_model(res)
-                        == crate::expr_model::ExprSpec::Bind(
+                        == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Pi, 
                         Box::new(crate::quot_model::local_type(binder)),
                         Box::new(
                             crate::expr_model::abstr_full(
@@ -1769,7 +1769,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
                 Box::new(crate::quot_model::local_type(binder)),
                 Box::new(
                     crate::expr_model::abstr_full(
@@ -1793,7 +1793,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 let res = self.mk_lambda(binder_name, binder_style, binder_type, body_abstr);
                 proof {
                     assert(crate::expr_arena_bridge::to_model(res)
-                        == crate::expr_model::ExprSpec::Bind(
+                        == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
                         Box::new(crate::quot_model::local_type(binder)),
                         Box::new(
                             crate::expr_model::abstr_full(
@@ -2444,7 +2444,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(e),
                             ids,
                             offset as nat,
-                        ) == crate::expr_model::ExprSpec::Bind(
+                        ) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Pi, 
                             Box::new(
                                 crate::expr_model::abstr_full(
                                     crate::expr_arena_bridge::to_model(binder_type),
@@ -2483,7 +2483,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(e),
                             ids,
                             offset as nat,
-                        ) == crate::expr_model::ExprSpec::Bind(
+                        ) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
                             Box::new(
                                 crate::expr_model::abstr_full(
                                     crate::expr_arena_bridge::to_model(binder_type),
@@ -2789,7 +2789,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(e),
                             sm,
                             offset as nat,
-                        ) == crate::expr_model::ExprSpec::Bind(
+                        ) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Pi, 
                             Box::new(
                                 crate::expr_model::subst_full(
                                     crate::expr_arena_bridge::to_model(binder_type),
@@ -2825,7 +2825,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(e),
                             sm,
                             offset as nat,
-                        ) == crate::expr_model::ExprSpec::Bind(
+                        ) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
                             Box::new(
                                 crate::expr_model::subst_full(
                                     crate::expr_arena_bridge::to_model(binder_type),
@@ -3215,7 +3215,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(e),
                             names,
                             vals,
-                        ) == crate::expr_model::ExprSpec::Bind(
+                        ) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Pi, 
                             Box::new(
                                 crate::expr_model::subst_expr_levels(
                                     crate::expr_arena_bridge::to_model(binder_type),
@@ -3254,7 +3254,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                             crate::expr_arena_bridge::to_model(e),
                             names,
                             vals,
-                        ) == crate::expr_model::ExprSpec::Bind(
+                        ) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
                             Box::new(
                                 crate::expr_model::subst_expr_levels(
                                     crate::expr_arena_bridge::to_model(binder_type),

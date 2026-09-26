@@ -85,6 +85,7 @@ use crate::expr_arena_bridge::{RecDataSpec, RecRuleSpec};
 use crate::expr_model::has_fv;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 use crate::expr_model::NatLitPayload;
 #[cfg(verus_only)]
 use crate::expr_model::{abstr_full, depth, fv_absent, nlbv, subst_expr_levels_rel, subst_full};
@@ -759,6 +760,7 @@ pub proof fn deq_any_bind_congr(
     t2: ExprSpec,
     b1: ExprSpec,
     b2: ExprSpec,
+    bkind: BinderKind,
 )
     requires
         deq_any(env, t1, t2),
@@ -766,8 +768,8 @@ pub proof fn deq_any_bind_congr(
     ensures
         deq_any(
             env,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         ),
 {
     let h1 = choose|h: nat| deq(env, t1, t2, h);
@@ -779,11 +781,11 @@ pub proof fn deq_any_bind_congr(
     };
     deq_mono(env, t1, t2, h1, hm);
     deq_mono(env, b1, b2, h2, hm);
-    deq_bind_congr(env, t1, t2, b1, b2, hm);
+    deq_bind_congr(env, t1, t2, b1, b2, hm, bkind);
     assert(deq(
         env,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         hm + 1,
     ));
 }
@@ -870,9 +872,10 @@ pub open spec fn def_eq_witness<'t>(x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
         body1: ExprPtr<'t>,
         t2: ExprPtr<'t>,
         body2: ExprPtr<'t>,
+        k: BinderKind,
     |
-        to_model(x) == ExprSpec::Bind(Box::new(to_model(t1)), Box::new(to_model(body1)))
-            && to_model(y) == ExprSpec::Bind(Box::new(to_model(t2)), Box::new(to_model(body2))))
+        to_model(x) == ExprSpec::Bind(k, Box::new(to_model(t1)), Box::new(to_model(body1)))
+            && to_model(y) == ExprSpec::Bind(k, Box::new(to_model(t2)), Box::new(to_model(body2))))
 }
 
 /// The FULL notion of "these two terms are definitionally equal" this
@@ -982,7 +985,7 @@ pub open spec fn proj_field_type(
             lctx,
             io,
             cur,
-            ExprSpec::Bind(Box::new(bt), Box::new(body)),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)),
             h,
         ) && (if np > 0 {
             args.len() > 0 && proj_field_type(
@@ -1079,7 +1082,7 @@ pub open spec fn types_to(
                 lctx,
                 io,
                 ft,
-                ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+                ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)),
                 (fuel - 1) as nat,
             )
             // `io` is the kernel's `InferOnly` mode: it never infers the
@@ -1132,7 +1135,7 @@ pub open spec fn types_to(
         // derivation assigns.
         // Real typing also checks the binder type is a type (`Check` mode's
         // `infer_sort_of`); `InferOnly` skips it.
-        ExprSpec::Bind(binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
+        ExprSpec::Bind(BinderKind::Lam, binder_type, body) => exists|lid: u32, infd: ExprSpec, bt2: ExprSpec| #[trigger]
             bind_marker(lid, infd, bt2) && lctx.contains_key(lid) && lctx[lid] == *binder_type && fv_absent(*body, lid)
             && (io || exists|s: ExprSpec, l: LevelSpec| #[trigger] sort_check_marker(s, l)
                 && types_to(dty, denv, lctx, io, *binder_type, s, (fuel - 1) as nat)
@@ -1144,14 +1147,14 @@ pub open spec fn types_to(
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 (fuel - 1) as nat,
-            ) && deq_p(dty, denv, lctx, io, infd, bt2, (fuel - 1) as nat) && t == ExprSpec::Bind(
+            ) && deq_p(dty, denv, lctx, io, infd, bt2, (fuel - 1) as nat) && t == ExprSpec::Bind(BinderKind::Pi, 
                 Box::new(abstr_full(*binder_type, seq![lid], 0)),
                 Box::new(abstr_full(bt2, seq![lid], 0)),
             ),
         _ => false,
     })
     ||| (fuel > 0 && match e {
-        ExprSpec::Bind(binder_type, body) => exists|
+        ExprSpec::Bind(BinderKind::Pi, binder_type, body) => exists|
             lid: u32,
             bt_ty: ExprSpec,
             dom_level: LevelSpec,
@@ -1296,7 +1299,7 @@ pub proof fn types_to_mono(
                 lctx,
                 io,
                 ft,
-                ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+                ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)),
                 (f1 - 1) as nat,
             ) && (io || (types_to(dty, denv, lctx, io, *a, aty2, f1) && deq_p(
                 dty,
@@ -1314,7 +1317,7 @@ pub proof fn types_to_mono(
             lctx,
             io,
             ft,
-            ExprSpec::Bind(Box::new(aty), Box::new(bt)),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)),
             (f1 - 1) as nat,
             (f2 - 1) as nat,
         );
@@ -1403,7 +1406,7 @@ pub proof fn types_to_mono(
     }
     // Binders: premises one height down, re-exhibited through the markers.
 
-    if let ExprSpec::Bind(binder_type, body) = e {
+    if let ExprSpec::Bind(bk, binder_type, body) = e {
         assert(f1 > 0);
         let g1 = (f1 - 1) as nat;
         let g2 = (f2 - 1) as nat;
@@ -1418,7 +1421,7 @@ pub proof fn types_to_mono(
                 subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                 infd,
                 g1,
-            ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(
+            ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(bk, 
                 Box::new(abstr_full(*binder_type, seq![lid], 0)),
                 Box::new(abstr_full(bt2, seq![lid], 0)),
             ) {
@@ -1433,7 +1436,7 @@ pub proof fn types_to_mono(
                     subst_full(*body, seq![ExprSpec::Free(lid)], 0),
                     infd,
                     g1,
-                ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(
+                ) && deq_p(dty, denv, lctx, io, infd, bt2, g1) && t == ExprSpec::Bind(bk, 
                     Box::new(abstr_full(*binder_type, seq![lid], 0)),
                     Box::new(abstr_full(bt2, seq![lid], 0)),
                 );
@@ -1588,7 +1591,7 @@ pub proof fn types_to_app(
     requires
         fuel > 0,
         types_to(dty, denv, lctx, io, f, ft, fuel),
-        deq_p(dty, denv, lctx, io, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)), (fuel - 1) as nat),
+        deq_p(dty, denv, lctx, io, ft, ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)), (fuel - 1) as nat),
         types_to(dty, denv, lctx, io, a, aty2, fuel),
         deq_p(dty, denv, lctx, io, aty2, aty, (fuel - 1) as nat),
     ensures
@@ -1623,7 +1626,7 @@ pub proof fn types_to_app_lift(
 ) -> (f2: nat)
     requires
         types_to(dty, denv, lctx, io, f, ft, fuel),
-        pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+        pstep_star(denv, ft, ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt))),
         types_to(dty, denv, lctx, io, a, aty2, fuel),
         deq_any(denv, aty2, aty),
     ensures
@@ -1660,7 +1663,7 @@ pub proof fn types_to_app_lift_p(
 ) -> (f2: nat)
     requires
         types_to(dty, denv, lctx, io, f, ft, fuel),
-        pstep_star(denv, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt))),
+        pstep_star(denv, ft, ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt))),
         types_to(dty, denv, lctx, io, a, aty2, fuel),
         deq_p_any(dty, denv, lctx, io, aty2, aty),
     ensures
@@ -1679,7 +1682,7 @@ pub proof fn types_to_app_lift_p(
     types_to_mono(dty, denv, lctx, io, f, ft, fuel, f2);
     types_to_mono(dty, denv, lctx, io, a, aty2, fuel, f2);
     deq_p_mono(dty, denv, lctx, io, aty2, aty, hh, (f2 - 1) as nat);
-    deq_p_of_pstep_star(dty, denv, lctx, io, ft, ExprSpec::Bind(Box::new(aty), Box::new(bt)), (f2 - 1) as nat);
+    deq_p_of_pstep_star(dty, denv, lctx, io, ft, ExprSpec::Bind(BinderKind::Pi, Box::new(aty), Box::new(bt)), (f2 - 1) as nat);
     types_to_app(dty, denv, lctx, io, f, a, ft, aty, bt, f2, aty2);
     f2
 }
@@ -1778,7 +1781,7 @@ pub proof fn proj_field_type_mono(
             lctx,
             io,
             cur,
-            ExprSpec::Bind(Box::new(bt), Box::new(body)),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)),
             h1,
         ) && (if np > 0 {
             args.len() > 0 && proj_field_type(
@@ -1813,7 +1816,7 @@ pub proof fn proj_field_type_mono(
         } else {
             t == bt
         });
-    deq_p_mono(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h1, h2);
+    deq_p_mono(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h1, h2);
     if np > 0 {
         proj_field_type_mono(
             dty,
@@ -1870,7 +1873,7 @@ pub proof fn proj_field_type_param_step_p(
     requires
         np > 0,
         args.len() > 0,
-        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h),
+        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h),
         proj_field_type(
             dty,
             denv,
@@ -1908,7 +1911,7 @@ pub proof fn proj_field_type_field_step_p(
 )
     requires
         remaining > 0,
-        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h),
+        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h),
         proj_field_type(
             dty,
             denv,
@@ -1943,7 +1946,7 @@ pub proof fn proj_field_type_final_p(
     s: ExprSpec,
 )
     requires
-        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h),
+        deq_p(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h),
     ensures
         proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, 0, s, bt),
 {
@@ -1970,7 +1973,7 @@ pub proof fn proj_field_type_param_step(
     requires
         np > 0,
         args.len() > 0,
-        pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+        pstep_star(denv, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body))),
         proj_field_type(
             dty,
             denv,
@@ -1988,7 +1991,7 @@ pub proof fn proj_field_type_param_step(
     ensures
         proj_field_type(dty, denv, lctx, io, h, cur, args, np, fld, remaining, s, t),
 {
-    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h);
+    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h);
     assert(proj_step_marker(bt, body));
 }
 
@@ -2010,7 +2013,7 @@ pub proof fn proj_field_type_field_step(
 )
     requires
         remaining > 0,
-        pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+        pstep_star(denv, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body))),
         proj_field_type(
             dty,
             denv,
@@ -2028,7 +2031,7 @@ pub proof fn proj_field_type_field_step(
     ensures
         proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, remaining, s, t),
 {
-    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h);
+    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h);
     assert(proj_step_marker(bt, body));
 }
 
@@ -2047,11 +2050,11 @@ pub proof fn proj_field_type_final(
     s: ExprSpec,
 )
     requires
-        pstep_star(denv, cur, ExprSpec::Bind(Box::new(bt), Box::new(body))),
+        pstep_star(denv, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body))),
     ensures
         proj_field_type(dty, denv, lctx, io, h, cur, args, 0, fld, 0, s, bt),
 {
-    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(Box::new(bt), Box::new(body)), h);
+    deq_p_of_pstep_star(dty, denv, lctx, io, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h);
     assert(proj_step_marker(bt, body));
 }
 
@@ -2085,8 +2088,8 @@ pub proof fn types_to_lambda(
             dty,
             denv,
             lctx, io,
-            ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
-            ExprSpec::Bind(
+            ExprSpec::Bind(BinderKind::Lam, Box::new(binder_type), Box::new(body)),
+            ExprSpec::Bind(BinderKind::Pi, 
                 Box::new(abstr_full(binder_type, seq![lid], 0)),
                 Box::new(abstr_full(infd, seq![lid], 0)),
             ),
@@ -2132,7 +2135,7 @@ pub proof fn types_to_pi(
             dty,
             denv,
             lctx, io,
-            ExprSpec::Bind(Box::new(binder_type), Box::new(body)),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(binder_type), Box::new(body)),
             ExprSpec::Sort(LevelSpec::IMax(Box::new(dom_level), Box::new(cod_level))),
             fuel,
         ),
@@ -2584,16 +2587,17 @@ pub open spec fn deq_leaf(x: ExprSpec, y: ExprSpec) -> bool {
     }
 }
 
-/// `lam` is the eta-expansion of `f`: a binder (of ANY binder type --
+/// `lam` is the eta-expansion of `f`: a lambda (of ANY binder type --
 /// the relation is untyped, like `defeq`; in a well-typed term the type
 /// is determined, and the eventual typed-soundness statement is where
-/// that re-enters) whose body applies the WEAKENED `f` to `Var(0)`.
+/// that re-enters) whose body applies the WEAKENED `f` to `Var(0)`. Only
+/// a lambda: a Pi is never an eta-expansion.
 /// `shift(1, 0, f)` is the general de-Bruijn-correct form; for closed
 /// `f` (`nlbv <= 0`, every real checker operand here) `shift` is the
 /// identity via `nlbv_shift_noop`. Match-based, no existential.
 pub open spec fn eta_expands_to(lam: ExprSpec, f: ExprSpec) -> bool {
     match lam {
-        ExprSpec::Bind(_t, b) => *b == ExprSpec::App(
+        ExprSpec::Bind(BinderKind::Lam, _t, b) => *b == ExprSpec::App(
             Box::new(shift(1, 0, f)),
             Box::new(ExprSpec::Var(0)),
         ),
@@ -2769,7 +2773,7 @@ pub open spec fn deq_c(
         // variable `k` (absent from both bodies), related by a `deq`
         // CHAIN one height down (chains, not a single step: the opened
         // bodies may need reduction steps that raw bodies cannot take).
-        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => deq_c(env, *t1, *t2, (h - 1) as nat)
+        (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => bk1 == bk2 && deq_c(env, *t1, *t2, (h - 1) as nat)
             && (deq_c(env, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
             fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && deq(
                 env,
@@ -2857,7 +2861,7 @@ pub proof fn deq_c_mono(
                 ));
                 assert(deq_c(env, x, y, h2));
             },
-            (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
+            (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => {
                 assert(deq_c(env, *t1, *t2, (h1 - 1) as nat));
                 deq_c_mono(env, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
                 if deq_c(env, *b1, *b2, (h1 - 1) as nat) {
@@ -2964,7 +2968,7 @@ pub proof fn deq_c_symm(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
                 ));
                 assert(deq_c(env, y, x, h));
             },
-            (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
+            (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => {
                 assert(deq_c(env, *t1, *t2, (h - 1) as nat));
                 deq_c_symm(env, *t1, *t2, (h - 1) as nat);
                 if deq_c(env, *b1, *b2, (h - 1) as nat) {
@@ -3347,6 +3351,7 @@ pub proof fn deq_bind_congr(
     b1: ExprSpec,
     b2: ExprSpec,
     h: nat,
+    bkind: BinderKind,
 )
     requires
         deq(env, t1, t2, h),
@@ -3354,8 +3359,8 @@ pub proof fn deq_bind_congr(
     ensures
         deq(
             env,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
             h + 1,
         ),
 {
@@ -3363,8 +3368,8 @@ pub proof fn deq_bind_congr(
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_chain_valid(env, ch, h);
     let chb = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == b1 && ch[ch.len() - 1] == b2 && deq_chain_valid(env, ch, h);
-    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b1)));
+    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(bkind, Box::new(t2), Box::new(chb[i])));
     assert(deq_chain_valid(env, mt, h + 1)) by {
         assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(
             env,
@@ -3375,8 +3380,8 @@ pub proof fn deq_bind_congr(
             assert(deq_c(env, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
-            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
+            assert(mt[i] == ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b1)));
+            assert(mt[i + 1] == ExprSpec::Bind(bkind, Box::new(cht[i + 1]), Box::new(b1)));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_c(env, mt[i], mt[i + 1], h + 1));
         }
@@ -3391,33 +3396,33 @@ pub proof fn deq_bind_congr(
             assert(deq_c(env, chb[i], chb[i + 1], h));
             defeq_refl(env, t2);
             assert(deq_c(env, t2, t2, h));
-            assert(mb[i] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
-            assert(mb[i + 1] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i + 1])));
+            assert(mb[i] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(chb[i])));
+            assert(mb[i + 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(chb[i + 1])));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_c(env, mb[i], mb[i + 1], h + 1));
         }
     }
-    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
-    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(mb[0] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(mb[mb.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
+    assert(mt[0] == ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)));
+    assert(mb[0] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)));
+    assert(mb[mb.len() - 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)));
     assert(deq(
         env,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
         h + 1,
     ));
     assert(deq(
         env,
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         h + 1,
     ));
     deq_trans(
         env,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         h + 1,
     );
 }
@@ -3436,6 +3441,7 @@ pub proof fn deq_bind_fresh(
     b2: ExprSpec,
     k: u32,
     h: nat,
+    bkind: BinderKind,
 )
     requires
         deq(env, t1, t2, h),
@@ -3445,14 +3451,14 @@ pub proof fn deq_bind_fresh(
     ensures
         deq(
             env,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
             h + 1,
         ),
 {
     let cht = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_chain_valid(env, ch, h);
-    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b1)));
     assert(deq_chain_valid(env, mt, h + 1)) by {
         assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_c(
             env,
@@ -3463,23 +3469,23 @@ pub proof fn deq_bind_fresh(
             assert(deq_c(env, cht[i], cht[i + 1], h));
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
-            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
+            assert(mt[i] == ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b1)));
+            assert(mt[i + 1] == ExprSpec::Bind(bkind, Box::new(cht[i + 1]), Box::new(b1)));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_c(env, mt[i], mt[i + 1], h + 1));
         }
     }
-    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
-    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
+    assert(mt[0] == ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)));
     assert(deq(
         env,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
         h + 1,
     ));
     // The fresh-instance link.
-    let bx = ExprSpec::Bind(Box::new(t2), Box::new(b1));
-    let by = ExprSpec::Bind(Box::new(t2), Box::new(b2));
+    let bx = ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1));
+    let by = ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2));
     defeq_refl(env, t2);
     assert(deq_c(env, t2, t2, h));
     assert(fresh_marker(k));
@@ -3504,7 +3510,7 @@ pub proof fn deq_bind_fresh(
         }
     }
     assert(deq(env, bx, by, h + 1));
-    deq_trans(env, ExprSpec::Bind(Box::new(t1), Box::new(b1)), bx, by, h + 1);
+    deq_trans(env, ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)), bx, by, h + 1);
 }
 
 /// `deq_any` form of `deq_bind_fresh` (heights joined by `deq_mono`).
@@ -3515,6 +3521,7 @@ pub proof fn deq_any_bind_fresh(
     b1: ExprSpec,
     b2: ExprSpec,
     k: u32,
+    bkind: BinderKind,
 )
     requires
         deq_any(env, t1, t2),
@@ -3524,8 +3531,8 @@ pub proof fn deq_any_bind_fresh(
     ensures
         deq_any(
             env,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         ),
 {
     let h1 = choose|h: nat| deq(env, t1, t2, h);
@@ -3537,11 +3544,11 @@ pub proof fn deq_any_bind_fresh(
     };
     deq_mono(env, t1, t2, h1, hm);
     deq_mono(env, inst_free(b1, k), inst_free(b2, k), h2, hm);
-    deq_bind_fresh(env, t1, t2, b1, b2, k, hm);
+    deq_bind_fresh(env, t1, t2, b1, b2, k, hm, bkind);
     assert(deq(
         env,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         hm + 1,
     ));
 }
@@ -3626,7 +3633,7 @@ pub open spec fn deq_p_c(
         // the two binder types (convertible to each other; the kernel opens
         // with the first, `def_eq_binder_aux`, and the rule is symmetric), so
         // a typed leaf under the binder types it correctly.
-        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => deq_p_c(
+        (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => bk1 == bk2 && deq_p_c(
             dty,
             env,
             lctx, io,
@@ -3789,7 +3796,7 @@ pub proof fn deq_p_c_mono(
                 ));
                 assert(deq_p_c(dty, env, lctx, io, x, y, h2));
             },
-            (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
+            (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => {
                 assert(deq_p_c(dty, env, lctx, io, *t1, *t2, (h1 - 1) as nat));
                 deq_p_c_mono(dty, env, lctx, io, *t1, *t2, (h1 - 1) as nat, (h2 - 1) as nat);
                 if deq_p_c(dty, env, lctx, io, *b1, *b2, (h1 - 1) as nat) {
@@ -3938,7 +3945,7 @@ pub proof fn deq_p_c_symm(
                 ));
                 assert(deq_p_c(dty, env, lctx, io, y, x, h));
             },
-            (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => {
+            (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => {
                 assert(deq_p_c(dty, env, lctx, io, *t1, *t2, (h - 1) as nat));
                 deq_p_c_symm(dty, env, lctx, io, *t1, *t2, (h - 1) as nat);
                 if deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) {
@@ -4743,6 +4750,7 @@ pub proof fn deq_p_bind_congr(
     b1: ExprSpec,
     b2: ExprSpec,
     h: nat,
+    bkind: BinderKind,
 )
     requires
         deq_p(dty, env, lctx, io, t1, t2, h),
@@ -4752,8 +4760,8 @@ pub proof fn deq_p_bind_congr(
             dty,
             env,
             lctx, io,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
             h + 1,
         ),
 {
@@ -4773,8 +4781,8 @@ pub proof fn deq_p_bind_congr(
             ch,
             h,
         );
-    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b1)));
+    let mb = Seq::new(chb.len(), |i: int| ExprSpec::Bind(bkind, Box::new(t2), Box::new(chb[i])));
     assert(deq_p_chain_valid(dty, env, lctx, io, mt, h + 1)) by {
         assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(
             dty,
@@ -4788,8 +4796,8 @@ pub proof fn deq_p_bind_congr(
             defeq_refl(env, b1);
             assert(deq_c(env, b1, b1, h));
             assert(deq_p_c(dty, env, lctx, io, b1, b1, h));
-            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b1)));
-            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b1)));
+            assert(mt[i] == ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b1)));
+            assert(mt[i + 1] == ExprSpec::Bind(bkind, Box::new(cht[i + 1]), Box::new(b1)));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_p_c(dty, env, lctx, io, mt[i], mt[i + 1], h + 1));
         }
@@ -4807,39 +4815,39 @@ pub proof fn deq_p_bind_congr(
             defeq_refl(env, t2);
             assert(deq_c(env, t2, t2, h));
             assert(deq_p_c(dty, env, lctx, io, t2, t2, h));
-            assert(mb[i] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i])));
-            assert(mb[i + 1] == ExprSpec::Bind(Box::new(t2), Box::new(chb[i + 1])));
+            assert(mb[i] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(chb[i])));
+            assert(mb[i + 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(chb[i + 1])));
             assert(((h + 1) - 1) as nat == h);
             assert(deq_p_c(dty, env, lctx, io, mb[i], mb[i + 1], h + 1));
         }
     }
-    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b1)));
-    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(mb[0] == ExprSpec::Bind(Box::new(t2), Box::new(b1)));
-    assert(mb[mb.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b2)));
+    assert(mt[0] == ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)));
+    assert(mb[0] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)));
+    assert(mb[mb.len() - 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)));
     assert(deq_p(
         dty,
         env,
         lctx, io,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
         h + 1,
     ));
     assert(deq_p(
         dty,
         env,
         lctx, io,
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         h + 1,
     ));
     deq_p_trans(
         dty,
         env,
         lctx, io,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         h + 1,
     );
 }
@@ -5011,6 +5019,7 @@ pub proof fn deq_p_any_bind_congr(
     t2: ExprSpec,
     b1: ExprSpec,
     b2: ExprSpec,
+    bkind: BinderKind,
 )
     requires
         deq_p_any(dty, env, lctx, io, t1, t2),
@@ -5020,8 +5029,8 @@ pub proof fn deq_p_any_bind_congr(
             dty,
             env,
             lctx, io,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         ),
 {
     let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, t1, t2, h);
@@ -5033,13 +5042,13 @@ pub proof fn deq_p_any_bind_congr(
     };
     deq_p_mono(dty, env, lctx, io, t1, t2, h1, h);
     deq_p_mono(dty, env, lctx, io, b1, b2, h2, h);
-    deq_p_bind_congr(dty, env, lctx, io, t1, t2, b1, b2, h);
+    deq_p_bind_congr(dty, env, lctx, io, t1, t2, b1, b2, h, bkind);
     assert(deq_p(
         dty,
         env,
         lctx, io,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         h + 1,
     ));
 }
@@ -5110,28 +5119,29 @@ pub proof fn deq_p_bind_type_chain(
     t2: ExprSpec,
     b: ExprSpec,
     h: nat,
+    bkind: BinderKind,
 )
     requires
         deq_p(dty, env, lctx, io, t1, t2, h),
     ensures
-        deq_p(dty, env, lctx, io, ExprSpec::Bind(Box::new(t1), Box::new(b)), ExprSpec::Bind(Box::new(t2), Box::new(b)), h + 1),
+        deq_p(dty, env, lctx, io, ExprSpec::Bind(bkind, Box::new(t1), Box::new(b)), ExprSpec::Bind(bkind, Box::new(t2), Box::new(b)), h + 1),
 {
     let cht = choose|ch: Seq<ExprSpec>|
         ch.len() >= 1 && ch[0] == t1 && ch[ch.len() - 1] == t2 && deq_p_chain_valid(dty, env, lctx, io, ch, h);
-    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(Box::new(cht[i]), Box::new(b)));
+    let mt = Seq::new(cht.len(), |i: int| ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b)));
     assert(deq_p_chain_valid(dty, env, lctx, io, mt, h + 1)) by {
         assert forall|i: int| #![trigger mt[i]] 0 <= i < mt.len() - 1 implies deq_p_c(dty, env, lctx, io, mt[i], mt[i + 1], h + 1) by {
             assert(deq_p_c(dty, env, lctx, io, cht[i], cht[i + 1], h));
             defeq_refl(env, b);
             assert(deq_c(env, b, b, h));
             deq_p_c_of_deq_c(dty, env, lctx, io, b, b, h);
-            assert(mt[i] == ExprSpec::Bind(Box::new(cht[i]), Box::new(b)));
-            assert(mt[i + 1] == ExprSpec::Bind(Box::new(cht[i + 1]), Box::new(b)));
+            assert(mt[i] == ExprSpec::Bind(bkind, Box::new(cht[i]), Box::new(b)));
+            assert(mt[i + 1] == ExprSpec::Bind(bkind, Box::new(cht[i + 1]), Box::new(b)));
             assert(((h + 1) - 1) as nat == h);
         }
     }
-    assert(mt[0] == ExprSpec::Bind(Box::new(t1), Box::new(b)));
-    assert(mt[mt.len() - 1] == ExprSpec::Bind(Box::new(t2), Box::new(b)));
+    assert(mt[0] == ExprSpec::Bind(bkind, Box::new(t1), Box::new(b)));
+    assert(mt[mt.len() - 1] == ExprSpec::Bind(bkind, Box::new(t2), Box::new(b)));
 }
 
 /// Binder congruence on the bodies alone, opened with a fresh local of the
@@ -5146,6 +5156,7 @@ pub proof fn deq_p_bind_link(
     b2: ExprSpec,
     k: u32,
     h: nat,
+    bkind: BinderKind,
 )
     requires
         fv_absent(b1, k),
@@ -5154,10 +5165,10 @@ pub proof fn deq_p_bind_link(
         lctx[k] == t,
         deq_p(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h),
     ensures
-        deq_p(dty, env, lctx, io, ExprSpec::Bind(Box::new(t), Box::new(b1)), ExprSpec::Bind(Box::new(t), Box::new(b2)), h + 1),
+        deq_p(dty, env, lctx, io, ExprSpec::Bind(bkind, Box::new(t), Box::new(b1)), ExprSpec::Bind(bkind, Box::new(t), Box::new(b2)), h + 1),
 {
-    let bx = ExprSpec::Bind(Box::new(t), Box::new(b1));
-    let by = ExprSpec::Bind(Box::new(t), Box::new(b2));
+    let bx = ExprSpec::Bind(bkind, Box::new(t), Box::new(b1));
+    let by = ExprSpec::Bind(bkind, Box::new(t), Box::new(b2));
     defeq_refl(env, t);
     assert(deq_c(env, t, t, h));
     deq_p_c_of_deq_c(dty, env, lctx, io, t, t, h);
@@ -5185,6 +5196,7 @@ pub proof fn deq_p_bind_fresh(
     b2: ExprSpec,
     k: u32,
     h: nat,
+    bkind: BinderKind,
 )
     requires
         deq_p(dty, env, lctx, io, t1, t2, h),
@@ -5198,22 +5210,22 @@ pub proof fn deq_p_bind_fresh(
             dty,
             env,
             lctx, io,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
             h + 1,
         ),
 {
-    let x = ExprSpec::Bind(Box::new(t1), Box::new(b1));
-    let y = ExprSpec::Bind(Box::new(t2), Box::new(b2));
+    let x = ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1));
+    let y = ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2));
     if lctx[k] == t1 {
-        let m = ExprSpec::Bind(Box::new(t1), Box::new(b2));
-        deq_p_bind_link(dty, env, lctx, io, t1, b1, b2, k, h);
-        deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b2, h);
+        let m = ExprSpec::Bind(bkind, Box::new(t1), Box::new(b2));
+        deq_p_bind_link(dty, env, lctx, io, t1, b1, b2, k, h, bkind);
+        deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b2, h, bkind);
         deq_p_trans(dty, env, lctx, io, x, m, y, h + 1);
     } else {
-        let m = ExprSpec::Bind(Box::new(t2), Box::new(b1));
-        deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b1, h);
-        deq_p_bind_link(dty, env, lctx, io, t2, b1, b2, k, h);
+        let m = ExprSpec::Bind(bkind, Box::new(t2), Box::new(b1));
+        deq_p_bind_type_chain(dty, env, lctx, io, t1, t2, b1, h, bkind);
+        deq_p_bind_link(dty, env, lctx, io, t2, b1, b2, k, h, bkind);
         deq_p_trans(dty, env, lctx, io, x, m, y, h + 1);
     }
 }
@@ -5229,6 +5241,7 @@ pub proof fn deq_p_any_bind_fresh(
     b1: ExprSpec,
     b2: ExprSpec,
     k: u32,
+    bkind: BinderKind,
 )
     requires
         deq_p_any(dty, env, lctx, io, t1, t2),
@@ -5242,8 +5255,8 @@ pub proof fn deq_p_any_bind_fresh(
             dty,
             env,
             lctx, io,
-            ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-            ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+            ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+            ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         ),
 {
     let h1 = choose|h: nat| #[trigger] deq_p(dty, env, lctx, io, t1, t2, h);
@@ -5255,13 +5268,13 @@ pub proof fn deq_p_any_bind_fresh(
     };
     deq_p_mono(dty, env, lctx, io, t1, t2, h1, hm);
     deq_p_mono(dty, env, lctx, io, inst_free(b1, k), inst_free(b2, k), h2, hm);
-    deq_p_bind_fresh(dty, env, lctx, io, t1, t2, b1, b2, k, hm);
+    deq_p_bind_fresh(dty, env, lctx, io, t1, t2, b1, b2, k, hm, bkind);
     assert(deq_p(
         dty,
         env,
         lctx, io,
-        ExprSpec::Bind(Box::new(t1), Box::new(b1)),
-        ExprSpec::Bind(Box::new(t2), Box::new(b2)),
+        ExprSpec::Bind(bkind, Box::new(t1), Box::new(b1)),
+        ExprSpec::Bind(bkind, Box::new(t2), Box::new(b2)),
         hm + 1,
     ));
 }

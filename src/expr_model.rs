@@ -124,6 +124,13 @@ impl vstd::std_specs::cmp::PartialEqSpecImpl for StringLitPayload {
     }
 }
 
+/// Which binder an `ExprSpec::Bind` is.
+#[derive(PartialEq, Eq, Structural)]
+pub enum BinderKind {
+    Pi,
+    Lam,
+}
+
 // (derives dropped in delta-lift L1: `ExprSpec` is now ghost-only -- its `Const`
 // payload is a `Seq<LevelSpec>`, which has no runtime representation.)
 pub enum ExprSpec {
@@ -201,7 +208,11 @@ pub enum ExprSpec {
     /// its levels).
     Const(u64, Seq<LevelSpec>),
     App(Box<ExprSpec>, Box<ExprSpec>),
-    Bind(Box<ExprSpec>, Box<ExprSpec>),
+    /// A binder: a Pi type or a lambda, which differ in how they type and
+    /// reduce (only a lambda beta-reduces; a lambda's type is a Pi, a Pi's is
+    /// a sort) and are never definitionally equal to each other. Both carry
+    /// the binder type and the body; structural operations treat them alike.
+    Bind(BinderKind, Box<ExprSpec>, Box<ExprSpec>),
     Let(Box<ExprSpec>, Box<ExprSpec>, Box<ExprSpec>),
     Proj(usize, Box<ExprSpec>),
 }
@@ -225,7 +236,7 @@ pub open spec fn nlbv(e: ExprSpec) -> nat
         } else {
             nlbv(*a)
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             let bb = if nlbv(*b) == 0 {
                 0
             } else {
@@ -271,7 +282,7 @@ pub open spec fn has_fv(e: ExprSpec) -> bool
         | ExprSpec::Sort(_) => false,
         ExprSpec::Free(_) => true,
         ExprSpec::App(f, a) => has_fv(*f) || has_fv(*a),
-        ExprSpec::Bind(t, b) => has_fv(*t) || has_fv(*b),
+        ExprSpec::Bind(bk, t, b) => has_fv(*t) || has_fv(*b),
         ExprSpec::Let(t, v, b) => has_fv(*t) || has_fv(*v) || has_fv(*b),
         ExprSpec::Proj(pidx, s) => has_fv(*s),
     }
@@ -345,7 +356,7 @@ pub proof fn abstr_full_depth(e: ExprSpec, locals: Seq<u32>, offset: nat)
             abstr_full_depth(*f, locals, offset);
             abstr_full_depth(*a, locals, offset);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             abstr_full_depth(*t, locals, offset);
             abstr_full_depth(*b, locals, offset + 1);
         },
@@ -448,7 +459,7 @@ pub proof fn abstr_levels_full_eq_abstr_full(
             abstr_levels_full_eq_abstr_full(aids, *f, ids, start_pos, nob, offset);
             abstr_levels_full_eq_abstr_full(aids, *a, ids, start_pos, nob, offset);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             abstr_levels_full_eq_abstr_full(aids, *t, ids, start_pos, nob, offset);
             abstr_levels_full_eq_abstr_full(aids, *b, ids, start_pos, nob, offset + 1);
         },
@@ -480,7 +491,7 @@ pub open spec fn dbj_serials_below(aids: (nat, nat), e: ExprSpec, bound: u16) ->
             None => true,
         },
         ExprSpec::App(f, a) => dbj_serials_below(aids, *f, bound) && dbj_serials_below(aids, *a, bound),
-        ExprSpec::Bind(t, b) => dbj_serials_below(aids, *t, bound) && dbj_serials_below(aids, *b, bound),
+        ExprSpec::Bind(bk, t, b) => dbj_serials_below(aids, *t, bound) && dbj_serials_below(aids, *b, bound),
         ExprSpec::Let(t, v, b) => dbj_serials_below(aids, *t, bound) && dbj_serials_below(aids, *v, bound)
             && dbj_serials_below(aids, *b, bound),
         ExprSpec::Proj(_, st) => dbj_serials_below(aids, *st, bound),
@@ -503,7 +514,7 @@ pub proof fn dbj_serials_below_mono(aids: (nat, nat), e: ExprSpec, b1: u16, b2: 
             dbj_serials_below_mono(aids, *f, b1, b2);
             dbj_serials_below_mono(aids, *a, b1, b2);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             dbj_serials_below_mono(aids, *t, b1, b2);
             dbj_serials_below_mono(aids, *b, b1, b2);
         },
@@ -558,7 +569,7 @@ pub open spec fn dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
             None => unique_deep(aids, id),
         },
         ExprSpec::App(f, a) => dbj_deep_in(aids, *f, S, c) && dbj_deep_in(aids, *a, S, c),
-        ExprSpec::Bind(t, b) => dbj_deep_in(aids, *t, S, c) && dbj_deep_in(aids, *b, S, c),
+        ExprSpec::Bind(bk, t, b) => dbj_deep_in(aids, *t, S, c) && dbj_deep_in(aids, *b, S, c),
         ExprSpec::Let(t, v, b) => dbj_deep_in(aids, *t, S, c) && dbj_deep_in(aids, *v, S, c) && dbj_deep_in(aids, 
             *b,
             S,
@@ -586,7 +597,7 @@ pub open spec fn unique_ty_deep(aids: (nat, nat), e: ExprSpec, n: nat) -> bool
             && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
             && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], (n - 1) as nat),
         ExprSpec::App(f, a) => unique_ty_deep(aids, *f, n) && unique_ty_deep(aids, *a, n),
-        ExprSpec::Bind(t, b) => unique_ty_deep(aids, *t, n) && unique_ty_deep(aids, *b, n),
+        ExprSpec::Bind(bk, t, b) => unique_ty_deep(aids, *t, n) && unique_ty_deep(aids, *b, n),
         ExprSpec::Let(t, v, b) => unique_ty_deep(aids, *t, n) && unique_ty_deep(aids, *v, n)
             && unique_ty_deep(aids, *b, n),
         ExprSpec::Proj(_, st) => unique_ty_deep(aids, *st, n),
@@ -611,7 +622,7 @@ pub proof fn unique_ty_deep_in(aids: (nat, nat), e: ExprSpec, n: nat, S: ISet<u3
             unique_ty_deep_in(aids, *f, n, S, c);
             unique_ty_deep_in(aids, *a, n, S, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             unique_ty_deep_in(aids, *t, n, S, c);
             unique_ty_deep_in(aids, *b, n, S, c);
         },
@@ -644,7 +655,7 @@ pub proof fn unique_ty_deep_mono(aids: (nat, nat), e: ExprSpec, n: nat, m: nat)
             unique_ty_deep_mono(aids, *f, n, m);
             unique_ty_deep_mono(aids, *a, n, m);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             unique_ty_deep_mono(aids, *t, n, m);
             unique_ty_deep_mono(aids, *b, n, m);
         },
@@ -681,7 +692,7 @@ pub proof fn unique_fuel(aids: (nat, nat), e: ExprSpec) -> (n: nat)
             unique_ty_deep_mono(aids, *a, n2, n);
             n
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             let n1 = unique_fuel(aids, *t);
             let n2 = unique_fuel(aids, *b);
             let n = if n1 >= n2 { n1 } else { n2 };
@@ -736,7 +747,7 @@ pub proof fn dbj_deep_in_below(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u
             dbj_deep_in_below(aids, *f, S, c);
             dbj_deep_in_below(aids, *a, S, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             dbj_deep_in_below(aids, *t, S, c);
             dbj_deep_in_below(aids, *b, S, c);
         },
@@ -786,7 +797,7 @@ pub proof fn dbj_deep_in_weaken(aids: (nat, nat), e: ExprSpec, S1: ISet<u32>, c1
             dbj_deep_in_weaken(aids, *f, S1, c1, S2, c2);
             dbj_deep_in_weaken(aids, *a, S1, c1, S2, c2);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             dbj_deep_in_weaken(aids, *t, S1, c1, S2, c2);
             dbj_deep_in_weaken(aids, *b, S1, c1, S2, c2);
         },
@@ -828,7 +839,7 @@ pub proof fn no_fv_dbj_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u
             no_fv_dbj_deep_in(aids, *f, S, c);
             no_fv_dbj_deep_in(aids, *a, S, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             no_fv_dbj_deep_in(aids, *t, S, c);
             no_fv_dbj_deep_in(aids, *b, S, c);
         },
@@ -880,7 +891,7 @@ pub proof fn subst_full_dbj_deep_in(
             subst_full_dbj_deep_in(aids, *f, substs, offset, S, c);
             subst_full_dbj_deep_in(aids, *a, substs, offset, S, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_dbj_deep_in(aids, *t, substs, offset, S, c);
             subst_full_dbj_deep_in(aids, *b, substs, offset + 1, S, c);
         },
@@ -924,7 +935,7 @@ pub open spec fn occurs_deep(aids: (nat, nat), e: ExprSpec, c: u16, t: u32) -> b
             None => false,
         },
         ExprSpec::App(f, a) => occurs_deep(aids, *f, c, t) || occurs_deep(aids, *a, c, t),
-        ExprSpec::Bind(ty, b) => occurs_deep(aids, *ty, c, t) || occurs_deep(aids, *b, c, t),
+        ExprSpec::Bind(bk, ty, b) => occurs_deep(aids, *ty, c, t) || occurs_deep(aids, *b, c, t),
         ExprSpec::Let(ty, v, b) => occurs_deep(aids, *ty, c, t) || occurs_deep(aids, *v, c, t) || occurs_deep(aids, 
             *b,
             c,
@@ -970,7 +981,7 @@ pub proof fn dbj_deep_in_occ(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16
             dbj_deep_in_occ(aids, *f, S, c, O);
             dbj_deep_in_occ(aids, *a, S, c, O);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             assert forall|t: u32| #[trigger] occurs_deep(aids, *ty, c, t) implies O.contains(t) by {
                 assert(occurs_deep(aids, e, c, t));
             }
@@ -1028,7 +1039,7 @@ pub proof fn occurs_deep_in(aids: (nat, nat), e: ExprSpec, S: ISet<u32>, c: u16,
                 occurs_deep_in(aids, *a, S, c, c1, t);
             }
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             if occurs_deep(aids, *ty, c1, t) {
                 occurs_deep_in(aids, *ty, S, c, c1, t);
             } else {
@@ -1086,7 +1097,7 @@ pub proof fn abstr_levels_dbj_deep_in(
             abstr_levels_dbj_deep_in(aids, *f, S, b, start, n, S2, c2);
             abstr_levels_dbj_deep_in(aids, *a, S, b, start, n, S2, c2);
         },
-        ExprSpec::Bind(t, bd) => {
+        ExprSpec::Bind(bk, t, bd) => {
             abstr_levels_dbj_deep_in(aids, *t, S, b, start, n, S2, c2);
             abstr_levels_dbj_deep_in(aids, *bd, S, b, start, (n + 1) as u16, S2, c2);
         },
@@ -1123,7 +1134,7 @@ pub proof fn abstr_levels_nlbv(aids: (nat, nat), e: ExprSpec, start: u16, nob: u
             abstr_levels_nlbv(aids, *f, start, nob);
             abstr_levels_nlbv(aids, *a, start, nob);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_levels_nlbv(aids, *ty, start, nob);
             dbj_serials_below_mono(aids, *b, nob, (nob + 1) as u16);
             abstr_levels_nlbv(aids, *b, start, (nob + 1) as u16);
@@ -1196,7 +1207,7 @@ pub proof fn subst_full_push(e: ExprSpec, l: Seq<ExprSpec>, s: ExprSpec, offset:
             subst_full_push(*f, l, s, offset);
             subst_full_push(*a, l, s, offset);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_push(*t, l, s, offset);
             subst_full_push(*b, l, s, offset + 1);
         },
@@ -1229,7 +1240,7 @@ pub proof fn dbj_serials_below_fv_absent(aids: (nat, nat), e: ExprSpec, k: u32, 
             dbj_serials_below_fv_absent(aids, *f, k, c);
             dbj_serials_below_fv_absent(aids, *a, k, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             dbj_serials_below_fv_absent(aids, *t, k, c);
             dbj_serials_below_fv_absent(aids, *b, k, c);
         },
@@ -1259,7 +1270,7 @@ pub proof fn no_fv_dbj_serials_below(aids: (nat, nat), e: ExprSpec, c: u16)
             no_fv_dbj_serials_below(aids, *f, c);
             no_fv_dbj_serials_below(aids, *a, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             no_fv_dbj_serials_below(aids, *t, c);
             no_fv_dbj_serials_below(aids, *b, c);
         },
@@ -1296,7 +1307,7 @@ pub proof fn subst_full_dbj_serials_below(aids: (nat, nat), e: ExprSpec, substs:
             subst_full_dbj_serials_below(aids, *f, substs, offset, c);
             subst_full_dbj_serials_below(aids, *a, substs, offset, c);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_dbj_serials_below(aids, *t, substs, offset, c);
             subst_full_dbj_serials_below(aids, *b, substs, offset + 1, c);
         },
@@ -1345,7 +1356,7 @@ pub open spec fn abstr_levels_full(aids: (nat, nat), e: ExprSpec, start_pos: u16
             Box::new(abstr_levels_full(aids, *f, start_pos, num_open_binders)),
             Box::new(abstr_levels_full(aids, *a, start_pos, num_open_binders)),
         ),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => ExprSpec::Bind(bk, 
             Box::new(abstr_levels_full(aids, *t, start_pos, num_open_binders)),
             Box::new(abstr_levels_full(aids, *b, start_pos, (num_open_binders + 1) as u16)),
         ),
@@ -1371,7 +1382,7 @@ pub open spec fn levels_fit(e: ExprSpec, nob: u16) -> bool
 {
     !has_fv(e) || match e {
         ExprSpec::App(f, a) => levels_fit(*f, nob) && levels_fit(*a, nob),
-        ExprSpec::Bind(t, b) => nob < 0xFFFF && levels_fit(*t, nob) && levels_fit(*b, (nob + 1) as u16),
+        ExprSpec::Bind(bk, t, b) => nob < 0xFFFF && levels_fit(*t, nob) && levels_fit(*b, (nob + 1) as u16),
         ExprSpec::Let(t, v, b) => nob < 0xFFFF && levels_fit(*t, nob) && levels_fit(*v, nob) && levels_fit(
             *b,
             (nob + 1) as u16,
@@ -1392,7 +1403,7 @@ pub proof fn abstr_levels_full_depth(aids: (nat, nat), e: ExprSpec, start_pos: u
             abstr_levels_full_depth(aids, *f, start_pos, num_open_binders);
             abstr_levels_full_depth(aids, *a, start_pos, num_open_binders);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             abstr_levels_full_depth(aids, *t, start_pos, num_open_binders);
             abstr_levels_full_depth(aids, *b, start_pos, (num_open_binders + 1) as u16);
         },
@@ -1423,7 +1434,7 @@ pub proof fn abstr_levels_full_noop(aids: (nat, nat), e: ExprSpec, start_pos: u1
             abstr_levels_full_noop(aids, *f, start_pos, num_open_binders);
             abstr_levels_full_noop(aids, *a, start_pos, num_open_binders);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             abstr_levels_full_noop(aids, *t, start_pos, num_open_binders);
             abstr_levels_full_noop(aids, *b, start_pos, (num_open_binders + 1) as u16);
         },
@@ -1443,7 +1454,7 @@ pub proof fn abstr_levels_full_noop(aids: (nat, nat), e: ExprSpec, start_pos: u1
 /// accessor so a contract can name the binder type without an `exists`.
 pub open spec fn bind_dom(e: ExprSpec) -> ExprSpec {
     match e {
-        ExprSpec::Bind(t, _) => *t,
+        ExprSpec::Bind(bk, t, _) => *t,
         _ => ExprSpec::Closed,
     }
 }
@@ -1464,7 +1475,7 @@ pub open spec fn depth(e: ExprSpec) -> nat
         } else {
             depth(*a)
         },
-        ExprSpec::Bind(t, b) => 1 + if depth(*t) >= depth(*b) {
+        ExprSpec::Bind(bk, t, b) => 1 + if depth(*t) >= depth(*b) {
             depth(*t)
         } else {
             depth(*b)
@@ -1515,7 +1526,7 @@ pub open spec fn subst_full(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat) -> 
             Box::new(subst_full(*f, substs, offset)),
             Box::new(subst_full(*a, substs, offset)),
         ),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => ExprSpec::Bind(bk, 
             Box::new(subst_full(*t, substs, offset)),
             Box::new(subst_full(*b, substs, offset + 1)),
         ),
@@ -1552,7 +1563,7 @@ pub proof fn subst_full_noop(e: ExprSpec, substs: Seq<ExprSpec>, offset: nat)
             subst_full_noop(*f, substs, offset);
             subst_full_noop(*a, substs, offset);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_full_noop(*t, substs, offset);
             subst_full_noop(*b, substs, (offset + 1) as nat);
         },
@@ -1605,7 +1616,7 @@ pub proof fn abstr_full_absent(e: ExprSpec, x: u32, off: nat)
             abstr_full_absent(*f, x, off);
             abstr_full_absent(*a, x, off);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_full_absent(*ty, x, off);
             abstr_full_absent(*b, x, off + 1);
         },
@@ -1635,7 +1646,7 @@ pub proof fn abstr_full_empty(e: ExprSpec, off: nat)
             abstr_full_empty(*f, off);
             abstr_full_empty(*a, off);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_full_empty(*ty, off);
             abstr_full_empty(*b, off + 1);
         },
@@ -1676,7 +1687,7 @@ pub proof fn abstr_full_compose(e: ExprSpec, ids: Seq<u32>, x: u32, off: nat)
             abstr_full_compose(*f, ids, x, off);
             abstr_full_compose(*a, ids, x, off);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_full_compose(*ty, ids, x, off);
             abstr_full_compose(*b, ids, x, off + 1);
         },
@@ -1714,7 +1725,7 @@ pub proof fn abstr_inst_roundtrip(e: ExprSpec, x: u32, off: nat)
             abstr_inst_roundtrip(*f, x, off);
             abstr_inst_roundtrip(*a, x, off);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_inst_roundtrip(*ty, x, off);
             abstr_inst_roundtrip(*b, x, off + 1);
         },
@@ -1748,7 +1759,7 @@ pub proof fn abstr_full_removes(e: ExprSpec, x: u32, off: nat)
             abstr_full_removes(*f, x, off);
             abstr_full_removes(*a, x, off);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_full_removes(*ty, x, off);
             abstr_full_removes(*b, x, off + 1);
         },
@@ -1784,7 +1795,7 @@ pub proof fn abstr_full_nlbv1(e: ExprSpec, x: u32, off: nat)
             abstr_full_nlbv1(*f, x, off);
             abstr_full_nlbv1(*a, x, off);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_full_nlbv1(*ty, x, off);
             abstr_full_nlbv1(*b, x, off + 1);
         },
@@ -1879,7 +1890,7 @@ pub proof fn abstr_levels_eq_abstr_full_in(
             abstr_levels_eq_abstr_full_in(aids, *f, ids, S, start_pos, nob, offset);
             abstr_levels_eq_abstr_full_in(aids, *a, ids, S, start_pos, nob, offset);
         },
-        ExprSpec::Bind(ty, b) => {
+        ExprSpec::Bind(bk, ty, b) => {
             abstr_levels_eq_abstr_full_in(aids, *ty, ids, S, start_pos, nob, offset);
             abstr_levels_eq_abstr_full_in(aids, *b, ids, S, start_pos, nob, offset + 1);
         },
@@ -1907,7 +1918,7 @@ pub proof fn abstr_full_noop(e: ExprSpec, locals: Seq<u32>, offset: nat)
             abstr_full_noop(*f, locals, offset);
             abstr_full_noop(*a, locals, offset);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             abstr_full_noop(*t, locals, offset);
             abstr_full_noop(*b, locals, offset + 1);
         },
@@ -1997,7 +2008,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<u32>, offset: nat) -> ExprS
             Box::new(abstr_full(*f, locals, offset)),
             Box::new(abstr_full(*a, locals, offset)),
         ),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => ExprSpec::Bind(bk, 
             Box::new(abstr_full(*t, locals, offset)),
             Box::new(abstr_full(*b, locals, offset + 1)),
         ),
@@ -2025,7 +2036,7 @@ pub open spec fn fv_absent(e: ExprSpec, k: u32) -> bool
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => true,
         ExprSpec::App(f, a) => fv_absent(*f, k) && fv_absent(*a, k),
-        ExprSpec::Bind(t, bd) => fv_absent(*t, k) && fv_absent(*bd, k),
+        ExprSpec::Bind(bk, t, bd) => fv_absent(*t, k) && fv_absent(*bd, k),
         ExprSpec::Let(t, v, bd) => fv_absent(*t, k) && fv_absent(*v, k) && fv_absent(*bd, k),
         ExprSpec::Proj(pidx, s) => fv_absent(*s, k),
     }
@@ -2050,7 +2061,7 @@ pub open spec fn subst_expr_levels(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>
             Box::new(subst_expr_levels(*f, ks, vs)),
             Box::new(subst_expr_levels(*a, ks, vs)),
         ),
-        ExprSpec::Bind(t, b) => ExprSpec::Bind(
+        ExprSpec::Bind(bk, t, b) => ExprSpec::Bind(bk, 
             Box::new(subst_expr_levels(*t, ks, vs)),
             Box::new(subst_expr_levels(*b, ks, vs)),
         ),
@@ -2075,7 +2086,7 @@ pub proof fn subst_expr_levels_has_fv(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSp
             subst_expr_levels_has_fv(*f, ks, vs);
             subst_expr_levels_has_fv(*a, ks, vs);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_expr_levels_has_fv(*t, ks, vs);
             subst_expr_levels_has_fv(*b, ks, vs);
         },
@@ -2128,7 +2139,7 @@ pub proof fn subst_expr_levels_sat_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelS
             subst_expr_levels_sat_rel(*f, ks, vs);
             subst_expr_levels_sat_rel(*a, ks, vs);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_expr_levels_sat_rel(*t, ks, vs);
             subst_expr_levels_sat_rel(*b, ks, vs);
         },
@@ -2195,7 +2206,7 @@ pub proof fn subst_expr_levels_fn_rel(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSp
             subst_expr_levels_fn_rel(*f, ks, vs);
             subst_expr_levels_fn_rel(*a, ks, vs);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_expr_levels_fn_rel(*t, ks, vs);
             subst_expr_levels_fn_rel(*b, ks, vs);
         },
@@ -2235,7 +2246,7 @@ pub open spec fn subst_expr_levels_rel(
                 == crate::level_model::interp(ls1[j], crate::level_model::subst_env(rho, ks, vs)),
         (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => subst_expr_levels_rel(*f1, ks, vs, *f2)
             && subst_expr_levels_rel(*a1, ks, vs, *a2),
-        (ExprSpec::Bind(t1, b1), ExprSpec::Bind(t2, b2)) => subst_expr_levels_rel(*t1, ks, vs, *t2)
+        (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => bk1 == bk2 && subst_expr_levels_rel(*t1, ks, vs, *t2)
             && subst_expr_levels_rel(*b1, ks, vs, *b2),
         (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => subst_expr_levels_rel(
             *t1,
@@ -2270,7 +2281,7 @@ pub proof fn subst_expr_levels_rel_empty(e: ExprSpec)
             subst_expr_levels_rel_empty(*f);
             subst_expr_levels_rel_empty(*a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_expr_levels_rel_empty(*t);
             subst_expr_levels_rel_empty(*b);
         },
@@ -2339,7 +2350,7 @@ pub proof fn subst_expr_levels_empty(e: ExprSpec)
             subst_expr_levels_empty(*f);
             subst_expr_levels_empty(*a);
         },
-        ExprSpec::Bind(t, b) => {
+        ExprSpec::Bind(bk, t, b) => {
             subst_expr_levels_empty(*t);
             subst_expr_levels_empty(*b);
         },

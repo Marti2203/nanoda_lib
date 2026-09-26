@@ -115,6 +115,7 @@ use crate::level_arena_bridge::to_model_of_levels;
 use crate::level_model::LevelSpec;
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 use vstd::prelude::*;
 
 verus! {
@@ -186,7 +187,7 @@ pub open spec fn tele_ok<'x, 't>(env: crate::env::Env<'x, 't>, c: TeleCert) -> b
     &&& c.bts.len() == c.locals.len()
     &&& c.bodies.len() == c.locals.len()
     &&& forall|k: int| 0 <= k < c.locals.len() ==> crate::tc::kconv(env, c.cursors[k],
-        ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k])))
+        ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k])))
         && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
     &&& crate::tc::kconv(env, c.cursors.last(), ExprSpec::Sort(c.sort))
 }
@@ -365,7 +366,7 @@ pub open spec fn elim_cert_ok<'x, 't>(env: crate::env::Env<'x, 't>, ty: ExprSpec
     &&& c.bodies.len() == c.locals.len()
     &&& c.sorts.len() == c.locals.len()
     &&& c.cursors[0] == ty
-    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.cursors[k] == ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
         && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
     &&& forall|k: int| np <= k < c.locals.len() ==> crate::tc::kinfer_claim(env, c.bts[k], ExprSpec::Sort(#[trigger] c.sorts[k]))
     &&& c.cursors.last() == crate::beta_model::spine_app(c.head, c.args)
@@ -1704,7 +1705,7 @@ pub proof fn tele_closed<'t>(bs: Seq<ExprPtr<'t>>, e: ExprSpec)
         assert(ids.drop_last() =~= Seq::new(rest.len(), |i: int| crate::expr_arena_bridge::expr_id(rest[i])));
         assert(tys.drop_last() =~= Seq::new(rest.len(), |i: int| crate::quot_model::local_type(rest[i])));
         crate::expr_model::abstr_full_nlbv1(e, ids.last(), 0);
-        let inner = ExprSpec::Bind(Box::new(tys.last()), Box::new(crate::expr_model::abstr_full(e, seq![ids.last()], 0)));
+        let inner = ExprSpec::Bind(BinderKind::Pi, Box::new(tys.last()), Box::new(crate::expr_model::abstr_full(e, seq![ids.last()], 0)));
         assert(crate::expr_model::nlbv(inner) <= 0);
         assert forall|i: int| 0 <= i < rest.len() implies crate::expr_model::nlbv(crate::quot_model::local_type(#[trigger] rest[i])) <= 0 by {
             assert(rest[i] == bs[i]);
@@ -1756,7 +1757,7 @@ pub(crate) open spec fn pos_cert_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: In
     &&& c.bodies.len() == c.locals.len()
     &&& c.cursors[0] == ty
     &&& forall|k: int| 0 <= k < c.cursors.len() ==> #[trigger] crate::tc::kconv(env, c.cursors[k], c.ws[k])
-    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.ws[k] == ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.ws[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
         && !crate::inductive_model::contains_const_named(c.bts[k], const_ids(st.ind_consts@))
         && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
     &&& !crate::inductive_model::contains_const_named(c.ws.last(), const_ids(st.ind_consts@))
@@ -1797,7 +1798,7 @@ pub(crate) open spec fn ctor_cert_ok<'x, 't>(
     &&& c.sorts.len() == c.locals.len()
     &&& np <= c.locals.len()
     &&& c.cursors[0] == ty
-    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.cursors[k] == ExprSpec::Bind(Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
         && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
     &&& forall|k: int| 0 <= k < np ==> #[trigger] c.locals[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
         && crate::tc::kconv(env, c.bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])))
@@ -1937,7 +1938,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert forall|j: int| 0 <= j < ix.len() implies crate::expr_model::nlbv(crate::quot_model::local_type(#[trigger] ix[j])) <= 0 by {
                 local_type_closed(*self.ctx, ix[j]);
             }
-            assert(crate::expr_arena_bridge::to_model(w_major) == ExprSpec::Bind(
+            assert(crate::expr_arena_bridge::to_model(w_major) == ExprSpec::Bind(BinderKind::Pi, 
                 Box::new(crate::quot_model::local_type(major)), Box::new(crate::expr_arena_bridge::to_model(elim_sort))));
             assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(w_major)) <= 0) by {
                 reveal_with_fuel(crate::expr_model::nlbv, 2);
@@ -5466,7 +5467,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 locs.len() == i,
                 cs[0] == crate::expr_arena_bridge::to_model(ctor_type_in),
                 cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
-                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
+                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 forall|k: int| 0 <= k < locs.len() ==> #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
                     && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))),
@@ -5522,7 +5523,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.local_params@.len() <= locs.len(),
                 cs[0] == crate::expr_arena_bridge::to_model(ctor_type_in),
                 cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
-                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
+                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 forall|k: int| 0 <= k < st.local_params@.len() ==> #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
                     && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))),
@@ -5684,7 +5685,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 cs[0] == crate::expr_arena_bridge::to_model(ctor_type_in),
                 cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
                 forall|k: int| 0 <= k < ws.len() ==> #[trigger] crate::tc::kconv(env, cs[k], ws[k]),
-                forall|k: int| 0 <= k < locs.len() ==> ws[k] == ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
+                forall|k: int| 0 <= k < locs.len() ==> ws[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
                     && !crate::inductive_model::contains_const_named(bts[k], const_ids(st.ind_consts@))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
         {
@@ -6141,7 +6142,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 cs[0] == ty0,
                 cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
                 rem_params as nat == if locs.len() <= np0 { (np0 - locs.len()) as nat } else { 0nat },
-                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
+                forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 forall|k: int| 0 <= k < locs.len() ==> #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(lptrs[k])
                     && crate::util_model::owns(*self.ctx, lptrs[k])
@@ -6492,7 +6493,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 bodies.len() == locs.len(),
                 cs[0] == crate::expr_arena_bridge::to_model(ty0),
                 forall|k: int| 0 <= k < locs.len() ==> crate::tc::kconv(env, cs[k],
-                    ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
+                    ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
                 i == locs.len(),
@@ -6505,7 +6506,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         {
             let ghost cur_m = crate::expr_arena_bridge::to_model(ind_ty_cursor);
             proof {
-                assert(cur_m == ExprSpec::Bind(Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
+                assert(cur_m == ExprSpec::Bind(BinderKind::Pi, Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
                 assert(level_free(*self.ctx, binder_type));
             }
             if i < st.local_params.len() {
@@ -6705,7 +6706,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 bodies.len() == locs.len(),
                 cs[0] == crate::expr_arena_bridge::to_model(ty0),
                 forall|k: int| 0 <= k < locs.len() ==> crate::tc::kconv(env, cs[k],
-                    ExprSpec::Bind(Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
+                    ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
                 i == locs.len(),
@@ -6718,7 +6719,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         {
             let ghost cur_m = crate::expr_arena_bridge::to_model(ind_ty_cursor);
             proof {
-                assert(cur_m == ExprSpec::Bind(Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
+                assert(cur_m == ExprSpec::Bind(BinderKind::Pi, Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
                 assert(level_free(*self.ctx, binder_type));
             }
             if i < st.local_params.len() {

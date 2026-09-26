@@ -2290,6 +2290,7 @@ use crate::expr_arena_bridge::to_model as to_model_expr;
 use crate::expr_arena_bridge::to_model_of_expr;
 #[cfg(verus_only)]
 use crate::expr_model::ExprSpec;
+use crate::expr_model::BinderKind;
 #[cfg(verus_only)]
 use crate::level_arena_bridge::name_id;
 #[cfg(verus_only)]
@@ -2358,7 +2359,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*old(self), body),
         ensures
             crate::util_model::owns(*final(self), result),
-            to_model_expr(result) == ExprSpec::Bind(
+            to_model_expr(result) == ExprSpec::Bind(BinderKind::Lam, 
                 Box::new(to_model_expr(binder_type)),
                 Box::new(to_model_expr(body)),
             ),
@@ -2444,7 +2445,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::owns(*old(self), body),
         ensures
             crate::util_model::owns(*final(self), result),
-            to_model_expr(result) == ExprSpec::Bind(
+            to_model_expr(result) == ExprSpec::Bind(BinderKind::Pi, 
                 Box::new(to_model_expr(binder_type)),
                 Box::new(to_model_expr(body)),
             ),
