@@ -2311,9 +2311,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert!(self.ctx.dbj_level_counter < u16::MAX, "infer_lambda: too many open de Bruijn levels");
             let ghost live_k = self.live@;
             let ghost pre = locals@;
+            proof {
+                assert(in_scope(*self, binder_type));
+            }
             let local = self.ctx.mk_dbj_level(binder_name, binder_style, binder_type);
             self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(local)));
             proof {
+                live_push_local(crate::env_model::env_arena_ids(*self.env), live_k, local, binder_type);
                 opened_locals_push(crate::env_model::env_arena_ids(*self.env), locals@, start_pos, walk_set(crate::env_model::env_arena_ids(*self.env), L, live_k, start_pos), local);
                 walk_set_grows(crate::env_model::env_arena_ids(*self.env), L, live_k, crate::expr_arena_bridge::expr_id(local), start_pos);
                 opened_locals_weaken(crate::env_model::env_arena_ids(*self.env), 
@@ -2462,7 +2466,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             match self.ctx.read_expr(local) {
                 Local { binder_name, binder_style, binder_type, .. } => {
                     self.ctx.replace_dbj_level(local);
+                    let ghost live_p = self.live@;
                     self.live = Ghost(self.live@.drop_last());
+                    proof {
+                        live_types_prefix(crate::env_model::env_arena_ids(*self.env), live_p, live_p.len() - 1);
+                        assert(live_p.drop_last() =~= live_p.subrange(0, live_p.len() - 1));
+                    }
                     proof {
                         assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@.push(local)) =~= ids_of(crate::env_model::env_arena_ids(*self.env), locals@).push(crate::expr_arena_bridge::expr_id(local)));
                         assert(self.live@ =~= old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@));
@@ -2602,10 +2611,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert!(self.ctx.dbj_level_counter < u16::MAX, "infer_pi: too many open de Bruijn levels");
             let ghost pre = locals@;
             let ghost live_k = self.live@;
+            proof {
+                assert(in_scope(*self, binder_type));
+            }
             locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, binder_type));
             self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(locals@[pre.len() as int])));
             proof {
                 let loc = locals@[pre.len() as int];
+                live_push_local(crate::env_model::env_arena_ids(*self.env), live_k, loc, binder_type);
                 opened_locals_push(crate::env_model::env_arena_ids(*self.env), pre, c0, walk_set(crate::env_model::env_arena_ids(*self.env), L, live_k, c0), loc);
                 assert(locals@ =~= pre.push(loc));
                 crate::util_model::owns_all_push(*self.ctx, pre, loc);
@@ -2696,7 +2709,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             infd = self.ctx.imax(universe, infd);
             self.ctx.replace_dbj_level(local);
+            let ghost live_p = self.live@;
             self.live = Ghost(self.live@.drop_last());
+            proof {
+                live_types_prefix(crate::env_model::env_arena_ids(*self.env), live_p, live_p.len() - 1);
+                assert(live_p.drop_last() =~= live_p.subrange(0, live_p.len() - 1));
+            }
             proof {
                 assert(ids_of(crate::env_model::env_arena_ids(*self.env), locals@.push(local)) =~= ids_of(crate::env_model::env_arena_ids(*self.env), locals@).push(crate::expr_arena_bridge::expr_id(local)));
                 assert(self.live@ =~= old(self).live@ + ids_of(crate::env_model::env_arena_ids(*self.env), locals@));
@@ -3437,11 +3455,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ghost live_k = self.live@;
                 proof {
                     in_scope_deep(*self, t1);
+                    assert(in_scope(*self, t1));
                 }
                 locals.push(self.ctx.mk_dbj_level(binder_name, binder_style, t1));
                 self.live = Ghost(self.live@.push(crate::expr_arena_bridge::expr_id(locals@[pre.len() as int])));
                 proof {
                     let loc = locals@[pre.len() as int];
+                    live_push_local(crate::env_model::env_arena_ids(*self.env), live_k, loc, t1);
                     live_walk_push(crate::env_model::env_arena_ids(*self.env), live_k, old(self).live@, L, pre, c0, loc);
                     assert(locals@ =~= pre.push(loc));
                     crate::util_model::owns_all_push(*self.ctx, pre, loc);
@@ -3475,7 +3495,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 y = body2;
             } else {
                 self.ctx.dbj_level_counter -= u16::try_from(locals.len()).unwrap();
+                let ghost live_p = self.live@;
                 self.live = Ghost(self.live@.subrange(0, self.ctx.dbj_level_counter as int));
+                proof {
+                    if self.ctx.dbj_level_counter as int <= live_p.len() {
+                        live_types_prefix(crate::env_model::env_arena_ids(*self.env), live_p, self.ctx.dbj_level_counter as int);
+                    }
+                }
                 proof {
                     assert(self.live@ =~= old(self).live@);
                 }
@@ -3497,7 +3523,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         self.ctx.dbj_level_counter -= u16::try_from(locals.len()).unwrap();
+        let ghost live_p = self.live@;
         self.live = Ghost(self.live@.subrange(0, self.ctx.dbj_level_counter as int));
+        proof {
+            if self.ctx.dbj_level_counter as int <= live_p.len() {
+                live_types_prefix(crate::env_model::env_arena_ids(*self.env), live_p, self.ctx.dbj_level_counter as int);
+            }
+        }
         proof {
             assert(self.live@ =~= old(self).live@);
         }
@@ -5987,6 +6019,7 @@ pub proof fn telescope_locals_deep<'x, 't>(
 /// step is `kconv_bind_fresh`, with freshness from the level (`c0 + j` is above
 /// every local already in scope) and the substitution reassociated by
 /// `subst_full_push`.
+#[verifier::spinoff_prover]
 pub proof fn binder_telescope_from<'x, 't>(
     env: Env<'x, 't>,
     b1s: Seq<ExprSpec>,
@@ -8745,6 +8778,316 @@ pub open spec fn ids_of<'t>(aids: (nat, nat), locals: Seq<crate::util::ExprPtr<'
 pub open spec fn live_ok<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& tc.live@.len() == tc.ctx.dbj_level_counter
     &&& forall|s: int| 0 <= s < tc.live@.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), tc.live@[s]) == Some(s as u16)
+    // and each live local's type is closed and in scope over the locals
+    // opened before it (what makes the live scope a well-formed context)
+    &&& live_types_ok(crate::env_model::env_arena_ids(*tc.env), tc.live@)
+}
+
+pub open spec fn live_types_ok(aids: (nat, nat), live: Seq<u32>) -> bool {
+    forall|s: int| 0 <= s < live.len() ==> #[trigger] live_type_ok(aids, live, s)
+}
+
+/// THE KERNEL'S SCOPE AS A CONTEXT: the arena's local context restricted to
+/// the live level-locals and the (well-founded) unique locals -- the scoped
+/// context the metatheory's `InferWt` and real typing are stated in.
+pub open spec fn kscope_dom(aids: (nat, nat), live: Seq<u32>) -> Set<u32> {
+    crate::expr_arena_bridge::arena_lctx(aids).dom().filter(|id: u32| live.contains(id)
+        || (crate::expr_arena_bridge::dbj_serial(aids, id) is None && crate::expr_model::unique_deep(aids, id)))
+}
+
+pub open spec fn kscope_of(aids: (nat, nat), live: Seq<u32>) -> Map<u32, ExprSpec> {
+    crate::expr_arena_bridge::arena_lctx(aids).restrict(kscope_dom(aids, live))
+}
+
+pub open spec fn kscope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> Map<u32, ExprSpec> {
+    kscope_of(crate::env_model::env_arena_ids(*tc.env), tc.live@)
+}
+
+/// Unique locals reach only unique locals, all in the scope.
+pub proof fn kscope_unique_absent(aids: (nat, nat), live: Seq<u32>, k: u32, e: ExprSpec, n: nat)
+    requires
+        crate::expr_model::unique_ty_deep(aids, e, n),
+        !kscope_of(aids, live).contains_key(k),
+    ensures
+        crate::expr_model::deep_absent(kscope_of(aids, live), k, e, n),
+    decreases n, e,
+{
+    let G = kscope_of(aids, live);
+    let L = crate::expr_arena_bridge::arena_lctx(aids);
+    match e {
+        ExprSpec::Free(j) => {
+            crate::expr_arena_bridge::unique_in_lctx(aids, j);
+            assert(crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(j), n));
+            assert(crate::expr_model::unique_deep(aids, j));
+            assert(kscope_dom(aids, live).contains(j));
+            kscope_unique_absent(aids, live, k, L[j], (n - 1) as nat);
+        },
+        ExprSpec::App(f, a) => {
+            kscope_unique_absent(aids, live, k, *f, n);
+            kscope_unique_absent(aids, live, k, *a, n);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            kscope_unique_absent(aids, live, k, *t, n);
+            kscope_unique_absent(aids, live, k, *b, n);
+        },
+        ExprSpec::Let(t, v, b) => {
+            kscope_unique_absent(aids, live, k, *t, n);
+            kscope_unique_absent(aids, live, k, *v, n);
+            kscope_unique_absent(aids, live, k, *b, n);
+        },
+        ExprSpec::Proj(_, st) => {
+            kscope_unique_absent(aids, live, k, *st, n);
+        },
+        _ => {},
+    }
+}
+
+/// A term deep in scope over (a prefix of) the live locals reaches only locals
+/// in the scope; so any local outside the scope is unreachable from it.
+pub proof fn kscope_deep_absent(aids: (nat, nat), live: Seq<u32>, k: u32, e: ExprSpec, s: int, c: u16) -> (n: nat)
+    requires
+        live_types_ok(aids, live),
+        forall|i: int| 0 <= i < live.len() ==> #[trigger] crate::expr_arena_bridge::dbj_serial(aids, live[i]) == Some(i as u16),
+        0 <= s <= live.len(),
+        crate::expr_model::dbj_deep_in(aids, e, prefix_set(live, s), c),
+        !kscope_of(aids, live).contains_key(k),
+    ensures
+        crate::expr_model::deep_absent(kscope_of(aids, live), k, e, n),
+    decreases c, e,
+{
+    broadcast use vstd::iset::lemma_iset_new;
+    let G = kscope_of(aids, live);
+    let L = crate::expr_arena_bridge::arena_lctx(aids);
+    match e {
+        ExprSpec::Free(j) => {
+            match crate::expr_arena_bridge::dbj_serial(aids, j) {
+                Some(sj) => {
+                    assert(live.subrange(0, s).contains(j));
+                    let i = choose|i: int| 0 <= i < s && live.subrange(0, s)[i] == j;
+                    assert(live[i] == j);
+                    assert(live.contains(j));
+                    assert(live_type_ok(aids, live, i));
+                    assert(kscope_dom(aids, live).contains(j));
+                    assert(sj == i as u16);
+                    // the local's type is deep below its own level, over the prefix
+                    let m = kscope_deep_absent(aids, live, k, L[j], i, sj);
+                    m + 1
+                },
+                None => {
+                    let m = choose|m: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(j), m);
+                    kscope_unique_absent(aids, live, k, ExprSpec::Free(j), m);
+                    m
+                },
+            }
+        },
+        ExprSpec::App(f, a) => {
+            let n1 = kscope_deep_absent(aids, live, k, *f, s, c);
+            let n2 = kscope_deep_absent(aids, live, k, *a, s, c);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            crate::expr_model::deep_absent_mono(G, k, *f, n1, n);
+            crate::expr_model::deep_absent_mono(G, k, *a, n2, n);
+            n
+        },
+        ExprSpec::Bind(_, t, b) => {
+            let n1 = kscope_deep_absent(aids, live, k, *t, s, c);
+            let n2 = kscope_deep_absent(aids, live, k, *b, s, c);
+            let n = if n1 >= n2 { n1 } else { n2 };
+            crate::expr_model::deep_absent_mono(G, k, *t, n1, n);
+            crate::expr_model::deep_absent_mono(G, k, *b, n2, n);
+            n
+        },
+        ExprSpec::Let(t, v, b) => {
+            let n1 = kscope_deep_absent(aids, live, k, *t, s, c);
+            let n2 = kscope_deep_absent(aids, live, k, *v, s, c);
+            let n3 = kscope_deep_absent(aids, live, k, *b, s, c);
+            let n12 = if n1 >= n2 { n1 } else { n2 };
+            let n = if n12 >= n3 { n12 } else { n3 };
+            crate::expr_model::deep_absent_mono(G, k, *t, n1, n);
+            crate::expr_model::deep_absent_mono(G, k, *v, n2, n);
+            crate::expr_model::deep_absent_mono(G, k, *b, n3, n);
+            n
+        },
+        ExprSpec::Proj(_, st) => kscope_deep_absent(aids, live, k, *st, s, c),
+        _ => 0,
+    }
+}
+
+/// Everything a term deep in the live scope mentions is in the kernel's scope.
+pub proof fn kscope_fv_in(aids: (nat, nat), live: Seq<u32>, e: ExprSpec, c: u16)
+    requires
+        live_types_ok(aids, live),
+        crate::expr_model::dbj_deep_in(aids, e, vstd::iset::ISet::new(|t: u32| live.contains(t)), c),
+    ensures
+        crate::swap_typed::fv_in(e, kscope_of(aids, live)),
+    decreases e,
+{
+    broadcast use vstd::iset::lemma_iset_new;
+    let G = kscope_of(aids, live);
+    match e {
+        ExprSpec::Free(j) => {
+            assert forall|i: u32| #[trigger] crate::expr_model::fv_absent(e, i) || G.contains_key(i) by {
+                if i == j {
+                    match crate::expr_arena_bridge::dbj_serial(aids, j) {
+                        Some(_) => {
+                            let k = choose|k: int| 0 <= k < live.len() && live[k] == j;
+                            assert(live_type_ok(aids, live, k));
+                        },
+                        None => {
+                            let m = choose|m: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(j), m);
+                            crate::expr_arena_bridge::unique_in_lctx(aids, j);
+                        },
+                    }
+                    assert(kscope_dom(aids, live).contains(j));
+                }
+            }
+        },
+        ExprSpec::App(f, a) => {
+            kscope_fv_in(aids, live, *f, c);
+            kscope_fv_in(aids, live, *a, c);
+            assert forall|i: u32| #[trigger] crate::expr_model::fv_absent(e, i) || G.contains_key(i) by {
+                assert(crate::expr_model::fv_absent(*f, i) || G.contains_key(i));
+                assert(crate::expr_model::fv_absent(*a, i) || G.contains_key(i));
+            }
+        },
+        ExprSpec::Bind(_, t, b) => {
+            kscope_fv_in(aids, live, *t, c);
+            kscope_fv_in(aids, live, *b, c);
+            assert forall|i: u32| #[trigger] crate::expr_model::fv_absent(e, i) || G.contains_key(i) by {
+                assert(crate::expr_model::fv_absent(*t, i) || G.contains_key(i));
+                assert(crate::expr_model::fv_absent(*b, i) || G.contains_key(i));
+            }
+        },
+        ExprSpec::Let(t, v, b) => {
+            kscope_fv_in(aids, live, *t, c);
+            kscope_fv_in(aids, live, *v, c);
+            kscope_fv_in(aids, live, *b, c);
+            assert forall|i: u32| #[trigger] crate::expr_model::fv_absent(e, i) || G.contains_key(i) by {
+                assert(crate::expr_model::fv_absent(*t, i) || G.contains_key(i));
+                assert(crate::expr_model::fv_absent(*v, i) || G.contains_key(i));
+                assert(crate::expr_model::fv_absent(*b, i) || G.contains_key(i));
+            }
+        },
+        ExprSpec::Proj(_, st) => {
+            kscope_fv_in(aids, live, *st, c);
+            assert forall|i: u32| #[trigger] crate::expr_model::fv_absent(e, i) || G.contains_key(i) by {
+                assert(crate::expr_model::fv_absent(*st, i) || G.contains_key(i));
+            }
+        },
+        _ => {
+            assert forall|i: u32| #[trigger] crate::expr_model::fv_absent(e, i) || G.contains_key(i) by {}
+        },
+    }
+}
+
+/// A term in the kernel's scope mentions only locals of `kscope`.
+pub proof fn in_scope_fv_in<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: crate::util::ExprPtr<'t>)
+    requires
+        live_ok(tc),
+        in_scope(tc, e),
+    ensures
+        crate::swap_typed::fv_in(to_model_expr(e), kscope(tc)),
+{
+    kscope_fv_in(crate::env_model::env_arena_ids(*tc.env), tc.live@, to_model_expr(e), tc.ctx.dbj_level_counter);
+}
+
+/// The kernel's scope is a well-formed scoped context.
+pub proof fn kscope_ok<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>)
+    requires
+        live_ok(tc),
+    ensures
+        crate::swap_typed::ctx_ok(kscope(tc)),
+{
+    broadcast use vstd::iset::lemma_iset_new;
+    let aids = crate::env_model::env_arena_ids(*tc.env);
+    let live = tc.live@;
+    let G = kscope(tc);
+    let L = crate::expr_arena_bridge::arena_lctx(aids);
+    assert forall|j: u32, k: u32| #![trigger G.contains_key(j), G.contains_key(k)]
+        G.contains_key(j) && !G.contains_key(k) implies crate::expr_model::unreach(G, k, G[j]) by {
+        assert(kscope_dom(aids, live).contains(j));
+        if live.contains(j) {
+            let i = choose|i: int| 0 <= i < live.len() && live[i] == j;
+            assert(live_type_ok(aids, live, i));
+            let n = kscope_deep_absent(aids, live, k, L[j], i, i as u16);
+            assert(crate::expr_model::deep_absent(G, k, G[j], n));
+        } else {
+            let m = choose|m: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(j), m);
+            assert(crate::expr_model::unique_ty_deep(aids, L[j], (m - 1) as nat));
+            kscope_unique_absent(aids, live, k, L[j], (m - 1) as nat);
+            assert(crate::expr_model::deep_absent(G, k, G[j], (m - 1) as nat));
+        }
+    }
+}
+
+/// Opening one more local keeps the live types well scoped.
+pub proof fn live_types_push(aids: (nat, nat), live: Seq<u32>, id: u32, ty: ExprSpec)
+    requires
+        live_types_ok(aids, live),
+        crate::expr_arena_bridge::arena_lctx(aids).contains_key(id),
+        crate::expr_arena_bridge::arena_lctx(aids)[id] == ty,
+        crate::expr_model::nlbv(ty) <= 0,
+        crate::expr_model::dbj_deep_in(aids, ty, vstd::iset::ISet::new(|t: u32| live.contains(t)), live.len() as u16),
+    ensures
+        live_types_ok(aids, live.push(id)),
+{
+    let l2 = live.push(id);
+    assert forall|s: int| 0 <= s < l2.len() implies #[trigger] live_type_ok(aids, l2, s) by {
+        if s < live.len() {
+            assert(live_type_ok(aids, live, s));
+            assert(l2.subrange(0, s) =~= live.subrange(0, s));
+            assert(prefix_set(l2, s) =~= prefix_set(live, s));
+        } else {
+            assert(l2.subrange(0, s) =~= live);
+            assert(prefix_set(l2, s) =~= vstd::iset::ISet::new(|t: u32| live.contains(t)));
+        }
+    }
+}
+
+/// Closing locals keeps them well scoped.
+pub proof fn live_types_prefix(aids: (nat, nat), live: Seq<u32>, n: int)
+    requires
+        live_types_ok(aids, live),
+        0 <= n <= live.len(),
+    ensures
+        live_types_ok(aids, live.subrange(0, n)),
+{
+    let l2 = live.subrange(0, n);
+    assert forall|s: int| 0 <= s < l2.len() implies #[trigger] live_type_ok(aids, l2, s) by {
+        assert(live_type_ok(aids, live, s));
+        assert(l2.subrange(0, s) =~= live.subrange(0, s));
+        assert(prefix_set(l2, s) =~= prefix_set(live, s));
+    }
+}
+
+/// The local `mk_dbj_level` just made for a binder type in scope keeps the
+/// live types well scoped once it is pushed.
+pub proof fn live_push_local<'t>(aids: (nat, nat), live: Seq<u32>, local: crate::util::ExprPtr<'t>, bt: crate::util::ExprPtr<'t>)
+    requires
+        live_types_ok(aids, live),
+        crate::util_model::owns_in(aids, local),
+        crate::expr_arena_bridge::is_local_shape(local),
+        crate::expr_arena_bridge::local_binder_type_of(local) == bt,
+        crate::expr_model::nlbv(to_model_expr(bt)) <= 0,
+        crate::expr_model::dbj_deep_in(aids, to_model_expr(bt), vstd::iset::ISet::new(|t: u32| live.contains(t)), live.len() as u16),
+    ensures
+        live_types_ok(aids, live.push(crate::expr_arena_bridge::expr_id(local))),
+{
+    crate::expr_arena_bridge::arena_lctx_local(aids, local);
+    live_types_push(aids, live, crate::expr_arena_bridge::expr_id(local), to_model_expr(bt));
+}
+
+/// The live local at level `s` is in the local context, with a closed type
+/// in scope over the first `s` live locals at level `s`.
+pub open spec fn live_type_ok(aids: (nat, nat), live: Seq<u32>, s: int) -> bool {
+    let ty = crate::expr_arena_bridge::arena_lctx(aids)[live[s]];
+    &&& crate::expr_arena_bridge::arena_lctx(aids).contains_key(live[s])
+    &&& crate::expr_model::nlbv(ty) <= 0
+    &&& crate::expr_model::dbj_deep_in(aids, ty, prefix_set(live, s), s as u16)
+}
+
+/// The first `s` live locals, as a set.
+pub open spec fn prefix_set(live: Seq<u32>, s: int) -> vstd::iset::ISet<u32> {
+    vstd::iset::ISet::new(|id: u32| live.subrange(0, s).contains(id))
 }
 
 /// The four claim-carrying caches' WRITE side, verified.

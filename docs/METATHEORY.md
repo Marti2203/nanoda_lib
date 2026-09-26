@@ -272,6 +272,17 @@ cofinite rule, by swapping that local with each fresh one. The context is
 fixed by the swap (`cswap_fixed`), and the binder type, body and codomain are
 fixed because their locals are in the context (`fv_in`, `scoped_unreach`).
 
+**S4 foundation (2026-09-26).** The kernel's scope is now a well-formed
+scoped context:
+- `live_ok` also records that each live local's type is closed and in scope
+  over the locals opened before it (`live_types_ok`), maintained at the
+  three binder pushes and the pops.
+- `kscope(tc)` restricts the arena's local context to the live
+  level-locals and the unique locals.
+- `kscope_ok`: `kscope(tc)` is `ctx_ok`.
+- `in_scope_fv_in`: anything in scope mentions only `kscope` locals.
+- `real_gen::rt_fv_in`: really typed terms are scoped.
+
 **Then:**
 - S4, the kernel's derivations as `InferWt` derivations in the live scope.
   This re-proves `whnf`/`def_eq`/`infer` against `InferWt` (the existing

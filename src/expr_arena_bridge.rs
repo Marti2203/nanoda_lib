@@ -1212,6 +1212,20 @@ pub closed spec fn arena_lctx(aids: (nat, nat)) -> Map<u32, ExprSpec> {
     )
 }
 
+/// A unique local is in the local context.
+pub proof fn unique_in_lctx(aids: (nat, nat), id: u32)
+    requires
+        unique_serial(aids, id) is Some,
+    ensures
+        arena_lctx(aids).contains_key(id),
+{
+    broadcast use vstd::set_lib::group_set_lib_default;
+    vstd::set_lib::lemma_int_range(0, 0x1_0000_0000);
+    let r = vstd::set_lib::set_int_range(0, 0x1_0000_0000);
+    assert(r.contains(id as int));
+    assert(r.map(|i: int| i as u32).contains((id as int) as u32));
+}
+
 /// An owned local's id is in the local context, with its binder type.
 pub proof fn arena_lctx_local<'a>(aids: (nat, nat), ptr: ExprPtr<'a>)
     requires
