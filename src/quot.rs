@@ -367,6 +367,314 @@ pub open spec fn quot_expected_ty(which: u8, n: QuotNames) -> ExprSpec {
     }
 }
 
+pub open spec fn qf(i: u32) -> ExprSpec {
+    ExprSpec::Free(i)
+}
+
+/// Abstract one local at offset 0, as `abstr_pi` does.
+pub open spec fn qab(k: u32, e: ExprSpec) -> ExprSpec {
+    crate::expr_model::abstr_full(e, seq![k], 0)
+}
+
+/// `Quot.lift`'s type as `quot_expected_type` builds it, step by step: each
+/// `abstr_pi` abstracts its local out of what it wraps, each `arrow!` is a
+/// plain Pi. `lift_layered_eq` evaluates it to `quot_lift_ty`.
+pub open spec fn lift_layered(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    let rab = qa(qa(qf(ir), qf(ia1)), qf(ib1));
+    let eq_app = qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qf(ia1))), qa(qf(i_f), qf(ib1)));
+    let lift_inner = qb(qf(ia), qab(ia1, qb(qf(ia), qab(ib1, qb(rab, eq_app)))));
+    let quot_a_r = qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir));
+    let body = qb(lift_inner, qb(quot_a_r, qf(ibb)));
+    let ty_r = qb(qf(ia), qb(qf(ia), qprop()));
+    let ty_f = qb(qf(ia), qf(ibb));
+    qb(qsort(n.u), qab(ia, qb(ty_r, qab(ir, qb(qsort(n.v), qab(ibb, qb(ty_f, qab(i_f, body))))))))
+}
+
+/// The layered construction evaluates to `Quot.lift`'s type, one abstraction
+/// at a time (each step is its own lemma: evaluating them all at once is too
+/// much for one query).
+pub proof fn lift_layered_eq(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        lift_layered(n, ia, ir, ibb, i_f, ia1, ib1) == quot_lift_ty(n),
+{
+    lift_s1(n, ia, ir, ibb, i_f, ia1, ib1); lift_s2(n, ia, ir, ibb, i_f, ia1, ib1); lift_s3(n, ia, ir, ibb, i_f, ia1, ib1); lift_s4(n, ia, ir, ibb, i_f, ia1, ib1); lift_s5(n, ia, ir, ibb, i_f, ia1, ib1); lift_s6(n, ia, ir, ibb, i_f, ia1, ib1);
+}
+
+pub open spec fn lift_t_l_rab(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qa(qa(qf(ir), qf(ia1)), qf(ib1))
+}
+
+pub open spec fn lift_t_l_eq(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qf(ia1))), qa(qf(i_f), qf(ib1)))
+}
+
+pub open spec fn lift_t_l_x1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qb(qa(qa(qf(ir), qf(ia1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qf(ia1))), qa(qf(i_f), qv(1))))
+}
+
+pub open spec fn lift_t_l_x2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qb(qf(ia), qb(qa(qa(qf(ir), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qf(i_f), qv(2))), qa(qf(i_f), qv(1)))))
+}
+
+pub open spec fn lift_t_l_qar(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir))
+}
+
+pub open spec fn lift_t_l_b4(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qb(qb(qf(ia), qb(qf(ia), qb(qa(qa(qf(ir), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qf(ibb)), qa(qv(3), qv(2))), qa(qv(3), qv(1)))))), qb(lift_t_l_qar(n, ia, ir, ibb, i_f, ia1, ib1), qf(ibb)))
+}
+
+pub open spec fn lift_t_l_b3(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qb(qb(qf(ia), qv(1)), qb(qb(qf(ia), qb(qf(ia), qb(qa(qa(qf(ir), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qv(4)), qa(qv(3), qv(2))), qa(qv(3), qv(1)))))), qb(lift_t_l_qar(n, ia, ir, ibb, i_f, ia1, ib1), qv(3))))
+}
+
+pub open spec fn lift_t_l_b2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qb(qsort(n.v), qb(qb(qf(ia), qv(1)), qb(qb(qf(ia), qb(qf(ia), qb(qa(qa(qv(4), qv(1)), qv(0)), qa(qa(qa(qconst(n.eq, n.v), qv(4)), qa(qv(3), qv(2))), qa(qv(3), qv(1)))))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qv(3)), qv(3)))))
+}
+
+pub open spec fn lift_t_l_b1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32) -> ExprSpec {
+    qb(rel_ty(), qb(qsort(n.v), qb(qb(qv(2), qv(1)), qb(lift_inner_ty(n), qb(qa(qa(qconst(n.quot, n.u), qv(4)), qv(3)), qv(3))))))
+}
+
+/// One abstraction step of `lift_layered_eq`, its own query.
+proof fn lift_s1(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        qab(ib1, qb(lift_t_l_rab(n, ia, ir, ibb, i_f, ia1, ib1), lift_t_l_eq(n, ia, ir, ibb, i_f, ia1, ib1))) == lift_t_l_x1(n, ia, ir, ibb, i_f, ia1, ib1),
+{
+    find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+    find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
+    find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
+    find1(ia1, ia); find1(ib1, ia);
+    find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb); find1(i_f, ia1); find1(i_f, ib1);
+    find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir); find1(ibb, i_f); find1(ibb, ia1); find1(ibb, ib1);
+    find1(ir, ibb); find1(ir, i_f); find1(ir, ia1); find1(ir, ib1);
+    find1(ia, ibb); find1(ia, i_f); find1(ia, ia1); find1(ia, ib1);
+    reveal_with_fuel(crate::expr_model::abstr_full, 5);
+}
+
+/// One abstraction step of `lift_layered_eq`, its own query.
+proof fn lift_s2(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        qab(ia1, qb(qf(ia), lift_t_l_x1(n, ia, ir, ibb, i_f, ia1, ib1))) == lift_t_l_x2(n, ia, ir, ibb, i_f, ia1, ib1),
+{
+    find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+    find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
+    find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
+    find1(ia1, ia); find1(ib1, ia);
+    find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb); find1(i_f, ia1); find1(i_f, ib1);
+    find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir); find1(ibb, i_f); find1(ibb, ia1); find1(ibb, ib1);
+    find1(ir, ibb); find1(ir, i_f); find1(ir, ia1); find1(ir, ib1);
+    find1(ia, ibb); find1(ia, i_f); find1(ia, ia1); find1(ia, ib1);
+    reveal_with_fuel(crate::expr_model::abstr_full, 6);
+}
+
+/// One abstraction step of `lift_layered_eq`, its own query.
+proof fn lift_s3(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        qab(i_f, qb(qb(qf(ia), lift_t_l_x2(n, ia, ir, ibb, i_f, ia1, ib1)), qb(lift_t_l_qar(n, ia, ir, ibb, i_f, ia1, ib1), qf(ibb)))) == lift_t_l_b4(n, ia, ir, ibb, i_f, ia1, ib1),
+{
+    find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+    find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
+    find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
+    find1(ia1, ia); find1(ib1, ia);
+    find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb); find1(i_f, ia1); find1(i_f, ib1);
+    find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir); find1(ibb, i_f); find1(ibb, ia1); find1(ibb, ib1);
+    find1(ir, ibb); find1(ir, i_f); find1(ir, ia1); find1(ir, ib1);
+    find1(ia, ibb); find1(ia, i_f); find1(ia, ia1); find1(ia, ib1);
+    reveal_with_fuel(crate::expr_model::abstr_full, 8);
+}
+
+/// One abstraction step of `lift_layered_eq`, its own query.
+proof fn lift_s4(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        qab(ibb, qb(qb(qf(ia), qf(ibb)), lift_t_l_b4(n, ia, ir, ibb, i_f, ia1, ib1))) == lift_t_l_b3(n, ia, ir, ibb, i_f, ia1, ib1),
+{
+    find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+    find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
+    find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
+    find1(ia1, ia); find1(ib1, ia);
+    find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb); find1(i_f, ia1); find1(i_f, ib1);
+    find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir); find1(ibb, i_f); find1(ibb, ia1); find1(ibb, ib1);
+    find1(ir, ibb); find1(ir, i_f); find1(ir, ia1); find1(ir, ib1);
+    find1(ia, ibb); find1(ia, i_f); find1(ia, ia1); find1(ia, ib1);
+    reveal_with_fuel(crate::expr_model::abstr_full, 9);
+}
+
+/// One abstraction step of `lift_layered_eq`, its own query.
+proof fn lift_s5(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        qab(ir, qb(qsort(n.v), lift_t_l_b3(n, ia, ir, ibb, i_f, ia1, ib1))) == lift_t_l_b2(n, ia, ir, ibb, i_f, ia1, ib1),
+{
+    find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+    find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
+    find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
+    find1(ia1, ia); find1(ib1, ia);
+    find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb); find1(i_f, ia1); find1(i_f, ib1);
+    find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir); find1(ibb, i_f); find1(ibb, ia1); find1(ibb, ib1);
+    find1(ir, ibb); find1(ir, i_f); find1(ir, ia1); find1(ir, ib1);
+    find1(ia, ibb); find1(ia, i_f); find1(ia, ia1); find1(ia, ib1);
+    reveal_with_fuel(crate::expr_model::abstr_full, 10);
+}
+
+/// One abstraction step of `lift_layered_eq`, its own query.
+proof fn lift_s6(n: QuotNames, ia: u32, ir: u32, ibb: u32, i_f: u32, ia1: u32, ib1: u32)
+    requires
+        ia != ir, ia != ibb, ia != i_f, ia != ia1, ia != ib1,
+        ir != ibb, ir != i_f, ir != ia1, ir != ib1,
+        ibb != i_f, ibb != ia1, ibb != ib1,
+        i_f != ia1, i_f != ib1,
+        ia1 != ib1,
+    ensures
+        qab(ia, qb(qb(qf(ia), qb(qf(ia), qprop())), lift_t_l_b2(n, ia, ir, ibb, i_f, ia1, ib1))) == lift_t_l_b1(n, ia, ir, ibb, i_f, ia1, ib1),
+{
+    find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+    find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
+    find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
+    find1(ia1, ia); find1(ib1, ia);
+    find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb); find1(i_f, ia1); find1(i_f, ib1);
+    find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir); find1(ibb, i_f); find1(ibb, ia1); find1(ibb, ib1);
+    find1(ir, ibb); find1(ir, i_f); find1(ir, ia1); find1(ir, ib1);
+    find1(ia, ibb); find1(ia, i_f); find1(ia, ia1); find1(ia, ib1);
+    reveal_with_fuel(crate::expr_model::abstr_full, 11);
+}
+
+/// `Quot.ind`'s type as built, step by step (see `lift_layered`).
+pub open spec fn ind_layered(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32) -> ExprSpec {
+    let quot_a_r = qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir));
+    let quot_mk_app = qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qf(ia1));
+    let lhs = qb(qf(ia), qab(ia1, qa(qf(ibl), quot_mk_app)));
+    let rhs = qb(quot_a_r, qab(iq, qa(qf(ibl), qf(iq))));
+    let ty_r = qb(qf(ia), qb(qf(ia), qprop()));
+    qb(qsort(n.u), qab(ia, qb(ty_r, qab(ir, qb(qb(quot_a_r, qprop()), qab(ibl, qb(lhs, rhs)))))))
+}
+
+/// As `lift_layered_eq`, for `Quot.ind`.
+pub proof fn ind_layered_eq(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+    requires
+        ia != ir, ia != ibl, ia != ia1, ia != iq,
+        ir != ibl, ir != ia1, ir != iq,
+        ibl != ia1, ibl != iq,
+        ia1 != iq,
+    ensures
+        ind_layered(n, ia, ir, ibl, ia1, iq) == quot_ind_ty(n),
+{
+    ind_s1(n, ia, ir, ibl, ia1, iq); ind_s2(n, ia, ir, ibl, ia1, iq); ind_s3(n, ia, ir, ibl, ia1, iq); ind_s4(n, ia, ir, ibl, ia1, iq); ind_s5(n, ia, ir, ibl, ia1, iq);
+}
+
+pub open spec fn ind_t_i_b3(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32) -> ExprSpec {
+    qb(qb(qf(ia), qa(qv(1), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qv(0)))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir)), qa(qv(2), qv(0))))
+}
+
+pub open spec fn ind_t_i_b2(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32) -> ExprSpec {
+    qb(qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qv(0)), qprop()), qb(qb(qf(ia), qa(qv(1), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qv(2)), qv(0)))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qv(2)), qa(qv(2), qv(0)))))
+}
+
+/// One abstraction step of `ind_layered_eq`, its own query.
+proof fn ind_s1(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+    requires
+        ia != ir, ia != ibl, ia != ia1, ia != iq,
+        ir != ibl, ir != ia1, ir != iq,
+        ibl != ia1, ibl != iq,
+        ia1 != iq,
+    ensures
+        qab(ia1, qa(qf(ibl), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qf(ia1)))) == qa(qf(ibl), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qv(0))),
+{
+    find1(ia, ia); find1(ia, ir); find1(ia, ibl); find1(ia, ia1); find1(ia, iq); find1(ir, ia); find1(ir, ir); find1(ir, ibl); find1(ir, ia1); find1(ir, iq); find1(ibl, ia); find1(ibl, ir); find1(ibl, ibl); find1(ibl, ia1); find1(ibl, iq); find1(ia1, ia); find1(ia1, ir); find1(ia1, ibl); find1(ia1, ia1); find1(ia1, iq); find1(iq, ia); find1(iq, ir); find1(iq, ibl); find1(iq, ia1); find1(iq, iq);
+    reveal_with_fuel(crate::expr_model::abstr_full, 5);
+}
+
+/// One abstraction step of `ind_layered_eq`, its own query.
+proof fn ind_s2(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+    requires
+        ia != ir, ia != ibl, ia != ia1, ia != iq,
+        ir != ibl, ir != ia1, ir != iq,
+        ibl != ia1, ibl != iq,
+        ia1 != iq,
+    ensures
+        qab(iq, qa(qf(ibl), qf(iq))) == qa(qf(ibl), qv(0)),
+{
+    find1(ia, ia); find1(ia, ir); find1(ia, ibl); find1(ia, ia1); find1(ia, iq); find1(ir, ia); find1(ir, ir); find1(ir, ibl); find1(ir, ia1); find1(ir, iq); find1(ibl, ia); find1(ibl, ir); find1(ibl, ibl); find1(ibl, ia1); find1(ibl, iq); find1(ia1, ia); find1(ia1, ir); find1(ia1, ibl); find1(ia1, ia1); find1(ia1, iq); find1(iq, ia); find1(iq, ir); find1(iq, ibl); find1(iq, ia1); find1(iq, iq);
+    reveal_with_fuel(crate::expr_model::abstr_full, 3);
+}
+
+/// One abstraction step of `ind_layered_eq`, its own query.
+proof fn ind_s3(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+    requires
+        ia != ir, ia != ibl, ia != ia1, ia != iq,
+        ir != ibl, ir != ia1, ir != iq,
+        ibl != ia1, ibl != iq,
+        ia1 != iq,
+    ensures
+        qab(ibl, qb(qb(qf(ia), qa(qf(ibl), qa(qa(qa(qconst(n.quot_mk, n.u), qf(ia)), qf(ir)), qv(0)))), qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir)), qa(qf(ibl), qv(0))))) == ind_t_i_b3(n, ia, ir, ibl, ia1, iq),
+{
+    find1(ia, ia); find1(ia, ir); find1(ia, ibl); find1(ia, ia1); find1(ia, iq); find1(ir, ia); find1(ir, ir); find1(ir, ibl); find1(ir, ia1); find1(ir, iq); find1(ibl, ia); find1(ibl, ir); find1(ibl, ibl); find1(ibl, ia1); find1(ibl, iq); find1(ia1, ia); find1(ia1, ir); find1(ia1, ibl); find1(ia1, ia1); find1(ia1, iq); find1(iq, ia); find1(iq, ir); find1(iq, ibl); find1(iq, ia1); find1(iq, iq);
+    reveal_with_fuel(crate::expr_model::abstr_full, 7);
+}
+
+/// One abstraction step of `ind_layered_eq`, its own query.
+proof fn ind_s4(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+    requires
+        ia != ir, ia != ibl, ia != ia1, ia != iq,
+        ir != ibl, ir != ia1, ir != iq,
+        ibl != ia1, ibl != iq,
+        ia1 != iq,
+    ensures
+        qab(ir, qb(qb(qa(qa(qconst(n.quot, n.u), qf(ia)), qf(ir)), qprop()), ind_t_i_b3(n, ia, ir, ibl, ia1, iq))) == ind_t_i_b2(n, ia, ir, ibl, ia1, iq),
+{
+    find1(ia, ia); find1(ia, ir); find1(ia, ibl); find1(ia, ia1); find1(ia, iq); find1(ir, ia); find1(ir, ir); find1(ir, ibl); find1(ir, ia1); find1(ir, iq); find1(ibl, ia); find1(ibl, ir); find1(ibl, ibl); find1(ibl, ia1); find1(ibl, iq); find1(ia1, ia); find1(ia1, ir); find1(ia1, ibl); find1(ia1, ia1); find1(ia1, iq); find1(iq, ia); find1(iq, ir); find1(iq, ibl); find1(iq, ia1); find1(iq, iq);
+    reveal_with_fuel(crate::expr_model::abstr_full, 8);
+}
+
+/// One abstraction step of `ind_layered_eq`, its own query.
+proof fn ind_s5(n: QuotNames, ia: u32, ir: u32, ibl: u32, ia1: u32, iq: u32)
+    requires
+        ia != ir, ia != ibl, ia != ia1, ia != iq,
+        ir != ibl, ir != ia1, ir != iq,
+        ibl != ia1, ibl != iq,
+        ia1 != iq,
+    ensures
+        qab(ia, qb(qb(qf(ia), qb(qf(ia), qprop())), ind_t_i_b2(n, ia, ir, ibl, ia1, iq))) == qb(rel_ty(), qb(qb(qa(qa(qconst(n.quot, n.u), qv(1)), qv(0)), qprop()), qb(qb(qv(2), qa(qv(1), qa(qa(qa(qconst(n.quot_mk, n.u), qv(3)), qv(2)), qv(0)))), qb(qa(qa(qconst(n.quot, n.u), qv(3)), qv(2)), qa(qv(2), qv(0)))))),
+{
+    find1(ia, ia); find1(ia, ir); find1(ia, ibl); find1(ia, ia1); find1(ia, iq); find1(ir, ia); find1(ir, ir); find1(ir, ibl); find1(ir, ia1); find1(ir, iq); find1(ibl, ia); find1(ibl, ir); find1(ibl, ibl); find1(ibl, ia1); find1(ibl, iq); find1(ia1, ia); find1(ia1, ir); find1(ia1, ibl); find1(ia1, ia1); find1(ia1, iq); find1(iq, ia); find1(iq, ir); find1(iq, ibl); find1(iq, ia1); find1(iq, iq);
+    reveal_with_fuel(crate::expr_model::abstr_full, 9);
+}
+
 proof fn find1(x: u32, y: u32)
     ensures
         crate::expr_model::find_from_end(seq![x], y) == (if x == y {
@@ -503,7 +811,10 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
     let A_A_Prop = arrow!(in ctx; A, A, prop);
     let A_B = arrow!(in ctx; A, B);
     proof {
-        reveal_with_fuel(crate::expr_model::nlbv, 3);
+        // the two arrow types are closed (what `mk_unique` requires)
+        assert(crate::expr_model::nlbv(to_model(A_A_Prop)) == 0 && crate::expr_model::nlbv(to_model(A_B)) == 0) by {
+            reveal_with_fuel(crate::expr_model::nlbv, 3);
+        }
     }
     // local for `(r : A -> A -> Prop)`
     let ghost k_r = crate::util::unique_count(*ctx);
@@ -575,22 +886,21 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
             eq_app
         }
     };
-    proof {
-        find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
-        find1(ia1, ia1); find1(ib1, ib1); find1(ib1, ia1); find1(ia1, ib1);
-        find1(ib1, ir); find1(ib1, i_f); find1(ib1, ibb); find1(ia1, ir); find1(ia1, i_f); find1(ia1, ibb);
-        find1(ia1, ia); find1(ib1, ia);
-        reveal_with_fuel(crate::expr_model::abstr_full, 8);
-    }
 
     if which == 0 {
         proof {
-            assert(to_model(expected_quot) == quot_ty(*n));
+            assert(to_model(expected_quot) == quot_ty(*n)) by {
+                find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+                reveal_with_fuel(crate::expr_model::abstr_full, 5);
+            }
         }
         expected_quot
     } else if which == 1 {
         proof {
-            assert(to_model(expected_quot_mk) == quot_mk_ty(*n));
+            assert(to_model(expected_quot_mk) == quot_mk_ty(*n)) by {
+                find1(ia, ia); find1(ia, ir); find1(ir, ia); find1(ir, ir);
+                reveal_with_fuel(crate::expr_model::abstr_full, 5);
+            }
         }
         expected_quot_mk
     } else if which == 2 {
@@ -610,17 +920,17 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
             }
         };
         proof {
-            find1(i_f, i_f); find1(i_f, ia); find1(i_f, ir); find1(i_f, ibb);
-            find1(ibb, ibb); find1(ibb, ia); find1(ibb, ir);
-            reveal_with_fuel(crate::expr_model::abstr_full, 12);
-            assert(to_model(e) == quot_lift_ty(*n));
+            assert(to_model(e) == lift_layered(*n, ia, ir, ibb, i_f, ia1, ib1));
+            lift_layered_eq(*n, ia, ir, ibb, i_f, ia1, ib1);
         }
         e
     } else {
         // {B : @Quot A r → Prop}
         let quot_A_r_prop = arrow!(in ctx; quot_A_r, prop);
         proof {
-            reveal_with_fuel(crate::expr_model::nlbv, 4);
+            assert(crate::expr_model::nlbv(to_model(quot_A_r_prop)) == 0 && crate::expr_model::nlbv(to_model(quot_A_r)) == 0) by {
+                reveal_with_fuel(crate::expr_model::nlbv, 4);
+            }
         }
 
         let ghost k_bl = crate::util::unique_count(*ctx);
@@ -651,11 +961,8 @@ pub fn quot_expected_type<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, which: u8, names:
             serial_distinct(aids, ia, iq, k_a, k_q);
             serial_distinct(aids, ir, iq, k_r, k_q);
             serial_distinct(aids, ibl, iq, k_bl, k_q);
-            find1(ia1, ibl); find1(iq, iq); find1(iq, ibl); find1(iq, ia); find1(iq, ir);
-            find1(ibl, ibl); find1(ibl, ia); find1(ibl, ir); find1(ir, ibl); find1(ia, ibl);
-            find1(ia1, ia1); find1(ia1, ia); find1(ia1, ir);
-            reveal_with_fuel(crate::expr_model::abstr_full, 12);
-            assert(to_model(e) == quot_ind_ty(*n));
+            assert(to_model(e) == ind_layered(*n, ia, ir, ibl, ia1, iq));
+            ind_layered_eq(*n, ia, ir, ibl, ia1, iq);
         }
         e
     }

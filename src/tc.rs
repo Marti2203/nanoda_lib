@@ -5859,8 +5859,8 @@ pub open spec fn telescope_ok<'x, 't>(
     &&& b1s.len() == n + 1 && b2s.len() == n + 1
     &&& t1s.len() == n && t2s.len() == n && bks.len() == n && ls.len() == n && ks.len() == n
     &&& c0 as nat + n < 0x1_0000
-    &&& forall|i: int| 0 <= i < n ==> #[trigger] b1s[i] == ExprSpec::Bind(bks[i], Box::new(t1s[i]), Box::new(b1s[i + 1]))
-    &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(bks[i], Box::new(t2s[i]), Box::new(b2s[i + 1]))
+    &&& forall|i: int| #![trigger t1s[i]] 0 <= i < n ==> b1s[i] == ExprSpec::Bind(bks[i], Box::new(t1s[i]), Box::new(b1s[i + 1]))
+    &&& forall|i: int| #![trigger t2s[i]] 0 <= i < n ==> b2s[i] == ExprSpec::Bind(bks[i], Box::new(t2s[i]), Box::new(b2s[i + 1]))
     &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[i], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[i], c0)
     &&& forall|i: int| 0 <= i < n ==> #[trigger] ls[i] == ExprSpec::Free(ks[i])
     &&& forall|i: int| 0 <= i < n ==> #[trigger] crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(env), ks[i]) == Some((c0 + i) as u16)
@@ -6036,8 +6036,8 @@ pub open spec fn binder_walk<'x, 't>(
     let closed0 = crate::expr_model::nlbv(b1s[0]) <= 0 && crate::expr_model::nlbv(b2s[0]) <= 0;
     &&& b1s.len() == n + 1 && b2s.len() == n + 1 && t1s.len() == n && t2s.len() == n && bks.len() == n
     &&& c0 as nat + n < 0x1_0000
-    &&& forall|i: int| 0 <= i < n ==> #[trigger] b1s[i] == ExprSpec::Bind(bks[i], Box::new(t1s[i]), Box::new(b1s[i + 1]))
-    &&& forall|i: int| 0 <= i < n ==> #[trigger] b2s[i] == ExprSpec::Bind(bks[i], Box::new(t2s[i]), Box::new(b2s[i + 1]))
+    &&& forall|i: int| #![trigger t1s[i]] 0 <= i < n ==> b1s[i] == ExprSpec::Bind(bks[i], Box::new(t1s[i]), Box::new(b1s[i + 1]))
+    &&& forall|i: int| #![trigger t2s[i]] 0 <= i < n ==> b2s[i] == ExprSpec::Bind(bks[i], Box::new(t2s[i]), Box::new(b2s[i + 1]))
     &&& forall|i: int| 0 <= i <= n ==> #[trigger] crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b1s[i], c0) && crate::expr_model::dbj_deep(crate::env_model::env_arena_ids(env), b2s[i], c0)
     &&& opened_locals(crate::env_model::env_arena_ids(env), locals, c0, crate::expr_model::all_ids())
     // each local has its first-side binder type, instantiated with the
@@ -6145,18 +6145,24 @@ pub proof fn binder_walk_step<'x, 't>(
             assert(b2s2[i] == b2s[i]);
         }
     }
-    assert forall|i: int| 0 <= i < n + 1 implies #[trigger] b1s2[i] == ExprSpec::Bind(bks2[i], Box::new(t1s2[i]), Box::new(b1s2[i + 1])) by {
+    assert forall|i: int| #![trigger t1s2[i]] 0 <= i < n + 1 implies b1s2[i] == ExprSpec::Bind(bks2[i], Box::new(t1s2[i]), Box::new(b1s2[i + 1])) by {
         if i < n {
             assert(b1s2[i] == b1s[i]);
             assert(b1s2[i + 1] == b1s[i + 1]);
             assert(t1s2[i] == t1s[i]);
+            assert(bks2[i] == bks[i]);
+        } else {
+            assert(bks2[i] == bk);
         }
     }
-    assert forall|i: int| 0 <= i < n + 1 implies #[trigger] b2s2[i] == ExprSpec::Bind(bks2[i], Box::new(t2s2[i]), Box::new(b2s2[i + 1])) by {
+    assert forall|i: int| #![trigger t2s2[i]] 0 <= i < n + 1 implies b2s2[i] == ExprSpec::Bind(bks2[i], Box::new(t2s2[i]), Box::new(b2s2[i + 1])) by {
         if i < n {
             assert(b2s2[i] == b2s[i]);
             assert(b2s2[i + 1] == b2s[i + 1]);
             assert(t2s2[i] == t2s[i]);
+            assert(bks2[i] == bks[i]);
+        } else {
+            assert(bks2[i] == bk);
         }
     }
     assert(ls2.subrange(0, n as int) =~= ls);

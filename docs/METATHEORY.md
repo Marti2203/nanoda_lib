@@ -52,6 +52,15 @@ Lean's theory in these places:
 (this commit's successor). For G, the fresh local has EITHER binder type (they
 are convertible), which keeps the relation symmetric.
 
+**A done (2026-09-26, branch `pi-lambda-split`):** `ExprSpec::Bind` carries a
+`BinderKind` (`Pi` / `Lam`). Beta, eta and head spines match `Lam`; the lambda
+typing rule types a `Lam` with a `Pi`; the pi rule types a `Pi`; application
+needs a `Pi`; congruence and level substitution relate only binders of the same
+kind. Telescopes are kind-indexed (`telescope_size_spec(k, ..)`,
+`abstr_telescope_model(k, ..)`); Pi-peeling uses `pi_spine`. No kernel change:
+the exec side already distinguished the two, and the def_eq binder walk only
+gained a ghost `bks: Seq<BinderKind>`.
+
 B–E and G are spec tightenings. The kernel already behaves this way (literals
 are `Nat` with no levels, Check mode checks binders and let annotations,
 `infer_const` checks arity), so they cost proof work, not kernel changes. A is
