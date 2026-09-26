@@ -35,6 +35,7 @@ pub mod quot;
 pub mod quot_model;
 pub mod rctx;
 pub mod real_gen;
+pub mod regularity;
 pub mod subst_model;
 pub mod subst_conv;
 pub mod subst_typed;

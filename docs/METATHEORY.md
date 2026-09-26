@@ -391,7 +391,31 @@ Regularity up to conversion needs:
 
 Two ways forward: state regularity up to conversion as a named hypothesis
 next to subject reduction, or prove it from (i)-(iii) plus the existing
-inversion hypotheses.
+inversion hypotheses. **Chosen: prove it.**
+
+**Regularity status.**
+- (i) DONE, `subst_conv.rs`: `sc_types_to` / `sc_deq_p`. `m : tm` with
+  `tm ~ G[k]`; each result type is returned with its conversion to the
+  substituted type, at a fixed height `dd`.
+- (iii) DONE, `level_inst.rs` (untyped) and `level_typed.rs` (typed):
+  instantiating universe parameters preserves `pstep`, `defeq`, `deq_c`,
+  typing and conversion at the same height. `lt_closed` is the `Const`
+  case: a declaration type is typed at any instance. It assumes
+  `env_lp_ok` / `dty_lp_ok`: each declaration mentions only its own
+  universe parameters, which the kernel checks. The trusted
+  string-expansion fact now also says the expansion has no universe
+  parameter.
+- `regularity.rs::reg_app` DONE: `Pi(A, B)` really typed, and `m` typed
+  at a type convertible to `A`, give `B[m]` typed at a type convertible to
+  the codomain sort. This is the application step.
+- (ii) What remains is at the kernel, not in the model. Regularity is a
+  property of the KERNEL's inference: its application type is the
+  codomain of `whnf` of the function type, a reduct of a typed term, so
+  subject reduction makes it typed. It is proven site by site in `infer`'s
+  contract during the port (M7c). The application site feeds `reg_app` the
+  conversion `aty2 ~ A`. That comes from the real derivation's `aty2 ~ aty_r`,
+  plus `Pi(A, B) ~ ft ~ ft_r ~ Pi(aty_r, bt_r)` and Pi DOMAIN injectivity:
+  a sibling of `h_pi_inj_app` that will be stated with the port.
 
 Steps: M1 cofinite scoped rules; M2 freshness (`fvs`, pigeonhole); M3
 option 2 re-proved; M4 weakening; M5 `rctx` and its reachability lemmas;
