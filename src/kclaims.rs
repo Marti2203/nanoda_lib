@@ -1432,4 +1432,125 @@ pub proof fn cwh_k(
     }
 }
 
+
+/// Whatever a term reaches whose locals come from `e1` or `e2` is reached
+/// from one of them.
+pub proof fn rctx_two(g: Map<nat, ExprSpec>, r: ExprSpec, e1: ExprSpec, e2: ExprSpec, d: Map<nat, ExprSpec>)
+    requires
+        forall|i: nat| #[trigger] fv_absent(e1, i) && fv_absent(e2, i) ==> fv_absent(r, i),
+        sub(rctx(g, e1), d),
+        sub(rctx(g, e2), d),
+    ensures
+        sub(rctx(g, r), d),
+{
+    assert forall|j: nat| #[trigger] rctx(g, r).contains_key(j) implies d.contains_key(j) && d[j] == rctx(g, r)[j] by {
+        rctx_at(g, r, j);
+        let n = choose|n: nat| #[trigger] reach_n(g, r, j, n);
+        let i = reach_start(g, r, j, n);
+        if !fv_absent(e1, i) {
+            reach_via(g, e1, i, j, n);
+            rctx_at(g, e1, j);
+        } else {
+            reach_via(g, e2, i, j, n);
+            rctx_at(g, e2, j);
+        }
+    }
+}
+
+/// STRUCTURE ETA BEFORE IOTA (`expand_eta_struct_aux`): a term of a
+/// structure type converts to its expansion, which is typed wherever the
+/// term is and reaches only what it does.
+#[verifier::spinoff_prover]
+pub proof fn cwh_eta_exp(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    e: ExprSpec,
+    ety: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    args: Seq<ExprSpec>,
+    np: nat,
+    nf: nat,
+    r: ExprSpec,
+)
+    requires
+        ci(dty, denv, g, e, ety),
+        ety == spine_app(ExprSpec::Const(ind, ls), args),
+        nlbv(e) <= 0,
+        nlbv(ety) <= 0,
+        denv.struct_ctor(ind) == Some(cid),
+        denv.ctor_num_params(cid) == Some(np as u16),
+        denv.ctor_num_fields(cid) == Some(nf as u16),
+        np < 0x1_0000 && nf < 0x1_0000,
+        np <= args.len(),
+        r == spine_app(ExprSpec::Const(cid, ls), args.subrange(0, np as int) + eta_projs(e, nf)),
+    ensures
+        cwh(dty, denv, g, e, r),
+{
+    let w = IoMode::InferWt;
+    let ps = args.subrange(0, np as int);
+    let rest = args.subrange(np as int, args.len() as int);
+    assert(ps + rest =~= args);
+    if kh(dty, denv) {
+        crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(ind, ls), args);
+        // conversion: the one-sided eta leaf, through the structure type
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && sub(rctx(g, r), d) && rtyped(dty, denv, d, e) && rtyped(dty, denv, d, r)
+            implies #[trigger] deq_p_any(dty, denv, d, w, e, r) by {
+            let (tx, fx, h1) = ci_use(dty, denv, g, d, e, ety);
+            let (rxt, rxf) = rt_at(dty, denv, d, e);
+            let hh = fx + h1 + rxf + 1;
+            deq_p_mono(dty, denv, d, w, tx, ety, h1, hh);
+            assert(struct_type_marker(ls, rest));
+            assert(struct_type_of(dty, denv, d, w, tx, ind, ps, hh));
+            assert(wt_marker(rxt, rxf));
+            assert(wt1(dty, denv, d, w, e, hh));
+            assert(eta_struct_marker(tx, fx, ind, cid, ls, ps, nf));
+            assert(eta_struct_expand(dty, denv, d, w, e, r, hh));
+            deq_p_any_of_eta_struct(dty, denv, d, w, e, r, hh);
+        }
+        // reach: the expansion's locals are e's or its type's
+        assert forall|i: nat| #[trigger] fv_absent(e, i) && fv_absent(ety, i) implies fv_absent(r, i) by {
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(ind, ls), args, i);
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(cid, ls), ps + eta_projs(e, nf), i);
+            assert forall|k: int| 0 <= k < (ps + eta_projs(e, nf)).len() implies fv_absent(#[trigger] (ps + eta_projs(e, nf))[k], i) by {
+                if k < np {
+                    assert((ps + eta_projs(e, nf))[k] == args[k]);
+                } else {
+                    assert((ps + eta_projs(e, nf))[k] == ExprSpec::Proj((k - np) as usize, Box::new(e)));
+                }
+            }
+        }
+        assert(sub(rctx(g, ety), rctx(g, e)));
+        rctx_two(g, r, e, ety, rctx(g, e));
+        // typing: the expansion is typed wherever e is
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
+            implies #[trigger] rtyped(dty, denv, d, r) by {
+            let (tx, fx, h1) = ci_use(dty, denv, g, d, e, ety);
+            let (rxt, rxf) = rt_at(dty, denv, d, e);
+            s_sound(dty, denv, d, e, tx, rxt, fx, rxf);
+            assert(deq_p_any(dty, denv, d, w, tx, ety));
+            kconv_wt_implies_tconv(dty, denv, d, tx, ety);
+            tconv_symm(dty, denv, d, tx, rxt);
+            tconv_trans(dty, denv, d, rxt, tx, ety);
+            let hc = choose|h: nat| #[trigger] deq_p(dty, denv, d, IoMode::Real, rxt, ety, h);
+            let s0 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, ety, t);
+            assert(denv.ctor_np[cid] as nat == np);
+            assert(denv.ctor_nf[cid] as nat == nf);
+            // the constructor's level arity, from E2' on the structure type
+            assert(crate::ctor_typing::struct_ok1(dty, denv, ind, cid));
+            assert(crate::ctor_typing::ctor_params_ok1(dty, denv, ind, cid));
+            assert(typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps + rest), s0));
+            let tc = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(cid, ls), ps), t);
+            let th = crate::ctor_typing::spine_head_typed(dty, denv, d, ExprSpec::Const(cid, ls), ps, tc);
+            crate::ctor_typing::ctor_const_type(dty, denv, d, cid, ls, th);
+            assert(crate::ctor_typing::exp_ok(dty, denv, d, ind, cid, ls, ps, rest, e, rxt, rxf, hc));
+            let (t2, n2, h2) = crate::ctor_typing::exp_fields(dty, denv, d, ind, cid, ls, ps, rest, e, rxt, rxf, hc, nf);
+            assert((ps + eta_projs(e, nf)).subrange(0, (ps.len() + nf) as int) =~= ps + eta_projs(e, nf));
+            assert(typed(dty, denv, d, r, t2));
+        }
+    }
+}
+
 } // verus!

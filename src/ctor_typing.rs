@@ -546,7 +546,7 @@ pub proof fn proj_typed(
     requires
         struct_ok(dty, denv),
         denv.struct_ctor(ind) == Some(cid),
-        params.len() == denv.ctor_np[cid] as nat,
+        params.len() >= denv.ctor_np[cid] as nat,
         idx < denv.ctor_nf[cid] as nat,
         ls.len() == dty[cid].0.len(),
         nlbv(x) == 0,
@@ -555,7 +555,7 @@ pub proof fn proj_typed(
         deq_p(dty, denv, d, IoMode::Real, sty, spine_app(ExprSpec::Const(ind, ls), params), hx),
     ensures
         typed(dty, denv, d, ExprSpec::Proj(idx as usize, Box::new(x)), t),
-        t == pdom(peel_inst(subst_expr_levels(dty[cid].1, dty[cid].0, ls), params + projs_from(x, 0, idx), denv.ctor_np[cid] as nat + idx)),
+        t == pdom(peel_inst(subst_expr_levels(dty[cid].1, dty[cid].0, ls), params.subrange(0, denv.ctor_np[cid] as int) + projs_from(x, 0, idx), denv.ctor_np[cid] as nat + idx)),
 {
     let r = IoMode::Real;
     assert(struct_ok1(dty, denv, ind, cid));
@@ -572,8 +572,8 @@ pub proof fn proj_typed(
     deq_p_mono(dty, denv, d, r, sty, spine_app(ExprSpec::Const(ind, ls), params), hx, f2);
     pi_spine_li(dd, np + nf, us, ls);
     pi_spine_shorter(cty, np + idx + 1, np + nf);
+    assert forall|i: int| 0 <= i < np implies nlbv(#[trigger] params[i]) == 0 by {}
     let t = pft_intro(dty, denv, d, r, f2, cty, params, np, 0, idx, x);
-    assert(params.subrange(0, np as int) =~= params);
     assert(proj_marker(f2, sty, ind, ls, params, cid, np as u16, cty));
     let e = ExprSpec::Proj(idx as usize, Box::new(x));
     assert(types_to(dty, denv, d, r, e, t, f2 + 1));
@@ -667,6 +667,7 @@ pub open spec fn exp_ok(
     cid: u64,
     ls: Seq<LevelSpec>,
     ps: Seq<ExprSpec>,
+    rest: Seq<ExprSpec>,
     e: ExprSpec,
     te: ExprSpec,
     fe: nat,
@@ -677,12 +678,12 @@ pub open spec fn exp_ok(
     &&& ctor_params_ok(dty, denv)
     &&& denv.struct_ctor(ind) == Some(cid)
     &&& ps.len() == denv.ctor_np[cid] as nat
-    &&& forall|i: int| 0 <= i < ps.len() ==> nlbv(#[trigger] ps[i]) == 0
+    &&& forall|i: int| 0 <= i < ps.len() + rest.len() ==> nlbv(#[trigger] (ps + rest)[i]) == 0
     &&& nlbv(e) == 0
     &&& ls.len() == dty[cid].0.len()
     &&& types_to(dty, denv, d, IoMode::Real, e, te, fe)
-    &&& deq_p(dty, denv, d, IoMode::Real, te, spine_app(ExprSpec::Const(ind, ls), ps), hc)
-    &&& exists|s: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps), s)
+    &&& deq_p(dty, denv, d, IoMode::Real, te, spine_app(ExprSpec::Const(ind, ls), ps + rest), hc)
+    &&& exists|s: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps + rest), s)
 }
 
 /// The expansion with its first `j` fields is really typed, at a type
@@ -695,6 +696,7 @@ pub proof fn exp_fields(
     cid: u64,
     ls: Seq<LevelSpec>,
     ps: Seq<ExprSpec>,
+    rest: Seq<ExprSpec>,
     e: ExprSpec,
     te: ExprSpec,
     fe: nat,
@@ -702,7 +704,7 @@ pub proof fn exp_fields(
     j: nat,
 ) -> (res: (ExprSpec, nat, nat))
     requires
-        exp_ok(dty, denv, d, ind, cid, ls, ps, e, te, fe, hc),
+        exp_ok(dty, denv, d, ind, cid, ls, ps, rest, e, te, fe, hc),
         j <= denv.ctor_nf[cid] as nat,
     ensures
         types_to(dty, denv, d, IoMode::Real,
@@ -723,6 +725,8 @@ pub proof fn exp_fields(
     assert forall|i: int| 0 <= i < full.len() implies nlbv(#[trigger] full[i]) == 0 by {
         if i >= np {
             assert(full[i] == ExprSpec::Proj((i - np) as usize, Box::new(e)));
+        } else {
+            assert(full[i] == (ps + rest)[i]);
         }
     }
     peel_pis(ct, full, np + nf);
@@ -730,14 +734,15 @@ pub proof fn exp_fields(
         // the constructor applied to the parameters: E2'
         assert(denv.ctor_ind.contains_key(cid));
         assert(ctor_params_ok1(dty, denv, ind, cid));
-        let s0 = choose|s: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps), s);
-        assert(ps + Seq::<ExprSpec>::empty() =~= ps);
-        assert(typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps + Seq::<ExprSpec>::empty()), s0));
+        let s0 = choose|s: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ls), ps + rest), s);
         let tc0 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(c, ps), t);
         let th = spine_head_typed(dty, denv, d, c, ps, tc0);
         ctor_const_type(dty, denv, d, cid, ls, th);
         assert(ps.subrange(0, np as int) =~= ps);
         pi_spine_shorter(ct, np, np + nf);
+        assert forall|i: int| 0 <= i < ps.len() implies nlbv(#[trigger] ps[i]) == 0 by {
+            assert(ps[i] == (ps + rest)[i]);
+        }
         peel_pis(ct, ps, np);
         spine_type(dty, denv, d, c, th, ct, ps, np, tc0);
         peel_inst_prefix(ct, ps, full, np);
@@ -747,12 +752,14 @@ pub proof fn exp_fields(
         (tc0, n0, h0)
     } else {
         let k = (j - 1) as nat;
-        let (tk, nk, hk) = exp_fields(dty, denv, d, ind, cid, ls, ps, e, te, fe, hc, k);
+        let (tk, nk, hk) = exp_fields(dty, denv, d, ind, cid, ls, ps, rest, e, te, fe, hc, k);
         let fk = spine_app(c, full.subrange(0, (np + k) as int));
         let a = full[(np + k) as int];
         assert(a == ExprSpec::Proj(k as usize, Box::new(e)));
         // the projection's exact type is the next binder's domain
-        let ta = proj_typed(dty, denv, d, ind, cid, ls, ps, e, te, fe, hc, k);
+        assert forall|i: int| 0 <= i < (ps + rest).len() implies nlbv(#[trigger] (ps + rest)[i]) == 0 by {}
+        let ta = proj_typed(dty, denv, d, ind, cid, ls, ps + rest, e, te, fe, hc, k);
+        assert((ps + rest).subrange(0, np as int) =~= ps);
         let fa = choose|f: nat| #[trigger] types_to(dty, denv, d, r, a, ta, f);
         peel_inst_prefix(ct, ps + projs_from(e, 0, k), full, np + k);
         let p = peel_inst(ct, full, np + k);
