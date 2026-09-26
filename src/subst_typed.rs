@@ -45,6 +45,14 @@ pub proof fn sctx_at(g: Map<nat, ExprSpec>, k: nat, m: ExprSpec, j: nat)
 {
 }
 
+/// The scoping side of the substitution's conditions: `m` and `k`'s type
+/// mention only locals of the substituted context.
+pub open spec fn sfv(g: Map<nat, ExprSpec>, k: nat, m: ExprSpec) -> bool {
+    &&& g.contains_key(k)
+    &&& fv_in(m, sctx(g, k, m))
+    &&& fv_in(g[k], sctx(g, k, m))
+}
+
 /// What the substitution needs: `m` is really typed at `k`'s type in the
 /// substituted context (and, for `InferWt`, `InferWt`-typed there too), and
 /// both it and that type mention only locals of that context.
@@ -59,10 +67,8 @@ pub open spec fn sok(
 ) -> bool {
     &&& fv_free(dty, denv)
     &&& io != IoMode::Infer
-    &&& g.contains_key(k)
+    &&& sfv(g, k, m)
     &&& nlbv(m) == 0
-    &&& fv_in(m, sctx(g, k, m))
-    &&& fv_in(g[k], sctx(g, k, m))
     &&& types_to(dty, denv, sctx(g, k, m), IoMode::Real, m, g[k], fm)
     &&& (io == IoMode::Real || types_to(dty, denv, sctx(g, k, m), io, m, g[k], fm))
 }
@@ -160,7 +166,7 @@ pub proof fn fresh_back(
     j: nat,
 )
     requires
-        sok(dty, denv, g, io, k, m, fm),
+        sfv(g, k, m),
         j != k,
         !sctx(g, k, m).contains_key(j),
         ctx_fresh(sctx(g, k, m), j),
@@ -213,7 +219,7 @@ pub proof fn fresh_k(
     fm: nat,
 )
     requires
-        sok(dty, denv, g, io, k, m, fm),
+        sfv(g, k, m),
     ensures
         !sctx(g, k, m).contains_key(k),
         ctx_fresh(sctx(g, k, m), k),
@@ -480,7 +486,7 @@ proof fn st_dp_open(
 }
 
 /// A local fresh for everything the binder cases touch.
-proof fn far_local(
+pub proof fn far_local(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     g: Map<nat, ExprSpec>,
@@ -491,7 +497,7 @@ proof fn far_local(
     es: Seq<ExprSpec>,
 ) -> (j: nat)
     requires
-        sok(dty, denv, g, io, k, m, fm),
+        sfv(g, k, m),
     ensures
         j != k,
         !g.contains_key(j),
@@ -515,7 +521,7 @@ proof fn far_local(
 
 /// Renaming the opening local `x` to `y`, both fresh for the context and for
 /// the binder's type.
-proof fn rename_open(
+pub proof fn rename_open(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     sg: Map<nat, ExprSpec>,
