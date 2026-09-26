@@ -10,6 +10,7 @@ use vstd::prelude::*;
 
 pub mod arena_history;
 pub mod beta_model;
+pub mod ctor_typing;
 pub mod debug_printer;
 pub mod env;
 pub mod env_model;
@@ -44,6 +45,7 @@ pub mod swap_model;
 pub mod swap_typed;
 pub mod tc;
 pub mod tc_model;
+pub mod telescope;
 #[cfg(test)]
 mod tests;
 pub mod unique_hasher;
