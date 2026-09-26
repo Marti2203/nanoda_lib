@@ -2867,6 +2867,23 @@ pub open spec fn inst_free(b: ExprSpec, k: u32) -> ExprSpec {
     subst_full(b, seq![ExprSpec::Free(k)], 0)
 }
 
+/// Marker trigger for the typed binder congruence's local and its type.
+pub open spec fn fresh_ty_marker(k: u32, ty: ExprSpec) -> bool {
+    true
+}
+
+/// Extending a context at a local with the type it already has changes
+/// nothing.
+pub proof fn lctx_insert_same(lctx: Map<u32, ExprSpec>, k: u32, ty: ExprSpec)
+    requires
+        lctx.contains_key(k),
+        lctx[k] == ty,
+    ensures
+        lctx.insert(k, ty) == lctx,
+{
+    assert(lctx.insert(k, ty) =~= lctx);
+}
+
 /// Marker trigger for the fresh-instance rule's existential (a trigger
 /// must not mention match-bound variables -- see the match-arm exists
 /// trigger law in the project memory).
@@ -3865,11 +3882,11 @@ pub open spec fn deq_p_c(
             *t1,
             *t2,
             (h - 1) as nat,
-        ) && (deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) || (exists|k: u32| #[trigger]
-            fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+        ) && (deq_p_c(dty, env, lctx, io, *b1, *b2, (h - 1) as nat) || (exists|k: u32, ty: ExprSpec| #[trigger]
+            fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty)) && deq_p(
                 dty,
                 env,
-                lctx, io,
+                lctx.insert(k, ty), io,
                 inst_free(*b1, k),
                 inst_free(*b2, k),
                 (h - 1) as nat,
@@ -4038,11 +4055,11 @@ pub proof fn deq_p_c_mono(
                         (h2 - 1) as nat,
                     ));
                 } else {
-                    let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+                    let (k, ty) = choose|k: u32, ty: ExprSpec| #[trigger]
+                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty)) && deq_p(
                             dty,
                             env,
-                            lctx, io,
+                            lctx.insert(k, ty), io,
                             inst_free(*b1, k),
                             inst_free(*b2, k),
                             (h1 - 1) as nat,
@@ -4050,21 +4067,13 @@ pub proof fn deq_p_c_mono(
                     deq_p_mono(
                         dty,
                         env,
-                        lctx, io,
+                        lctx.insert(k, ty), io,
                         inst_free(*b1, k),
                         inst_free(*b2, k),
                         (h1 - 1) as nat,
                         (h2 - 1) as nat,
                     );
-                    assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
-                        dty,
-                        env,
-                        lctx, io,
-                        inst_free(*b1, k),
-                        inst_free(*b2, k),
-                        (h2 - 1) as nat,
-                    ));
+                    assert(fresh_ty_marker(k, ty));
                 }
                 assert(deq_p_c(dty, env, lctx, io, x, y, h2));
             },
@@ -4190,11 +4199,11 @@ pub proof fn deq_p_c_symm(
                         (h - 1) as nat,
                     ));
                 } else {
-                    let k = choose|k: u32| #[trigger]
-                        fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && lctx.contains_key(k) && (lctx[k] == *t1 || lctx[k] == *t2) && deq_p(
+                    let (k, ty) = choose|k: u32, ty: ExprSpec| #[trigger]
+                        fresh_ty_marker(k, ty) && (ty == *t1 || ty == *t2) && fv_absent(*b1, k) && fv_absent(*b2, k) && unreach(lctx, k, *t1) && unreach(lctx, k, *t2) && unreach(lctx, k, *b1) && unreach(lctx, k, *b2) && (io == IoMode::Real || (lctx.contains_key(k) && lctx[k] == ty)) && deq_p(
                             dty,
                             env,
-                            lctx, io,
+                            lctx.insert(k, ty), io,
                             inst_free(*b1, k),
                             inst_free(*b2, k),
                             (h - 1) as nat,
@@ -4202,20 +4211,12 @@ pub proof fn deq_p_c_symm(
                     deq_p_symm(
                         dty,
                         env,
-                        lctx, io,
+                        lctx.insert(k, ty), io,
                         inst_free(*b1, k),
                         inst_free(*b2, k),
                         (h - 1) as nat,
                     );
-                    assert(fresh_marker(k));
-                    assert(fresh_marker(k) && fv_absent(*b2, k) && fv_absent(*b1, k) && unreach(lctx, k, *t2) && unreach(lctx, k, *t1) && unreach(lctx, k, *b2) && unreach(lctx, k, *b1) && lctx.contains_key(k) && (lctx[k] == *t2 || lctx[k] == *t1) && deq_p(
-                        dty,
-                        env,
-                        lctx, io,
-                        inst_free(*b2, k),
-                        inst_free(*b1, k),
-                        (h - 1) as nat,
-                    ));
+                    assert(fresh_ty_marker(k, ty));
                 }
                 assert(deq_p_c(dty, env, lctx, io, y, x, h));
             },
@@ -5416,7 +5417,8 @@ pub proof fn deq_p_bind_link(
     defeq_refl(env, t);
     assert(deq_c(env, t, t, h));
     deq_p_c_of_deq_c(dty, env, lctx, io, t, t, h);
-    assert(fresh_marker(k));
+    lctx_insert_same(lctx, k, t);
+    assert(fresh_ty_marker(k, t));
     assert(((h + 1) - 1) as nat == h);
     assert(deq_p_c(dty, env, lctx, io, bx, by, h + 1));
     let link = seq![bx, by];

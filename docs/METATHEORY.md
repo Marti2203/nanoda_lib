@@ -191,6 +191,15 @@ Uniqueness is used only for projections. Subject reduction is not needed
 here; it comes back for option 1 and for the kernel producing `InferWt`
 derivations.
 
+**Binder conversion in context-extension form (2026-09-26).** Real typing
+extends the context at binders, so real conversion must too. Otherwise, in a
+context with no local of the binder's type, two real types of one lambda
+could fail to convert, making `h_unique_in` false and the theorem vacuous
+there. The binder rule now picks a local `k` and one of the two binder types
+`ty`, and relates the opened bodies in `lctx.insert(k, ty)`. The kernel modes
+also require `lctx[k] == ty`, where the extension is the identity, so
+nothing about `def_eq`'s proofs changed.
+
 ## Proof plan for phase 2 (after phase 1)
 
 Mutual induction on derivation height over `types_to` and `deq_p`, `io`
