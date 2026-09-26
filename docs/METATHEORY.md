@@ -67,6 +67,52 @@ are `Nat` with no levels, Check mode checks binders and let annotations,
 the large one. The model has to distinguish Π from λ before the metatheory can
 say anything, and that touches the foundations every proof rests on.
 
+## The hypotheses, stated (`src/metatheory.rs`)
+
+All are spec predicates, none assumed:
+
+| predicate | says |
+|---|---|
+| `typed`, `tconv`, `kconv`, `well_typed`, `is_type` | real typing; real / kernel conversion |
+| `lctx_wf` | every local's type is a type |
+| `env_wf` | every constant's type is a closed type; every definition's value has its declared type (delta needs it) |
+| `h_unique` | two real types of one term are `tconv` (in a well-formed context) |
+| `h_pi_inj` | `tconv(Π a1 b1, Π a2 b2)` between types gives `tconv(a1, a2)` and, for every fresh local `k : a1`, `tconv(b1[k], b2[k])` |
+| `h_sr` | a `pstep` keeps a term's real type (given `env_wf`, `lctx_wf`) |
+| `kconv_implies_tconv` | the phase-2 target: on well-typed `x`, `y` in a well-formed context, `kconv ⟹ tconv` |
+
+Checked by hand against the model after defect A:
+
+- `h_unique`: every typing rule is functional up to conversion. The lambda
+  rule takes the body type up to conversion, which `tconv` congruence absorbs.
+- `h_pi_inj`: no typed leaf can relate two Pi types. A Pi's type is a
+  `Sort`, which is never a proposition (so no proof irrelevance), a unit-like
+  structure, or a structure. Eta is `Lam`-only.
+- `h_sr` for iota rests on the recursor rules the inductive checker
+  generates; that is the classic hard case, and the reason SR stays a
+  hypothesis.
+
+### Open design question: which chains the theorem is about
+
+`kconv` is a chain relation, and a chain between two well-typed terms can pass
+through terms that are ill-typed under real typing. For example, the
+expansion `x ← (λ_:A. x) bad` is `InferOnly`-typed, because `InferOnly` never
+checks the argument. A typed leaf between two such terms has no real-typing
+counterpart. There are two options:
+
+1. **Arbitrary chains** (the statement above). This is the strongest
+   theorem and needs nothing from the exec side. The proof has to show that
+   detours through ill-typed terms add nothing, which is a
+   chain-normalisation argument of research size.
+2. **Well-typed chains.** Restate the target over chains whose every element
+   is really well-typed. The proof becomes a straightforward induction (leaf
+   transfer plus congruence). The cost is on the exec side: `def_eq` must
+   produce such chains. It already visits only forward reducts of well-typed
+   inputs (which are well-typed by `h_sr`) and their subterms (which are
+   well-typed by generation). The eta case is the exception: it builds
+   `λ(x:t2). f x` with `t2` taken from the other side, and its typing needs
+   `h_unique` + `h_pi_inj`.
+
 ## Proof plan for phase 2 (after phase 1)
 
 Mutual induction on derivation height over `types_to` and `deq_p`, `io`
