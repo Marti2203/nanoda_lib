@@ -23,6 +23,7 @@ pub mod level;
 pub mod level_arena_bridge;
 pub mod level_inst;
 pub mod level_model;
+pub mod level_typed;
 pub mod metatheory;
 pub mod name;
 pub mod name_arena_bridge;
