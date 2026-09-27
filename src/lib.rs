@@ -17,6 +17,7 @@ pub mod dom_compact;
 pub mod dom_model;
 pub mod dom_proj;
 pub mod dom_rel;
+pub mod dom_rel_hexp;
 pub mod dom_rel_mono;
 pub mod dom_rel_per;
 pub mod dom_sound;

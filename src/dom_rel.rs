@@ -52,6 +52,11 @@ pub open spec fn to_sort(g: Ctx, t: ExprSpec, prop: bool) -> bool {
     sort_red(t) && is_zero(rs(t)) == prop && tchain(g, t, sort(rs(t)))
 }
 
+/// A Pi's domain and codomain are types.
+pub open spec fn pi_typed(g: Ctx, ta: ExprSpec, tb: ExprSpec) -> bool {
+    crate::ti_sub::tconvd(g, ta, ta) && crate::ti_sub::tconvd(g.push(ta), tb, tb)
+}
+
 /// The syntactic application of terms.
 pub open spec fn sapp(m: ExprSpec, x: ExprSpec) -> ExprSpec {
     ExprSpec::App(Box::new(m), Box::new(x))
@@ -76,7 +81,8 @@ pub open spec fn rel_ty(n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bo
             let (ta, tb) = rp(t);
             let (ta2, tb2) = rp(t2);
             tchain(g, t, pi(ta, tb)) && tchain(g, t2, pi(ta2, tb2)) && tchain(g, ta, ta2)
-                && tchain(g.push(ta), tb, tb2) && rel_ty((n - 1) as nat, g, ta, ta2, *b)
+                && tchain(g.push(ta), tb, tb2) && pi_typed(g, ta, tb) && pi_typed(g, ta2, tb2)
+                && rel_ty((n - 1) as nat, g, ta, ta2, *b)
                 && cod_ty((n - 1) as nat, g, a, ta, tb, tb2)
         },
         _ => false,
@@ -149,7 +155,8 @@ pub proof fn ty_sort(n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec)
 pub open spec fn ty_pi_body(n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bool {
     n >= 1 && pi_red(t) && pi_red(t2)
         && tchain(g, t, pi(rp(t).0, rp(t).1)) && tchain(g, t2, pi(rp(t2).0, rp(t2).1)) && tchain(g, rp(t).0, rp(t2).0)
-        && tchain(g.push(rp(t).0), rp(t).1, rp(t2).1) && rel_ty((n - 1) as nat, g, rp(t).0, rp(t2).0, *a->Pi_0)
+        && tchain(g.push(rp(t).0), rp(t).1, rp(t2).1) && pi_typed(g, rp(t).0, rp(t).1) && pi_typed(g, rp(t2).0, rp(t2).1)
+        && rel_ty((n - 1) as nat, g, rp(t).0, rp(t2).0, *a->Pi_0)
         && cod_ty((n - 1) as nat, g, a, rp(t).0, rp(t).1, rp(t2).1)
 }
 

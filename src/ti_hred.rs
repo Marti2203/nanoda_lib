@@ -145,4 +145,36 @@ pub proof fn hred_step(t: ExprSpec)
     assert(hiter(t, 1) == hstep(t)->Some_0);
 }
 
+/// Head reduction in function position.
+pub proof fn hred_app_l(t: ExprSpec, t2: ExprSpec, x: ExprSpec)
+    requires
+        hred(t, t2),
+    ensures
+        hred(ExprSpec::App(Box::new(t), Box::new(x)), ExprSpec::App(Box::new(t2), Box::new(x))),
+{
+    let k = choose|k: nat| #[trigger] hiter(t, k) == t2;
+    hred_app_k(t, x, k);
+}
+
+proof fn hred_app_k(t: ExprSpec, x: ExprSpec, k: nat)
+    ensures
+        hred(ExprSpec::App(Box::new(t), Box::new(x)), ExprSpec::App(Box::new(hiter(t, k)), Box::new(x))),
+    decreases k,
+{
+    if k == 0 {
+        hred_refl(ExprSpec::App(Box::new(t), Box::new(x)));
+    } else {
+        let km = (k - 1) as nat;
+        hred_app_k(t, x, km);
+        let p = hiter(t, km);
+        if let Some(q) = hstep(p) {
+            assert(!(p is Bind));
+            let ap = ExprSpec::App(Box::new(p), Box::new(x));
+            assert(hstep(ap) == Some(ExprSpec::App(Box::new(q), Box::new(x))));
+            hred_step(ap);
+            hred_trans(ExprSpec::App(Box::new(t), Box::new(x)), ap, ExprSpec::App(Box::new(q), Box::new(x)));
+        }
+    }
+}
+
 } // verus!

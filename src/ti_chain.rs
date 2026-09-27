@@ -315,4 +315,71 @@ pub proof fn tchain_ctx(g: Ctx, a: ExprSpec, a2: ExprSpec, x: ExprSpec, y: ExprS
     assert(chain_ok(g.push(a2), c));
 }
 
+/// SINGLE SUBSTITUTION of related arguments converts the instances.
+pub proof fn inst_conv(g: Ctx, a: ExprSpec, b: ExprSpec, l: LevelSpec, x: ExprSpec, x2: ExprSpec)
+    requires
+        derivable(eq(g.push(a), b, b, sort(l))),
+        derivable(eq(g, x, x2, a)),
+    ensures
+        derivable(eq(g, crate::subst_algebra::inst(0, x, b), crate::subst_algebra::inst(0, x2, b), sort(l))),
+{
+    let db = get(eq(g.push(a), b, b, sort(l)));
+    let dx = get(eq(g, x, x2, a));
+    let w = d_wf(dx);
+    let wa = d_wf(db);
+    let (la, da) = d_wf_last(wa);
+    assert(g.push(a).drop_last() =~= g);
+    assert(g.push(a).last() == a);
+    wf_vars(w);
+    let g1 = g.push(a);
+    let s = cons(x, ids());
+    let s2 = cons(x2, ids());
+    reveal(spair);
+    mk_d(w);
+    assert forall|i: nat| i < g1.len() implies #[trigger] derivable(eq(g, s(i), s2(i), psub(var_ty(g1, i), s))) by {
+        var_ty_push(g, a, i);
+        if i == 0 {
+            psub_lift_cons(a, x, ids());
+            psub_id(a);
+        } else {
+            let k = (i - 1) as nat;
+            psub_lift_cons(var_ty(g, k), x, ids());
+            psub_id(var_ty(g, k));
+            let v = crate::ti_sub::d_var(w, k);
+            mk_d(v);
+        }
+    }
+    assert forall|i: nat| i < g1.len() implies #[trigger] tconvd(g, psub(var_ty(g1, i), s), psub(var_ty(g1, i), s2)) by {
+        var_ty_push(g, a, i);
+        if i == 0 {
+            psub_lift_cons(a, x, ids());
+            psub_lift_cons(a, x2, ids());
+            psub_id(a);
+            mk_t(da, la);
+        } else {
+            let k = (i - 1) as nat;
+            psub_lift_cons(var_ty(g, k), x, ids());
+            psub_lift_cons(var_ty(g, k), x2, ids());
+            psub_id(var_ty(g, k));
+            assert(tconvd(g, var_ty(g, k), var_ty(g, k)));
+        }
+    }
+    assert(spair(g1, g, s, s2));
+    d_sub(db, g, s, s2);
+    crate::ti_subst::inst_is_psub(0, x, b);
+    crate::ti_subst::inst_is_psub(0, x2, b);
+    assert forall|i: nat| #[trigger] isub(0, x)(i) == s(i) by {
+        if i == 0 {
+            crate::subst_algebra::lift_zero(0, x);
+        }
+    }
+    assert forall|i: nat| #[trigger] isub(0, x2)(i) == s2(i) by {
+        if i == 0 {
+            crate::subst_algebra::lift_zero(0, x2);
+        }
+    }
+    psub_ext(b, isub(0, x), s);
+    psub_ext(b, isub(0, x2), s2);
+}
+
 } // verus!
