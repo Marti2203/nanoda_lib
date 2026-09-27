@@ -833,6 +833,423 @@ pub open spec fn ci_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
         && types_to(dty, denv, d, IoMode::InferWt, e, tt, f) && deq_p_any(dty, denv, d, IoMode::InferWt, tt, t)
 }
 
+/// THE CHECK CLAIM (kernel `Check` mode): in every admissible context `e`
+/// is really typed, at a type convertible to `t`. What `ci` assumes of `e`,
+/// `Check` mode establishes.
+pub open spec fn cc(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
+    kh(dty, denv) ==> forall|d: Map<nat, ExprSpec>| #![trigger cc_at(dty, denv, d, e, t)]
+        lctx_wf(dty, denv, d) && sub(rctx(g, e), d) ==> cc_at(dty, denv, d, e, t)
+}
+
+pub open spec fn cc_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
+    exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, e, t2) && tconv(dty, denv, d, t2, t)
+}
+
+/// The pieces of a check claim at one context.
+pub proof fn cc_use(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
+    -> (t2: ExprSpec)
+    requires
+        kh(dty, denv),
+        cc(dty, denv, g, e, t),
+        lctx_wf(dty, denv, d),
+        sub(rctx(g, e), d),
+    ensures
+        typed(dty, denv, d, e, t2),
+        tconv(dty, denv, d, t2, t),
+        rtyped(dty, denv, d, e),
+{
+    assert(cc_at(dty, denv, d, e, t));
+    choose|t2: ExprSpec| #[trigger] typed(dty, denv, d, e, t2) && tconv(dty, denv, d, t2, t)
+}
+
+/// CHECK, LOCAL.
+pub proof fn cc_local(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, k: nat)
+    requires
+        g.contains_key(k),
+    ensures
+        cc(dty, denv, g, ExprSpec::Free(k), g[k]),
+{
+    let e = ExprSpec::Free(k);
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, g[k]) by {
+            rctx_at(g, e, k);
+            assert(reach_n(g, e, k, 0));
+            assert(types_to(dty, denv, d, IoMode::Real, e, g[k], 0));
+            assert(typed(dty, denv, d, e, g[k]));
+            tconv_refl(dty, denv, d, g[k]);
+        }
+    }
+}
+
+/// CHECK, SORT.
+pub proof fn cc_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, l: LevelSpec)
+    ensures
+        cc(dty, denv, g, ExprSpec::Sort(l), ExprSpec::Sort(LevelSpec::Succ(Box::new(l)))),
+{
+    let e = ExprSpec::Sort(l);
+    let t = ExprSpec::Sort(LevelSpec::Succ(Box::new(l)));
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
+            assert(types_to(dty, denv, d, IoMode::Real, e, t, 0));
+            assert(typed(dty, denv, d, e, t));
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+/// CHECK, CONSTANT: the constant rule reads only the declaration.
+pub proof fn cc_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, cid: u64, ls: Seq<LevelSpec>)
+    requires
+        dty.contains_key(cid),
+        ls.len() == dty[cid].0.len(),
+    ensures
+        cc(dty, denv, g, ExprSpec::Const(cid, ls), crate::expr_model::subst_expr_levels(dty[cid].1, dty[cid].0, ls)),
+{
+    let e = ExprSpec::Const(cid, ls);
+    let t = crate::expr_model::subst_expr_levels(dty[cid].1, dty[cid].0, ls);
+    crate::expr_model::subst_expr_levels_fn_rel(dty[cid].1, dty[cid].0, ls);
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
+            assert(types_to(dty, denv, d, IoMode::Real, e, t, 0));
+            assert(typed(dty, denv, d, e, t));
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+/// CHECK, LITERALS.
+pub proof fn cc_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, cid: u64)
+    requires
+        (matches!(e, ExprSpec::NatLit(_)) && cid == crate::expr_arena_bridge::nat_type_id(denv.export))
+        || (matches!(e, ExprSpec::StringLit(_)) && cid == crate::expr_arena_bridge::string_type_id(denv.export)),
+    ensures
+        cc(dty, denv, g, e, ExprSpec::Const(cid, Seq::empty())),
+{
+    let t = ExprSpec::Const(cid, Seq::<LevelSpec>::empty());
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
+            assert(types_to(dty, denv, d, IoMode::Real, e, t, 0));
+            assert(typed(dty, denv, d, e, t));
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+/// A check claim moves along a reduction of its type.
+pub proof fn cc_whnf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t0: ExprSpec, t1: ExprSpec)
+    requires
+        cc(dty, denv, g, e, t0),
+        ci(dty, denv, g, e, t0),
+        cwh(dty, denv, g, t0, t1),
+    ensures
+        cc(dty, denv, g, e, t1),
+{
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t1) by {
+            let t2 = cc_use(dty, denv, g, d, e, t0);
+            rtyped_closed(dty, denv, d, e);
+            let (tt, f, h) = ci_use(dty, denv, g, d, e, t0);
+            let (s0, l0) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, d, t0, s), tconv(dty, denv, d, s, ExprSpec::Sort(l))]
+                typed(dty, denv, d, t0, s) && tconv(dty, denv, d, s, ExprSpec::Sort(l));
+            let s1 = choose|t3: ExprSpec| #[trigger] typed(dty, denv, d, t1, t3) && tconv(dty, denv, d, t3, s0);
+            assert(rtyped(dty, denv, d, t0));
+            assert(rtyped(dty, denv, d, t1));
+            sub_trans(rctx(g, t1), rctx(g, t0), d);
+            assert(deq_p_any(dty, denv, d, IoMode::InferWt, t0, t1));
+            kconv_wt_implies_tconv(dty, denv, d, t0, t1);
+            tconv_trans(dty, denv, d, t2, t0, t1);
+        }
+    }
+}
+
+
+/// CHECK, APPLICATION: the function checks at a Pi, the argument at a type
+/// the kernel compared with the domain (`cw`, a real conversion once both
+/// are types, which regularity gives), so the real application rule applies.
+#[verifier::spinoff_prover]
+pub proof fn cc_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, f: ExprSpec, a: ExprSpec, pa: ExprSpec, pb: ExprSpec, ta: ExprSpec)
+    requires
+        cc(dty, denv, g, f, crate::metatheory::pi(pa, pb)),
+        ci(dty, denv, g, f, crate::metatheory::pi(pa, pb)),
+        cc(dty, denv, g, a, ta),
+        ci(dty, denv, g, a, ta),
+        cw(dty, denv, g, pa, ta),
+    ensures
+        cc(dty, denv, g, ExprSpec::App(Box::new(f), Box::new(a)), subst_full(pb, seq![a], 0)),
+{
+    let e = ExprSpec::App(Box::new(f), Box::new(a));
+    let p = crate::metatheory::pi(pa, pb);
+    let t = subst_full(pb, seq![a], 0);
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
+            rctx_part(g, f, e, d);
+            rctx_part(g, a, e, d);
+            let tf = cc_use(dty, denv, g, d, f, p);
+            let ta2 = cc_use(dty, denv, g, d, a, ta);
+            rtyped_closed(dty, denv, d, f);
+            rtyped_closed(dty, denv, d, a);
+            let _ = ci_use(dty, denv, g, d, f, p);
+            let _ = ci_use(dty, denv, g, d, a, ta);
+            // the domain is typed: the Pi is a type
+            let (tp, lp) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, d, p, s), tconv(dty, denv, d, s, ExprSpec::Sort(l))]
+                typed(dty, denv, d, p, s) && tconv(dty, denv, d, s, ExprSpec::Sort(l));
+            let fp = choose|n: nat| #[trigger] types_to(dty, denv, d, IoMode::Real, p, tp, n);
+            let (st, ht, lt) = gen_bind_ty(dty, denv, d, BinderKind::Pi, pa, pb, tp, fp);
+            assert(typed(dty, denv, d, pa, st));
+            rctx_mono(g, pa, p);
+            sub_trans(rctx(g, pa), rctx(g, p), d);
+            let (s0, l0) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, d, ta, s), tconv(dty, denv, d, s, ExprSpec::Sort(l))]
+                typed(dty, denv, d, ta, s) && tconv(dty, denv, d, s, ExprSpec::Sort(l));
+            assert(rtyped(dty, denv, d, pa));
+            assert(rtyped(dty, denv, d, ta));
+            assert(deq_p_any(dty, denv, d, IoMode::InferWt, pa, ta));
+            kconv_wt_implies_tconv(dty, denv, d, pa, ta);
+            tconv_symm(dty, denv, d, pa, ta);
+            tconv_trans(dty, denv, d, ta2, ta, pa);
+            crate::replace::app_intro(dty, denv, d, f, a, tf, pa, pb, ta2);
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+/// CHECK, LET: the body at the value, and the annotation's checks.
+#[verifier::spinoff_prover]
+pub proof fn cc_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, ty: ExprSpec, v: ExprSpec, b: ExprSpec, t: ExprSpec, l: LevelSpec, vt: ExprSpec)
+    requires
+        cc(dty, denv, g, subst_full(b, seq![v], 0), t),
+        cc(dty, denv, g, ty, ExprSpec::Sort(l)),
+        cc(dty, denv, g, v, vt),
+        ci(dty, denv, g, v, vt),
+        cw(dty, denv, g, vt, ty),
+    ensures
+        cc(dty, denv, g, ExprSpec::Let(Box::new(ty), Box::new(v), Box::new(b)), t),
+{
+    let r = IoMode::Real;
+    let e = ExprSpec::Let(Box::new(ty), Box::new(v), Box::new(b));
+    let bv = subst_full(b, seq![v], 0);
+    if kh(dty, denv) {
+        assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(bv, i) by {
+            if !fv_absent(bv, i) {
+                crate::rctx::subst_free_fv(b, v, 0, i);
+            }
+        }
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
+            rctx_part(g, bv, e, d);
+            rctx_part(g, ty, e, d);
+            rctx_part(g, v, e, d);
+            let t2 = cc_use(dty, denv, g, d, bv, t);
+            let s = cc_use(dty, denv, g, d, ty, ExprSpec::Sort(l));
+            let vt2 = cc_use(dty, denv, g, d, v, vt);
+            rtyped_closed(dty, denv, d, v);
+            let _ = ci_use(dty, denv, g, d, v, vt);
+            let (s0, l0) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, d, vt, s), tconv(dty, denv, d, s, ExprSpec::Sort(l))]
+                typed(dty, denv, d, vt, s) && tconv(dty, denv, d, s, ExprSpec::Sort(l));
+            assert(rtyped(dty, denv, d, vt));
+            assert(rtyped(dty, denv, d, ty));
+            assert(deq_p_any(dty, denv, d, IoMode::InferWt, vt, ty));
+            kconv_wt_implies_tconv(dty, denv, d, vt, ty);
+            tconv_trans(dty, denv, d, vt2, vt, ty);
+            let fb = choose|n: nat| #[trigger] types_to(dty, denv, d, r, bv, t2, n);
+            let fs = choose|n: nat| #[trigger] types_to(dty, denv, d, r, ty, s, n);
+            let fv = choose|n: nat| #[trigger] types_to(dty, denv, d, r, v, vt2, n);
+            let hs = choose|h: nat| #[trigger] deq_p(dty, denv, d, r, s, ExprSpec::Sort(l), h);
+            let hv = choose|h: nat| #[trigger] deq_p(dty, denv, d, r, vt2, ty, h);
+            let f2 = fb + fs + fv + hs + hv;
+            types_to_mono(dty, denv, d, r, bv, t2, fb, f2);
+            types_to_mono(dty, denv, d, r, ty, s, fs, f2);
+            types_to_mono(dty, denv, d, r, v, vt2, fv, f2);
+            deq_p_mono(dty, denv, d, r, s, ExprSpec::Sort(l), hs, f2);
+            deq_p_mono(dty, denv, d, r, vt2, ty, hv, f2);
+            assert(fuel_marker(f2));
+            assert(let_check_marker(s, l, vt2));
+            assert(types_to(dty, denv, d, r, e, t2, f2 + 1));
+            assert(typed(dty, denv, d, e, t2));
+        }
+    }
+}
+
+
+/// CHECK, PI: the binder type and the body (at the kernel's local, moved to
+/// a far one by a swap) are types, so the real Pi rule applies at exactly
+/// the kernel's sort.
+#[verifier::spinoff_prover]
+pub proof fn cc_pi(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    a: ExprSpec,
+    b: ExprSpec,
+    lid: nat,
+    u: LevelSpec,
+    acc: LevelSpec,
+)
+    requires
+        cc(dty, denv, g, a, ExprSpec::Sort(u)),
+        cc(dty, denv, g, inst_free(b, lid), ExprSpec::Sort(acc)),
+        g.contains_key(lid),
+        g[lid] == a,
+        fv_absent(b, lid),
+        crate::expr_model::unreach(g, lid, a),
+        crate::expr_model::unreach(g, lid, b),
+    ensures
+        cc(dty, denv, g, ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(b)), ExprSpec::Sort(LevelSpec::IMax(Box::new(u), Box::new(acc)))),
+{
+    let r = IoMode::Real;
+    let x = ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(b));
+    let t = ExprSpec::Sort(LevelSpec::IMax(Box::new(u), Box::new(acc)));
+    let ob = inst_free(b, lid);
+    if kh(dty, denv) {
+        let na = choose|n: nat| #[trigger] crate::expr_model::deep_absent(g, lid, a, n);
+        let nb = choose|n: nat| #[trigger] crate::expr_model::deep_absent(g, lid, b, n);
+        crate::expr_model::deep_absent_mono(g, lid, a, na, na + nb);
+        crate::expr_model::deep_absent_mono(g, lid, b, nb, na + nb);
+        assert(crate::expr_model::deep_absent(g, lid, x, na + nb));
+        crate::rctx::rctx_fresh(g, x, lid);
+        crate::rctx::rctx_fresh(g, a, lid);
+        crate::metatheory::unreach_fv_absent(g, lid, a);
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) implies #[trigger] cc_at(dty, denv, d, x, t) by {
+            let es = seq![a, b, ExprSpec::Free(lid)];
+            let j2 = crate::swap_typed::fresh_local(d, es);
+            assert(fv_absent(es[0], j2) && fv_absent(es[1], j2) && fv_absent(es[2], j2));
+            rctx_part(g, a, x, d);
+            let ta = cc_use(dty, denv, g, d, a, ExprSpec::Sort(u));
+            assert(is_type(dty, denv, d, a));
+            let dj = d.insert(j2, a);
+            let ds = cswap(d, j2, lid).insert(lid, a);
+            cswap_insert(d, j2, a, j2, lid);
+            assert(sw(j2, j2, lid) == lid);
+            fswap_noop(a, j2, lid);
+            assert(cswap(dj, j2, lid) == ds);
+            swapped_ctx_ok(g, d, lid, j2, a, x, b);
+            wf_swap_insert(dty, denv, d, j2, lid, a);
+            let tb = cc_use(dty, denv, g, ds, ob, ExprSpec::Sort(acc));
+            let fb = choose|n: nat| #[trigger] types_to(dty, denv, ds, r, ob, tb, n);
+            let hb = choose|h: nat| #[trigger] deq_p(dty, denv, ds, r, tb, ExprSpec::Sort(acc), h);
+            sw_types_to(dty, denv, ds, r, ob, tb, fb, j2, lid);
+            sw_deq_p(dty, denv, ds, r, tb, ExprSpec::Sort(acc), hb, j2, lid);
+            cswap_insert(cswap(d, j2, lid), lid, a, j2, lid);
+            assert(sw(lid, j2, lid) == j2);
+            cswap_invol(d, j2, lid);
+            assert(cswap(ds, j2, lid) == dj);
+            open_rename(b, j2, lid);
+            fswap_invol(inst_free(b, j2), j2, lid);
+            fswap_noop(ExprSpec::Sort(acc), j2, lid);
+            let tb2 = fswap(tb, j2, lid);
+            let fa = choose|n: nat| #[trigger] types_to(dty, denv, d, r, a, ta, n);
+            let ha = choose|h: nat| #[trigger] deq_p(dty, denv, d, r, ta, ExprSpec::Sort(u), h);
+            let m = fa + ha + fb + hb;
+            types_to_mono(dty, denv, d, r, a, ta, fa, m);
+            deq_p_mono(dty, denv, d, r, ta, ExprSpec::Sort(u), ha, m);
+            types_to_mono(dty, denv, dj, r, inst_free(b, j2), tb2, fb, m);
+            deq_p_mono(dty, denv, dj, r, tb2, ExprSpec::Sort(acc), hb, m);
+            crate::swap_typed::pi_intro_far(dty, denv, d, r, a, b, ta, u, acc, j2, tb2, m + 1);
+            assert(typed(dty, denv, d, x, t));
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+/// CHECK, LAMBDA: the binder type is a type, and the body (at the kernel's
+/// local, moved to a far one) is really typed at a type converting to the
+/// body's inferred type; the kernel abstracts that type, and `levels_fit`
+/// makes abstraction and instantiation inverse.
+#[verifier::spinoff_prover]
+pub proof fn cc_lam(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    a: ExprSpec,
+    b: ExprSpec,
+    lid: nat,
+    u: LevelSpec,
+    c: ExprSpec,
+    nob: u16,
+)
+    requires
+        cc(dty, denv, g, a, ExprSpec::Sort(u)),
+        cc(dty, denv, g, inst_free(b, lid), c),
+        ci(dty, denv, g, inst_free(b, lid), c),
+        g.contains_key(lid),
+        g[lid] == a,
+        fv_absent(b, lid),
+        crate::expr_model::unreach(g, lid, a),
+        crate::expr_model::unreach(g, lid, b),
+        nlbv(c) <= 0,
+        crate::expr_model::levels_fit(c, nob),
+    ensures
+        cc(dty, denv, g, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b)), crate::metatheory::pi(a, crate::expr_model::abstr_full(c, seq![lid], 0))),
+{
+    let r = IoMode::Real;
+    let x = ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b));
+    let cod = crate::expr_model::abstr_full(c, seq![lid], 0);
+    let t = crate::metatheory::pi(a, cod);
+    let ob = inst_free(b, lid);
+    crate::expr_model::abstr_inst_roundtrip_fit(c, lid, 0, nob);
+    crate::expr_model::abstr_full_removes(c, lid, 0);
+    if kh(dty, denv) {
+        let na = choose|n: nat| #[trigger] crate::expr_model::deep_absent(g, lid, a, n);
+        let nb = choose|n: nat| #[trigger] crate::expr_model::deep_absent(g, lid, b, n);
+        crate::expr_model::deep_absent_mono(g, lid, a, na, na + nb);
+        crate::expr_model::deep_absent_mono(g, lid, b, nb, na + nb);
+        assert(crate::expr_model::deep_absent(g, lid, x, na + nb));
+        crate::rctx::rctx_fresh(g, x, lid);
+        crate::rctx::rctx_fresh(g, a, lid);
+        crate::metatheory::unreach_fv_absent(g, lid, a);
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) implies #[trigger] cc_at(dty, denv, d, x, t) by {
+            let es = seq![a, b, ExprSpec::Free(lid), c];
+            let j2 = crate::swap_typed::fresh_local(d, es);
+            assert(fv_absent(es[0], j2) && fv_absent(es[1], j2) && fv_absent(es[2], j2) && fv_absent(es[3], j2));
+            rctx_part(g, a, x, d);
+            let ta = cc_use(dty, denv, g, d, a, ExprSpec::Sort(u));
+            assert(is_type(dty, denv, d, a));
+            let dj = d.insert(j2, a);
+            let ds = cswap(d, j2, lid).insert(lid, a);
+            cswap_insert(d, j2, a, j2, lid);
+            assert(sw(j2, j2, lid) == lid);
+            fswap_noop(a, j2, lid);
+            assert(cswap(dj, j2, lid) == ds);
+            swapped_ctx_ok(g, d, lid, j2, a, x, b);
+            wf_swap_insert(dty, denv, d, j2, lid, a);
+            let tb = cc_use(dty, denv, g, ds, ob, c);
+            rtyped_closed(dty, denv, ds, ob);
+            let _ = ci_use(dty, denv, g, ds, ob, c);
+            // the codomain mentions only locals of `d`
+            let (sc, lc) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, ds, c, s), tconv(dty, denv, ds, s, ExprSpec::Sort(l))]
+                typed(dty, denv, ds, c, s) && tconv(dty, denv, ds, s, ExprSpec::Sort(l));
+            let fc = choose|f: nat| #[trigger] types_to(dty, denv, ds, r, c, sc, f);
+            crate::real_gen::rt_fv_in(dty, denv, ds, c, sc, fc);
+            lam_cod_fv_in(d, j2, lid, a, c);
+            // the body, swapped back
+            let fb = choose|n: nat| #[trigger] types_to(dty, denv, ds, r, ob, tb, n);
+            let hb = choose|h: nat| #[trigger] deq_p(dty, denv, ds, r, tb, c, h);
+            sw_types_to(dty, denv, ds, r, ob, tb, fb, j2, lid);
+            sw_deq_p(dty, denv, ds, r, tb, c, hb, j2, lid);
+            cswap_insert(cswap(d, j2, lid), lid, a, j2, lid);
+            assert(sw(lid, j2, lid) == j2);
+            cswap_invol(d, j2, lid);
+            assert(cswap(ds, j2, lid) == dj);
+            open_rename(b, j2, lid);
+            fswap_invol(inst_free(b, j2), j2, lid);
+            crate::expr_model::abstr_full_keeps_absent(c, lid, 0, j2);
+            open_rename(cod, j2, lid);
+            fswap_invol(inst_free(cod, j2), j2, lid);
+            assert(fswap(c, j2, lid) == inst_free(cod, j2));
+            let tb2 = fswap(tb, j2, lid);
+            let fa = choose|n: nat| #[trigger] types_to(dty, denv, d, r, a, ta, n);
+            let ha = choose|h: nat| #[trigger] deq_p(dty, denv, d, r, ta, ExprSpec::Sort(u), h);
+            let m = fa + ha + fb + hb;
+            types_to_mono(dty, denv, d, r, a, ta, fa, m);
+            deq_p_mono(dty, denv, d, r, ta, ExprSpec::Sort(u), ha, m);
+            types_to_mono(dty, denv, dj, r, inst_free(b, j2), tb2, fb, m);
+            deq_p_mono(dty, denv, dj, r, tb2, inst_free(cod, j2), hb, m);
+            crate::swap_typed::lam_intro_far(dty, denv, d, r, a, b, cod, ta, u, j2, tb2, m + 1);
+            assert(typed(dty, denv, d, x, t));
+            tconv_refl(dty, denv, d, t);
+        }
+    }
+}
+
+
 /// `a` is a proposition: its inferred type is a sort at a level that is
 /// zero under every assignment.
 pub open spec fn cprop(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, a: ExprSpec) -> bool {

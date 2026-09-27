@@ -542,6 +542,7 @@ proof fn pw_walk(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     d: Map<nat, ExprSpec>,
+    io: IoMode,
     am: Seq<ExprSpec>,
     np: nat,
     idx: usize,
@@ -556,16 +557,16 @@ proof fn pw_walk(
         cs.len() == np + idx as nat + 1,
         ws.len() == np + idx as nat + 1,
         j <= np + idx as nat,
-        forall|k: int| j <= k <= np + idx as nat ==> #[trigger] deq_p_any(dty, denv, d, IoMode::InferWt, cs[k], ws[k]),
+        forall|k: int| j <= k <= np + idx as nat ==> #[trigger] deq_p_any(dty, denv, d, io, cs[k], ws[k]),
         forall|k: int| 0 <= k <= np + idx as nat ==> (#[trigger] ws[k]) is Bind && ws[k]->Bind_0 == BinderKind::Pi,
         forall|k: int| #![trigger ws[k]] 0 <= k < np + idx as nat ==> cs[k + 1] == subst_full(pbod(ws[k]), seq![psq(am, np, s, idx as nat)[k]], 0),
         pdom(ws[(np + idx as nat) as int]) == btm,
     ensures
-        proj_field_type(dty, denv, d, IoMode::InferWt, h, cs[j as int], am.skip(pw_skip(j, np) as int), pw_np(j, np),
+        proj_field_type(dty, denv, d, io, h, cs[j as int], am.skip(pw_skip(j, np) as int), pw_np(j, np),
             pw_fld(j, np) as usize, pw_rem(j, np, idx as nat), s, btm),
     decreases np + idx as nat - j,
 {
-    let w = IoMode::InferWt;
+    let w = io;
     let m = np + idx as nat;
     let jj = j as int;
     assert(deq_p_any(dty, denv, d, w, cs[jj], ws[jj]));
@@ -578,7 +579,7 @@ proof fn pw_walk(
         proj_field_type_final_p(dty, denv, d, w, hj, cs[jj], bt, b, am.skip(np as int), idx, s);
         hj
     } else {
-        let hr = pw_walk(dty, denv, d, am, np, idx, s, cs, ws, btm, j + 1);
+        let hr = pw_walk(dty, denv, d, io, am, np, idx, s, cs, ws, btm, j + 1);
         let hh = hj + hr;
         deq_p_mono(dty, denv, d, w, cs[jj], ws[jj], hj, hh);
         let j1 = j + 1;
@@ -657,7 +658,7 @@ pub proof fn ci_proj(
                 pwalk_stage(dty, denv, g, d, idx, s, ind, cid, ls, am, cs, ws, btm, sty, fx, hx, tsp, k as nat);
             }
             pwalk_stage(dty, denv, g, d, idx, s, ind, cid, ls, am, cs, ws, btm, sty, fx, hx, tsp, m);
-            let hw = pw_walk(dty, denv, d, am, np, idx, s, cs, ws, btm, 0);
+            let hw = pw_walk(dty, denv, d, w, am, np, idx, s, cs, ws, btm, 0);
             assert(am.skip(0) =~= am);
             // the field type is a type: the domain of the last Pi
             let wm = ws[m as int];
@@ -685,6 +686,68 @@ pub proof fn ci_proj(
             assert(types_to(dty, denv, d, w, e, btm, f2 + 1));
             deq_p_refl(dty, denv, d, w, btm, 0);
             assert(wt_marker(btm, f2 + 1));
+        }
+    }
+}
+
+/// CHECK, PROJECTION: the structure checks at the kernel's structure type,
+/// so the stages are types and the real walk goes through, at exactly the
+/// kernel's field type.
+#[verifier::spinoff_prover]
+pub proof fn cc_proj(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+)
+    requires
+        pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
+        crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
+    ensures
+        crate::kclaims::cc(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
+{
+    let r = IoMode::Real;
+    let e = ExprSpec::Proj(idx, Box::new(s));
+    let np = denv.ctor_np[cid] as nat;
+    let m = np + idx as nat;
+    let sp = spine_app(ExprSpec::Const(ind, ls), am);
+    let cty = ctor_ty_at(dty, cid, ls);
+    if kh(dty, denv) {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d)
+            implies #[trigger] crate::kclaims::cc_at(dty, denv, d, e, btm) by {
+            rctx_part(g, s, e, d);
+            let sty = crate::kclaims::cc_use(dty, denv, g, d, s, sp);
+            rtyped_closed(dty, denv, d, s);
+            let _ = ci_use(dty, denv, g, d, s, sp);
+            let (tsp, l0) = choose|t: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, d, sp, t), tconv(dty, denv, d, t, ExprSpec::Sort(l))]
+                typed(dty, denv, d, sp, t) && tconv(dty, denv, d, t, ExprSpec::Sort(l));
+            let fx = choose|n: nat| #[trigger] types_to(dty, denv, d, r, s, sty, n);
+            let hx = choose|h: nat| #[trigger] deq_p(dty, denv, d, r, sty, sp, h);
+            assert forall|k: int| 0 <= k <= m implies #[trigger] deq_p_any(dty, denv, d, r, cs[k], ws[k]) by {
+                pwalk_stage(dty, denv, g, d, idx, s, ind, cid, ls, am, cs, ws, btm, sty, fx, hx, tsp, k as nat);
+            }
+            let hw = pw_walk(dty, denv, d, r, am, np, idx, s, cs, ws, btm, 0);
+            assert(am.skip(0) =~= am);
+            assert(struct_ok1(dty, denv, ind, cid));
+            crate::expr_model::subst_expr_levels_sat_rel(dty[cid].1, dty[cid].0, ls);
+            let f2 = fx + hx + hw;
+            types_to_mono(dty, denv, d, r, s, sty, fx, f2);
+            deq_p_mono(dty, denv, d, r, sty, sp, hx, f2);
+            assert(types_to(dty, denv, d, r, ExprSpec::Const(cid, ls), cty, f2));
+            proj_field_type_mono(dty, denv, d, r, hw, f2, cty, am, np, 0, idx as nat, s, btm);
+            assert(denv.ctor_num_params(cid) == Some(np as u16));
+            assert(proj_marker(f2, sty, ind, ls, am, cid, np as u16, cty));
+            assert(types_to(dty, denv, d, r, e, btm, f2 + 1));
+            assert(typed(dty, denv, d, e, btm));
+            tconv_refl(dty, denv, d, btm);
         }
     }
 }
