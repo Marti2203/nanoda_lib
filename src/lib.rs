@@ -20,6 +20,7 @@ pub mod confluence;
 pub mod conv_cr;
 pub mod conv_frag;
 pub mod fclose;
+pub mod frag_hyps;
 pub mod env_weaken;
 pub mod expr;
 pub mod expr_arena_bridge;

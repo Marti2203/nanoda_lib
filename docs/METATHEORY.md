@@ -564,3 +564,15 @@ Under `cr_ext`, every reduction step of `env` is a conversion of
 (`ceq_jn_ext`), and injectivity holds in `env` (`ceq_bind_inj`,
 `ceq_sort_inj` with `ne = nofold(env)`). `h_nat_ext` is the trust Lean's own
 kernel places in its extension.
+
+### The injectivity hypotheses on the eta-free fragment (`frag_hyps.rs`)
+
+`jn_tconv`: joinability modulo level equivalence is real conversion. With it,
+`frag_hyps_ext` proves, in a real environment under `cr_ext`, the fragment
+forms of the kernel's hypotheses in every context: `h_sort_inj_frag`,
+`h_pi_inj_dom_frag`, `h_pi_inj_app_frag`. They are `h_sort_inj`,
+`h_pi_inj_dom` and `h_pi_inj_app` with the premise conversion restricted to
+`ceq` (no eta, no typed leaves). The application form needs no `tconv(targ,
+a2)` premise: a really typed argument is closed, and instantiation respects
+joinability. The full hypotheses need typed inversion (proof irrelevance,
+eta), the next stage.
