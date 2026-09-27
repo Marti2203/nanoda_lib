@@ -113,14 +113,16 @@ pub open spec fn lctx_wf(
 }
 
 /// Every declared constant's type is a closed type, and every definition's
-/// value has its declared type under the same universe parameters (delta
-/// steps need the second). The kernel checked both when the declaration was
-/// added.
+/// value has, under the same universe parameters, a type convertible to its
+/// declared one (delta steps need the second). The kernel checked both when
+/// the declaration was added; it infers a value's type and compares it with
+/// the declared one, which is what the second says.
 pub open spec fn env_wf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     (forall|cid: u64| #[trigger] dty.contains_key(cid) ==> is_type(dty, denv, Map::empty(), dty[cid].1))
     && (forall|cid: u64|
         #[trigger] denv.defs.contains_key(cid) ==> dty.contains_key(cid) && dty[cid].0 == denv.defs[cid].0
-            && typed(dty, denv, Map::empty(), denv.defs[cid].1, dty[cid].1))
+            && exists|t2: ExprSpec| #[trigger] typed(dty, denv, Map::empty(), denv.defs[cid].1, t2)
+                && tconv(dty, denv, Map::empty(), t2, dty[cid].1))
 }
 
 /// UNIQUENESS OF TYPING: two real types of one term are convertible.

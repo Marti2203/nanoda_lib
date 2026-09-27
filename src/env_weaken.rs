@@ -806,4 +806,41 @@ proof fn ew_esp(
 }
 
 
+
+/// Real typing, conversion and being a type survive growing the environment.
+pub proof fn ew_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
+    requires
+        env_le(dty, denv, dty2, denv2),
+        crate::metatheory::typed(dty, denv, g, e, t),
+    ensures
+        crate::metatheory::typed(dty2, denv2, g, e, t),
+{
+    let f = choose|f: nat| #[trigger] types_to(dty, denv, g, IoMode::Real, e, t, f);
+    ew_types_to(dty, denv, dty2, denv2, g, IoMode::Real, e, t, f);
+}
+
+pub proof fn ew_tconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
+    requires
+        env_le(dty, denv, dty2, denv2),
+        crate::metatheory::tconv(dty, denv, g, x, y),
+    ensures
+        crate::metatheory::tconv(dty2, denv2, g, x, y),
+{
+    let h = choose|h: nat| #[trigger] deq_p(dty, denv, g, IoMode::Real, x, y, h);
+    ew_deq_p(dty, denv, dty2, denv2, g, IoMode::Real, x, y, h);
+}
+
+pub proof fn ew_is_type(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec)
+    requires
+        env_le(dty, denv, dty2, denv2),
+        crate::metatheory::is_type(dty, denv, g, e),
+    ensures
+        crate::metatheory::is_type(dty2, denv2, g, e),
+{
+    let (s, l) = choose|s: ExprSpec, l: LevelSpec| #![trigger crate::metatheory::typed(dty, denv, g, e, s), crate::metatheory::tconv(dty, denv, g, s, ExprSpec::Sort(l))]
+        crate::metatheory::typed(dty, denv, g, e, s) && crate::metatheory::tconv(dty, denv, g, s, ExprSpec::Sort(l));
+    ew_typed(dty, denv, dty2, denv2, g, e, s);
+    ew_tconv(dty, denv, dty2, denv2, g, s, ExprSpec::Sort(l));
+}
+
 } // verus!

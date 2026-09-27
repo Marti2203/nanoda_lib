@@ -245,6 +245,17 @@ impl<'p> ExportFile<'p> {
                     let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
                     tc.check_declar_info_unwrap(d);
                     proof {
+                        assert forall|j: int| 0 <= j < recursor_data.rec_rules@.len() implies crate::util_model::owns(*tc.ctx, #[trigger] recursor_data.rec_rules@[j].val) by {
+                            crate::inductive::export_tagged_owned(*tc.ctx, recursor_data.rec_rules@[j].val);
+                        }
+                    }
+                    // VERUS-REWRITE(tested-input): the recursor's rules are checked
+                    // too -- each value closed, and inferred in `Check` mode, so its
+                    // universe levels are the recursor's. The block's checker only
+                    // compares them with the rules it builds, by conversion. Never
+                    // fails on the rules Lean exports.
+                    tc.check_rec_rules(&recursor_data.rec_rules);
+                    proof {
                         declar_cert_intro(*self, env, *d);
                     }
                 }
@@ -528,6 +539,50 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         inferred_type
+    }
+
+    /// A recursor's rules, checked: each rule's value is closed, and it is
+    /// inferred in `Check` mode, so its universe levels are the recursor's.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn check_rec_rules(&mut self, rules: &[crate::env::RecRule<'t>])
+        requires
+            tc_wf(*old(self)),
+            forall|j: int| 0 <= j < rules@.len() ==> crate::util_model::owns(*(*old(self)).ctx, #[trigger] rules@[j].val),
+        ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).declar_info == (*old(self)).declar_info,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            forall|j: int| 0 <= j < rules@.len() ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] rules@[j].val))
+                && klp(*old(self), to_model_expr(rules@[j].val)),
+    {
+        let mut k: usize = 0;
+        while k < rules.len()
+            invariant
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
+                tc_wf(*self),
+                (*self).env == old(self).env,
+                (*self).declar_info == old(self).declar_info,
+                self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                k <= rules@.len(),
+                forall|j: int| 0 <= j < rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] rules@[j].val),
+                forall|j: int| 0 <= j < k ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] rules@[j].val))
+                    && klp(*old(self), to_model_expr(rules@[j].val)),
+            decreases rules@.len() - k,
+        {
+            let v = rules[k].val;
+            self.assert_closed(v);
+            proof {
+                no_fv_in_scope(*self, v);
+            }
+            self.infer(v, Check);
+            k = k + 1;
+        }
     }
 
     /// The checks of `check_declar_info`, verified: on success the declared
@@ -5980,6 +6035,9 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
         && crate::level_inst::elp_in(to_model_expr(v), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
         && (crate::kclaims::kh(dty, denv) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), to_model_expr(v), t2)
             && crate::metatheory::tconv(dty, denv, Map::empty(), t2, ty)))
+    &&& (d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
+        ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] r.rec_rules@[j].val))
+            && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))))
 }
 
 /// A definition-like declaration's value.
@@ -6008,6 +6066,9 @@ pub proof fn declar_cert_intro<'x, 't, 'p>(ef: crate::util::ExportFile<'p>, env:
         declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))
             && crate::level_inst::elp_in(to_model_expr(v), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
             && kval_cert(env, to_model_expr(v), to_model_expr(crate::env::declar_info(d).ty)),
+        d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
+            ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] r.rec_rules@[j].val))
+                && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))),
     ensures
         declar_cert_at(ef, d, env.visible()),
 {
