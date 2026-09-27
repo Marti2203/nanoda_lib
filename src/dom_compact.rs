@@ -2237,6 +2237,118 @@ pub proof fn below_lam_nonbot(u: Cpt, gen: Cpt)
     }
 }
 
+/// A generator whose step list sits inside another's, with a lower
+/// domain for Pi, lies below it.
+pub proof fn gen_below(u: Cpt, j: Cpt, lam: bool, pre: Seq<(Cpt, Cpt)>, post: Seq<(Cpt, Cpt)>)
+    requires
+        kind(u, lam),
+        kind(j, lam),
+        steps(j, lam) == pre + steps(u, lam) + post,
+        !lam ==> le(*u->Pi_0, *j->Pi_0),
+    ensures
+        le(u, j),
+{
+    let off = pre.len() as int;
+    let su = steps(u, lam);
+    let sj = steps(j, lam);
+    assert forall|k: int| 0 <= k < su.len() implies 0 <= k + off < sj.len() && sj[k + off] == #[trigger] su[k] by {
+        assert((pre + su + post)[k + off] == su[k]);
+    }
+    if lam {
+        assert forall|k: int| 0 <= k < u->Lam_0.len() implies 0 <= k + off < j->Lam_0.len() && j->Lam_0[k + off] == #[trigger] u->Lam_0[k] by {
+            assert(su[k] == u->Lam_0[k]);
+        }
+    } else {
+        assert forall|k: int| 0 <= k < u->Pi_1.len() implies 0 <= k + off < j->Pi_1.len() && j->Pi_1[k + off] == #[trigger] u->Pi_1[k] by {
+            assert(su[k] == u->Pi_1[k]);
+        }
+    }
+    entries_below(u, j, off);
+    let t = seq![j];
+    assert(t[0] == j);
+    if !lam {
+        let d = *j->Pi_0;
+        parts_lower(j);
+        assert(pi_doms(t, ht(j), 1) == seq![d]) by {
+            reveal_with_fuel(pi_doms, 2);
+            assert(pi_doms(t, ht(j), 0) == Seq::<Cpt>::empty());
+            assert(Seq::<Cpt>::empty().push(d) =~= seq![d]);
+        }
+        assert(seq![d][0] == d);
+        assert(fits(seq![d], dec(ht(j))));
+        assert(fits(seq![d], ht(d)));
+        le_set_budget(*u->Pi_0, seq![d], ht(d), dec(ht(j)));
+        assert(t[0] is Pi);
+    }
+}
+
+/// `y` below an element of a fitting set is below the set's join.
+pub proof fn le_into_set(y: Cpt, z: Cpt, s: Seq<Cpt>, b: nat)
+    requires
+        le(y, z),
+        s.contains(z),
+        fits(s, b),
+    ensures
+        le_set(y, s, b),
+{
+    le_set_mem(z, s, b);
+    assert(seq![z][0] == z);
+    assert(fits(seq![z], ht(z)));
+    assert forall|w: Cpt| #[trigger] seq![z].contains(w) implies le_set(w, s, b) by {
+        assert(w == z);
+    }
+    le_set_trans(y, seq![z], s, ht(z), b);
+}
+
+/// A generator with the same inputs and larger outputs (and, for Pi, a
+/// larger domain) lies above.
+pub proof fn gen_raise(u: Cpt, j: Cpt, lam: bool)
+    requires
+        kind(u, lam),
+        kind(j, lam),
+        steps(j, lam).len() == steps(u, lam).len(),
+        forall|k: int| 0 <= k < steps(u, lam).len() ==> steps(j, lam)[k].0 == #[trigger] steps(u, lam)[k].0
+            && le(steps(u, lam)[k].1, steps(j, lam)[k].1),
+        !lam ==> le(*u->Pi_0, *j->Pi_0),
+    ensures
+        le(u, j),
+{
+    let su = steps(u, lam);
+    let sj = steps(j, lam);
+    let t = seq![j];
+    assert(t[0] == j);
+    parts_lower(j);
+    assert forall|k: int| 0 <= k < su.len() implies
+        le_set(#[trigger] su[k].1, selk(t, su[k].0, ht(j), lam), dec(ht(j))) by {
+        assert(sj[k].0 == su[k].0 && le(su[k].1, sj[k].1));
+        entry_selected(j, k, ht(j));
+        selk_fits(j, su[k].0, lam);
+        le_into_set(su[k].1, sj[k].1, selk(t, su[k].0, ht(j), lam), dec(ht(j)));
+    }
+    if lam {
+        assert forall|k: int| 0 <= k < u->Lam_0.len() implies
+            le_set(#[trigger] u->Lam_0[k].1, sel_lam(t, u->Lam_0[k].0, ht(j), 1), dec(ht(j))) by {
+            assert(su[k] == u->Lam_0[k]);
+        }
+    } else {
+        assert forall|k: int| 0 <= k < u->Pi_1.len() implies
+            le_set(#[trigger] u->Pi_1[k].1, sel_pi(t, u->Pi_1[k].0, ht(j), 1), dec(ht(j))) by {
+            assert(su[k] == u->Pi_1[k]);
+        }
+        let d = *j->Pi_0;
+        assert(pi_doms(t, ht(j), 1) == seq![d]) by {
+            reveal_with_fuel(pi_doms, 2);
+            assert(pi_doms(t, ht(j), 0) == Seq::<Cpt>::empty());
+            assert(Seq::<Cpt>::empty().push(d) =~= seq![d]);
+        }
+        assert(seq![d][0] == d);
+        assert(fits(seq![d], dec(ht(j))));
+        assert(fits(seq![d], ht(d)));
+        le_set_budget(*u->Pi_0, seq![d], ht(d), dec(ht(j)));
+        assert(t[0] is Pi);
+    }
+}
+
 /// Sanity examples: the order on concrete elements.
 proof fn order_examples() {
     let f = Cpt::Lam(seq![(Cpt::U, Cpt::U)]);
