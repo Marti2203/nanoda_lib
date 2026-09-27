@@ -29,18 +29,46 @@ terms.
 - Layer 2 on the fragment: Pi/Sort injectivity for `ceq`
   (`injectivity.rs`), and the kernel's injectivity hypotheses with eta-free
   premises (`frag_hyps.rs`).
+- Typed inversion for a typed conversion judgment (option A, see below):
+  Pi injectivity, Sort injectivity and Pi/Sort disjointness for every
+  derivable conversion of `ti_syntax` -- with eta, proof irrelevance,
+  impredicative `Prop` and Lean's levels (`dom_fund.rs`).
 
 **Missing.** Everything below is assumed, not proven. `kh_hyp` =
 `hyps_all` + `h_sr` + `h_sr_leaf` is what the export theorem still takes.
 
 | gap | what is assumed | why it is open | plan |
 |---|---|---|---|
-| full injectivity | `h_pi_inj_app`, `h_pi_inj_dom`, `h_sort_inj` over `tconv` | `tconv` has eta and typed leaves (proof irrelevance, unit-eta, struct-eta); untyped Church-Rosser cannot see them | A: a typed conversion judgment with the paper's domain model and logical relation, then connect `kconv_wt`/`tconv` to it; B afterwards: interpret nanoda's untyped terms directly |
+| full injectivity | `h_pi_inj_app`, `h_pi_inj_dom`, `h_sort_inj` over `tconv` | `tconv` has eta and typed leaves (proof irrelevance, unit-eta, struct-eta); untyped Church-Rosser cannot see them | A's typed half is DONE for `ti_syntax` (Pi, lambda, application, beta, eta, sorts with levels, proof irrelevance); open: translate `tconv`/`kconv_wt` derivations into `ti_syntax` derivations (constants, inductives, projections, literals, `let` are not in `ti_syntax` yet); B afterwards: interpret nanoda's untyped terms directly |
 | uniqueness of typing | `h_unique_in` | a Lean4Lean conjecture; not a corollary of the paper's method | none yet |
 | subject reduction | `h_sr`, `h_sr_leaf` (iota/quotient steps keep types) | needs injectivity and a substitution lemma for typing; recursor rules need the inductive checker's guarantees | the paper derives SR for its fragment; extend per feature |
 | Nat extension | `h_nat_ext`: each built-in Nat fold is joinable, without folding, with the op application | a named trust assumption, as in Lean's kernel | plausible for Init by inspection, not proven (export of Lean 4.30.0-rc2): every folded op is structural -- `add`/`sub`/`mul`/`pow`/`beq`/`ble` by `Nat.brecOn`, `div`/`mod` by fuel helpers (`Nat.div.go`, `Nat.modCore.go`), `gcd` by `WellFounded.Nat.fix`, which runs `Nat.rec` on fuel -- so each reduces by delta/beta/iota. Not checked: whether nanoda validates these bodies when they are declared |
 | features outside the paper | — | the paper covers Pi, Sigma, unit, Nat, Id, Prop with irrelevance, type-in-type | Lean's universe levels (`imax`, impredicative Prop), inductive families and recursors, K-like reduction, quotients, general structure eta, projections, Nat/String literals, `let` |
 | well-typed chains | the theorem is about `kconv_wt`, not `kconv` | `kconv ⟹ tconv` for arbitrary chains is FALSE (`option1_refuted`) | the kernel's derivations as `InferWt` derivations (S4) |
+
+## Typed inversion, option A (branch `metatheory`, 2026-09-27)
+
+Following arXiv 2607.13662 (blueprint and errata: `docs/typed-inversion/blueprint.md`).
+
+| stage | modules | content |
+|---|---|---|
+| 1-2 | `dom_compact`, `dom_typing` | compacts (a CUSL), application, stage-indexed semantic typing |
+| 3 | `ti_syntax`, `ti_subst`, `ti_meta`, `ti_sub`, `ti_hred`, `ti_chain` | the typed judgment (derivation trees), renaming, substitution, head reduction, type-conversion chains |
+| 4 | `dom_model`, `dom_sound` | the domain model and its soundness (Thm 2.31) |
+| 5 | `dom_rel*`, `dom_proj` | the logical relation: PER, monotonicity, head expansion, stability (joint projection) |
+| 6 | `dom_adeq_base`, `dom_adeq_syn`, `dom_adeq`, `dom_fund` | related substitutions, adequacy (Thm 2.35), the fundamental lemma (Thm 2.36), `pi_inj`, `sort_inj`, `pi_not_sort` (Cor 2.37) |
+
+Differences from the paper:
+- Lean levels: `Sort l : Sort (succ l)`, Pi at `imax`, `Prop` = a level
+  equivalent to zero. Single type conversions do not compose across levels,
+  so the relation and `pi_inj` use chains of type conversions (`tchain`),
+  each link at its own sort. `sort_inj` gives level equivalence.
+- Rules carry their presuppositions: congruences under both contexts, beta
+  with both sides typed, eta with its domain's AND codomain's typing
+  (`Eta(l, l2)`; adequacy needs the codomain's denotation join-closed at the
+  argument, which only a typing derivation of the codomain supplies).
+- Proof irrelevance (`Irr`) as in nanoda: any two proofs of a proposition
+  convert.
 
 ## The plan the user chose (2026-09-26)
 
