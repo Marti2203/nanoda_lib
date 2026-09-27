@@ -223,6 +223,7 @@ pub open spec fn step_ok(r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 }
 
 /// A derivation is valid: every rule instance is correct.
+#[verifier::opaque]
 pub open spec fn valid(d: Deriv) -> bool
     decreases d,
 {
@@ -232,6 +233,7 @@ pub open spec fn valid(d: Deriv) -> bool
 }
 
 /// `j` is derivable.
+#[verifier::opaque]
 pub open spec fn derivable(j: Jd) -> bool {
     exists|d: Deriv| valid(d) && #[trigger] concl(d) == j
 }

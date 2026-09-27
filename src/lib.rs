@@ -64,6 +64,7 @@ pub mod swap_typed;
 pub mod tc;
 pub mod tc_model;
 pub mod ti_meta;
+pub mod ti_sub;
 pub mod ti_subst;
 pub mod ti_syntax;
 pub mod telescope;

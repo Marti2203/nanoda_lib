@@ -28,6 +28,7 @@ pub proof fn valid_node(r: Rule, j: Jd, ps: Seq<Deriv>)
         valid(node(r, j, ps)),
         concl(node(r, j, ps)) == j,
 {
+    reveal_with_fuel(valid, 1);
 }
 
 /// The premises of a valid node are valid.
@@ -36,7 +37,19 @@ pub proof fn valid_prems(d: Deriv)
         valid(d),
     ensures
         forall|k: int| 0 <= k < d->Node_2.len() ==> valid(#[trigger] d->Node_2[k]),
+        step_ok(d->Node_0, d->Node_1, d->Node_2),
 {
+    reveal_with_fuel(valid, 1);
+}
+
+/// A valid derivation proves its conclusion.
+pub proof fn mk_d(d: Deriv)
+    requires
+        valid(d),
+    ensures
+        derivable(concl(d)),
+{
+    reveal(derivable);
 }
 
 /// Symmetry, transitivity and the diagonals, as derivations.
