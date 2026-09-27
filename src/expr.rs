@@ -2748,7 +2748,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     debug_assert!(dbj_idx >= offset);
                     proof {
                         assert(crate::expr_arena_bridge::to_model(e)
-                            == crate::expr_model::ExprSpec::Var(dbj_idx as u32));
+                            == crate::expr_model::ExprSpec::Var(dbj_idx as nat));
                         assert(crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e))
                             == dbj_idx as nat + 1);
                     }
@@ -3492,7 +3492,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 i <= np,
                 n == np as nat,
                 crate::expr_arena_bridge::to_model(acc) == crate::beta_model::spine_app(
-                    crate::expr_model::ExprSpec::Var(np as u32),
+                    crate::expr_model::ExprSpec::Var(np as nat),
                     crate::e2_lift::vargs0(n).subrange(0, i as int),
                 ),
             decreases np - i,
@@ -3502,7 +3502,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             proof {
                 let a = crate::e2_lift::vargs0(n);
                 assert(a.subrange(0, i as int + 1) =~= a.subrange(0, i as int).push(a[i as int]));
-                crate::beta_model::spine_app_compose_last(crate::expr_model::ExprSpec::Var(np as u32), a.subrange(0, i as int), a[i as int]);
+                crate::beta_model::spine_app_compose_last(crate::expr_model::ExprSpec::Var(np as nat), a.subrange(0, i as int), a[i as int]);
             }
             i = i + 1;
         }
@@ -3596,7 +3596,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         n == np as nat + nf as nat,
                         i <= args@.len(),
                         forall|j: int| 0 <= j < i ==> crate::expr_arena_bridge::to_model(#[trigger] args@[j])
-                            == crate::expr_model::ExprSpec::Var((n - 1 - j) as u32),
+                            == crate::expr_model::ExprSpec::Var((n - 1 - j) as nat),
                     decreases args@.len() - i,
                 {
                     match self.read_expr(args[i]) {

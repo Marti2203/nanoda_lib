@@ -3163,7 +3163,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             dbj_level < num_open_binders,
         ensures
             crate::util_model::owns(*final(self), result),
-            to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as u32),
+            to_model_expr(result) == ExprSpec::Var((num_open_binders - dbj_level - 1) as nat),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -3177,7 +3177,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             dbj_idx < u16::MAX,
         ensures
             crate::util_model::owns(*final(self), result),
-            to_model_expr(result) == ExprSpec::Var(dbj_idx as u32),
+            to_model_expr(result) == ExprSpec::Var(dbj_idx as nat),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),

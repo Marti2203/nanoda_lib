@@ -270,7 +270,7 @@ pub proof fn subst_full_spine(h: ExprSpec, xs: Seq<ExprSpec>, ss: Seq<ExprSpec>,
 /// The parameter variables a constructor's codomain applies its inductive
 /// to, under the constructor's `n` binders.
 pub open spec fn cod_vars(np: nat, n: nat) -> Seq<ExprSpec> {
-    Seq::new(np, |i: int| ExprSpec::Var((n - 1 - i) as u32))
+    Seq::new(np, |i: int| ExprSpec::Var((n - 1 - i) as nat))
 }
 
 /// A STRUCTURE'S CONSTRUCTOR, as the inductive checker certifies it: its

@@ -134,7 +134,7 @@ pub enum BinderKind {
 // (derives dropped in delta-lift L1: `ExprSpec` is now ghost-only -- its `Const`
 // payload is a `Seq<LevelSpec>`, which has no runtime representation.)
 pub enum ExprSpec {
-    Var(u32),
+    Var(nat),
     Free(nat),
     /// No longer stands in for anything -- `Sort`/`Const`/`NatLit`/
     /// `StringLit` used to all collapse into this (their payload was
@@ -1453,7 +1453,7 @@ pub open spec fn abstr_levels_full(aids: (nat, nat), e: ExprSpec, start_pos: u16
             Some(s) => if s < start_pos {
                 e
             } else if (s as int) < (num_open_binders as int) {
-                ExprSpec::Var((num_open_binders - s - 1) as u32)
+                ExprSpec::Var((num_open_binders - s - 1) as nat)
             } else {
                 ExprSpec::Var(0)
             },
@@ -1823,7 +1823,7 @@ pub proof fn abstr_inst_roundtrip(e: ExprSpec, x: nat, off: nat)
         ExprSpec::Free(id) => {
             if id == x {
                 find_from_end_first_match(seq![x], id, 0);
-                assert(((off + 0) as u32) as nat == off);
+                assert((off + 0) as nat == off);
             } else {
                 find_from_end_no_match(seq![x], id);
             }
@@ -1902,7 +1902,7 @@ pub proof fn abstr_inst_roundtrip_fit(e: ExprSpec, x: nat, off: nat, nob: u16)
             ExprSpec::Free(id) => {
                 if id == x {
                     find_from_end_first_match(seq![x], id, 0);
-                    assert(((off + 0) as u32) as nat == off);
+                    assert((off + 0) as nat == off);
                 } else {
                     find_from_end_no_match(seq![x], id);
                 }
@@ -2223,7 +2223,7 @@ pub open spec fn abstr_full(e: ExprSpec, locals: Seq<nat>, offset: nat) -> ExprS
         | ExprSpec::Const(_, _)
         | ExprSpec::Sort(_) => e,
         ExprSpec::Free(id) => match find_from_end(locals, id) {
-            Some(p) => ExprSpec::Var((offset + p) as u32),
+            Some(p) => ExprSpec::Var((offset + p) as nat),
             None => e,
         },
         ExprSpec::App(f, a) => ExprSpec::App(

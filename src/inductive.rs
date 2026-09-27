@@ -229,6 +229,15 @@ pub open spec fn level_free_local<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>) -> b
     &&& crate::expr_arena_bridge::is_local_shape(l)
 }
 
+/// The constructor's first `n` binder types convert to the block's
+/// parameter types (`check_ctor`'s parameter loop). Opaque, so the loop's
+/// invariant is checked as stated rather than by unfolding `kconv`.
+#[verifier::opaque]
+pub(crate) open spec fn params_conv<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, locs: Seq<nat>, bts: Seq<ExprSpec>, n: int) -> bool {
+    forall|k: int| 0 <= k < n ==> #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
+        && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])))
+}
+
 /// What the inductive checker's state holds, as far as the spec walks need it.
 pub(crate) open spec fn ind_st_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveCheckState<'t>) -> bool {
     &&& crate::util_model::owns(c, st.uparams)
@@ -5560,6 +5569,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut locs: Seq<nat> = Seq::empty();
         let ghost mut sorts: Seq<LevelSpec> = Seq::empty();
         self.tc_cache.clear();
+        proof {
+            reveal(params_conv);
+        }
         for i in 0..st.local_params.len()
             invariant
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
@@ -5580,8 +5592,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 cs.last() == crate::expr_arena_bridge::to_model(ctor_type_cursor),
                 forall|k: int| 0 <= k < locs.len() ==> cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k]))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
-                forall|k: int| 0 <= k < locs.len() ==> #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
-                    && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))),
+                params_conv(env, *st, locs, bts, locs.len() as int),
         {
             let local_param = st.local_params[i];
             match self.ctx.read_expr_pair(ctor_type_cursor, local_param) {
@@ -5594,6 +5605,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         level_free_in_scope(*self, local_type);
                     }
                     self.assert_def_eq(binder_type, local_type);
+                    proof {
+                        assert(crate::tc::kconv(env, crate::expr_arena_bridge::to_model(binder_type), crate::expr_arena_bridge::to_model(local_type)));
+                    }
                     ctor_type_cursor = self.ctx.inst(body, &[local_param]);
                     proof {
                         let aids = crate::util_model::arena_ids(*self.ctx);
@@ -5601,15 +5615,31 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(crate::expr_arena_bridge::ptr_models(seq![local_param]) =~= seq![crate::expr_arena_bridge::to_model(local_param)]);
                         crate::tc::inst_deep_in(aids, body, seq![local_param], vstd::iset::ISet::empty(), 0);
                         crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local_param), 0);
+                        let (bts0, locs0) = (bts, locs);
                         bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                         bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
                         locs = locs.push(crate::expr_arena_bridge::expr_id(local_param));
                         sorts = sorts.push(LevelSpec::Zero);
                         cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                        reveal(params_conv);
+                        assert forall|k: int| 0 <= k < locs.len() implies #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
+                            && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))) by {
+                            if k < locs0.len() {
+                                assert(locs[k] == locs0[k]);
+                                assert(bts[k] == bts0[k]);
+                            } else {
+                                assert(bts[k] == crate::expr_arena_bridge::to_model(binder_type));
+                                assert(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]) == local_type);
+                            }
+                        }
+                        assert(params_conv(env, *st, locs, bts, locs.len() as int));
                     }
                 }
                 _ => panic!(),
             }
+        }
+        proof {
+            reveal(params_conv);
         }
         // Non-param constructor args.
         while let Pi { binder_name, binder_type, binder_style, body, .. } = self.ctx.read_expr(ctor_type_cursor)

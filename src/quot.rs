@@ -320,7 +320,7 @@ pub open spec fn qa(f: ExprSpec, a: ExprSpec) -> ExprSpec {
     ExprSpec::App(Box::new(f), Box::new(a))
 }
 
-pub open spec fn qv(i: u32) -> ExprSpec {
+pub open spec fn qv(i: nat) -> ExprSpec {
     ExprSpec::Var(i)
 }
 

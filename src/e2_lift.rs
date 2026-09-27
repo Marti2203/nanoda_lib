@@ -60,12 +60,12 @@ pub open spec fn pr(t: ExprSpec, i: nat) -> ExprSpec
 
 /// The parameters as bound variables, under the parameter binders.
 pub open spec fn vargs0(np: nat) -> Seq<ExprSpec> {
-    Seq::new(np, |i: int| ExprSpec::Var((np - 1 - i) as u32))
+    Seq::new(np, |i: int| ExprSpec::Var((np - 1 - i) as nat))
 }
 
 /// `f` applied to the parameters, all bound.
 pub open spec fn vb0(np: nat) -> ExprSpec {
-    spine_app(ExprSpec::Var(np as u32), vargs0(np))
+    spine_app(ExprSpec::Var(np as nat), vargs0(np))
 }
 
 /// THE TERM: `λ (f : tc) (params of ti), f params`.
@@ -75,7 +75,7 @@ pub open spec fn lmk(ti: ExprSpec, tc: ExprSpec, np: nat) -> ExprSpec {
 
 /// The body with `f` and the first `k` parameters opened at locals.
 pub open spec fn vargs(np: nat, ys: Seq<nat>, k: nat) -> Seq<ExprSpec> {
-    Seq::new(np, |i: int| if i < k { ExprSpec::Free(ys[i]) } else { ExprSpec::Var((np - 1 - i) as u32) })
+    Seq::new(np, |i: int| if i < k { ExprSpec::Free(ys[i]) } else { ExprSpec::Var((np - 1 - i) as nat) })
 }
 
 pub open spec fn vbk(np: nat, f: nat, ys: Seq<nat>, k: nat) -> ExprSpec {
@@ -148,7 +148,7 @@ proof fn vb_open_f(np: nat, f: nat, ys: Seq<nat>)
         subst_full(vb0(np), seq![ExprSpec::Free(f)], np) == vbk(np, f, ys, 0),
 {
     let s = seq![ExprSpec::Free(f)];
-    crate::ctor_typing::subst_full_spine(ExprSpec::Var(np as u32), vargs0(np), s, np);
+    crate::ctor_typing::subst_full_spine(ExprSpec::Var(np as nat), vargs0(np), s, np);
     assert(Seq::new(vargs0(np).len(), |i: int| subst_full(vargs0(np)[i], s, np)) =~= vargs(np, ys, 0));
 }
 
@@ -184,7 +184,7 @@ proof fn vb0_fv(np: nat, z: nat)
     ensures
         fv_absent(vb0(np), z),
 {
-    crate::reduce_fv::spine_app_fv(ExprSpec::Var(np as u32), vargs0(np), z);
+    crate::reduce_fv::spine_app_fv(ExprSpec::Var(np as nat), vargs0(np), z);
     assert forall|i: int| 0 <= i < vargs0(np).len() implies fv_absent(#[trigger] vargs0(np)[i], z) by {}
 }
 

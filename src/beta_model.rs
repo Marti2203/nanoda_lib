@@ -66,7 +66,7 @@ pub open spec fn shift(d: int, cutoff: nat, e: ExprSpec) -> ExprSpec
 {
     match e {
         ExprSpec::Var(i) => if (i as nat) >= cutoff {
-            ExprSpec::Var(((i as int) + d) as u32)
+            ExprSpec::Var(((i as int) + d) as nat)
         } else {
             ExprSpec::Var(i)
         },
@@ -728,15 +728,14 @@ pub open spec fn rec_ready(env: EnvSpec, s: ExprSpec) -> bool {
         ExprSpec::Const(rid, lv) => match env.rec_data(rid) {
             Some(rd) => {
                 let args = spine_args(s);
-                rec_prefix(rd) <= rd.major_idx && rd.major_idx < args.len() && args.len() <= 64
+                rec_prefix(rd) <= rd.major_idx && rd.major_idx < args.len()
                     && rd.uparams.len() == lv.len() && {
                     let major = args[rd.major_idx as int];
                     match spine_head(major) {
                         ExprSpec::Const(cid, clv) => match find_rule(rd.rules, cid) {
                             Some(ri) => {
                                 let rule = rd.rules[ri];
-                                rule.nfields <= spine_args(major).len() && spine_args(major).len()
-                                    <= 64 && size(rule.rhs) <= 500
+                                rule.nfields <= spine_args(major).len()
                                 // the rule's right-hand side is well formed
                                 // (closed, a lambda, no string literals) and
                                 // its constructor is one -- facts about the
@@ -983,9 +982,6 @@ pub proof fn rec_unpack(env: EnvSpec, s: ExprSpec) -> (r: (
             &&& 0 <= ri < rd.rules.len()
             &&& rd.rules[ri].ctor_id == cid
             &&& rd.rules[ri].nfields <= cargs.len()
-            &&& args.len() <= 64
-            &&& cargs.len() <= 64
-            &&& size(rd.rules[ri].rhs) <= 500
             &&& body == crate::expr_model::subst_expr_levels(rd.rules[ri].rhs, rd.uparams, lv)
             &&& rec_result(env, s) == spine_app(
                 spine_app(
@@ -996,8 +992,6 @@ pub proof fn rec_unpack(env: EnvSpec, s: ExprSpec) -> (r: (
             )
             &&& nlbv(body) == 0
             &&& !has_fv(body)
-            &&& size(body) <= 500
-            &&& depth(body) <= 500
             &&& forall|cap: nat| #[trigger] string_lits_ok(env.export, body, cap)
             &&& body is Bind
             &&& spine_head(rec_result(env, s)) == body
@@ -1030,10 +1024,7 @@ pub proof fn rec_unpack(env: EnvSpec, s: ExprSpec) -> (r: (
     let body = crate::expr_model::subst_expr_levels(rhs, rd.uparams, lv);
     crate::expr_model::subst_expr_levels_sat_rel(rhs, rd.uparams, lv);
     subst_expr_levels_rel_nlbv(rhs, rd.uparams, lv, body);
-    subst_expr_levels_rel_size(rhs, rd.uparams, lv, body);
-    subst_expr_levels_rel_depth(rhs, rd.uparams, lv, body);
     crate::expr_model::subst_expr_levels_has_fv(rhs, rd.uparams, lv);
-    depth_le_size(rhs);
     assert forall|cap: nat| #[trigger] string_lits_ok(env.export, body, cap) by {
         string_free_lits_ok(env.export, rhs, cap);
         subst_expr_levels_string_lits_ok(env.export, rhs, rd.uparams, lv, cap);
@@ -1062,192 +1053,6 @@ pub proof fn spine_head_spine_app(head: ExprSpec, args: Seq<ExprSpec>)
         spine_app_compose_last(head, init, last);
         spine_head_spine_app(head, init);
     }
-}
-
-/// Bounds of the rule instance: depth, `max_var_below`, size, string
-/// headroom, escaping references, loose bound variables -- all in terms
-/// of the application `s` plus the rule body's 500 gate.
-#[verifier::spinoff_prover]
-// Margin survey (2026-09-18): the whole crate verifies at half the default
-// rlimit; this is one of only three functions that fail at a fifth of it,
-// so it is the next closest to the edge after the two `verified_conv_inner`
-// twins actually went flaky. Pinned pre-emptively rather than after a red
-// tree. See docs/VERUS_REWRITES.md for the survey.
-#[verifier::rlimit(40)]
-pub proof fn rec_result_bounds(env: EnvSpec, s: ExprSpec, bound: nat, cap: nat, k: nat)
-    requires
-        rec_ready(env, s),
-    ensures
-        depth(rec_result(env, s)) <= depth(s) + 700,
-        max_var_below(s, bound) ==> max_var_below(rec_result(env, s), bound + 500),
-        size(rec_result(env, s)) <= size(s) + 500,
-        string_lits_ok(env.export, s, cap) ==> string_lits_ok(env.export, rec_result(env, s), cap),
-        !has_escaping_ref(s, k) ==> !has_escaping_ref(rec_result(env, s), k),
-        nlbv(rec_result(env, s)) <= nlbv(s),
-{
-    let (rid, lv, args, rd, major, cid, clv, cargs, ri, body) = rec_unpack(env, s);
-    let head = ExprSpec::Const(rid, lv);
-    let chead = ExprSpec::Const(cid, clv);
-    let pre = args.subrange(0, rec_prefix(rd) as int);
-    let flds = cargs.subrange((cargs.len() - rd.rules[ri].nfields) as int, cargs.len() as int);
-    let trail = args.subrange((rd.major_idx + 1) as int, args.len() as int);
-    let s1 = spine_app(body, pre);
-    let s2 = spine_app(s1, flds);
-    let r = spine_app(s2, trail);
-    assert(rec_result(env, s) == r);
-    // element facts of args / cargs from s
-    spine_app_depth_decompose(head, args);
-    spine_app_depth_decompose(chead, cargs);
-    assert(depth(major) <= depth(s));
-    assert(args.len() <= depth(s));
-    assert(cargs.len() <= depth(major));
-    let ds = depth(s);
-    assert forall|i: int| 0 <= i < pre.len() implies depth(#[trigger] pre[i]) <= ds by {
-        assert(pre[i] == args[i]);
-    }
-    assert forall|i: int| 0 <= i < flds.len() implies depth(#[trigger] flds[i]) <= ds by {
-        assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
-    }
-    assert forall|i: int| 0 <= i < trail.len() implies depth(#[trigger] trail[i]) <= ds by {
-        assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
-    }
-    let m: nat = if ds >= 500 {
-        ds
-    } else {
-        500
-    };
-    spine_app_depth_max(body, pre, m);
-    assert forall|i: int| 0 <= i < flds.len() implies depth(#[trigger] flds[i]) <= m
-        + pre.len() by {}
-    spine_app_depth_max(s1, flds, m + pre.len());
-    assert forall|i: int| 0 <= i < trail.len() implies depth(#[trigger] trail[i]) <= m + pre.len()
-        + flds.len() by {}
-    spine_app_depth_max(s2, trail, m + pre.len() + flds.len());
-    assert(pre.len() <= args.len() && flds.len() <= cargs.len() && trail.len() <= args.len());
-    assert(pre.len() + flds.len() + trail.len() <= 192);
-    assert(depth(r) <= ds + 700);
-    // max_var_below
-    if max_var_below(s, bound) {
-        spine_app_mvb_decompose(head, args, bound);
-        assert(max_var_below(major, bound));
-        spine_app_mvb_decompose(chead, cargs, bound);
-        nlbv_bound_implies_max_var_below(body, 0);
-        max_var_below_mono(body, (depth(body) + 0) as nat, bound + 500);
-        assert forall|i: int| 0 <= i < pre.len() implies max_var_below(
-            #[trigger] pre[i],
-            bound + 500,
-        ) by {
-            assert(pre[i] == args[i]);
-            max_var_below_mono(args[i], bound, bound + 500);
-        }
-        assert forall|i: int| 0 <= i < flds.len() implies max_var_below(
-            #[trigger] flds[i],
-            bound + 500,
-        ) by {
-            let j = (cargs.len() - rd.rules[ri].nfields) as int + i;
-            assert(flds[i] == cargs[j]);
-            max_var_below_mono(cargs[j], bound, bound + 500);
-        }
-        assert forall|i: int| 0 <= i < trail.len() implies max_var_below(
-            #[trigger] trail[i],
-            bound + 500,
-        ) by {
-            let j = (rd.major_idx + 1) as int + i;
-            assert(trail[i] == args[j]);
-            max_var_below_mono(args[j], bound, bound + 500);
-        }
-        spine_app_max_var_below(body, pre, bound + 500);
-        spine_app_max_var_below(s1, flds, bound + 500);
-        spine_app_max_var_below(s2, trail, bound + 500);
-    }
-    // size
-
-    spine_app_size(body, pre);
-    spine_app_size(s1, flds);
-    spine_app_size(s2, trail);
-    spine_app_size(head, args);
-    spine_app_size(chead, cargs);
-    // pre, the middle (containing the major), and trail partition args.
-    let p = rec_prefix(rd) as int;
-    let mi = rd.major_idx as int;
-    args_size_sum_split(args, p);
-    let after_pre = args.subrange(p, args.len() as int);
-    args_size_sum_split(after_pre, mi + 1 - p);
-    assert(after_pre.subrange(0, mi + 1 - p) =~= args.subrange(p, mi + 1));
-    assert(after_pre.subrange(mi + 1 - p, after_pre.len() as int) =~= trail);
-    let middle = args.subrange(p, mi + 1);
-    assert(middle[mi - p] == major);
-    args_size_sum_elem(middle, mi - p);
-    assert(args_size_sum(pre) + args_size_sum(trail) + size(major) < args_size_sum(args));
-    args_size_sum_subrange_le(
-        cargs,
-        (cargs.len() - rd.rules[ri].nfields) as int,
-        cargs.len() as int,
-    );
-    assert(size(major) == 1 + args_size_sum(cargs));
-    assert(size(s) == 1 + args_size_sum(args));
-    assert(size(r) <= size(s) + 500);
-    // strings
-    if string_lits_ok(env.export, s, cap) {
-        spine_app_strings_decompose(env.export, head, args, cap);
-        spine_app_strings_decompose(env.export, chead, cargs, cap);
-        assert(string_lits_ok(env.export, body, cap));
-        assert forall|i: int| 0 <= i < pre.len() implies string_lits_ok(env.export, #[trigger] pre[i], cap) by {
-            assert(pre[i] == args[i]);
-        }
-        assert forall|i: int| 0 <= i < flds.len() implies string_lits_ok(env.export, 
-            #[trigger] flds[i],
-            cap,
-        ) by {
-            assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
-        }
-        assert forall|i: int| 0 <= i < trail.len() implies string_lits_ok(env.export, 
-            #[trigger] trail[i],
-            cap,
-        ) by {
-            assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
-        }
-        string_lits_ok_spine_app(env.export, body, pre, cap);
-        string_lits_ok_spine_app(env.export, s1, flds, cap);
-        string_lits_ok_spine_app(env.export, s2, trail, cap);
-    }
-    // escaping refs
-
-    if !has_escaping_ref(s, k) {
-        spine_app_no_escaping_decompose(head, args, k);
-        spine_app_no_escaping_decompose(chead, cargs, k);
-        nlbv_no_escaping_ref(body, k);
-        assert forall|i: int| 0 <= i < pre.len() implies !has_escaping_ref(
-            #[trigger] pre[i],
-            k,
-        ) by {
-            assert(pre[i] == args[i]);
-        }
-        assert forall|i: int| 0 <= i < flds.len() implies !has_escaping_ref(
-            #[trigger] flds[i],
-            k,
-        ) by {
-            assert(flds[i] == cargs[(cargs.len() - rd.rules[ri].nfields) as int + i]);
-        }
-        assert forall|i: int| 0 <= i < trail.len() implies !has_escaping_ref(
-            #[trigger] trail[i],
-            k,
-        ) by {
-            assert(trail[i] == args[(rd.major_idx + 1) as int + i]);
-        }
-        spine_app_no_escaping(body, pre, k);
-        spine_app_no_escaping(s1, flds, k);
-        spine_app_no_escaping(s2, trail, k);
-    }
-    // nlbv
-
-    spine_app_nlbv_decompose(head, args);
-    spine_app_nlbv_decompose(chead, cargs);
-    let n = nlbv(s);
-    assert(nlbv(major) <= n);
-    rec_spine_nlbv_le(body, pre, n);
-    rec_spine_nlbv_le(s1, flds, n);
-    rec_spine_nlbv_le(s2, trail, n);
 }
 
 /// `nlbv` of a spine is at most the max over head and args (bound form).
@@ -2162,12 +1967,9 @@ pub proof fn subst_max_var_below(bound: nat, j: nat, s: ExprSpec, e: ExprSpec)
 /// identity (no "no free variable at this level" side condition needed,
 /// unlike the general shift-shift/shift-subst commutations, since a
 /// `Var(i)` either stays untouched by both shifts (`i < c`) or gets `+1`
-/// then `-1`'d straight back (`i >= c`)) -- modulo the boilerplate `u32`
-/// overflow bound above.
+/// then `-1`'d straight back (`i >= c`)).
 #[verifier::spinoff_prover]
 pub proof fn shift_cancel(c: nat, e: ExprSpec)
-    requires
-        max_var_below(e, 0xFFFF_FFFEnat),
     ensures
         shift(-1, c, shift(1, c, e)) == e,
     decreases e,
@@ -2176,12 +1978,8 @@ pub proof fn shift_cancel(c: nat, e: ExprSpec)
     match e {
         ExprSpec::Var(i) => {
             if (i as nat) >= c {
-                assert(shift(1, c, e) == ExprSpec::Var(((i as int) + 1) as u32));
-                assert((((i as int) + 1) as u32) as nat >= c);
-                assert(shift(-1, c, ExprSpec::Var(((i as int) + 1) as u32)) == ExprSpec::Var(
-                    ((((i as int) + 1) as u32 as int) - 1) as u32,
-                ));
-                assert(((((i as int) + 1) as u32 as int) - 1) as u32 == i);
+                assert(shift(1, c, e) == ExprSpec::Var(((i as int) + 1) as nat));
+                assert(shift(-1, c, ExprSpec::Var(((i as int) + 1) as nat)) == ExprSpec::Var(i));
             } else {
                 assert(shift(1, c, e) == e);
                 assert(shift(-1, c, e) == e);
@@ -2305,7 +2103,7 @@ pub proof fn shift_down_max_var_below(c0: nat, bound: nat, y: ExprSpec)
             }
             let ii = i as int;
             if ii >= c0 {
-                assert(shift(-1, c0, y) == ExprSpec::Var((ii - 1) as u32));
+                assert(shift(-1, c0, y) == ExprSpec::Var((ii - 1) as nat));
                 assert(ii >= 1);
                 assert(((ii - 1) as nat) < bound);
             } else {
@@ -2386,9 +2184,8 @@ pub proof fn shift_up_min_escaping(bound: nat, c0: nat, s: ExprSpec)
             assert(min_escaping(s) == Some(i as nat));
             assert((i as nat) < bound);
             if (i as nat) >= c0 {
-                assert(shift(1, c0, s) == ExprSpec::Var(((i as int) + 1) as u32));
-                assert(min_escaping(shift(1, c0, s)) == Some((((i as int) + 1) as u32) as nat));
-                assert((((i as int) + 1) as u32) as nat == (i as nat) + 1);
+                assert(shift(1, c0, s) == ExprSpec::Var(((i as int) + 1) as nat));
+                assert(min_escaping(shift(1, c0, s)) == Some((i as nat) + 1));
             } else {
                 assert(shift(1, c0, s) == s);
             }
@@ -2619,27 +2416,27 @@ pub proof fn shift_shift_aligned_up(c_top: nat, c0: nat, s: ExprSpec)
             let ii = i as int;
             assert(shift(1, c0, s) == ExprSpec::Var(
                 if ii >= c0 {
-                    (ii + 1) as u32
+                    (ii + 1) as nat
                 } else {
                     i
                 },
             ));
             if ii >= (c_top + c0) as int {
-                assert(shift(1, (c_top + c0) as nat, s) == ExprSpec::Var((ii + 1) as u32));
+                assert(shift(1, (c_top + c0) as nat, s) == ExprSpec::Var((ii + 1) as nat));
                 assert(ii >= c0);
                 assert(ii + 1 >= (c_top + c0 + 1) as int);
-                assert(shift(1, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as u32))
-                    == ExprSpec::Var((ii + 2) as u32));
-                assert(shift(1, c0, ExprSpec::Var((ii + 1) as u32)) == ExprSpec::Var(
-                    (ii + 2) as u32,
+                assert(shift(1, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as nat))
+                    == ExprSpec::Var((ii + 2) as nat));
+                assert(shift(1, c0, ExprSpec::Var((ii + 1) as nat)) == ExprSpec::Var(
+                    (ii + 2) as nat,
                 ));
             } else {
                 assert(shift(1, (c_top + c0) as nat, s) == s);
                 if ii >= c0 {
                     assert(ii + 1 < (c_top + c0 + 1) as int);
-                    assert(shift(1, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as u32))
-                        == ExprSpec::Var((ii + 1) as u32));
-                    assert(shift(1, c0, s) == ExprSpec::Var((ii + 1) as u32));
+                    assert(shift(1, (c_top + c0 + 1) as nat, ExprSpec::Var((ii + 1) as nat))
+                        == ExprSpec::Var((ii + 1) as nat));
+                    assert(shift(1, c0, s) == ExprSpec::Var((ii + 1) as nat));
                 } else {
                     assert(ii < (c_top + c0 + 1) as int);
                     assert(shift(1, (c_top + c0 + 1) as nat, s) == s);

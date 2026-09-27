@@ -154,7 +154,7 @@ pub closed spec fn to_model<'a>(ptr: ExprPtr<'a>) -> ExprSpec
         ExprSpec::Closed
     } else {
         match h[i as int] {
-            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as nat),
             Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
             Expr::Const { name, levels, .. } => ExprSpec::Const(name_id(name), to_model_of_levels(levels)),
             Expr::NatLit { ptr: np, .. } => ExprSpec::NatLit(NatLitPayload(Ghost(bignum_ptr_value(np)))),
@@ -241,7 +241,7 @@ pub uninterp spec fn local_fvar_id_of<'a>(e: Expr<'a>) -> nat;
 /// silent one.
 pub open spec fn to_model_of_expr<'a>(e: Expr<'a>) -> ExprSpec {
     match e {
-        Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+        Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as nat),
         Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
         Expr::Const { name, levels, .. } => ExprSpec::Const(
             name_id(name),
@@ -311,7 +311,7 @@ pub open spec fn expr_model_at<'a>(es: Seq<Expr<'a>>, i: nat) -> ExprSpec
         ExprSpec::Closed
     } else {
         match es[i as int] {
-            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as nat),
             Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
             Expr::Const { name, levels, .. } => ExprSpec::Const(
                 name_id(name),
@@ -463,7 +463,7 @@ pub open spec fn expr_model_at2<'a>(
         ExprSpec::Closed
     } else {
         match store[i as int] {
-            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as u32),
+            Expr::Var { dbj_idx, .. } => ExprSpec::Var(dbj_idx as nat),
             Expr::Sort { level, .. } => ExprSpec::Sort(level_to_model(level)),
             Expr::Const { name, levels, .. } => ExprSpec::Const(
                 name_id(name),
@@ -1009,7 +1009,7 @@ pub open spec fn expr_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, e: Expr<'t>) -> b
 pub fn expr_as_var(e: &Expr) -> (result: Option<u16>)
     ensures
         match result {
-            Some(i) => to_model_of_expr(*e) == ExprSpec::Var(i as u32),
+            Some(i) => to_model_of_expr(*e) == ExprSpec::Var(i as nat),
             None => !matches!(to_model_of_expr(*e), ExprSpec::Var(_)),
         },
 {
@@ -2535,7 +2535,7 @@ pub fn verified_subst_expr_levels<'t, 'p: 't>(
     let fuel1 = fuel - 1;
     let el = ctx.read_expr(e);
     if let Some(dbj_idx) = expr_as_var(&el) {
-        assert(to_model(e) == ExprSpec::Var(dbj_idx as u32));
+        assert(to_model(e) == ExprSpec::Var(dbj_idx as nat));
         return Some(e);
     }
     if expr_is_local(ctx, e) {
