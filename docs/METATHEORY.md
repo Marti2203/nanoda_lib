@@ -18,6 +18,30 @@ the typing/conversion those leaves consult. So the theorem is: a typed leaf that
 fires under `InferOnly` typing also fires under real typing, on well-typed
 terms.
 
+## Status and what is missing (2026-09-27, branch `metatheory`)
+
+**Proven.**
+- The kernel side: `whnf`/`def_eq` against `kconv`; `kconv_wt ⟹ tconv` on
+  well-typed terms; the export theorem, under `kh_hyp` (`export_sound.rs`).
+- Layer 1, Church-Rosser: parallel reduction is confluent (`confluence.rs`);
+  eta-free conversion (`ceq`) is joinable up to universe-level equivalence
+  (`conv_frag.rs`), in a real environment under `h_nat_ext` (`nat_ext.rs`).
+- Layer 2 on the fragment: Pi/Sort injectivity for `ceq`
+  (`injectivity.rs`), and the kernel's injectivity hypotheses with eta-free
+  premises (`frag_hyps.rs`).
+
+**Missing.** Everything below is assumed, not proven. `kh_hyp` =
+`hyps_all` + `h_sr` + `h_sr_leaf` is what the export theorem still takes.
+
+| gap | what is assumed | why it is open | plan |
+|---|---|---|---|
+| full injectivity | `h_pi_inj_app`, `h_pi_inj_dom`, `h_sort_inj` over `tconv` | `tconv` has eta and typed leaves (proof irrelevance, unit-eta, struct-eta); untyped Church-Rosser cannot see them | A: a typed conversion judgment with the paper's domain model and logical relation, then connect `kconv_wt`/`tconv` to it; B afterwards: interpret nanoda's untyped terms directly |
+| uniqueness of typing | `h_unique_in` | a Lean4Lean conjecture; not a corollary of the paper's method | none yet |
+| subject reduction | `h_sr`, `h_sr_leaf` (iota/quotient steps keep types) | needs injectivity and a substitution lemma for typing; recursor rules need the inductive checker's guarantees | the paper derives SR for its fragment; extend per feature |
+| Nat extension | `h_nat_ext`: each built-in Nat fold is joinable, without folding, with the op application | a named trust assumption, as in Lean's kernel | plausible for Init by inspection, not proven (export of Lean 4.30.0-rc2): every folded op is structural -- `add`/`sub`/`mul`/`pow`/`beq`/`ble` by `Nat.brecOn`, `div`/`mod` by fuel helpers (`Nat.div.go`, `Nat.modCore.go`), `gcd` by `WellFounded.Nat.fix`, which runs `Nat.rec` on fuel -- so each reduces by delta/beta/iota. Not checked: whether nanoda validates these bodies when they are declared |
+| features outside the paper | — | the paper covers Pi, Sigma, unit, Nat, Id, Prop with irrelevance, type-in-type | Lean's universe levels (`imax`, impredicative Prop), inductive families and recursors, K-like reduction, quotients, general structure eta, projections, Nat/String literals, `let` |
+| well-typed chains | the theorem is about `kconv_wt`, not `kconv` | `kconv ⟹ tconv` for arbitrary chains is FALSE (`option1_refuted`) | the kernel's derivations as `InferWt` derivations (S4) |
+
 ## The plan the user chose (2026-09-26)
 
 1. **A conditional theorem.** Prove `kconv ⟹ tconv` on well-typed terms from

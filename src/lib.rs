@@ -13,6 +13,7 @@ pub mod beta_model;
 pub mod ctor_typing;
 pub mod debug_printer;
 pub mod env;
+pub mod dom_compact;
 pub mod e2_cert;
 pub mod e2_lift;
 pub mod env_model;
