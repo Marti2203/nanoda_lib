@@ -14,6 +14,7 @@ pub mod ctor_typing;
 pub mod debug_printer;
 pub mod env;
 pub mod env_model;
+pub mod env_weaken;
 pub mod expr;
 pub mod expr_arena_bridge;
 pub mod expr_model;

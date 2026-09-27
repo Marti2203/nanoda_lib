@@ -54,18 +54,7 @@ pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool 
     hyps_all(dty, denv) && fv_free(dty, denv) && crate::ctor_typing::struct_ok(dty, denv)
         && crate::ctor_typing::ctor_params_ok(dty, denv)
         && crate::metatheory::env_wf(dty, denv) && crate::metatheory::h_sr(dty, denv) && h_sr_leaf(dty, denv)
-        && crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv) && lits_ok(dty, denv)
-}
-
-/// The literal types are declared, with no universe parameters, at a sort:
-/// the type a literal infers (`Nat`, `String`) is itself a type.
-pub open spec fn lits_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    &&& dty.contains_key(crate::expr_arena_bridge::nat_type_id(denv.export))
-    &&& dty[crate::expr_arena_bridge::nat_type_id(denv.export)].0.len() == 0
-    &&& dty[crate::expr_arena_bridge::nat_type_id(denv.export)].1 is Sort
-    &&& dty.contains_key(crate::expr_arena_bridge::string_type_id(denv.export))
-    &&& dty[crate::expr_arena_bridge::string_type_id(denv.export)].0.len() == 0
-    &&& dty[crate::expr_arena_bridge::string_type_id(denv.export)].1 is Sort
+        && crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
 }
 
 /// SUBJECT REDUCTION for the kernel's uncapped leaf steps: a recursor
@@ -1247,6 +1236,83 @@ pub proof fn cc_lam(
             tconv_refl(dty, denv, d, t);
         }
     }
+}
+
+
+/// A term with no locals reaches nothing: its minimal context is empty.
+pub proof fn rctx_no_fv(g: Map<nat, ExprSpec>, e: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(e),
+    ensures
+        sub(rctx(g, e), Map::<nat, ExprSpec>::empty()),
+{
+    assert forall|i: nat| #[trigger] fv_absent(e, i) by {
+        no_fv_absent(e, i);
+    }
+    assert forall|j: nat| #[trigger] rctx(g, e).contains_key(j) implies false by {
+        rctx_at(g, e, j);
+        let n = choose|n: nat| #[trigger] reach_n(g, e, j, n);
+        let i = crate::rctx::reach_start(g, e, j, n);
+    }
+}
+
+pub proof fn no_fv_absent(e: ExprSpec, i: nat)
+    requires
+        !crate::expr_model::has_fv(e),
+    ensures
+        fv_absent(e, i),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            no_fv_absent(*f, i);
+            no_fv_absent(*a, i);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            no_fv_absent(*t, i);
+            no_fv_absent(*b, i);
+        },
+        ExprSpec::Let(t, v, b) => {
+            no_fv_absent(*t, i);
+            no_fv_absent(*v, i);
+            no_fv_absent(*b, i);
+        },
+        ExprSpec::Proj(_, st) => {
+            no_fv_absent(*st, i);
+        },
+        _ => {},
+    }
+}
+
+/// A closed term checked at a sort is a type in the empty context.
+pub proof fn cc_closed_is_type(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, l: LevelSpec)
+    requires
+        kh(dty, denv),
+        cc(dty, denv, g, e, ExprSpec::Sort(l)),
+        !crate::expr_model::has_fv(e),
+    ensures
+        is_type(dty, denv, Map::empty(), e),
+{
+    let em = Map::<nat, ExprSpec>::empty();
+    rctx_no_fv(g, e);
+    crate::metatheory::lctx_wf_empty(dty, denv);
+    let t2 = cc_use(dty, denv, g, em, e, ExprSpec::Sort(l));
+}
+
+/// A closed term checked at `t` is really typed in the empty context, at a
+/// type convertible to `t`.
+pub proof fn cc_closed_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
+    requires
+        kh(dty, denv),
+        cc(dty, denv, g, e, t),
+        !crate::expr_model::has_fv(e),
+    ensures
+        exists|t2: ExprSpec| #[trigger] typed(dty, denv, Map::empty(), e, t2) && tconv(dty, denv, Map::empty(), t2, t),
+{
+    let em = Map::<nat, ExprSpec>::empty();
+    rctx_no_fv(g, e);
+    crate::metatheory::lctx_wf_empty(dty, denv);
+    let t2 = cc_use(dty, denv, g, em, e, t);
 }
 
 
@@ -2569,6 +2635,9 @@ pub proof fn ci_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
     requires
         (matches!(e, ExprSpec::NatLit(_)) && cid == crate::expr_arena_bridge::nat_type_id(denv.export))
         || (matches!(e, ExprSpec::StringLit(_)) && cid == crate::expr_arena_bridge::string_type_id(denv.export)),
+        dty.contains_key(cid),
+        dty[cid].0.len() == 0,
+        dty[cid].1 is Sort,
     ensures
         ci(dty, denv, g, e, ExprSpec::Const(cid, Seq::empty())),
 {
@@ -2927,74 +2996,114 @@ pub proof fn ci_lam(
         }
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && rtyped(dty, denv, d, x)
             implies #[trigger] ci_at(dty, denv, d, x, t) by {
-            let es = seq![a, b, ExprSpec::Free(lid), c];
-            let j2 = crate::swap_typed::fresh_local(d, es);
-            assert(fv_absent(es[0], j2) && fv_absent(es[1], j2) && fv_absent(es[2], j2) && fv_absent(es[3], j2));
-            let (tt1, f1) = rt_at(dty, denv, d, x);
-            let (s1, h1, c1) = gen_bind(dty, denv, d, BinderKind::Lam, a, b, tt1, f1, j2);
-            rctx_part(g, a, x, d);
-            // the body's claim, in the context with the kernel's local swapped in
-            let dj = d.insert(j2, a);
-            let ds = cswap(d, j2, lid).insert(lid, a);
-            cswap_insert(d, j2, a, j2, lid);
-            assert(sw(j2, j2, lid) == lid);
-            fswap_noop(a, j2, lid);
-            assert(cswap(dj, j2, lid) == ds);
-            let o = inst_free(b, j2);
-            sw_types_to(dty, denv, dj, r, o, c1, h1, j2, lid);
-            open_rename(b, j2, lid);
-            assert(typed(dty, denv, ds, ob, fswap(c1, j2, lid)));
-            swapped_ctx_ok(g, d, lid, j2, a, x, b);
-            let (st, ht, lt) = gen_bind_ty(dty, denv, d, BinderKind::Lam, a, b, tt1, f1);
-            assert(typed(dty, denv, d, a, st));
-            crate::metatheory::tconv_of(dty, denv, d, st, ExprSpec::Sort(lt), ht);
-            assert(is_type(dty, denv, d, a));
-            wf_swap_insert(dty, denv, d, j2, lid, a);
-            let (tb, fb, hb) = ci_use(dty, denv, g, ds, ob, c);
-            // and back
-            sw_types_to(dty, denv, ds, w, ob, tb, fb, j2, lid);
-            sw_deq_p(dty, denv, ds, w, tb, c, hb, j2, lid);
-            cswap_insert(cswap(d, j2, lid), lid, a, j2, lid);
-            assert(sw(lid, j2, lid) == j2);
-            cswap_invol(d, j2, lid);
-            fswap_invol(o, j2, lid);
-            assert(cswap(ds, j2, lid) == dj);
-            // the body's type, swapped back, is the codomain opened at `j2`
-            crate::expr_model::abstr_full_keeps_absent(c, lid, 0, j2);
-            open_rename(cod, j2, lid);
-            fswap_invol(inst_free(cod, j2), j2, lid);
-            assert(fswap(c, j2, lid) == inst_free(cod, j2));
-            // the codomain mentions only locals of `d`
-            let (sc, lc) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, ds, c, s), tconv(dty, denv, ds, s, ExprSpec::Sort(l))]
-                typed(dty, denv, ds, c, s) && tconv(dty, denv, ds, s, ExprSpec::Sort(l));
-            let fc = choose|f: nat| #[trigger] types_to(dty, denv, ds, r, c, sc, f);
-            crate::real_gen::rt_fv_in(dty, denv, ds, c, sc, fc);
-            lam_cod_fv_in(d, j2, lid, a, c);
-            // the InferWt lambda
-            let tb2 = fswap(tb, j2, lid);
-            let m = fb + hb;
-            types_to_mono(dty, denv, dj, w, o, tb2, fb, m);
-            deq_p_mono(dty, denv, dj, w, tb2, inst_free(cod, j2), hb, m);
-            crate::swap_typed::lam_intro_far(dty, denv, d, w, a, b, cod, st, lt, j2, tb2, m + 1);
-            deq_p_refl(dty, denv, d, w, t, 0);
-            assert(wt_marker(t, m + 1));
-            // the Pi it forms is a type
-            let hc = choose|h: nat| #[trigger] deq_p(dty, denv, ds, r, sc, ExprSpec::Sort(lc), h);
-            sw_types_to(dty, denv, ds, r, c, sc, fc, j2, lid);
-            sw_deq_p(dty, denv, ds, r, sc, ExprSpec::Sort(lc), hc, j2, lid);
-            fswap_noop(ExprSpec::Sort(lc), j2, lid);
-            let sc2 = fswap(sc, j2, lid);
-            let mm = ht + fc + hc;
-            types_to_mono(dty, denv, d, r, a, st, ht, mm);
-            deq_p_mono(dty, denv, d, r, st, ExprSpec::Sort(lt), ht, mm);
-            types_to_mono(dty, denv, dj, r, inst_free(cod, j2), sc2, fc, mm);
-            deq_p_mono(dty, denv, dj, r, sc2, ExprSpec::Sort(lc), hc, mm);
-            crate::swap_typed::pi_intro_far(dty, denv, d, r, a, cod, st, lt, lc, j2, sc2, mm + 1);
-            let ps = ExprSpec::Sort(LevelSpec::IMax(Box::new(lt), Box::new(lc)));
-            assert(typed(dty, denv, d, t, ps));
-            tconv_refl(dty, denv, d, ps);
+            ci_lam_at(dty, denv, g, d, a, b, lid, c);
         }
     }
+}
+
+/// `ci_lam` at one context.
+#[verifier::spinoff_prover]
+proof fn ci_lam_at(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    d: Map<nat, ExprSpec>,
+    a: ExprSpec,
+    b: ExprSpec,
+    lid: nat,
+    c: ExprSpec,
+)
+    requires
+        kh(dty, denv),
+        ci(dty, denv, g, inst_free(b, lid), c),
+        g.contains_key(lid),
+        g[lid] == a,
+        fv_absent(b, lid),
+        fv_absent(a, lid),
+        !rctx(g, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b))).contains_key(lid),
+        ctx_fresh(rctx(g, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b))), lid),
+        !rctx(g, a).contains_key(lid),
+        ctx_fresh(rctx(g, a), lid),
+        subst_full(crate::expr_model::abstr_full(c, seq![lid], 0), seq![ExprSpec::Free(lid)], 0) == c,
+        fv_absent(crate::expr_model::abstr_full(c, seq![lid], 0), lid),
+        lctx_wf(dty, denv, d),
+        sub(rctx(g, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b))), d),
+        rtyped(dty, denv, d, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b))),
+    ensures
+        ci_at(dty, denv, d, ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b)), crate::metatheory::pi(a, crate::expr_model::abstr_full(c, seq![lid], 0))),
+{
+    let w = IoMode::InferWt;
+    let r = IoMode::Real;
+    let x = ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b));
+    let cod = crate::expr_model::abstr_full(c, seq![lid], 0);
+    let t = crate::metatheory::pi(a, cod);
+    let ob = inst_free(b, lid);
+        let es = seq![a, b, ExprSpec::Free(lid), c];
+        let j2 = crate::swap_typed::fresh_local(d, es);
+        assert(fv_absent(es[0], j2) && fv_absent(es[1], j2) && fv_absent(es[2], j2) && fv_absent(es[3], j2));
+        let (tt1, f1) = rt_at(dty, denv, d, x);
+        let (s1, h1, c1) = gen_bind(dty, denv, d, BinderKind::Lam, a, b, tt1, f1, j2);
+        rctx_part(g, a, x, d);
+        // the body's claim, in the context with the kernel's local swapped in
+        let dj = d.insert(j2, a);
+        let ds = cswap(d, j2, lid).insert(lid, a);
+        cswap_insert(d, j2, a, j2, lid);
+        assert(sw(j2, j2, lid) == lid);
+        fswap_noop(a, j2, lid);
+        assert(cswap(dj, j2, lid) == ds);
+        let o = inst_free(b, j2);
+        sw_types_to(dty, denv, dj, r, o, c1, h1, j2, lid);
+        open_rename(b, j2, lid);
+        assert(typed(dty, denv, ds, ob, fswap(c1, j2, lid)));
+        swapped_ctx_ok(g, d, lid, j2, a, x, b);
+        let (st, ht, lt) = gen_bind_ty(dty, denv, d, BinderKind::Lam, a, b, tt1, f1);
+        assert(typed(dty, denv, d, a, st));
+        crate::metatheory::tconv_of(dty, denv, d, st, ExprSpec::Sort(lt), ht);
+        assert(is_type(dty, denv, d, a));
+        wf_swap_insert(dty, denv, d, j2, lid, a);
+        let (tb, fb, hb) = ci_use(dty, denv, g, ds, ob, c);
+        // and back
+        sw_types_to(dty, denv, ds, w, ob, tb, fb, j2, lid);
+        sw_deq_p(dty, denv, ds, w, tb, c, hb, j2, lid);
+        cswap_insert(cswap(d, j2, lid), lid, a, j2, lid);
+        assert(sw(lid, j2, lid) == j2);
+        cswap_invol(d, j2, lid);
+        fswap_invol(o, j2, lid);
+        assert(cswap(ds, j2, lid) == dj);
+        // the body's type, swapped back, is the codomain opened at `j2`
+        crate::expr_model::abstr_full_keeps_absent(c, lid, 0, j2);
+        open_rename(cod, j2, lid);
+        fswap_invol(inst_free(cod, j2), j2, lid);
+        assert(fswap(c, j2, lid) == inst_free(cod, j2));
+        // the codomain mentions only locals of `d`
+        let (sc, lc) = choose|s: ExprSpec, l: LevelSpec| #![trigger typed(dty, denv, ds, c, s), tconv(dty, denv, ds, s, ExprSpec::Sort(l))]
+            typed(dty, denv, ds, c, s) && tconv(dty, denv, ds, s, ExprSpec::Sort(l));
+        let fc = choose|f: nat| #[trigger] types_to(dty, denv, ds, r, c, sc, f);
+        crate::real_gen::rt_fv_in(dty, denv, ds, c, sc, fc);
+        lam_cod_fv_in(d, j2, lid, a, c);
+        // the InferWt lambda
+        let tb2 = fswap(tb, j2, lid);
+        let m = fb + hb;
+        types_to_mono(dty, denv, dj, w, o, tb2, fb, m);
+        deq_p_mono(dty, denv, dj, w, tb2, inst_free(cod, j2), hb, m);
+        crate::swap_typed::lam_intro_far(dty, denv, d, w, a, b, cod, st, lt, j2, tb2, m + 1);
+        deq_p_refl(dty, denv, d, w, t, 0);
+        assert(wt_marker(t, m + 1));
+        // the Pi it forms is a type
+        let hc = choose|h: nat| #[trigger] deq_p(dty, denv, ds, r, sc, ExprSpec::Sort(lc), h);
+        sw_types_to(dty, denv, ds, r, c, sc, fc, j2, lid);
+        sw_deq_p(dty, denv, ds, r, sc, ExprSpec::Sort(lc), hc, j2, lid);
+        fswap_noop(ExprSpec::Sort(lc), j2, lid);
+        let sc2 = fswap(sc, j2, lid);
+        let mm = ht + fc + hc;
+        types_to_mono(dty, denv, d, r, a, st, ht, mm);
+        deq_p_mono(dty, denv, d, r, st, ExprSpec::Sort(lt), ht, mm);
+        types_to_mono(dty, denv, dj, r, inst_free(cod, j2), sc2, fc, mm);
+        deq_p_mono(dty, denv, dj, r, sc2, ExprSpec::Sort(lc), hc, mm);
+        crate::swap_typed::pi_intro_far(dty, denv, d, r, a, cod, st, lt, lc, j2, sc2, mm + 1);
+        let ps = ExprSpec::Sort(LevelSpec::IMax(Box::new(lt), Box::new(lc)));
+        assert(typed(dty, denv, d, t, ps));
+        tconv_refl(dty, denv, d, ps);
 }
 
 

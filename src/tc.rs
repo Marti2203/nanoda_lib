@@ -446,11 +446,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             !crate::expr_model::has_fv(to_model_expr(crate::env::declar_info(*d).ty)),
             crate::expr_model::nlbv(to_model_expr(crate::env::declar_info(*d).ty)) <= 0,
             crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*d).uparams)),
+            ktype_cert(*old(self).env, to_model_expr(crate::env::declar_info(*d).ty)),
     {
         let info = d.info();
         let is_theorem = matches!(d, Declar::Theorem { .. });
         self.assert_closed(info.ty);
         let (_inferred_type, sort, ok) = self.check_declar_info_core(info, is_theorem);
+        proof {
+            ktype_cert_intro(*old(self).env, to_model_expr(info.ty), to_model_level(sort));
+        }
         if !ok {
             self.declar_info_failure(info.name, sort)
         }
@@ -490,6 +494,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             kinfer_claim(*old(self).env, to_model_expr(val), to_model_expr(result)),
             def_eq_claim(*old(self).env, to_model_expr(result), to_model_expr(ty)),
+            ktype_cert(*old(self).env, to_model_expr(ty)) && !crate::expr_model::has_fv(to_model_expr(val))
+                ==> kval_cert(*old(self).env, to_model_expr(val), to_model_expr(ty)),
     {
         let inferred_type = self.infer(val, Check);
         proof {
@@ -497,6 +503,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             no_fv_in_scope(*self, ty);
         }
         self.assert_def_eq(inferred_type, ty);
+        proof {
+            if ktype_cert(*old(self).env, to_model_expr(ty)) && !crate::expr_model::has_fv(to_model_expr(val)) {
+                kval_cert_intro(*old(self).env, to_model_expr(val), to_model_expr(inferred_type), to_model_expr(ty));
+            }
+        }
         inferred_type
     }
 
@@ -523,6 +534,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             !crate::expr_model::has_fv(to_model_expr(info.ty)),
             kinfer_claim(*old(self).env, to_model_expr(info.ty), to_model_expr(result.0)),
             whnf_claim(*old(self).env, to_model_expr(result.0), ExprSpec::Sort(to_model_level(result.1))),
+            kcc(*old(self).env, to_model_expr(info.ty), ExprSpec::Sort(to_model_level(result.1))),
             !is_theorem ==> result.2,
             result.2 && is_theorem ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(to_model_level(result.1), rho) == 0,
     {
@@ -538,6 +550,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         let inferred_type = self.infer(info.ty, Check);
         let sort = self.ensure_sort(inferred_type);
+        proof {
+            crate::kclaims::cc_whnf(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env),
+                crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)),
+                to_model_expr(info.ty), to_model_expr(inferred_type), ExprSpec::Sort(to_model_level(sort)));
+        }
 
         // This is sort of a "soft" check in terms of soundness, but for theorems, ensure
         // that they're propositions.
@@ -1448,6 +1465,41 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(a)
     }
 
+    /// The literal type constant `t` (`Nat` or `String`) is declared, with no
+    /// universe parameters, at a sort -- what makes a literal's inferred
+    /// type a type. Tested where a literal is inferred.
+    fn lit_type_declared(&self, t: ExprPtr<'t>) -> (r: bool)
+        requires
+            crate::util_model::owns(*self.ctx, t),
+            tc_wf(*self),
+        ensures
+            r ==> match to_model_expr(t) {
+                ExprSpec::Const(id, _) => crate::env_model::to_model_of_declar_ty(*self.env).contains_key(id)
+                    && crate::env_model::to_model_of_declar_ty(*self.env)[id].0.len() == 0
+                    && crate::env_model::to_model_of_declar_ty(*self.env)[id].1 is Sort,
+                _ => false,
+            },
+    {
+        match self.ctx.read_expr(t) {
+            Const { name, .. } => {
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(t);
+                }
+                match crate::env_model::get_declar_info_ty(self.env, &name) {
+                    Some((ups, ty)) => {
+                        let n = self.ctx.read_levels(ups).len();
+                        match self.ctx.read_expr(ty) {
+                            Sort { .. } => n == 0,
+                            _ => false,
+                        }
+                    },
+                    None => false,
+                }
+            },
+            _ => false,
+        }
+    }
+
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn infer_then_whnf(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> (result: ExprPtr<'t>)
         requires
@@ -2019,6 +2071,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // through `nat_extension_on()` (`Config` is opaque).
                 assert!(self.ctx.export_file.config.nat_extension_on());
                 let t = self.ctx.nat_type().unwrap();
+                // VERUS-REWRITE(tested-env): the literal's type is declared,
+                // without universe parameters, at a sort. Never fails on an
+                // export that declares `Nat` before using its literals.
+                assert!(self.lit_type_declared(t), "literal type is not declared at a sort");
                 proof {
                     crate::expr_arena_bridge::is_const_shape_model(t);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
@@ -2035,6 +2091,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // through `string_extension_on()` (`Config` is opaque).
                 assert!(self.ctx.export_file.config.string_extension_on());
                 let t = self.ctx.string_type().unwrap();
+                // VERUS-REWRITE(tested-env): the literal's type is declared,
+                // without universe parameters, at a sort. Never fails on an
+                // export that declares `String` before using its literals.
+                assert!(self.lit_type_declared(t), "literal type is not declared at a sort");
                 proof {
                     crate::expr_arena_bridge::is_const_shape_model(t);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
@@ -5736,6 +5796,65 @@ pub open spec fn kcc<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool
         e,
         t,
     )
+}
+
+/// DECLARATION CERTIFICATE, type: under the environment's hypotheses the
+/// declared type is a type in the empty context.
+pub open spec fn ktype_cert<'x, 't>(env: Env<'x, 't>, ty: ExprSpec) -> bool {
+    crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) ==> crate::metatheory::is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), ty)
+}
+
+/// DECLARATION CERTIFICATE, value: under the environment's hypotheses the
+/// value is really typed in the empty context, at a type convertible to the
+/// declared one.
+pub open spec fn kval_cert<'x, 't>(env: Env<'x, 't>, val: ExprSpec, ty: ExprSpec) -> bool {
+    crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), val, t2)
+        && crate::metatheory::tconv(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), t2, ty)
+}
+
+pub proof fn ktype_cert_intro<'x, 't>(env: Env<'x, 't>, ty: ExprSpec, l: crate::level_model::LevelSpec)
+    requires
+        kcc(env, ty, ExprSpec::Sort(l)),
+        !crate::expr_model::has_fv(ty),
+    ensures
+        ktype_cert(env, ty),
+{
+    if crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) {
+        crate::kclaims::cc_closed_is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), ty, l);
+    }
+}
+
+pub proof fn kval_cert_intro<'x, 't>(env: Env<'x, 't>, val: ExprSpec, inf: ExprSpec, ty: ExprSpec)
+    requires
+        kcc(env, val, inf),
+        kci(env, val, inf),
+        kcw(env, inf, ty),
+        ktype_cert(env, ty),
+        !crate::expr_model::has_fv(val),
+        !crate::expr_model::has_fv(ty),
+    ensures
+        kval_cert(env, val, ty),
+{
+    let (dty, denv) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env));
+    let g = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
+    let em = Map::<nat, ExprSpec>::empty();
+    if crate::kclaims::kh(dty, denv) {
+        crate::kclaims::rctx_no_fv(g, val);
+        crate::kclaims::rctx_no_fv(g, ty);
+        crate::metatheory::lctx_wf_empty(dty, denv);
+        let t2 = crate::kclaims::cc_use(dty, denv, g, em, val, inf);
+        crate::kclaims::rtyped_closed(dty, denv, em, val);
+        let _ = crate::kclaims::ci_use(dty, denv, g, em, val, inf);
+        let (s0, l0) = choose|s: ExprSpec, l: crate::level_model::LevelSpec| #![trigger crate::metatheory::typed(dty, denv, em, ty, s), crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l))]
+            crate::metatheory::typed(dty, denv, em, ty, s) && crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l));
+        let (s1, l1) = choose|s: ExprSpec, l: crate::level_model::LevelSpec| #![trigger crate::metatheory::typed(dty, denv, em, inf, s), crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l))]
+            crate::metatheory::typed(dty, denv, em, inf, s) && crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l));
+        assert(crate::kclaims::rtyped(dty, denv, em, inf));
+        assert(crate::kclaims::rtyped(dty, denv, em, ty));
+        assert(crate::tc_model::deq_p_any(dty, denv, em, crate::tc_model::IoMode::InferWt, inf, ty));
+        crate::metatheory::kconv_wt_implies_tconv(dty, denv, em, inf, ty);
+        crate::metatheory::tconv_trans(dty, denv, em, t2, inf, ty);
+    }
 }
 
 pub open spec fn kci<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
