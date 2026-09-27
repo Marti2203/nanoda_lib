@@ -200,7 +200,29 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
         old(ctx).dbj_level_counter == 0,
         crate::expr_arena_bridge::dsubst_cache_sound(*old(ctx)),
         crate::inductive::declar_export_tagged(crate::util_model::arena_ids(*old(ctx)).1, *declar),
+        matches!(*declar, Declar::Quot { .. }),
+    ensures
+        exists|c: int| #[trigger] crate::tc::declar_cert_at(*old(ctx).export_file, *declar, c),
 {
+    // VERUS-REWRITE(tested-input): the declared type is also checked as any
+    // declaration's is (inferred in `Check` mode, to a sort), in the
+    // declaration's own environment. The comparison with the expected type
+    // below does not show the type is a type; this does. Never fails on the
+    // quotient declarations Lean exports.
+    {
+        let env0 = crate::env_model::ctx_env(ctx, EnvLimit::ByName(declar.info().name));
+        proof {
+            let i = crate::env::declar_info(*declar);
+            crate::inductive::export_tagged_owned(*ctx, i.name);
+            crate::inductive::export_tagged_owned(*ctx, i.uparams);
+            crate::inductive::export_tagged_owned(*ctx, i.ty);
+        }
+        let mut tc0 = TypeChecker::new(ctx, &env0, Some(*declar.info()));
+        tc0.check_declar_info_unwrap(declar);
+        proof {
+            crate::tc::declar_cert_intro(*ctx.export_file, env0, *declar);
+        }
+    }
     let which: u8 = if declar.info().name == ctx.str1("Quot") {
         0
     } else if declar.info().name == ctx.str2("Quot", "mk") {

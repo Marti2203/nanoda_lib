@@ -781,4 +781,113 @@ pub proof fn li_deq(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat, ks: Seq<u64>
     assert(ch2[ch2.len() - 1] == subst_expr_levels(y, ks, vs));
 }
 
+
+/// A parameter among `us` is found in `us`.
+pub proof fn find_level_idx_contains(us: Seq<u64>, q: u64)
+    requires
+        us.contains(q),
+    ensures
+        crate::level_model::find_level_idx(us, q) is Some,
+    decreases us.len(),
+{
+    if us[0] != q {
+        let j = choose|j: int| 0 <= j < us.len() && us[j] == q;
+        assert(us.subrange(1, us.len() as int)[j - 1] == q);
+        find_level_idx_contains(us.subrange(1, us.len() as int), q);
+    }
+}
+
+/// A level whose parameter names are all among `us` uses only `us`.
+pub proof fn lp_in_of_params(l: LevelSpec, us: Seq<u64>)
+    requires
+        forall|n: u64| #[trigger] crate::level_model::param_names(l).contains(n) ==> us.contains(n),
+    ensures
+        lp_in(l, us),
+    decreases l,
+{
+    match l {
+        LevelSpec::Param(q) => {
+            assert(crate::level_model::param_names(l).contains(q));
+            find_level_idx_contains(us, q);
+        },
+        LevelSpec::Succ(a) => {
+            assert forall|n: u64| #[trigger] crate::level_model::param_names(*a).contains(n) implies us.contains(n) by {
+                assert(crate::level_model::param_names(l).contains(n));
+            }
+            lp_in_of_params(*a, us);
+        },
+        LevelSpec::Max(a, b) => {
+            assert forall|n: u64| #[trigger] crate::level_model::param_names(*a).contains(n) implies us.contains(n) by {
+                assert(crate::level_model::param_names(l).contains(n));
+            }
+            assert forall|n: u64| #[trigger] crate::level_model::param_names(*b).contains(n) implies us.contains(n) by {
+                assert(crate::level_model::param_names(l).contains(n));
+            }
+            lp_in_of_params(*a, us);
+            lp_in_of_params(*b, us);
+        },
+        LevelSpec::IMax(a, b) => {
+            assert forall|n: u64| #[trigger] crate::level_model::param_names(*a).contains(n) implies us.contains(n) by {
+                assert(crate::level_model::param_names(l).contains(n));
+            }
+            assert forall|n: u64| #[trigger] crate::level_model::param_names(*b).contains(n) implies us.contains(n) by {
+                assert(crate::level_model::param_names(l).contains(n));
+            }
+            lp_in_of_params(*a, us);
+            lp_in_of_params(*b, us);
+        },
+        _ => {},
+    }
+}
+
+/// Substitution replaces only bound variables: the substituted term's
+/// levels include the original's.
+pub proof fn elp_in_subst_rev(e: ExprSpec, ss: Seq<ExprSpec>, off: nat, us: Seq<u64>)
+    requires
+        elp_in(subst_full(e, ss, off), us),
+    ensures
+        elp_in(e, us),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            elp_in_subst_rev(*f, ss, off, us);
+            elp_in_subst_rev(*x, ss, off, us);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            elp_in_subst_rev(*t, ss, off, us);
+            elp_in_subst_rev(*b, ss, off + 1, us);
+        },
+        ExprSpec::Let(t, v, b) => {
+            elp_in_subst_rev(*t, ss, off, us);
+            elp_in_subst_rev(*v, ss, off, us);
+            elp_in_subst_rev(*b, ss, off + 1, us);
+        },
+        ExprSpec::Proj(_, st) => {
+            elp_in_subst_rev(*st, ss, off, us);
+        },
+        _ => {},
+    }
+}
+
+/// A spine's levels are its head's and its arguments'.
+pub proof fn elp_in_spine(h: ExprSpec, args: Seq<ExprSpec>, us: Seq<u64>)
+    requires
+        elp_in(h, us),
+        forall|i: int| 0 <= i < args.len() ==> elp_in(#[trigger] args[i], us),
+    ensures
+        elp_in(crate::beta_model::spine_app(h, args), us),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let n = args.len() - 1;
+        let pre = args.subrange(0, n);
+        assert forall|i: int| 0 <= i < pre.len() implies elp_in(#[trigger] pre[i], us) by {
+            assert(pre[i] == args[i]);
+        }
+        elp_in_spine(h, pre, us);
+        assert(crate::beta_model::spine_app(h, args) == ExprSpec::App(Box::new(crate::beta_model::spine_app(h, pre)), Box::new(args[n])));
+    }
+}
+
 } // verus!

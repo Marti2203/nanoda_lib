@@ -1334,8 +1334,33 @@ impl<'t, 'p: 't> ExportFile<'p> {
             export_rec_names_ok(*self),
             export_blocks_ok(*self),
             declar_export_tagged(self.arena(), *d),
+            matches!(*d, Declar::Inductive(..)),
+        ensures
+            exists|c: int| #[trigger] crate::tc::declar_cert_at(*self, *d, c),
     {
         let ghost a = self.arena();
+        // VERUS-REWRITE(tested-input): the inductive type's declared type is
+        // also checked as any declaration's is, in the environment before it
+        // and with its own universe parameters. The block's own check below
+        // runs in an environment that already holds the block, which cannot
+        // certify the type. Never fails on a block Lean exports: an
+        // inductive's type mentions nothing declared after it.
+        {
+            let mut dag0 = LeanDag::new(&self.config);
+            let mut ctx0 = TcCtx::new(self, &mut dag0);
+            let env0 = crate::env_model::ctx_env(&ctx0, crate::env::EnvLimit::ByName(d.info().name));
+            proof {
+                let i = crate::env::declar_info(*d);
+                export_tagged_owned(ctx0, i.name);
+                export_tagged_owned(ctx0, i.uparams);
+                export_tagged_owned(ctx0, i.ty);
+            }
+            let mut tc0 = TypeChecker::new(&mut ctx0, &env0, Some(*d.info()));
+            tc0.check_declar_info_unwrap(d);
+            proof {
+                crate::tc::declar_cert_intro(*self, env0, *d);
+            }
+        }
         let (ind, env_limit) = match d {
             Declar::Inductive(ind) => {
                 // Assert computed `is_recursive` value matches the export file. Lean considers
@@ -5103,6 +5128,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Verified in place, body unchanged: one header per name in the block,
     /// all of it owned by the checker's context.
+    #[verifier::spinoff_prover]
     fn collect_unmodified_mutuals(&self, t_from_file: &InductiveData<'t>) -> (result: Vec<IndTyHeader<'t>>)
         requires
             crate::env_model::inductive_data_owned(*self.env, *t_from_file),
