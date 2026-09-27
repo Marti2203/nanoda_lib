@@ -158,6 +158,11 @@ impl<'p> ExportFile<'p> {
             crate::inductive::export_rec_names_ok(*self),
             crate::inductive::export_blocks_ok(*self),
             crate::inductive::declar_export_tagged(self.arena(), *d),
+        ensures
+            // the declaration's certificate (inductives and the quotient's
+            // declarations are certified by their own checkers)
+            !matches!(*d, Declar::Inductive(..) | Declar::Quot { .. })
+                ==> exists|c: int| #[trigger] declar_cert_at(*self, *d, c),
     {
         use Declar::*;
         let ghost a = self.arena();
@@ -173,7 +178,10 @@ impl<'p> ExportFile<'p> {
                     crate::inductive::export_tagged_owned(ctx, i.ty);
                 }
                 let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
-                tc.check_declar_info_unwrap(d)
+                tc.check_declar_info_unwrap(d);
+                proof {
+                    declar_cert_intro(*self, env, *d);
+                }
             }
             Inductive(..) => self.check_inductive_declar(d),
             Quot { .. } => {
@@ -202,6 +210,9 @@ impl<'p> ExportFile<'p> {
                     no_fv_in_scope(tc, *val);
                 }
                 tc.check_declar_value(*val, d.info().ty);
+                proof {
+                    declar_cert_intro(*self, env, *d);
+                }
             }
             Constructor(ctor_data) => {
                 {
@@ -216,6 +227,9 @@ impl<'p> ExportFile<'p> {
                     }
                     let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
                     tc.check_declar_info_unwrap(d);
+                    proof {
+                        declar_cert_intro(*self, env, *d);
+                    }
                 }
                 assert!(self.declars.get(&ctor_data.inductive_name).is_some());
             }
@@ -232,6 +246,9 @@ impl<'p> ExportFile<'p> {
                     }
                     let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
                     tc.check_declar_info_unwrap(d);
+                    proof {
+                        declar_cert_intro(*self, env, *d);
+                    }
                 }
                 match recursor_data.all_inductives.get(0) {
                     None => self.recursor_without_inductive(recursor_data.info.name),
@@ -5796,6 +5813,73 @@ pub open spec fn kcc<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool
         e,
         t,
     )
+}
+
+/// THE DECLARATION'S CERTIFICATE over the export, at a cutoff `c` no later
+/// than the declaration's own position: under the hypotheses of the
+/// environment there, its type is a closed type, and a definition's value is
+/// closed and really typed at a type convertible to it. The induction over
+/// declaration order (`env_model::env_le_at`, `env_weaken`) lifts it.
+pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::env::Declar<'p>, c: int) -> bool {
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let dty = crate::env_model::dty_at(view, keys, c);
+    let denv = crate::env_model::denv_at(ef.arena(), view, keys, c);
+    let ty = to_model_expr(crate::env::declar_info(d).ty);
+    &&& 0 <= c
+    &&& forall|i: int| 0 <= i < keys.len() && #[trigger] keys[i] == crate::env::declar_info(d).name ==> c <= i
+    &&& !crate::expr_model::has_fv(ty)
+    &&& crate::kclaims::kh(dty, denv) ==> crate::metatheory::is_type(dty, denv, Map::empty(), ty)
+    &&& (declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))
+        && (crate::kclaims::kh(dty, denv) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), to_model_expr(v), t2)
+            && crate::metatheory::tconv(dty, denv, Map::empty(), t2, ty)))
+}
+
+/// A definition-like declaration's value.
+pub open spec fn declar_value<'p>(d: crate::env::Declar<'p>) -> Option<ExprPtr<'p>> {
+    match d {
+        crate::env::Declar::Definition { val, .. } => Some(val),
+        crate::env::Declar::Theorem { val, .. } => Some(val),
+        crate::env::Declar::Opaque { val, .. } => Some(val),
+        _ => None,
+    }
+}
+
+/// From the checks at the declaration's own environment to its certificate.
+pub proof fn declar_cert_intro<'x, 't, 'p>(ef: crate::util::ExportFile<'p>, env: Env<'x, 't>, d: crate::env::Declar<'p>)
+    requires
+        crate::inductive::export_ok(ef),
+        crate::inductive::declar_export_tagged(ef.arena(), d),
+        env.old_view() == ef.declars_view(),
+        env.old_keys() == ef.declars_keys(),
+        env.temp_view() == Map::<crate::util::NamePtr<'t>, crate::env::Declar<'t>>::empty(),
+        crate::env::limit_cutoff_ok_vk(ef.declars_view(), ef.declars_keys(), crate::env::EnvLimit::ByName(crate::env::declar_info(d).name), env.visible()),
+        crate::env_model::env_arena_ids(env).1 == ef.arena(),
+        !crate::expr_model::has_fv(to_model_expr(crate::env::declar_info(d).ty)),
+        ktype_cert(env, to_model_expr(crate::env::declar_info(d).ty)),
+        declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))
+            && kval_cert(env, to_model_expr(v), to_model_expr(crate::env::declar_info(d).ty)),
+    ensures
+        declar_cert_at(ef, d, env.visible()),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let n = crate::env::declar_info(d).name;
+    crate::env_model::env_model_at(env);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    assert forall|k: crate::util::NamePtr<'p>| #[trigger] view.dom().insert(n).contains(k) implies crate::util_model::export_tagged(ef.arena(), k) by {
+        if k != n {
+            assert(view.contains_key(k));
+        }
+    }
+    crate::inductive::export_keys_obey_model(ef.arena(), view.dom().insert(n));
+    assert forall|i: int| 0 <= i < keys.len() && #[trigger] keys[i] == n implies env.visible() <= i by {
+        if env.visible() != 0 {
+            assert(keys[env.visible()] == n);
+            assert(keys.no_duplicates());
+        }
+    }
 }
 
 /// DECLARATION CERTIFICATE, type: under the environment's hypotheses the

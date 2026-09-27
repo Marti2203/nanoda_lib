@@ -303,6 +303,42 @@ pub(crate) type NotationMap<'a> = FxHashMap<NamePtr<'a>, Notation<'a>>;
 
 ::vstd::prelude::verus! {
 
+/// What an environment's cutoff is for a limit: nothing, a given index, or
+/// -- by name -- the name's position when the name is present and the
+/// map's keys obey their model (else 0).
+pub open spec fn limit_cutoff_ok<'a>(declars: &DeclarMap<'a>, limit: EnvLimit<'a>, cutoff: int) -> bool {
+    limit_cutoff_ok_vk(crate::indexmap_model::imap_view(declars), crate::indexmap_model::imap_keys(declars), limit, cutoff)
+}
+
+/// The same over the map's contents and keys.
+pub open spec fn limit_cutoff_ok_vk<'a>(view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, limit: EnvLimit<'a>, cutoff: int) -> bool {
+    match limit {
+        EnvLimit::Empty => cutoff == 0,
+        EnvLimit::ByIndex(i) => cutoff == i,
+        EnvLimit::PpUnlimited => cutoff == keys.len(),
+        EnvLimit::ByName(n) => vstd::std_specs::hash::keys_obey_model::<NamePtr<'a>>(view.dom().insert(n))
+            && keys.no_duplicates() && keys.to_set() == view.dom() ==> cutoff == 0 || (
+            0 <= cutoff < keys.len() && keys[cutoff] == n),
+    }
+}
+
+/// A name id's declaration in `keys` cut off at `c`: the environment's `find`
+/// without a temporary extension, as a function of the export alone.
+pub open spec fn find_at<'a>(view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c: int, id: u64) -> Option<Declar<'a>> {
+    if exists|i: int| 0 <= i < keys.len() && i < c && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id {
+        let i = choose|i: int| 0 <= i < keys.len() && i < c && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id;
+        Some(view[keys[i]])
+    } else {
+        None
+    }
+}
+
+/// The ids visible below the cutoff.
+pub open spec fn ids_at<'a>(keys: Seq<NamePtr<'a>>, c: int) -> Set<u64> {
+    let n = if c <= keys.len() { c } else { keys.len() as int };
+    keys.take(n).map_values(|k: NamePtr<'a>| crate::level_arena_bridge::name_id(k)).to_set()
+}
+
 impl<'x, 'a: 'x> Env<'x, 'a> {
     /// The arenas the environment's pointers index.
     pub closed spec fn arena_ids(self) -> (nat, nat) {
@@ -375,6 +411,24 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
         }
     }
 
+    /// Without a temporary extension, `find` and `ids` are the export's at the
+    /// cutoff.
+    pub proof fn find_no_temp(self)
+        requires
+            self.temp_view() == Map::<NamePtr<'a>, Declar<'a>>::empty(),
+        ensures
+            forall|id: u64| #[trigger] self.find(id) == find_at(self.old_view(), self.old_keys(), self.visible(), id),
+            self.ids() == ids_at(self.old_keys(), self.visible()),
+    {
+        let t = self.temp_view();
+        assert forall|id: u64| #[trigger] self.find(id) == find_at(self.old_view(), self.old_keys(), self.visible(), id) by {
+            assert(!(exists|k: NamePtr<'a>| #[trigger] t.contains_key(k) && crate::level_arena_bridge::name_id(k) == id));
+        }
+        let f = |k: NamePtr<'a>| crate::level_arena_bridge::name_id(k);
+        assert(t.dom().map(f) =~= Set::<u64>::empty());
+        assert(self.ids() =~= ids_at(self.old_keys(), self.visible()));
+    }
+
     /// Every declaration the environment holds belongs to its arenas.
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
@@ -391,6 +445,10 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
             crate::env_model::declar_map_owned_in(ids, declars),
         ensures
             result.arena_ids() == ids,
+            result.old_view() == crate::indexmap_model::imap_view(declars),
+            result.old_keys() == crate::indexmap_model::imap_keys(declars),
+            result.temp_view() == Map::<NamePtr<'a>, Declar<'a>>::empty(),
+            limit_cutoff_ok(declars, limit, result.visible()),
     {
         Self::new_w_temp_ext(declars, None, notation, limit, Ghost(ids))
     }
@@ -411,12 +469,41 @@ impl<'x, 'a: 'x> Env<'x, 'a> {
             temp_declars matches Some(t) ==> crate::env_model::declar_map_owned_in(ids, t),
         ensures
             result.arena_ids() == ids,
+            result.old_view() == crate::indexmap_model::imap_view(declars),
+            result.old_keys() == crate::indexmap_model::imap_keys(declars),
+            temp_declars is None ==> result.temp_view() == Map::<NamePtr<'a>, Declar<'a>>::empty(),
+            limit_cutoff_ok(declars, limit, result.visible()),
     {
+        // VERUS-REWRITE(spec-carrying-lookup): `get_index_of(&n).unwrap_or(0)`
+        // is read through `get_full`, the same lookup, whose specification
+        // says where the key sits.
         let cutoff = match limit {
             EnvLimit::Empty => 0,
             EnvLimit::ByIndex(idx) => idx,
             EnvLimit::PpUnlimited => declars.len(),
-            EnvLimit::ByName(n) => declars.get_index_of(&n).unwrap_or(0),
+            EnvLimit::ByName(n) => {
+                let r = declars.get_full(&n);
+                proof {
+                    broadcast use vstd::std_specs::hash::axiom_contains_deref_key,
+                        vstd::std_specs::hash::axiom_deref_keys_obey_model,
+                        vstd::std_specs::hash::axiom_keys_obey_model_subset;
+                    crate::util_model::build_hasher_default_valid_fx();
+                    let dom = crate::indexmap_model::imap_view(declars).dom();
+                    if vstd::std_specs::hash::keys_obey_model::<NamePtr<'a>>(dom.insert(n)) {
+                        assert(dom.subset_of(dom.insert(n)));
+                        assert(vstd::std_specs::hash::keys_obey_model::<NamePtr<'a>>(dom));
+                        assert(vstd::std_specs::hash::borrowed_keys_obey_model::<NamePtr<'a>, NamePtr<'a>>(dom, &n));
+                        if let Some((i, kk, v)) = r {
+                            assert(vstd::std_specs::hash::contains_borrowed_key::<NamePtr<'a>, (), NamePtr<'a>>(Map::<NamePtr<'a>, ()>::empty().insert(*kk, ()), &n));
+                            assert(*kk == n);
+                        }
+                    }
+                }
+                match r {
+                    Some((i, _, _)) => i,
+                    None => 0,
+                }
+            },
         };
         Self { declars, cutoff, temp_declars, notation, ids: Ghost(ids) }
     }

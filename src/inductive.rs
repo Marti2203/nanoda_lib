@@ -944,6 +944,22 @@ pub closed spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
             && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k
 }
 
+/// The export's keys have distinct name ids.
+pub(crate) proof fn export_keys_ids_inj<'p>(ef: ExportFile<'p>)
+    requires
+        export_ok(ef),
+    ensures
+        crate::env_model::keys_ids_inj(crate::indexmap_model::imap_keys(&ef.declars)),
+{
+    let keys = crate::indexmap_model::imap_keys(&ef.declars);
+    let view = crate::indexmap_model::imap_view(&ef.declars);
+    assert forall|i: int| 0 <= i < keys.len() implies crate::util_model::export_tagged(ef.arena(), #[trigger] keys[i]) by {
+        assert(keys.to_set().contains(keys[i]));
+        assert(view.contains_key(keys[i]));
+    }
+    crate::env_model::keys_ids_inj_of_tagged(keys, ef.arena());
+}
+
 /// `export_ok` unfolded, for proofs outside this module (it is closed: the
 /// export file's fields are visible only inside the crate).
 pub(crate) proof fn export_ok_facts<'p>(ef: ExportFile<'p>)

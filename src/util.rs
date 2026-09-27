@@ -496,6 +496,22 @@ impl<'p> ExportFile<'p> {
     /// The export tier's arena: the tag its name cache carries. Closed,
     /// because the struct's fields are only visible inside the crate (a type
     /// invariant needs that) and public contracts mention this.
+    /// The declarations' contents and keys, closed for the same reason.
+    pub closed spec fn declars_view(self) -> vstd::map::Map<NamePtr<'p>, crate::env::Declar<'p>> {
+        crate::indexmap_model::imap_view(&self.declars)
+    }
+
+    pub closed spec fn declars_keys(self) -> Seq<NamePtr<'p>> {
+        crate::indexmap_model::imap_keys(&self.declars)
+    }
+
+    pub(crate) proof fn declars_views(self)
+        ensures
+            self.declars_view() == crate::indexmap_model::imap_view(&self.declars),
+            self.declars_keys() == crate::indexmap_model::imap_keys(&self.declars),
+    {
+    }
+
     pub closed spec fn arena(self) -> nat {
         self.name_cache.arena_id()
     }

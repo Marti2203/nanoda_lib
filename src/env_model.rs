@@ -250,9 +250,14 @@ pub fn ctx_env<'t, 'p: 't>(ctx: &crate::util::TcCtx<'t, 'p>, env_limit: crate::e
         crate::inductive::export_ok(*ctx.export_file),
     ensures
         env_matches(result, *ctx),
+        result.old_view() == ctx.export_file.declars_view(),
+        result.old_keys() == ctx.export_file.declars_keys(),
+        result.temp_view() == Map::<NamePtr<'t>, Declar<'t>>::empty(),
+        crate::env::limit_cutoff_ok_vk(ctx.export_file.declars_view(), ctx.export_file.declars_keys(), env_limit, result.visible()),
 {
     proof {
         export_declars_owned(*ctx);
+        ctx.export_file.declars_views();
     }
     crate::env::Env::new(&ctx.export_file.declars, &ctx.export_file.notations, env_limit, Ghost(crate::util_model::arena_ids(*ctx)))
 }
@@ -794,6 +799,155 @@ pub assume_specification<'a>[ <RecRule<'a> as PartialEq>::eq ](a: &RecRule<'a>, 
 #[verifier::external_body]
 pub fn same_object<T>(a: &T, b: &T) -> bool {
     std::ptr::eq(a, b)
+}
+
+
+/// A table of the environment cut off at `c`, as a function of the export:
+/// every visible name whose declaration has an entry.
+pub open spec fn table_at<'a, T>(
+    view: Map<NamePtr<'a>, Declar<'a>>,
+    keys: Seq<NamePtr<'a>>,
+    c: int,
+    entry: spec_fn(Declar<'a>) -> Option<T>,
+) -> Map<u64, T> {
+    Map::new(
+        crate::env::ids_at(keys, c).filter(|id: u64| crate::env::find_at(view, keys, c, id) is Some
+            && entry(crate::env::find_at(view, keys, c, id)->0) is Some),
+        |id: u64| entry(crate::env::find_at(view, keys, c, id)->0)->0,
+    )
+}
+
+/// The environment's tables are the export's at its cutoff when it has no
+/// temporary extension.
+pub proof fn tables_at<'x, 'a>(env: Env<'x, 'a>)
+    requires
+        env.temp_view() == Map::<NamePtr<'a>, Declar<'a>>::empty(),
+    ensures
+        to_model_of_declar_ty(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| ty_entry(d)),
+        to_model_of_defs(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| def_entry(d)),
+        to_model_of_recursors(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| rec_entry(d)),
+        to_model_of_ctor_num_params(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| ctor_np_entry(d)),
+        to_model_of_struct_ctor(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| struct_ctor_entry(d)),
+        to_model_of_ctor_ind(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| ctor_ind_entry(d)),
+        to_model_of_ctor_num_fields(env) == table_at(env.old_view(), env.old_keys(), env.visible(), |d: Declar<'a>| ctor_nf_entry(d)),
+{
+    env.find_no_temp();
+    let (v, k, c) = (env.old_view(), env.old_keys(), env.visible());
+    assert(to_model_of_declar_ty(env) =~= table_at(v, k, c, |d: Declar<'a>| ty_entry(d)));
+    assert(to_model_of_defs(env) =~= table_at(v, k, c, |d: Declar<'a>| def_entry(d)));
+    assert(to_model_of_recursors(env) =~= table_at(v, k, c, |d: Declar<'a>| rec_entry(d)));
+    assert(to_model_of_ctor_num_params(env) =~= table_at(v, k, c, |d: Declar<'a>| ctor_np_entry(d)));
+    assert(to_model_of_struct_ctor(env) =~= table_at(v, k, c, |d: Declar<'a>| struct_ctor_entry(d)));
+    assert(to_model_of_ctor_ind(env) =~= table_at(v, k, c, |d: Declar<'a>| ctor_ind_entry(d)));
+    assert(to_model_of_ctor_num_fields(env) =~= table_at(v, k, c, |d: Declar<'a>| ctor_nf_entry(d)));
+}
+
+/// Name ids tell the export's keys apart.
+pub open spec fn keys_ids_inj<'a>(keys: Seq<NamePtr<'a>>) -> bool {
+    forall|i: int, j: int| 0 <= i < keys.len() && 0 <= j < keys.len()
+        && #[trigger] name_id(keys[i]) == #[trigger] name_id(keys[j]) ==> i == j
+}
+
+/// A later cutoff resolves every name an earlier one does, the same way.
+pub proof fn find_at_mono<'a>(view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int, id: u64)
+    requires
+        c1 <= c2,
+        keys_ids_inj(keys),
+        crate::env::find_at(view, keys, c1, id) is Some,
+    ensures
+        crate::env::find_at(view, keys, c2, id) == crate::env::find_at(view, keys, c1, id),
+        crate::env::ids_at(keys, c1).contains(id) ==> crate::env::ids_at(keys, c2).contains(id),
+{
+    let i1 = choose|i: int| 0 <= i < keys.len() && i < c1 && name_id(#[trigger] keys[i]) == id;
+    let i2 = choose|i: int| 0 <= i < keys.len() && i < c2 && name_id(#[trigger] keys[i]) == id;
+    assert(i1 == i2);
+    let n2 = if c2 <= keys.len() { c2 } else { keys.len() as int };
+    let f = |k: NamePtr<'a>| name_id(k);
+    assert(keys.take(n2).map_values(f)[i1] == id);
+    assert(keys.take(n2).map_values(f).contains(id));
+}
+
+pub proof fn table_at_mono<'a, T>(
+    view: Map<NamePtr<'a>, Declar<'a>>,
+    keys: Seq<NamePtr<'a>>,
+    c1: int,
+    c2: int,
+    entry: spec_fn(Declar<'a>) -> Option<T>,
+)
+    requires
+        c1 <= c2,
+        keys_ids_inj(keys),
+    ensures
+        forall|id: u64| #[trigger] table_at(view, keys, c1, entry).contains_key(id)
+            ==> table_at(view, keys, c2, entry).contains_key(id)
+            && table_at(view, keys, c2, entry)[id] == table_at(view, keys, c1, entry)[id],
+{
+    assert forall|id: u64| #[trigger] table_at(view, keys, c1, entry).contains_key(id)
+        implies table_at(view, keys, c2, entry).contains_key(id)
+            && table_at(view, keys, c2, entry)[id] == table_at(view, keys, c1, entry)[id] by {
+        find_at_mono(view, keys, c1, c2, id);
+    }
+}
+
+
+/// THE ENVIRONMENT AT A CUTOFF, as a function of the export.
+pub open spec fn dty_at<'a>(view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c: int) -> Map<u64, (Seq<u64>, ExprSpec)> {
+    table_at(view, keys, c, |d: Declar<'a>| ty_entry(d))
+}
+
+pub open spec fn denv_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c: int) -> EnvSpec {
+    EnvSpec {
+        export,
+        defs: table_at(view, keys, c, |d: Declar<'a>| def_entry(d)),
+        recs: table_at(view, keys, c, |d: Declar<'a>| rec_entry(d)),
+        ctor_np: table_at(view, keys, c, |d: Declar<'a>| ctor_np_entry(d)),
+        struct_ctor: table_at(view, keys, c, |d: Declar<'a>| struct_ctor_entry(d)),
+        ctor_nf: table_at(view, keys, c, |d: Declar<'a>| ctor_nf_entry(d)),
+        ctor_ind: table_at(view, keys, c, |d: Declar<'a>| ctor_ind_entry(d)),
+    }
+}
+
+/// An environment without a temporary extension is the export's at its cutoff.
+pub proof fn env_model_at<'x, 'a>(env: Env<'x, 'a>)
+    requires
+        env.temp_view() == Map::<NamePtr<'a>, Declar<'a>>::empty(),
+    ensures
+        to_model_of_declar_ty(env) == dty_at(env.old_view(), env.old_keys(), env.visible()),
+        to_model_of_env(env) == denv_at(env_arena_ids(env).1, env.old_view(), env.old_keys(), env.visible()),
+{
+    tables_at(env);
+}
+
+/// A later cutoff extends an earlier one.
+pub proof fn env_le_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
+    requires
+        c1 <= c2,
+        keys_ids_inj(keys),
+    ensures
+        crate::env_weaken::env_le(dty_at(view, keys, c1), denv_at(export, view, keys, c1), dty_at(view, keys, c2), denv_at(export, view, keys, c2)),
+{
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| ty_entry(d));
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| def_entry(d));
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| rec_entry(d));
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| ctor_np_entry(d));
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| struct_ctor_entry(d));
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| ctor_nf_entry(d));
+    table_at_mono(view, keys, c1, c2, |d: Declar<'a>| ctor_ind_entry(d));
+}
+
+
+/// Distinct keys of one export arena have distinct name ids.
+pub proof fn keys_ids_inj_of_tagged<'a>(keys: Seq<NamePtr<'a>>, a: nat)
+    requires
+        keys.no_duplicates(),
+        forall|i: int| 0 <= i < keys.len() ==> crate::util_model::export_tagged(a, #[trigger] keys[i]),
+    ensures
+        keys_ids_inj(keys),
+{
+    assert forall|i: int, j: int| 0 <= i < keys.len() && 0 <= j < keys.len()
+        && #[trigger] name_id(keys[i]) == #[trigger] name_id(keys[j]) implies i == j by {
+        crate::util_model::owned_raw_eq_in((0, a), keys[i], keys[j]);
+    }
 }
 
 } // verus!
