@@ -545,7 +545,7 @@ pub proof fn li_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, ks: Seq<u64>, vs
                 li_rec(env, r, ks, vs);
                 assert(rec_reduct(subst_expr_levels(f2, ks, vs), subst_expr_levels(a2, ks, vs)));
                 assert(pstep(env, subst_expr_levels(e1, ks, vs), subst_expr_levels(e2, ks, vs)));
-            } else {
+            } else if crate::beta_model::pstep_fold(env, *f, *x, e2) {
                 let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
                     (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *x, a2)
                         && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
@@ -556,6 +556,14 @@ pub proof fn li_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, ks: Seq<u64>, vs
                 li_nat_fold(env.export, r, ks, vs);
                 li_nat_fold_result(env.export, r, ks, vs);
                 assert(fold_reduct(subst_expr_levels(f2, ks, vs), subst_expr_levels(a2, ks, vs)));
+                assert(pstep(env, subst_expr_levels(e1, ks, vs), subst_expr_levels(e2, ks, vs)));
+            } else {
+                let (f2, a2) = crate::beta_model::pstep_quot_destruct(env, *f, *x, e2);
+                li_pstep(env, *f, f2, ks, vs);
+                li_pstep(env, *x, a2, ks, vs);
+                li_quot(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)), ks, vs);
+                crate::beta_model::pstep_quot_intro(env, Box::new(subst_expr_levels(*f, ks, vs)), Box::new(subst_expr_levels(*x, ks, vs)),
+                    subst_expr_levels(f2, ks, vs), subst_expr_levels(a2, ks, vs), subst_expr_levels(e2, ks, vs));
                 assert(pstep(env, subst_expr_levels(e1, ks, vs), subst_expr_levels(e2, ks, vs)));
             }
         },

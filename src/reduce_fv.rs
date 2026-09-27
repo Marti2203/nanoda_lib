@@ -254,7 +254,7 @@ pub proof fn pstep_fv(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, i: nat)
                 let r = ExprSpec::App(Box::new(f2), Box::new(a2));
                 assert(rec_ready_u(env, r));
                 rec_result_fv(env, r, i);
-            } else {
+            } else if crate::beta_model::pstep_fold(env, *f, *x, e2) {
                 let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
                     (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *x, a2)
                         && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
@@ -263,6 +263,11 @@ pub proof fn pstep_fv(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, i: nat)
                     reveal_with_fuel(has_fv, 3);
                 }
                 closed_fv_absent(e2, i);
+            } else {
+                let (f2, a2) = crate::beta_model::pstep_quot_destruct(env, *f, *x, e2);
+                pstep_fv(env, *f, f2, i);
+                pstep_fv(env, *x, a2, i);
+                quot_result_fv(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)), i);
             }
         },
         ExprSpec::Bind(bk, t, b) => {

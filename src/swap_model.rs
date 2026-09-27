@@ -610,7 +610,7 @@ pub proof fn fswap_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: nat, y: na
                 fswap_rec(env, ExprSpec::App(Box::new(f2), Box::new(a2)), x, y);
                 assert(rec_reduct(fswap(f2, x, y), fswap(a2, x, y)));
                 assert(pstep(env, fswap(e1, x, y), fswap(e2, x, y)));
-            } else {
+            } else if crate::beta_model::pstep_fold(env, *f, *a, e2) {
                 let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
                     (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *a, a2)
                         && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
@@ -619,6 +619,14 @@ pub proof fn fswap_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, x: nat, y: na
                 fswap_pstep(env, *a, a2, x, y);
                 fswap_nat_fold(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)), x, y);
                 assert(fold_reduct(fswap(f2, x, y), fswap(a2, x, y)));
+                assert(pstep(env, fswap(e1, x, y), fswap(e2, x, y)));
+            } else {
+                let (f2, a2) = crate::beta_model::pstep_quot_destruct(env, *f, *a, e2);
+                fswap_pstep(env, *f, f2, x, y);
+                fswap_pstep(env, *a, a2, x, y);
+                fswap_quot(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)), x, y);
+                crate::beta_model::pstep_quot_intro(env, Box::new(fswap(*f, x, y)), Box::new(fswap(*a, x, y)),
+                    fswap(f2, x, y), fswap(a2, x, y), fswap(e2, x, y));
                 assert(pstep(env, fswap(e1, x, y), fswap(e2, x, y)));
             }
         },

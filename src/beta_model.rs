@@ -319,6 +319,15 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
                 (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *a, a2)
                     && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
                     == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))))
+            // QUOTIENT REDUCTION: `Quot.lift f h (Quot.mk r a)` and
+            // `Quot.ind`, parallel like the others -- step function and
+            // argument once, require the reduct application to be a READY
+            // quotient elimination (`quot_ready`), take `quot_result`.
+            // `quot_reduct` is the marker trigger.
+            ||| (exists|f2: ExprSpec, a2: ExprSpec|
+                (#[trigger] quot_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *a, a2)
+                    && crate::tc_model::quot_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
+                    == crate::tc_model::quot_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))))
         },
         ExprSpec::Bind(bk, t, b) => {
             exists|t2: ExprSpec, b2: ExprSpec|
@@ -1230,6 +1239,48 @@ pub proof fn pstep_fold_intro(
     ) && e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))));
 }
 
+/// Marker trigger for the quotient disjunct (match-arm exists law).
+pub open spec fn quot_reduct(f2: ExprSpec, a2: ExprSpec) -> bool {
+    true
+}
+
+/// `pstep`'s quotient disjunct, named.
+pub open spec fn pstep_quot(env: EnvSpec, f: ExprSpec, a: ExprSpec, e2: ExprSpec) -> bool {
+    exists|f2: ExprSpec, a2: ExprSpec|
+        (#[trigger] quot_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2)
+            && crate::tc_model::quot_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+            && e2 == crate::tc_model::quot_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+}
+
+pub proof fn pstep_quot_destruct(env: EnvSpec, f: ExprSpec, a: ExprSpec, e2: ExprSpec) -> (r: (ExprSpec, ExprSpec))
+    requires
+        pstep_quot(env, f, a, e2),
+    ensures
+        ({
+            let (f2, a2) = r;
+            pstep(env, f, f2) && pstep(env, a, a2)
+                && crate::tc_model::quot_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+                && e2 == crate::tc_model::quot_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+        }),
+{
+    choose|f2: ExprSpec, a2: ExprSpec|
+        (#[trigger] quot_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2)
+            && crate::tc_model::quot_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+            && e2 == crate::tc_model::quot_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+}
+
+pub proof fn pstep_quot_intro(env: EnvSpec, f: Box<ExprSpec>, a: Box<ExprSpec>, f2: ExprSpec, a2: ExprSpec, e2: ExprSpec)
+    requires
+        pstep(env, *f, f2),
+        pstep(env, *a, a2),
+        crate::tc_model::quot_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))),
+        e2 == crate::tc_model::quot_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))),
+    ensures
+        pstep(env, ExprSpec::App(f, a), e2),
+{
+    assert(quot_reduct(f2, a2));
+}
+
 /// Leaf facts about the folded literal, in every predicate the cascade
 /// lemmas need (depth 0, size 1, closed, no strings, no escaping refs).
 pub proof fn nat_fold_result_bounds(export: nat, s: ExprSpec, bound: nat, cap: nat, k: nat)
@@ -1588,11 +1639,17 @@ pub proof fn pstep_env_weaken(
                             pstep_env_weaken(env1, env2, *a, a2);
                             pstep_rec_intro(env2, f, a, f2, a2, e2);
                             return;
-                        } else {
+                        } else if pstep_fold(env1, *f, *a, e2) {
                             let (f2, a2) = pstep_fold_destruct(env1, *f, *a, e2);
                             pstep_env_weaken(env1, env2, *f, f2);
                             pstep_env_weaken(env1, env2, *a, a2);
                             pstep_fold_intro(env2, f, a, f2, a2, e2);
+                            return;
+                        } else {
+                            let (f2, a2) = pstep_quot_destruct(env1, *f, *a, e2);
+                            pstep_env_weaken(env1, env2, *f, f2);
+                            pstep_env_weaken(env1, env2, *a, a2);
+                            pstep_quot_intro(env2, f, a, f2, a2, e2);
                             return;
                         }
                     }
