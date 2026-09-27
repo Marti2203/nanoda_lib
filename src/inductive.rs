@@ -1357,6 +1357,39 @@ impl<'t, 'p: 't> ExportFile<'p> {
             }
             let mut tc0 = TypeChecker::new(&mut ctx0, &env0, Some(*d.info()));
             tc0.check_declar_info_unwrap(d);
+            // VERUS-REWRITE(tested-input): a structure's constructor is tested
+            // to name the structure back and to have the structure shape (its
+            // declared type is `np + nf` Pi binders over the structure at the
+            // constructor's universe parameters, applied to the parameters) --
+            // what the projection and eta rules take for granted. Never fails
+            // on a structure Lean exports.
+            if let Declar::Inductive(i0) = d {
+                if i0.all_ctor_names.len() == 1 && i0.num_indices == 0 {
+                    let cn = i0.all_ctor_names[0];
+                    proof {
+                        broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                        crate::util_model::build_hasher_default_valid_fx();
+                        assert(crate::util_model::export_tagged(a, i0.all_ctor_names@[0]));
+                        export_declars_get(*self, cn);
+                    }
+                    match self.declars.get(&cn) {
+                        Some(Declar::Constructor(c)) => {
+                            proof {
+                                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                assert(crate::indexmap_model::imap_view(&self.declars).contains_key(cn));
+                                assert(declar_export_tagged(a, Declar::Constructor(*c)));
+                                export_tagged_owned(*tc0.ctx, c.info.ty);
+                                export_tagged_owned(*tc0.ctx, c.info.uparams);
+                                self.declars_views();
+                            }
+                            assert!(c.inductive_name == i0.info.name, "inductive: a structure's constructor names another inductive");
+                            assert!(tc0.ctx.ctor_shape_ok(c.info.ty, i0.info.name, c.info.uparams, c.num_params, c.num_fields),
+                                "inductive: a structure's constructor does not have the structure shape");
+                        },
+                        _ => panic!("inductive: a structure's constructor is not declared"),
+                    }
+                }
+            }
             proof {
                 crate::tc::declar_cert_intro(*self, env0, *d);
             }

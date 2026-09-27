@@ -6029,7 +6029,10 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
     &&& 0 <= c
     &&& forall|i: int| 0 <= i < keys.len() && #[trigger] keys[i] == crate::env::declar_info(d).name ==> c <= i
     &&& !crate::expr_model::has_fv(ty)
+    &&& crate::expr_model::nlbv(ty) <= 0
+    &&& crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))
     &&& crate::level_inst::elp_in(ty, crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
+    &&& (d matches crate::env::Declar::Inductive(i) ==> (is_structure(i) ==> struct_shape_cert(ef, i)))
     &&& crate::kclaims::kh(dty, denv) ==> crate::metatheory::is_type(dty, denv, Map::empty(), ty)
     &&& (declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))
         && crate::level_inst::elp_in(to_model_expr(v), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
@@ -6038,6 +6041,28 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
     &&& (d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
         ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] r.rec_rules@[j].val))
             && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))))
+}
+
+/// A STRUCTURE'S CONSTRUCTOR SHAPE, over the export: the structure's one
+/// constructor is declared, names the structure back, and its declared type
+/// is `np + nf` Pi binders over the structure, at the constructor's universe
+/// parameters, applied to the parameters.
+pub open spec fn struct_shape_cert<'p>(ef: crate::util::ExportFile<'p>, i: crate::env::InductiveData<'p>) -> bool {
+    let view = ef.declars_view();
+    let cn = i.all_ctor_names@[0];
+    &&& view.contains_key(cn)
+    &&& view[cn] matches crate::env::Declar::Constructor(c)
+    &&& c.inductive_name == i.info.name
+    &&& crate::beta_model::pi_spine(to_model_expr(c.info.ty), c.num_params as nat + c.num_fields as nat) == Some(
+        crate::beta_model::spine_app(
+            ExprSpec::Const(crate::level_arena_bridge::name_id(i.info.name), crate::level_arena_bridge::to_model_of_levels(c.info.uparams)),
+            crate::ctor_typing::cod_vars(c.num_params as nat, c.num_params as nat + c.num_fields as nat),
+        ),
+    )
+}
+
+pub open spec fn is_structure<'p>(i: crate::env::InductiveData<'p>) -> bool {
+    i.all_ctor_names@.len() == 1 && i.num_indices == 0
 }
 
 /// A definition-like declaration's value.
@@ -6061,6 +6086,9 @@ pub proof fn declar_cert_intro<'x, 't, 'p>(ef: crate::util::ExportFile<'p>, env:
         crate::env::limit_cutoff_ok_vk(ef.declars_view(), ef.declars_keys(), crate::env::EnvLimit::ByName(crate::env::declar_info(d).name), env.visible()),
         crate::env_model::env_arena_ids(env).1 == ef.arena(),
         !crate::expr_model::has_fv(to_model_expr(crate::env::declar_info(d).ty)),
+        crate::expr_model::nlbv(to_model_expr(crate::env::declar_info(d).ty)) <= 0,
+        crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)),
+        d matches crate::env::Declar::Inductive(i) ==> (is_structure(i) ==> struct_shape_cert(ef, i)),
         crate::level_inst::elp_in(to_model_expr(crate::env::declar_info(d).ty), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))),
         ktype_cert(env, to_model_expr(crate::env::declar_info(d).ty)),
         declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))

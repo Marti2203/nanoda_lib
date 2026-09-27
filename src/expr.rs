@@ -3381,6 +3381,89 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
+    /// A structure constructor's declared type has the structure shape:
+    /// `np + nf` Pi binders, then the structure at the constructor's universe
+    /// parameters applied to the parameters, as bound variables.
+    pub(crate) fn ctor_shape_ok(&self, ty: ExprPtr<'t>, ind: NamePtr<'t>, uparams: LevelsPtr<'t>, np: u16, nf: u16) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, ty),
+            crate::util_model::owns(*self, uparams),
+        ensures
+            result ==> crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(ty), np as nat + nf as nat) == Some(
+                crate::beta_model::spine_app(
+                    crate::expr_model::ExprSpec::Const(crate::level_arena_bridge::name_id(ind), crate::level_arena_bridge::to_model_of_levels(uparams)),
+                    crate::ctor_typing::cod_vars(np as nat, np as nat + nf as nat),
+                ),
+            ),
+    {
+        let n: u32 = np as u32 + nf as u32;
+        let mut cur = ty;
+        let mut k: u32 = 0;
+        while k < n
+            invariant
+                crate::util_model::owns(*self, cur),
+                k <= n,
+                n == np as nat + nf as nat,
+                crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(ty), n as nat)
+                    == crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(cur), (n - k) as nat),
+            decreases n - k,
+        {
+            match self.read_expr(cur) {
+                Pi { body, .. } => {
+                    cur = body;
+                },
+                _ => {
+                    return false;
+                },
+            }
+            k = k + 1;
+        }
+        match self.unfold_const_apps(cur) {
+            Some((f, name, levels, args)) => {
+                if name != ind || levels != uparams || args.len() != np as usize {
+                    return false;
+                }
+                let mut i: usize = 0;
+                while i < args.len()
+                    invariant
+                        crate::util_model::owns_all(*self, args@),
+                        args@.len() == np as nat,
+                        n == np as nat + nf as nat,
+                        i <= args@.len(),
+                        forall|j: int| 0 <= j < i ==> crate::expr_arena_bridge::to_model(#[trigger] args@[j])
+                            == crate::expr_model::ExprSpec::Var((n - 1 - j) as u32),
+                    decreases args@.len() - i,
+                {
+                    match self.read_expr(args[i]) {
+                        Var { dbj_idx, .. } => {
+                            if dbj_idx as u32 != n - 1 - (i as u32) {
+                                return false;
+                            }
+                        },
+                        _ => {
+                            return false;
+                        },
+                    }
+                    i = i + 1;
+                }
+                proof {
+                    crate::expr_arena_bridge::is_const_shape_model(f);
+                    crate::expr_arena_bridge::const_levels_vec_model(f);
+                    assert(crate::level_arena_bridge::name_id(name) == crate::level_arena_bridge::name_id(ind));
+                    crate::util_model::owned_raw_eq_in(crate::util_model::arena_ids(*self), levels, uparams);
+                    assert(levels == uparams);
+                    assert(crate::expr_arena_bridge::to_model(f) == crate::expr_model::ExprSpec::Const(
+                        crate::level_arena_bridge::name_id(ind), crate::level_arena_bridge::to_model_of_levels(uparams)));
+                    assert(crate::expr_arena_bridge::ptr_models(args@) =~= crate::ctor_typing::cod_vars(np as nat, n as nat));
+                    assert(k == n);
+                    assert(crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(cur), 0) == Some(crate::expr_arena_bridge::to_model(cur)));
+                }
+                true
+            },
+            None => false,
+        }
+    }
+
     /// Verified AS WRITTEN. Non-degeneracy witness for the `Const` clause on
     /// `read_expr`'s specification: `const_name_of`/`const_levels_of` are
     /// uninterpreted, so without that clause nothing in the `Const { .. }` arm

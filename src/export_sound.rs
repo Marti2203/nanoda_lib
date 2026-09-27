@@ -42,13 +42,12 @@ pub open spec fn all_certified<'p>(ef: crate::util::ExportFile<'p>) -> bool {
 }
 
 /// What the checker does not establish: the metatheory's named hypotheses,
-/// and -- until the inductive checker's certificates carry them -- the
-/// constructor facts.
+/// and -- until the inductive checker's certificates carry it -- the
+/// constructor parameter fact E2'.
 pub open spec fn kh_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& crate::metatheory::hyps_all(dty, denv)
     &&& crate::metatheory::h_sr(dty, denv)
     &&& crate::kclaims::h_sr_leaf(dty, denv)
-    &&& crate::ctor_typing::struct_ok(dty, denv)
     &&& crate::ctor_typing::ctor_params_ok(dty, denv)
 }
 
@@ -60,6 +59,7 @@ proof fn entry_of<'p>(ef: crate::util::ExportFile<'p>, c: int, id: u64) -> (i: i
         0 <= i < ef.declars_keys().len(),
         i < c,
         crate::env::find_at(ef.declars_view(), ef.declars_keys(), c, id) == Some(decl_at(ef, i)),
+        crate::level_arena_bridge::name_id(ef.declars_keys()[i]) == id,
 {
     let keys = ef.declars_keys();
     choose|i: int| 0 <= i < keys.len() && i < c && crate::level_arena_bridge::name_id(#[trigger] keys[i]) == id
@@ -84,6 +84,109 @@ proof fn cert_of<'p>(ef: crate::util::ExportFile<'p>, i: int) -> (c: int)
     let c = choose|c: int| #[trigger] crate::tc::declar_cert_at(ef, d, c);
     assert(keys[i] == crate::env::declar_info(d).name);
     c
+}
+
+/// Parameters' names, made levels again, are the parameters.
+proof fn params_levels_names(ls: Seq<crate::level_model::LevelSpec>)
+    requires
+        crate::level_arena_bridge::distinct_params(ls),
+    ensures
+        crate::ctor_typing::params_levels(crate::level_model::level_names(ls)) == ls,
+        forall|i: int, j: int| 0 <= i < j < ls.len() ==> crate::level_model::level_names(ls)[i] != crate::level_model::level_names(ls)[j],
+{
+    let us = crate::level_model::level_names(ls);
+    assert(crate::ctor_typing::params_levels(us) =~= ls) by {
+        assert forall|i: int| 0 <= i < ls.len() implies crate::ctor_typing::params_levels(us)[i] == ls[i] by {
+            assert(ls[i] is Param);
+        }
+    }
+    assert forall|i: int, j: int| 0 <= i < j < ls.len() implies us[i] != us[j] by {
+        assert(ls[i] is Param && ls[j] is Param);
+        assert(ls[i] != ls[j]);
+    }
+}
+
+/// Two export names with the same id are the same name.
+proof fn same_export_name<'p>(ef: crate::util::ExportFile<'p>, x: crate::util::NamePtr<'p>, y: crate::util::NamePtr<'p>)
+    requires
+        crate::inductive::export_ok(ef),
+        ef.declars_view().contains_key(x),
+        ef.declars_view().contains_key(y),
+        crate::level_arena_bridge::name_id(x) == crate::level_arena_bridge::name_id(y),
+    ensures
+        x == y,
+{
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    crate::util_model::owned_raw_eq_in((0, ef.arena()), x, y);
+}
+
+/// One structure's constructor, from the structure's certificate.
+#[verifier::spinoff_prover]
+proof fn struct_ok1_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, ind: u64)
+    requires
+        crate::inductive::export_ok(ef),
+        all_certified(ef),
+        0 <= cc <= ef.declars_keys().len(),
+        m_denv(ef, cc).struct_ctor.contains_key(ind),
+        m_denv(ef, cc).ctor_np.contains_key(m_denv(ef, cc).struct_ctor[ind]),
+    ensures
+        crate::ctor_typing::struct_ok1(m_dty(ef, cc), m_denv(ef, cc), ind, m_denv(ef, cc).struct_ctor[ind]),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let dty = m_dty(ef, cc);
+    let denv = m_denv(ef, cc);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let cid = denv.struct_ctor[ind];
+    let i1 = entry_of(ef, cc, ind);
+    let di = decl_at(ef, i1);
+    let ci1 = cert_of(ef, i1);
+    let i2 = entry_of(ef, cc, cid);
+    let dc = decl_at(ef, i2);
+    let ci2 = cert_of(ef, i2);
+    assert(keys.to_set().contains(keys[i1]));
+    assert(keys.to_set().contains(keys[i2]));
+    assert(crate::env_model::struct_ctor_entry(di) == Some(cid));
+    if let crate::env::Declar::Inductive(ii) = di {
+        assert(crate::tc::is_structure(ii));
+        let cn = ii.all_ctor_names@[0];
+        assert(crate::tc::struct_shape_cert(ef, ii));
+        same_export_name(ef, keys[i2], cn);
+        assert(dc == view[cn]);
+        if let crate::env::Declar::Constructor(c) = view[cn] {
+            assert(crate::env::declar_info(di).name == keys[i1]);
+            assert(crate::env::find_at(view, keys, cc, cid) == Some(dc));
+            assert(denv.ctor_np[cid] == c.num_params);
+            assert(denv.ctor_nf.contains_key(cid) && denv.ctor_nf[cid] == c.num_fields);
+            assert(denv.ctor_ind.contains_key(cid) && denv.ctor_ind[cid] == ind);
+            assert(dty.contains_key(cid));
+            let ls = crate::level_arena_bridge::to_model_of_levels(c.info.uparams);
+            assert(dty[cid] == (crate::level_model::level_names(ls), crate::expr_arena_bridge::to_model(c.info.ty)));
+            params_levels_names(ls);
+            let ils = crate::ctor_typing::params_levels(dty[cid].0);
+            assert(ils == ls);
+            assert(crate::ctor_typing::ctor_cod(dty, denv, ind, cid, ils));
+        }
+    }
+}
+
+/// THE STRUCTURES' CONSTRUCTORS, at every cutoff, from the structures'
+/// certificates.
+proof fn struct_ok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        crate::inductive::export_ok(ef),
+        all_certified(ef),
+        0 <= cc <= ef.declars_keys().len(),
+    ensures
+        crate::ctor_typing::struct_ok(m_dty(ef, cc), m_denv(ef, cc)),
+{
+    let denv = m_denv(ef, cc);
+    assert forall|ind: u64| #[trigger] denv.struct_ctor.contains_key(ind) && denv.ctor_np.contains_key(denv.struct_ctor[ind])
+        implies crate::ctor_typing::struct_ok1(m_dty(ef, cc), denv, ind, denv.struct_ctor[ind]) by {
+        struct_ok1_at(ef, cc, ind);
+    }
 }
 
 /// THE CHECKER'S GUARANTEE: every declaration certified, and the named
@@ -148,6 +251,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             assert(r.rec_rules@[j].val == crate::tc_model::rec_rule_val_of(r.rec_rules@[j]));
         }
     }
+    struct_ok_at(ef, cc);
     assert(crate::metatheory::env_wf(dty, denv));
     assert(crate::swap_model::dty_fv_free(dty));
     assert(crate::swap_model::env_fv_free(denv));

@@ -228,6 +228,7 @@ proof fn pwalk_reach(
 /// Every stage of the constructor's telescope, up to the field, is a Pi.
 proof fn stage_pis(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ind: u64, cid: u64, ls: Seq<LevelSpec>, sq: Seq<ExprSpec>, m: nat)
     requires
+        denv.ctor_np.contains_key(cid),
         struct_ok(dty, denv),
         denv.struct_ctor(ind) == Some(cid),
         m < denv.ctor_np[cid] as nat + denv.ctor_nf[cid] as nat,
@@ -274,6 +275,7 @@ proof fn stage_arg(
     j: nat,
 ) -> (tx: ExprSpec)
     requires
+        denv.ctor_np.contains_key(cid),
         hyps_all(dty, denv),
         struct_ok(dty, denv),
         ctor_params_ok(dty, denv),

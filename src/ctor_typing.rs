@@ -312,10 +312,13 @@ pub open spec fn struct_ok1(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
     &&& exists|ils: Seq<LevelSpec>| #[trigger] ctor_cod(dty, denv, ind, cid, ils)
 }
 
-/// Every structure's constructor is well shaped. An environment invariant:
-/// the inductive checker establishes it for each structure it adds.
+/// Every structure's constructor, once declared, is well shaped. An
+/// environment invariant, certified with each constructor. (The structure
+/// is declared before its constructor, so between the two the constructor
+/// has no entry yet.)
 pub open spec fn struct_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    forall|ind: u64| #[trigger] denv.struct_ctor.contains_key(ind) ==> struct_ok1(dty, denv, ind, denv.struct_ctor[ind])
+    forall|ind: u64| #[trigger] denv.struct_ctor.contains_key(ind) && denv.ctor_np.contains_key(denv.struct_ctor[ind])
+        ==> struct_ok1(dty, denv, ind, denv.struct_ctor[ind])
 }
 
 /// The head of a really typed spine is really typed.
@@ -364,6 +367,7 @@ pub proof fn ctor_app_type(
     t: ExprSpec,
 ) -> (ils: Seq<LevelSpec>)
     requires
+        denv.ctor_np.contains_key(cid),
         hyps_all(dty, denv),
         struct_ok(dty, denv),
         denv.struct_ctor(ind) == Some(cid),
@@ -477,6 +481,7 @@ pub proof fn peel_pis(t: ExprSpec, s: Seq<ExprSpec>, n: nat)
 /// conversion is reflexivity. Returns the field type, which is the domain
 /// reached after instantiating with the parameters and the earlier
 /// projections.
+#[verifier::spinoff_prover]
 pub proof fn pft_intro(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
@@ -565,6 +570,7 @@ pub proof fn proj_typed(
     idx: nat,
 ) -> (t: ExprSpec)
     requires
+        denv.ctor_np.contains_key(cid),
         struct_ok(dty, denv),
         denv.struct_ctor(ind) == Some(cid),
         params.len() >= denv.ctor_np[cid] as nat,
@@ -698,6 +704,7 @@ pub open spec fn exp_ok(
     &&& struct_ok(dty, denv)
     &&& ctor_params_ok(dty, denv)
     &&& denv.struct_ctor(ind) == Some(cid)
+    &&& denv.ctor_np.contains_key(cid)
     &&& ps.len() == denv.ctor_np[cid] as nat
     &&& forall|i: int| 0 <= i < ps.len() + rest.len() ==> nlbv(#[trigger] (ps + rest)[i]) == 0
     &&& nlbv(e) == 0
@@ -819,6 +826,7 @@ pub proof fn ctor_tele_end(
     full: Seq<ExprSpec>,
 )
     requires
+        denv.ctor_np.contains_key(cid),
         struct_ok(dty, denv),
         denv.struct_ctor(ind) == Some(cid),
         ls.len() == dty[cid].0.len(),
