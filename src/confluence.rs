@@ -1009,7 +1009,7 @@ proof fn app_join(env: EnvSpec, f: ExprSpec, a: ExprSpec, e2: ExprSpec)
 }
 
 /// A reduct of a binder is a binder of the same kind.
-proof fn pstep_bind_shape(env: EnvSpec, bk: BinderKind, t: ExprSpec, b: ExprSpec, x: ExprSpec) -> (r: (ExprSpec, ExprSpec))
+pub proof fn pstep_bind_shape(env: EnvSpec, bk: BinderKind, t: ExprSpec, b: ExprSpec, x: ExprSpec) -> (r: (ExprSpec, ExprSpec))
     requires
         pstep(env, ExprSpec::Bind(bk, Box::new(t), Box::new(b)), x),
     ensures

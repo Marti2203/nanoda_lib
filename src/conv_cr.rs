@@ -10,7 +10,15 @@ use crate::level_model::{interp, subst_env, subst_level_spec, LevelSpec};
 #[cfg(verus_only)]
 use crate::expr_model::subst_expr_levels;
 #[cfg(verus_only)]
-use crate::subst_algebra::{inst, lift, subst1_is_inst};
+use crate::subst_algebra::{inst, inst_lift, lift, lift_zero, subst1_is_inst};
+#[cfg(verus_only)]
+use crate::fclose::{fclose, fclose_open, pstep_star_fclose, pstep_star_inst};
+#[cfg(verus_only)]
+use crate::swap_model::env_fv_free;
+#[cfg(verus_only)]
+use crate::expr_model::fv_absent;
+#[cfg(verus_only)]
+use crate::tc_model::inst_free;
 #[cfg(verus_only)]
 use crate::beta_model::*;
 #[cfg(verus_only)]
@@ -950,6 +958,78 @@ pub proof fn jn_proj(env: EnvSpec, p: usize, s1: ExprSpec, s2: ExprSpec)
     pstep_star_proj_congr(env, p, s1, s3);
     pstep_star_proj_congr(env, p, s2, s4);
     jn_intro(env, ExprSpec::Proj(p, Box::new(s1)), ExprSpec::Proj(p, Box::new(s2)), ExprSpec::Proj(p, Box::new(s3)), ExprSpec::Proj(p, Box::new(s4)));
+}
+
+/// Closing a local respects level equivalence.
+pub proof fn lveq_fclose(k: nat, c: nat, x: ExprSpec, y: ExprSpec)
+    requires
+        lveq(x, y),
+    ensures
+        lveq(fclose(k, c, x), fclose(k, c, y)),
+    decreases x,
+{
+    match (x, y) {
+        (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
+            lveq_fclose(k, c, *f1, *f2);
+            lveq_fclose(k, c, *a1, *a2);
+        },
+        (ExprSpec::Bind(k1, t1, b1), ExprSpec::Bind(k2, t2, b2)) => {
+            lveq_fclose(k, c, *t1, *t2);
+            lveq_fclose(k, c + 1, *b1, *b2);
+        },
+        (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
+            lveq_fclose(k, c, *t1, *t2);
+            lveq_fclose(k, c, *v1, *v2);
+            lveq_fclose(k, c + 1, *b1, *b2);
+        },
+        (ExprSpec::Proj(p1, s1), ExprSpec::Proj(p2, s2)) => {
+            lveq_fclose(k, c, *s1, *s2);
+        },
+        _ => {},
+    }
+}
+
+/// Joinability is stable under instantiation.
+pub proof fn jn_inst(env: EnvSpec, j: nat, a: ExprSpec, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::subst_algebra::env_bv_free(env),
+        jn(env, x, y),
+    ensures
+        jn(env, inst(j, a, x), inst(j, a, y)),
+{
+    let (x2, y2) = jn_elim(env, x, y);
+    pstep_star_inst(env, j, a, x, x2);
+    pstep_star_inst(env, j, a, y, y2);
+    lveq_refl(a);
+    lveq_inst(j, a, a, x2, y2);
+    jn_intro(env, inst(j, a, x), inst(j, a, y), inst(j, a, x2), inst(j, a, y2));
+}
+
+/// OPENED BODIES JOIN ONLY IF THE BODIES DO: joinability of two binder
+/// bodies opened with a local neither mentions is joinability of the
+/// bodies themselves -- conversion's under-binder rule, in reduction form.
+pub proof fn jn_open(env: EnvSpec, k: nat, b1: ExprSpec, b2: ExprSpec)
+    requires
+        crate::subst_algebra::env_bv_free(env),
+        env_fv_free(env),
+        fv_absent(b1, k),
+        fv_absent(b2, k),
+        jn(env, inst_free(b1, k), inst_free(b2, k)),
+    ensures
+        jn(env, b1, b2),
+{
+    let (x2, y2) = jn_elim(env, inst_free(b1, k), inst_free(b2, k));
+    pstep_star_fclose(env, k, 0, inst_free(b1, k), x2);
+    pstep_star_fclose(env, k, 0, inst_free(b2, k), y2);
+    fclose_open(k, 0, b1);
+    fclose_open(k, 0, b2);
+    lveq_fclose(k, 0, x2, y2);
+    jn_intro(env, lift(1, 1, b1), lift(1, 1, b2), fclose(k, 0, x2), fclose(k, 0, y2));
+    jn_inst(env, 1, ExprSpec::Var(0), lift(1, 1, b1), lift(1, 1, b2));
+    inst_lift(0, 1, 1, ExprSpec::Var(0), b1);
+    inst_lift(0, 1, 1, ExprSpec::Var(0), b2);
+    lift_zero(1, b1);
+    lift_zero(1, b2);
 }
 
 } // verus!
