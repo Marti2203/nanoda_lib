@@ -28,42 +28,42 @@ use vstd::prelude::*;
 verus! {
 
 /// A redex of a Pi-reducing type reduces to the same Pi.
-pub proof fn rp_eq(s: ExprSpec, t: ExprSpec)
+pub proof fn rp_eq(sig: Sig, s: ExprSpec, t: ExprSpec)
     requires
-        hred(s, t),
-        pi_red(t),
+        hred(sig, s, t),
+        pi_red(sig, t),
     ensures
-        pi_red(s),
-        rp(s) == rp(t),
+        pi_red(sig, s),
+        rp(sig, s) == rp(sig, t),
 {
-    hred_trans(s, t, pi(rp(t).0, rp(t).1));
-    assert(hred(s, pi(rp(t).0, rp(t).1)));
-    let p = rp(s);
-    assert(hred(s, pi(p.0, p.1)));
-    hred_det(s, pi(p.0, p.1), pi(rp(t).0, rp(t).1));
+    hred_trans(sig, s, t, pi(rp(sig, t).0, rp(sig, t).1));
+    assert(hred(sig, s, pi(rp(sig, t).0, rp(sig, t).1)));
+    let p = rp(sig, s);
+    assert(hred(sig, s, pi(p.0, p.1)));
+    hred_det(sig, s, pi(p.0, p.1), pi(rp(sig, t).0, rp(sig, t).1));
 }
 
-pub proof fn rs_eq(s: ExprSpec, t: ExprSpec)
+pub proof fn rs_eq(sig: Sig, s: ExprSpec, t: ExprSpec)
     requires
-        hred(s, t),
-        sort_red(t),
+        hred(sig, s, t),
+        sort_red(sig, t),
     ensures
-        sort_red(s),
-        rs(s) == rs(t),
+        sort_red(sig, s),
+        rs(sig, s) == rs(sig, t),
 {
-    hred_trans(s, t, sort(rs(t)));
-    assert(hred(s, sort(rs(t))));
-    let l = rs(s);
-    assert(hred(s, sort(l)));
-    hred_det(s, sort(l), sort(rs(t)));
+    hred_trans(sig, s, t, sort(rs(sig, t)));
+    assert(hred(sig, s, sort(rs(sig, t))));
+    let l = rs(sig, s);
+    assert(hred(sig, s, sort(l)));
+    hred_det(sig, s, sort(l), sort(rs(sig, t)));
 }
 
 /// HEAD EXPANSION OF THE TYPE RELATION.
 pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: ExprSpec, s2: ExprSpec, a: Cpt)
     requires
         rel_ty(sig, n, g, t, t2, a),
-        hred(s, t),
-        hred(s2, t2),
+        hred(sig, s, t),
+        hred(sig, s2, t2),
         tconvd(sig, g, s, t),
         tconvd(sig, g, s2, t2),
     ensures
@@ -76,18 +76,18 @@ pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: E
         Cpt::U | Cpt::Prop => {
             ty_sort(sig, n, g, t, t2);
             ty_sort(sig, n, g, s, s2);
-            rs_eq(s, t);
-            rs_eq(s2, t2);
-            tchain_trans(sig, g, s, t, sort(rs(t)));
-            tchain_trans(sig, g, s2, t2, sort(rs(t2)));
+            rs_eq(sig, s, t);
+            rs_eq(sig, s2, t2);
+            tchain_trans(sig, g, s, t, sort(rs(sig, t)));
+            tchain_trans(sig, g, s2, t2, sort(rs(sig, t2)));
         },
         Cpt::Pi(_, _) => {
             ty_pi(sig, n, g, t, t2, a);
             ty_pi(sig, n, g, s, s2, a);
-            rp_eq(s, t);
-            rp_eq(s2, t2);
-            tchain_trans(sig, g, s, t, pi(rp(t).0, rp(t).1));
-            tchain_trans(sig, g, s2, t2, pi(rp(t2).0, rp(t2).1));
+            rp_eq(sig, s, t);
+            rp_eq(sig, s2, t2);
+            tchain_trans(sig, g, s, t, pi(rp(sig, t).0, rp(sig, t).1));
+            tchain_trans(sig, g, s2, t2, pi(rp(sig, t2).0, rp(sig, t2).1));
         },
         Cpt::Lam(_) => ty_other(sig, n, g, t, t2, a),
     }
@@ -136,8 +136,8 @@ pub proof fn app_conv(sig: Sig, g: Ctx, s1: ExprSpec, m1: ExprSpec, t: ExprSpec,
 pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1: ExprSpec, s2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
     requires
         rel_tm(sig, n, g, m1, m2, t, u, a),
-        hred(s1, m1),
-        hred(s2, m2),
+        hred(sig, s1, m1),
+        hred(sig, s2, m2),
         derivable(sig, eq(g, s1, m1, t)),
         derivable(sig, eq(g, s2, m2, t)),
     ensures
@@ -149,12 +149,12 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
         Cpt::U | Cpt::Prop => {
             tm_sort(sig, n, g, m1, m2, t, u);
             tm_sort(sig, n, g, s1, s2, t, u);
-            conv_chain(sig, g, s1, m1, t, sort(rs(t)));
-            conv_chain(sig, g, s2, m2, t, sort(rs(t)));
-            let d1 = get(sig, eq(g, s1, m1, sort(rs(t))));
-            let d2 = get(sig, eq(g, s2, m2, sort(rs(t))));
-            mk_t(sig, d1, rs(t));
-            mk_t(sig, d2, rs(t));
+            conv_chain(sig, g, s1, m1, t, sort(rs(sig, t)));
+            conv_chain(sig, g, s2, m2, t, sort(rs(sig, t)));
+            let d1 = get(sig, eq(g, s1, m1, sort(rs(sig, t))));
+            let d2 = get(sig, eq(g, s2, m2, sort(rs(sig, t))));
+            mk_t(sig, d1, rs(sig, t));
+            mk_t(sig, d2, rs(sig, t));
             expand_ty(sig, n, g, m1, m2, s1, s2, u);
         },
         Cpt::Pi(_, _) => {
@@ -163,17 +163,17 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
             ty_pi(sig, n, g, t, t, a);
             let k = (n - 1) as nat;
             let b = *a->Pi_0;
-            let (ta, tb) = rp(t);
+            let (ta, tb) = rp(sig, t);
             assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
                 crate::dom_typing::has_type(k, w, b) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b)
                 implies #[trigger] app_at(sig, k, g, s1, s2, tb, u, a, x, x2, w) by {
                 app_tm_elim(sig, k, g, m1, m2, ta, tb, u, a, x, x2, w);
                 app_conv(sig, g, s1, m1, t, ta, tb, x, x2);
                 app_conv(sig, g, s2, m2, t, ta, tb, x, x2);
-                hred_app_l(s1, m1, x);
-                hred_app_l(s1, m1, x2);
-                hred_app_l(s2, m2, x);
-                hred_app_l(s2, m2, x2);
+                hred_app_l(sig, s1, m1, x);
+                hred_app_l(sig, s1, m1, x2);
+                hred_app_l(sig, s2, m2, x);
+                hred_app_l(sig, s2, m2, x2);
                 expand_tm(sig, k, g, sapp(m1, x), sapp(m1, x2), sapp(s1, x), sapp(s1, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
                 expand_tm(sig, k, g, sapp(m2, x), sapp(m2, x2), sapp(s2, x), sapp(s2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
                 expand_tm(sig, k, g, sapp(m1, x), sapp(m2, x2), sapp(s1, x), sapp(s2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));

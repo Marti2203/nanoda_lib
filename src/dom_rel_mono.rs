@@ -87,8 +87,8 @@ proof fn decr_ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt,
     let b = *a->Pi_0;
     let b2 = *a2->Pi_0;
     pi_dom_le(a, a2);
-    let (ta, tb) = rp(t);
-    let (ta2, tb2) = rp(t2);
+    let (ta, tb) = rp(sig, t);
+    let (ta2, tb2) = rp(sig, t2);
     decr_ty(sig, k, g, ta, ta2, b, b2);
     symm_ty(sig, k, g, ta, ta2, b2);
     trans_ty(sig, k, g, ta, ta2, ta, b2);
@@ -157,7 +157,7 @@ proof fn mono_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     tm_pi(sig, n, g, m, m2, t, u, a);
     let k = (n - 1) as nat;
     let b = *a->Pi_0;
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
         has_type(k, w, b) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b)
         implies #[trigger] app_at(sig, k, g, m, m2, tb, u, a, x, x2, w) by {
@@ -224,7 +224,7 @@ proof fn incr_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpe
     let b = *a->Pi_0;
     let b2 = *a2->Pi_0;
     pi_dom_le(a, a2);
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     ty_inv(n, u, a);
     assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
         has_type(k, w, b2) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b2)
@@ -305,7 +305,7 @@ proof fn decr_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpe
     let b = *a->Pi_0;
     let b2 = *a2->Pi_0;
     pi_dom_le(a, a2);
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
         has_type(k, w, b) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b)
         implies #[trigger] app_at(sig, k, g, m, m2, tb, u, a, x, x2, w) by {

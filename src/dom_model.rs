@@ -1,5 +1,5 @@
 //! THE DOMAIN MODEL of the typed judgment (typed inversion, stage 4; the
-//! paper's Figure 4 in compact form). `mem_w(m, rho, u, w)`: the compact
+//! paper's Figure 4 in compact form). `mem_w(sig, m, rho, u, w)`: the compact
 //! `u` belongs to the denotation of `m` under the environment `rho`, as
 //! witnessed by `w` (the generator and domain chosen at each binder, the
 //! function and argument at each application) -- explicit witnesses, so
@@ -14,7 +14,9 @@ use crate::dom_compact::*;
 #[cfg(verus_only)]
 use crate::dom_typing::*;
 #[cfg(verus_only)]
-use crate::ti_syntax::is_zero;
+use crate::ti_syntax::{is_zero, dval};
+#[cfg(verus_only)]
+use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -59,39 +61,63 @@ pub open spec fn gsteps(gen: Cpt) -> Seq<(Cpt, Cpt)> {
 
 /// The entries of a generator: typed at the domain, outputs in the body's
 /// denotation at the input.
-pub open spec fn entries_ok(body: ExprSpec, rho: Env, a: Cpt, gen: Cpt, ws: Seq<Wit>) -> bool
-    decreases body, 2int,
+pub open spec fn entries_ok(sig: Sig, body: ExprSpec, rho: Env, a: Cpt, gen: Cpt, ws: Seq<Wit>) -> bool
+    decreases crank(sig, body), body, 2int,
 {
     ws.len() == gsteps(gen).len() && forall|i: int| 0 <= i < ws.len() ==>
-        typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(body, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
+        typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, body, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
 }
 
-/// MEMBERSHIP, as witnessed.
-pub open spec fn mem_w(m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
-    decreases m, 1int,
+/// The highest rank of a constant `e` mentions, plus one (0 for none).
+pub open spec fn crank(sig: Sig, e: ExprSpec) -> nat
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, _) => if sig.rank.contains_key(c) { sig.rank[c] + 1 } else { 0 },
+        ExprSpec::App(f, x) => vstd::math::max(crank(sig, *f) as int, crank(sig, *x) as int) as nat,
+        ExprSpec::Bind(_, t, b) => vstd::math::max(crank(sig, *t) as int, crank(sig, *b) as int) as nat,
+        ExprSpec::Let(t, v, b) => vstd::math::max(crank(sig, *t) as int, vstd::math::max(crank(sig, *v) as int, crank(sig, *b) as int)) as nat,
+        ExprSpec::Proj(_, x) => crank(sig, *x),
+        _ => 0,
+    }
+}
+
+/// `c.{ls}` unfolds: a definition at a matching level instance, whose value
+/// mentions only lower-ranked constants.
+pub open spec fn unfolds(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
+    &&& crate::ti_syntax::is_def(sig, c, ls)
+    &&& sig.rank.contains_key(c)
+    &&& crank(sig, dval(sig, c, ls)) <= sig.rank[c]
+}
+
+/// MEMBERSHIP, as witnessed. A definition denotes its value (closed, so in
+/// the empty environment); axioms and locals denote only bottom.
+pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
+    decreases crank(sig, m), m, 1int,
 {
     match m {
         ExprSpec::Var(i) => wf(u) && le(u, rho(i)),
         ExprSpec::Sort(l) => u is Bot || u == sortc(l),
         ExprSpec::Bind(bk, ta, b) => u is Bot || match w {
-            Wit::Gen(a, gen, wa, ws) => wf(u) && le(u, gen) && typed(a, Cpt::U) && mem_w(*ta, rho, a, *wa) && (
+            Wit::Gen(a, gen, wa, ws) => wf(u) && le(u, gen) && typed(a, Cpt::U) && mem_w(sig, *ta, rho, a, *wa) && (
                 if bk == BinderKind::Pi { gen is Pi && *gen->Pi_0 == a } else { bk == BinderKind::Lam && gen is Lam })
-                && entries_ok(*b, rho, a, gen, ws),
+                && entries_ok(sig, *b, rho, a, gen, ws),
             _ => false,
         },
         ExprSpec::App(f, x) => match w {
-            Wit::Ap(wf_, wx, w1, w2) => wf(u) && mem_w(*f, rho, wf_, *w1) && mem_w(*x, rho, wx, *w2)
+            Wit::Ap(wf_, wx, w1, w2) => wf(u) && mem_w(sig, *f, rho, wf_, *w1) && mem_w(sig, *x, rho, wx, *w2)
                 && le(u, crate::dom_compact::app(wf_, wx)),
             _ => false,
         },
+        ExprSpec::Const(c, ls) => u is Bot || (unfolds(sig, c, ls) && wf(u) && mem_w(sig, dval(sig, c, ls), bot_env(), u, w)),
         _ => u is Bot,
     }
 }
 
 /// `u` is in the denotation of `m`.
 #[verifier::opaque]
-pub open spec fn mem(m: ExprSpec, rho: Env, u: Cpt) -> bool {
-    exists|w: Wit| #[trigger] mem_w(m, rho, u, w)
+pub open spec fn mem(sig: Sig, m: ExprSpec, rho: Env, u: Cpt) -> bool {
+    exists|w: Wit| #[trigger] mem_w(sig, m, rho, u, w)
 }
 
 /// A witness for bottom.
@@ -105,29 +131,30 @@ pub open spec fn bot_w(m: ExprSpec) -> Wit
 }
 
 /// (I1) Every denotation contains bottom.
-pub proof fn mem_bot(m: ExprSpec, rho: Env)
+pub proof fn mem_bot(sig: Sig, m: ExprSpec, rho: Env)
     ensures
-        mem_w(m, rho, Cpt::Bot, bot_w(m)),
+        mem_w(sig, m, rho, Cpt::Bot, bot_w(m)),
     decreases m,
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
     if let ExprSpec::App(f, x) = m {
-        mem_bot(*f, rho);
-        mem_bot(*x, rho);
+        mem_bot(sig, *f, rho);
+        mem_bot(sig, *x, rho);
     }
 }
 
 /// (I2) Denotations are closed downward (on well-formed elements), with
 /// the same witness.
-pub proof fn mem_down(m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
+pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
     requires
-        mem_w(m, rho, u, w),
+        mem_w(sig, m, rho, u, w),
         le(u2, u),
         wf(u2),
     ensures
-        mem_w(m, rho, u2, w),
+        mem_w(sig, m, rho, u2, w),
+    decreases crank(sig, m), m,
 {
     reveal(mem);
     reveal(typed);
@@ -155,6 +182,12 @@ pub proof fn mem_down(m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
                 le_trans(u2, u, crate::dom_compact::app(wf_, wx));
             }
         },
+        ExprSpec::Const(c, ls) => {
+            if !(u2 is Bot) {
+                head_le(u2, u);
+                mem_down(sig, dval(sig, c, ls), bot_env(), u, u2, w);
+            }
+        },
         _ => {
             if !(u2 is Bot) {
                 head_le(u2, u);
@@ -169,12 +202,12 @@ pub open spec fn env_le(rho: Env, rho2: Env) -> bool {
 }
 
 /// (I4) Denotations grow with the environment, with the same witness.
-pub proof fn mem_env_mono(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
+pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
     requires
-        mem_w(m, rho, u, w),
+        mem_w(sig, m, rho, u, w),
         env_le(rho, rho2),
     ensures
-        mem_w(m, rho2, u, w),
+        mem_w(sig, m, rho2, u, w),
     decreases m,
 {
     reveal(mem);
@@ -187,26 +220,26 @@ pub proof fn mem_env_mono(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
         ExprSpec::Bind(bk, ta, b) => {
             if !(u is Bot) {
                 if let Wit::Gen(a, gen, wa, ws) = w {
-                    assert(entries_ok(*b, rho, a, gen, ws));
-                    mem_env_mono(*ta, rho, rho2, a, *wa);
+                    assert(entries_ok(sig, *b, rho, a, gen, ws));
+                    mem_env_mono(sig, *ta, rho, rho2, a, *wa);
                     assert forall|i: int| 0 <= i < ws.len() implies
-                        typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(*b, ext(rho2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
+                        typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, *b, ext(rho2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
                         let x = gsteps(gen)[i].0;
                         assert forall|j: nat| #[trigger] le(ext(rho, x)(j), ext(rho2, x)(j)) by {
                             if j == 0 {
                                 le_refl(x);
                             }
                         }
-                        mem_env_mono(*b, ext(rho, x), ext(rho2, x), gsteps(gen)[i].1, ws[i]);
+                        mem_env_mono(sig, *b, ext(rho, x), ext(rho2, x), gsteps(gen)[i].1, ws[i]);
                     }
-                    assert(entries_ok(*b, rho2, a, gen, ws));
+                    assert(entries_ok(sig, *b, rho2, a, gen, ws));
                 }
             }
         },
         ExprSpec::App(f, x) => {
             if let Wit::Ap(wf_, wx, w1, w2) = w {
-                mem_env_mono(*f, rho, rho2, wf_, *w1);
-                mem_env_mono(*x, rho, rho2, wx, *w2);
+                mem_env_mono(sig, *f, rho, rho2, wf_, *w1);
+                mem_env_mono(sig, *x, rho, rho2, wx, *w2);
             }
         },
         _ => {},
@@ -214,12 +247,12 @@ pub proof fn mem_env_mono(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
 }
 
 /// Membership reads the environment only pointwise.
-pub proof fn mem_env_ext(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
+pub proof fn mem_env_ext(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
     requires
-        mem_w(m, rho, u, w),
+        mem_w(sig, m, rho, u, w),
         forall|i: nat| #[trigger] rho(i) == rho2(i),
     ensures
-        mem_w(m, rho2, u, w),
+        mem_w(sig, m, rho2, u, w),
 {
     reveal(mem);
     reveal(typed);
@@ -227,7 +260,7 @@ pub proof fn mem_env_ext(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
     assert forall|i: nat| #[trigger] le(rho(i), rho2(i)) by {
         le_refl(rho(i));
     }
-    mem_env_mono(m, rho, rho2, u, w);
+    mem_env_mono(sig, m, rho, rho2, u, w);
 }
 
 /// The environment read through a renaming.
@@ -237,9 +270,9 @@ pub open spec fn env_rn(rho: Env, r: spec_fn(nat) -> nat) -> Env {
 
 /// RENAMING, SEMANTICALLY: a renamed term under `rho` is the term under
 /// `rho` read through the renaming, with the same witness.
-pub proof fn mem_rn(m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wit)
+pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wit)
     ensures
-        mem_w(crate::ti_subst::psub(m, crate::ti_subst::rn(r)), rho, u, w) == mem_w(m, env_rn(rho, r), u, w),
+        mem_w(sig, crate::ti_subst::psub(m, crate::ti_subst::rn(r)), rho, u, w) == mem_w(sig, m, env_rn(rho, r), u, w),
     decreases m,
 {
     reveal(mem);
@@ -248,31 +281,31 @@ pub proof fn mem_rn(m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wi
     use crate::ti_subst::{psub, rn, up, upr, up_rn, psub_ext};
     match m {
         ExprSpec::Bind(bk, ta, b) => {
-            mem_rn(*ta, r, rho, u, w);
+            mem_rn(sig, *ta, r, rho, u, w);
             if let Wit::Gen(a, gen, wa, ws) = w {
-                mem_rn(*ta, r, rho, a, *wa);
+                mem_rn(sig, *ta, r, rho, a, *wa);
                 up_rn(r);
                 psub_ext(*b, up(rn(r)), rn(upr(r)));
                 assert forall|i: int| 0 <= i < ws.len() implies
-                    mem_w(psub(*b, rn(upr(r))), ext(rho, #[trigger] gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
-                    == mem_w(*b, ext(env_rn(rho, r), gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
+                    mem_w(sig, psub(*b, rn(upr(r))), ext(rho, #[trigger] gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
+                    == mem_w(sig, *b, ext(env_rn(rho, r), gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
                     let x = gsteps(gen)[i].0;
-                    mem_rn(*b, upr(r), ext(rho, x), gsteps(gen)[i].1, ws[i]);
+                    mem_rn(sig, *b, upr(r), ext(rho, x), gsteps(gen)[i].1, ws[i]);
                     assert forall|j: nat| #[trigger] env_rn(ext(rho, x), upr(r))(j) == ext(env_rn(rho, r), x)(j) by {}
-                    if mem_w(*b, env_rn(ext(rho, x), upr(r)), gsteps(gen)[i].1, ws[i]) {
-                        mem_env_ext(*b, env_rn(ext(rho, x), upr(r)), ext(env_rn(rho, r), x), gsteps(gen)[i].1, ws[i]);
+                    if mem_w(sig, *b, env_rn(ext(rho, x), upr(r)), gsteps(gen)[i].1, ws[i]) {
+                        mem_env_ext(sig, *b, env_rn(ext(rho, x), upr(r)), ext(env_rn(rho, r), x), gsteps(gen)[i].1, ws[i]);
                     }
-                    if mem_w(*b, ext(env_rn(rho, r), x), gsteps(gen)[i].1, ws[i]) {
-                        mem_env_ext(*b, ext(env_rn(rho, r), x), env_rn(ext(rho, x), upr(r)), gsteps(gen)[i].1, ws[i]);
+                    if mem_w(sig, *b, ext(env_rn(rho, r), x), gsteps(gen)[i].1, ws[i]) {
+                        mem_env_ext(sig, *b, ext(env_rn(rho, r), x), env_rn(ext(rho, x), upr(r)), gsteps(gen)[i].1, ws[i]);
                     }
                 }
-                assert(entries_ok(psub(*b, up(rn(r))), rho, a, gen, ws) == entries_ok(*b, env_rn(rho, r), a, gen, ws));
+                assert(entries_ok(sig, psub(*b, up(rn(r))), rho, a, gen, ws) == entries_ok(sig, *b, env_rn(rho, r), a, gen, ws));
             }
         },
         ExprSpec::App(f, x) => {
             if let Wit::Ap(wf_, wx, w1, w2) = w {
-                mem_rn(*f, r, rho, wf_, *w1);
-                mem_rn(*x, r, rho, wx, *w2);
+                mem_rn(sig, *f, r, rho, wf_, *w1);
+                mem_rn(sig, *x, r, rho, wx, *w2);
             }
         },
         _ => {},
@@ -280,25 +313,25 @@ pub proof fn mem_rn(m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wi
 }
 
 /// Down-closure, for the existential form.
-pub proof fn mem_down_e(m: ExprSpec, rho: Env, u: Cpt, u2: Cpt)
+pub proof fn mem_down_e(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt)
     requires
-        mem(m, rho, u),
+        mem(sig, m, rho, u),
         le(u2, u),
         wf(u2),
     ensures
-        mem(m, rho, u2),
+        mem(sig, m, rho, u2),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
-    let w = choose|w: Wit| #[trigger] mem_w(m, rho, u, w);
-    mem_down(m, rho, u, u2, w);
+    let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+    mem_down(sig, m, rho, u, u2, w);
 }
 
 /// Every element of a denotation is well formed.
-pub proof fn mem_wf(m: ExprSpec, rho: Env, u: Cpt, w: Wit)
+pub proof fn mem_wf(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit)
     requires
-        mem_w(m, rho, u, w),
+        mem_w(sig, m, rho, u, w),
     ensures
         wf(u),
 {
@@ -309,48 +342,48 @@ pub proof fn mem_wf(m: ExprSpec, rho: Env, u: Cpt, w: Wit)
 
 /// The environment `rho2` is covered by `s` under `rho`: each entry is in
 /// the denotation of the corresponding substituted term.
-pub open spec fn covers(s: crate::ti_subst::Sub, rho: Env, rho2: Env) -> bool {
-    forall|i: nat| #[trigger] mem(s(i), rho, rho2(i))
+pub open spec fn covers(sig: Sig, s: crate::ti_subst::Sub, rho: Env, rho2: Env) -> bool {
+    forall|i: nat| #[trigger] mem(sig, s(i), rho, rho2(i))
 }
 
 /// Covering moves under a binder.
-pub proof fn covers_up(s: crate::ti_subst::Sub, rho: Env, rho2: Env, x: Cpt)
+pub proof fn covers_up(sig: Sig, s: crate::ti_subst::Sub, rho: Env, rho2: Env, x: Cpt)
     requires
-        covers(s, rho, rho2),
+        covers(sig, s, rho, rho2),
         wf(x),
     ensures
-        covers(crate::ti_subst::up(s), ext(rho, x), ext(rho2, x)),
+        covers(sig, crate::ti_subst::up(s), ext(rho, x), ext(rho2, x)),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
     use crate::ti_subst::{psub, rn, up, lift_is_rn, lr};
-    assert forall|i: nat| #[trigger] mem(up(s)(i), ext(rho, x), ext(rho2, x)(i)) by {
+    assert forall|i: nat| #[trigger] mem(sig, up(s)(i), ext(rho, x), ext(rho2, x)(i)) by {
         if i == 0 {
             le_refl(x);
-            assert(mem_w(ExprSpec::Var(0), ext(rho, x), x, Wit::Nil));
+            assert(mem_w(sig, ExprSpec::Var(0), ext(rho, x), x, Wit::Nil));
         } else {
             let k = (i - 1) as nat;
-            assert(mem(s(k), rho, rho2(k)));
-            let w = choose|w: Wit| #[trigger] mem_w(s(k), rho, rho2(k), w);
+            assert(mem(sig, s(k), rho, rho2(k)));
+            let w = choose|w: Wit| #[trigger] mem_w(sig, s(k), rho, rho2(k), w);
             crate::subst_algebra::lift_zero(0, s(k));
             lift_is_rn(1, 0, s(k));
-            mem_rn(s(k), lr(1, 0), ext(rho, x), rho2(k), w);
+            mem_rn(sig, s(k), lr(1, 0), ext(rho, x), rho2(k), w);
             assert forall|j: nat| #[trigger] rho(j) == env_rn(ext(rho, x), lr(1, 0))(j) by {}
-            mem_env_ext(s(k), rho, env_rn(ext(rho, x), lr(1, 0)), rho2(k), w);
-            assert(mem_w(up(s)(i), ext(rho, x), rho2(k), w));
+            mem_env_ext(sig, s(k), rho, env_rn(ext(rho, x), lr(1, 0)), rho2(k), w);
+            assert(mem_w(sig, up(s)(i), ext(rho, x), rho2(k), w));
         }
     }
 }
 
 /// SUBSTITUTION, SEMANTICALLY (the easy direction): what a term denotes
 /// under a covered environment, its substitution instance denotes.
-pub proof fn mem_psub_back(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, rho2: Env, u: Cpt, w: Wit)
+pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, rho2: Env, u: Cpt, w: Wit)
     requires
-        mem_w(m, rho2, u, w),
-        covers(s, rho, rho2),
+        mem_w(sig, m, rho2, u, w),
+        covers(sig, s, rho, rho2),
     ensures
-        mem(crate::ti_subst::psub(m, s), rho, u),
+        mem(sig, crate::ti_subst::psub(m, s), rho, u),
     decreases m,
 {
     reveal(mem);
@@ -359,46 +392,49 @@ pub proof fn mem_psub_back(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, rho2:
     use crate::ti_subst::{psub, up};
     match m {
         ExprSpec::Var(i) => {
-            assert(mem(s(i), rho, rho2(i)));
-            mem_down_e(s(i), rho, rho2(i), u);
+            assert(mem(sig, s(i), rho, rho2(i)));
+            mem_down_e(sig, s(i), rho, rho2(i), u);
         },
         ExprSpec::Sort(l) => {
-            assert(mem_w(psub(m, s), rho, u, Wit::Nil));
+            assert(mem_w(sig, psub(m, s), rho, u, Wit::Nil));
         },
         ExprSpec::Bind(bk, ta, b) => {
             if u is Bot {
-                assert(mem_w(psub(m, s), rho, u, Wit::Nil));
+                assert(mem_w(sig, psub(m, s), rho, u, Wit::Nil));
             } else if let Wit::Gen(a, gen, wa, ws) = w {
-                mem_psub_back(*ta, s, rho, rho2, a, *wa);
-                let wa2 = choose|w2: Wit| #[trigger] mem_w(psub(*ta, s), rho, a, w2);
+                mem_psub_back(sig, *ta, s, rho, rho2, a, *wa);
+                let wa2 = choose|w2: Wit| #[trigger] mem_w(sig, psub(*ta, s), rho, a, w2);
                 let st = gsteps(gen);
-                assert(entries_ok(*b, rho2, a, gen, ws));
+                assert(entries_ok(sig, *b, rho2, a, gen, ws));
                 assert forall|i: int| 0 <= i < ws.len() implies
-                    #[trigger] mem(psub(*b, up(s)), ext(rho, st[i].0), st[i].1) by {
+                    #[trigger] mem(sig, psub(*b, up(s)), ext(rho, st[i].0), st[i].1) by {
                     assert(typed(st[i].0, a));
-                    covers_up(s, rho, rho2, st[i].0);
-                    mem_psub_back(*b, up(s), ext(rho, st[i].0), ext(rho2, st[i].0), st[i].1, ws[i]);
+                    covers_up(sig, s, rho, rho2, st[i].0);
+                    mem_psub_back(sig, *b, up(s), ext(rho, st[i].0), ext(rho2, st[i].0), st[i].1, ws[i]);
                 }
-                let ws2 = Seq::new(ws.len(), |i: int| choose|w2: Wit| #[trigger] mem_w(psub(*b, up(s)), ext(rho, st[i].0), st[i].1, w2));
+                let ws2 = Seq::new(ws.len(), |i: int| choose|w2: Wit| #[trigger] mem_w(sig, psub(*b, up(s)), ext(rho, st[i].0), st[i].1, w2));
                 assert forall|i: int| 0 <= i < ws2.len() implies
-                    typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(psub(*b, up(s)), ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws2[i]) by {
-                    assert(mem(psub(*b, up(s)), ext(rho, st[i].0), st[i].1));
+                    typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, psub(*b, up(s)), ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws2[i]) by {
+                    assert(mem(sig, psub(*b, up(s)), ext(rho, st[i].0), st[i].1));
                 }
-                assert(entries_ok(psub(*b, up(s)), rho, a, gen, ws2));
-                assert(mem_w(psub(m, s), rho, u, Wit::Gen(a, gen, Box::new(wa2), ws2)));
+                assert(entries_ok(sig, psub(*b, up(s)), rho, a, gen, ws2));
+                assert(mem_w(sig, psub(m, s), rho, u, Wit::Gen(a, gen, Box::new(wa2), ws2)));
             }
         },
         ExprSpec::App(f, x) => {
             if let Wit::Ap(wf_, wx, w1, w2) = w {
-                mem_psub_back(*f, s, rho, rho2, wf_, *w1);
-                mem_psub_back(*x, s, rho, rho2, wx, *w2);
-                let v1 = choose|v: Wit| #[trigger] mem_w(psub(*f, s), rho, wf_, v);
-                let v2 = choose|v: Wit| #[trigger] mem_w(psub(*x, s), rho, wx, v);
-                assert(mem_w(psub(m, s), rho, u, Wit::Ap(wf_, wx, Box::new(v1), Box::new(v2))));
+                mem_psub_back(sig, *f, s, rho, rho2, wf_, *w1);
+                mem_psub_back(sig, *x, s, rho, rho2, wx, *w2);
+                let v1 = choose|v: Wit| #[trigger] mem_w(sig, psub(*f, s), rho, wf_, v);
+                let v2 = choose|v: Wit| #[trigger] mem_w(sig, psub(*x, s), rho, wx, v);
+                assert(mem_w(sig, psub(m, s), rho, u, Wit::Ap(wf_, wx, Box::new(v1), Box::new(v2))));
             }
         },
+        ExprSpec::Const(..) => {
+            assert(mem_w(sig, psub(m, s), rho, u, w));
+        },
         _ => {
-            assert(mem_w(psub(m, s), rho, u, Wit::Nil));
+            assert(mem_w(sig, psub(m, s), rho, u, Wit::Nil));
         },
     }
 }
@@ -536,36 +572,36 @@ pub proof fn join_lub(u: Cpt, v: Cpt, w: Cpt)
 
 /// A denotation is closed under compatible joins.
 #[verifier::opaque]
-pub open spec fn jc(m: ExprSpec, rho: Env) -> bool {
-    forall|u1: Cpt, u2: Cpt| #[trigger] mem(m, rho, u1) && #[trigger] mem(m, rho, u2)
-        ==> compat(u1, u2) && mem(m, rho, join(u1, u2))
+pub open spec fn jc(sig: Sig, m: ExprSpec, rho: Env) -> bool {
+    forall|u1: Cpt, u2: Cpt| #[trigger] mem(sig, m, rho, u1) && #[trigger] mem(sig, m, rho, u2)
+        ==> compat(u1, u2) && mem(sig, m, rho, join(u1, u2))
 }
 
-pub proof fn jc_var(i: nat, rho: Env)
+pub proof fn jc_var(sig: Sig, i: nat, rho: Env)
     requires
         wf(rho(i)),
     ensures
-        jc(ExprSpec::Var(i), rho),
+        jc(sig, ExprSpec::Var(i), rho),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
-    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(ExprSpec::Var(i), rho, u1) && #[trigger] mem(ExprSpec::Var(i), rho, u2)
-        implies compat(u1, u2) && mem(ExprSpec::Var(i), rho, join(u1, u2)) by {
-        let w1 = choose|w: Wit| #[trigger] mem_w(ExprSpec::Var(i), rho, u1, w);
-        let w2 = choose|w: Wit| #[trigger] mem_w(ExprSpec::Var(i), rho, u2, w);
+    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(sig, ExprSpec::Var(i), rho, u1) && #[trigger] mem(sig, ExprSpec::Var(i), rho, u2)
+        implies compat(u1, u2) && mem(sig, ExprSpec::Var(i), rho, join(u1, u2)) by {
+        let w1 = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Var(i), rho, u1, w);
+        let w2 = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Var(i), rho, u2, w);
         ub_compat(u1, u2, rho(i));
         join_ub(u1, u2);
         join_lub(u1, u2, rho(i));
-        assert(mem_w(ExprSpec::Var(i), rho, join(u1, u2), Wit::Nil));
+        assert(mem_w(sig, ExprSpec::Var(i), rho, join(u1, u2), Wit::Nil));
     }
 }
 
 /// A lifted term under an extended environment denotes what the term
 /// denotes.
-pub proof fn mem_lift1(t: ExprSpec, rho: Env, x: Cpt, u: Cpt)
+pub proof fn mem_lift1(sig: Sig, t: ExprSpec, rho: Env, x: Cpt, u: Cpt)
     ensures
-        mem(crate::subst_algebra::lift(1, 0, t), ext(rho, x), u) == mem(t, rho, u),
+        mem(sig, crate::subst_algebra::lift(1, 0, t), ext(rho, x), u) == mem(sig, t, rho, u),
 {
     reveal(mem);
     reveal(typed);
@@ -573,55 +609,55 @@ pub proof fn mem_lift1(t: ExprSpec, rho: Env, x: Cpt, u: Cpt)
     use crate::ti_subst::{lift_is_rn, lr};
     lift_is_rn(1, 0, t);
     assert forall|j: nat| #[trigger] rho(j) == env_rn(ext(rho, x), lr(1, 0))(j) by {}
-    if mem(t, rho, u) {
-        let w = choose|w: Wit| #[trigger] mem_w(t, rho, u, w);
-        mem_env_ext(t, rho, env_rn(ext(rho, x), lr(1, 0)), u, w);
-        mem_rn(t, lr(1, 0), ext(rho, x), u, w);
-        assert(mem_w(crate::subst_algebra::lift(1, 0, t), ext(rho, x), u, w));
+    if mem(sig, t, rho, u) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, t, rho, u, w);
+        mem_env_ext(sig, t, rho, env_rn(ext(rho, x), lr(1, 0)), u, w);
+        mem_rn(sig, t, lr(1, 0), ext(rho, x), u, w);
+        assert(mem_w(sig, crate::subst_algebra::lift(1, 0, t), ext(rho, x), u, w));
     }
-    if mem(crate::subst_algebra::lift(1, 0, t), ext(rho, x), u) {
-        let w = choose|w: Wit| #[trigger] mem_w(crate::subst_algebra::lift(1, 0, t), ext(rho, x), u, w);
-        mem_rn(t, lr(1, 0), ext(rho, x), u, w);
-        mem_env_ext(t, env_rn(ext(rho, x), lr(1, 0)), rho, u, w);
+    if mem(sig, crate::subst_algebra::lift(1, 0, t), ext(rho, x), u) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, crate::subst_algebra::lift(1, 0, t), ext(rho, x), u, w);
+        mem_rn(sig, t, lr(1, 0), ext(rho, x), u, w);
+        mem_env_ext(sig, t, env_rn(ext(rho, x), lr(1, 0)), rho, u, w);
     }
 }
 
-pub proof fn jc_lift(t: ExprSpec, rho: Env, x: Cpt)
+pub proof fn jc_lift(sig: Sig, t: ExprSpec, rho: Env, x: Cpt)
     requires
-        jc(t, rho),
+        jc(sig, t, rho),
     ensures
-        jc(crate::subst_algebra::lift(1, 0, t), ext(rho, x)),
+        jc(sig, crate::subst_algebra::lift(1, 0, t), ext(rho, x)),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
     let lt = crate::subst_algebra::lift(1, 0, t);
-    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(lt, ext(rho, x), u1) && #[trigger] mem(lt, ext(rho, x), u2)
-        implies compat(u1, u2) && mem(lt, ext(rho, x), join(u1, u2)) by {
-        mem_lift1(t, rho, x, u1);
-        mem_lift1(t, rho, x, u2);
-        mem_lift1(t, rho, x, join(u1, u2));
+    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(sig, lt, ext(rho, x), u1) && #[trigger] mem(sig, lt, ext(rho, x), u2)
+        implies compat(u1, u2) && mem(sig, lt, ext(rho, x), join(u1, u2)) by {
+        mem_lift1(sig, t, rho, x, u1);
+        mem_lift1(sig, t, rho, x, u2);
+        mem_lift1(sig, t, rho, x, join(u1, u2));
     }
 }
 
 /// The join of members of a join-closed denotation is a member.
-pub proof fn jall_mem(m: ExprSpec, rho: Env, t: Seq<Cpt>, k: int)
+pub proof fn jall_mem(sig: Sig, m: ExprSpec, rho: Env, t: Seq<Cpt>, k: int)
     requires
-        jc(m, rho),
+        jc(sig, m, rho),
         0 <= k <= t.len(),
-        forall|i: int| 0 <= i < t.len() ==> #[trigger] mem(m, rho, t[i]),
+        forall|i: int| 0 <= i < t.len() ==> #[trigger] mem(sig, m, rho, t[i]),
     ensures
-        mem(m, rho, joinall(t, k)),
+        mem(sig, m, rho, joinall(t, k)),
     decreases k,
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
     if k == 0 {
-        mem_bot(m, rho);
+        mem_bot(sig, m, rho);
     } else {
-        jall_mem(m, rho, t, k - 1);
-        assert(mem(m, rho, t[k - 1]));
+        jall_mem(sig, m, rho, t, k - 1);
+        assert(mem(sig, m, rho, t[k - 1]));
     }
 }
 
@@ -638,119 +674,119 @@ pub open spec fn tail(r: Env) -> Env {
     |i: nat| r(i + 1)
 }
 
-pub proof fn covers_bot(s: crate::ti_subst::Sub, rho: Env)
+pub proof fn covers_bot(sig: Sig, s: crate::ti_subst::Sub, rho: Env)
     ensures
-        covers(s, rho, bot_env()),
+        covers(sig, s, rho, bot_env()),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
-    assert forall|i: nat| #[trigger] mem(s(i), rho, bot_env()(i)) by {
-        mem_bot(s(i), rho);
+    assert forall|i: nat| #[trigger] mem(sig, s(i), rho, bot_env()(i)) by {
+        mem_bot(sig, s(i), rho);
     }
 }
 
 /// Two covering environments join into one above both.
-pub proof fn covers_join2(s: crate::ti_subst::Sub, rho: Env, r1: Env, r2: Env)
+pub proof fn covers_join2(sig: Sig, s: crate::ti_subst::Sub, rho: Env, r1: Env, r2: Env)
     requires
-        covers(s, rho, r1),
-        covers(s, rho, r2),
-        forall|i: nat| #[trigger] jc(s(i), rho),
+        covers(sig, s, rho, r1),
+        covers(sig, s, rho, r2),
+        forall|i: nat| #[trigger] jc(sig, s(i), rho),
     ensures
-        covers(s, rho, env_join2(r1, r2)),
+        covers(sig, s, rho, env_join2(r1, r2)),
         env_le(r1, env_join2(r1, r2)),
         env_le(r2, env_join2(r1, r2)),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
-    assert forall|i: nat| #[trigger] mem(s(i), rho, env_join2(r1, r2)(i)) && le(r1(i), env_join2(r1, r2)(i)) && le(r2(i), env_join2(r1, r2)(i)) by {
-        assert(mem(s(i), rho, r1(i)) && mem(s(i), rho, r2(i)));
-        assert(jc(s(i), rho));
-        let w1 = choose|w: Wit| #[trigger] mem_w(s(i), rho, r1(i), w);
-        let w2 = choose|w: Wit| #[trigger] mem_w(s(i), rho, r2(i), w);
-        mem_wf(s(i), rho, r1(i), w1);
-        mem_wf(s(i), rho, r2(i), w2);
+    assert forall|i: nat| #[trigger] mem(sig, s(i), rho, env_join2(r1, r2)(i)) && le(r1(i), env_join2(r1, r2)(i)) && le(r2(i), env_join2(r1, r2)(i)) by {
+        assert(mem(sig, s(i), rho, r1(i)) && mem(sig, s(i), rho, r2(i)));
+        assert(jc(sig, s(i), rho));
+        let w1 = choose|w: Wit| #[trigger] mem_w(sig, s(i), rho, r1(i), w);
+        let w2 = choose|w: Wit| #[trigger] mem_w(sig, s(i), rho, r2(i), w);
+        mem_wf(sig, s(i), rho, r1(i), w1);
+        mem_wf(sig, s(i), rho, r2(i), w2);
         join_ub(r1(i), r2(i));
     }
     assert forall|i: nat| #[trigger] le(r1(i), env_join2(r1, r2)(i)) by {
-        assert(mem(s(i), rho, env_join2(r1, r2)(i)) && le(r1(i), env_join2(r1, r2)(i)));
+        assert(mem(sig, s(i), rho, env_join2(r1, r2)(i)) && le(r1(i), env_join2(r1, r2)(i)));
     }
     assert forall|i: nat| #[trigger] le(r2(i), env_join2(r1, r2)(i)) by {
-        assert(mem(s(i), rho, env_join2(r1, r2)(i)) && le(r2(i), env_join2(r1, r2)(i)));
+        assert(mem(sig, s(i), rho, env_join2(r1, r2)(i)) && le(r2(i), env_join2(r1, r2)(i)));
     }
 }
 
 /// The substitution moved under a binder is still join-closed pointwise.
-pub proof fn jc_up(s: crate::ti_subst::Sub, rho: Env, x: Cpt)
+pub proof fn jc_up(sig: Sig, s: crate::ti_subst::Sub, rho: Env, x: Cpt)
     requires
-        forall|i: nat| #[trigger] jc(s(i), rho),
+        forall|i: nat| #[trigger] jc(sig, s(i), rho),
         wf(x),
     ensures
-        forall|i: nat| #[trigger] jc(crate::ti_subst::up(s)(i), ext(rho, x)),
+        forall|i: nat| #[trigger] jc(sig, crate::ti_subst::up(s)(i), ext(rho, x)),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
-    assert forall|i: nat| #[trigger] jc(crate::ti_subst::up(s)(i), ext(rho, x)) by {
+    assert forall|i: nat| #[trigger] jc(sig, crate::ti_subst::up(s)(i), ext(rho, x)) by {
         if i == 0 {
-            jc_var(0, ext(rho, x));
+            jc_var(sig, 0, ext(rho, x));
         } else {
-            assert(jc(s((i - 1) as nat), rho));
-            jc_lift(s((i - 1) as nat), rho, x);
+            assert(jc(sig, s((i - 1) as nat), rho));
+            jc_lift(sig, s((i - 1) as nat), rho, x);
         }
     }
 }
 
 /// A covering of `up(s)` under `ext(rho, x)`: its head is below `x`, its
 /// tail covers `s`.
-pub proof fn covers_up_back(s: crate::ti_subst::Sub, rho: Env, x: Cpt, r: Env)
+pub proof fn covers_up_back(sig: Sig, s: crate::ti_subst::Sub, rho: Env, x: Cpt, r: Env)
     requires
-        covers(crate::ti_subst::up(s), ext(rho, x), r),
+        covers(sig, crate::ti_subst::up(s), ext(rho, x), r),
     ensures
         le(r(0), x),
-        covers(s, rho, tail(r)),
+        covers(sig, s, rho, tail(r)),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
-    assert(mem(crate::ti_subst::up(s)(0), ext(rho, x), r(0)));
-    let w0 = choose|w: Wit| #[trigger] mem_w(ExprSpec::Var(0), ext(rho, x), r(0), w);
-    assert forall|i: nat| #[trigger] mem(s(i), rho, tail(r)(i)) by {
-        assert(mem(crate::ti_subst::up(s)(i + 1), ext(rho, x), r(i + 1)));
-        mem_lift1(s(i), rho, x, r(i + 1));
+    assert(mem(sig, crate::ti_subst::up(s)(0), ext(rho, x), r(0)));
+    let w0 = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Var(0), ext(rho, x), r(0), w);
+    assert forall|i: nat| #[trigger] mem(sig, s(i), rho, tail(r)(i)) by {
+        assert(mem(sig, crate::ti_subst::up(s)(i + 1), ext(rho, x), r(i + 1)));
+        mem_lift1(sig, s(i), rho, x, r(i + 1));
     }
 }
 
 /// The entries of a binder's generator, pulled back through the
 /// substitution into one covering environment.
-proof fn entries_fwd(b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, gen: Cpt, ws: Seq<Wit>, k: int) -> (acc: Env)
+proof fn entries_fwd(sig: Sig, b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, gen: Cpt, ws: Seq<Wit>, k: int) -> (acc: Env)
     requires
         0 <= k <= ws.len(),
         ws.len() == gsteps(gen).len(),
         forall|i: int| 0 <= i < ws.len() ==> wf(#[trigger] gsteps(gen)[i].0)
-            && mem_w(crate::ti_subst::psub(b, crate::ti_subst::up(s)), ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]),
-        forall|i: nat| #[trigger] jc(s(i), rho),
+            && mem_w(sig, crate::ti_subst::psub(b, crate::ti_subst::up(s)), ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]),
+        forall|i: nat| #[trigger] jc(sig, s(i), rho),
     ensures
-        covers(s, rho, acc),
-        forall|i: int| 0 <= i < k ==> #[trigger] mem(b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1),
+        covers(sig, s, rho, acc),
+        forall|i: int| 0 <= i < k ==> #[trigger] mem(sig, b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1),
     decreases b, k + 1,
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
     if k == 0 {
-        covers_bot(s, rho);
+        covers_bot(sig, s, rho);
         bot_env()
     } else {
-        let acc0 = entries_fwd(b, s, rho, gen, ws, k - 1);
+        let acc0 = entries_fwd(sig, b, s, rho, gen, ws, k - 1);
         let (x, y) = gsteps(gen)[k - 1];
-        jc_up(s, rho, x);
-        let r = mem_psub_fwd(b, crate::ti_subst::up(s), ext(rho, x), y, ws[k - 1]);
-        covers_up_back(s, rho, x, r);
-        covers_join2(s, rho, acc0, tail(r));
+        jc_up(sig, s, rho, x);
+        let r = mem_psub_fwd(sig, b, crate::ti_subst::up(s), ext(rho, x), y, ws[k - 1]);
+        covers_up_back(sig, s, rho, x, r);
+        covers_join2(sig, s, rho, acc0, tail(r));
         let acc = env_join2(acc0, tail(r));
-        assert forall|i: int| 0 <= i < k implies #[trigger] mem(b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1) by {
+        assert forall|i: int| 0 <= i < k implies #[trigger] mem(sig, b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1) by {
             let xi = gsteps(gen)[i].0;
             assert forall|j: nat| #[trigger] le(ext(acc0, xi)(j), ext(acc, xi)(j)) by {
                 if j == 0 {
@@ -758,17 +794,17 @@ proof fn entries_fwd(b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, gen: Cpt, w
                 }
             }
             if i < k - 1 {
-                assert(mem(b, ext(acc0, gsteps(gen)[i].0), gsteps(gen)[i].1));
-                let wi = choose|w: Wit| #[trigger] mem_w(b, ext(acc0, xi), gsteps(gen)[i].1, w);
-                mem_env_mono(b, ext(acc0, xi), ext(acc, xi), gsteps(gen)[i].1, wi);
+                assert(mem(sig, b, ext(acc0, gsteps(gen)[i].0), gsteps(gen)[i].1));
+                let wi = choose|w: Wit| #[trigger] mem_w(sig, b, ext(acc0, xi), gsteps(gen)[i].1, w);
+                mem_env_mono(sig, b, ext(acc0, xi), ext(acc, xi), gsteps(gen)[i].1, wi);
             } else {
                 assert forall|j: nat| #[trigger] le(r(j), ext(acc, x)(j)) by {
                     if j > 0 {
                         assert(le(tail(r)((j - 1) as nat), acc((j - 1) as nat)));
                     }
                 }
-                let wi = choose|w: Wit| #[trigger] mem_w(b, r, y, w);
-                mem_env_mono(b, r, ext(acc, x), y, wi);
+                let wi = choose|w: Wit| #[trigger] mem_w(sig, b, r, y, w);
+                mem_env_mono(sig, b, r, ext(acc, x), y, wi);
             }
         }
         acc
@@ -778,13 +814,13 @@ proof fn entries_fwd(b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, gen: Cpt, w
 /// SUBSTITUTION, SEMANTICALLY (the other direction, for join-closed
 /// substitutions): what a substitution instance denotes, the term denotes
 /// under some covered environment.
-pub proof fn mem_psub_fwd(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, u: Cpt, w: Wit) -> (rho2: Env)
+pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, u: Cpt, w: Wit) -> (rho2: Env)
     requires
-        mem_w(crate::ti_subst::psub(m, s), rho, u, w),
-        forall|i: nat| #[trigger] jc(s(i), rho),
+        mem_w(sig, crate::ti_subst::psub(m, s), rho, u, w),
+        forall|i: nat| #[trigger] jc(sig, s(i), rho),
     ensures
-        covers(s, rho, rho2),
-        mem(m, rho2, u),
+        covers(sig, s, rho, rho2),
+        mem(sig, m, rho2, u),
     decreases m, 0int,
 {
     reveal(mem);
@@ -794,50 +830,50 @@ pub proof fn mem_psub_fwd(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, u: Cpt
     match m {
         ExprSpec::Var(i) => {
             let r: Env = |j: nat| if j == i { u } else { Cpt::Bot };
-            mem_wf(s(i), rho, u, w);
-            assert forall|j: nat| #[trigger] mem(s(j), rho, r(j)) by {
+            mem_wf(sig, s(i), rho, u, w);
+            assert forall|j: nat| #[trigger] mem(sig, s(j), rho, r(j)) by {
                 if j == i {
-                    assert(mem_w(s(i), rho, u, w));
+                    assert(mem_w(sig, s(i), rho, u, w));
                 } else {
-                    mem_bot(s(j), rho);
+                    mem_bot(sig, s(j), rho);
                 }
             }
             le_refl(u);
-            assert(mem_w(m, r, u, Wit::Nil));
+            assert(mem_w(sig, m, r, u, Wit::Nil));
             r
         },
         ExprSpec::Bind(bk, ta, b) => {
-            covers_bot(s, rho);
+            covers_bot(sig, s, rho);
             if u is Bot {
-                assert(mem_w(m, bot_env(), u, Wit::Nil));
+                assert(mem_w(sig, m, bot_env(), u, Wit::Nil));
                 bot_env()
             } else if let Wit::Gen(a, gen, wa, ws) = w {
-                let ra = mem_psub_fwd(*ta, s, rho, a, *wa);
-                assert(entries_ok(psub(*b, up(s)), rho, a, gen, ws));
-                let acc = entries_fwd(*b, s, rho, gen, ws, ws.len() as int);
-                covers_join2(s, rho, ra, acc);
+                let ra = mem_psub_fwd(sig, *ta, s, rho, a, *wa);
+                assert(entries_ok(sig, psub(*b, up(s)), rho, a, gen, ws));
+                let acc = entries_fwd(sig, *b, s, rho, gen, ws, ws.len() as int);
+                covers_join2(sig, s, rho, ra, acc);
                 let r2 = env_join2(ra, acc);
-                let wa2 = choose|v: Wit| #[trigger] mem_w(*ta, ra, a, v);
-                mem_env_mono(*ta, ra, r2, a, wa2);
+                let wa2 = choose|v: Wit| #[trigger] mem_w(sig, *ta, ra, a, v);
+                mem_env_mono(sig, *ta, ra, r2, a, wa2);
                 let st = gsteps(gen);
-                assert forall|i: int| 0 <= i < ws.len() implies #[trigger] mem(*b, ext(r2, st[i].0), st[i].1) by {
+                assert forall|i: int| 0 <= i < ws.len() implies #[trigger] mem(sig, *b, ext(r2, st[i].0), st[i].1) by {
                     let xi = st[i].0;
-                    assert(mem(*b, ext(acc, xi), st[i].1));
+                    assert(mem(sig, *b, ext(acc, xi), st[i].1));
                     assert forall|j: nat| #[trigger] le(ext(acc, xi)(j), ext(r2, xi)(j)) by {
                         if j == 0 {
                             le_refl(xi);
                         }
                     }
-                    let wi = choose|v: Wit| #[trigger] mem_w(*b, ext(acc, xi), st[i].1, v);
-                    mem_env_mono(*b, ext(acc, xi), ext(r2, xi), st[i].1, wi);
+                    let wi = choose|v: Wit| #[trigger] mem_w(sig, *b, ext(acc, xi), st[i].1, v);
+                    mem_env_mono(sig, *b, ext(acc, xi), ext(r2, xi), st[i].1, wi);
                 }
-                let ws2 = Seq::new(ws.len(), |i: int| choose|v: Wit| #[trigger] mem_w(*b, ext(r2, st[i].0), st[i].1, v));
+                let ws2 = Seq::new(ws.len(), |i: int| choose|v: Wit| #[trigger] mem_w(sig, *b, ext(r2, st[i].0), st[i].1, v));
                 assert forall|i: int| 0 <= i < ws2.len() implies
-                    typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(*b, ext(r2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws2[i]) by {
-                    assert(mem(*b, ext(r2, st[i].0), st[i].1));
+                    typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, *b, ext(r2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws2[i]) by {
+                    assert(mem(sig, *b, ext(r2, st[i].0), st[i].1));
                 }
-                assert(entries_ok(*b, r2, a, gen, ws2));
-                assert(mem_w(m, r2, u, Wit::Gen(a, gen, Box::new(wa2), ws2)));
+                assert(entries_ok(sig, *b, r2, a, gen, ws2));
+                assert(mem_w(sig, m, r2, u, Wit::Gen(a, gen, Box::new(wa2), ws2)));
                 r2
             } else {
                 assert(false);
@@ -846,59 +882,64 @@ pub proof fn mem_psub_fwd(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, u: Cpt
         },
         ExprSpec::App(f, x) => {
             if let Wit::Ap(wf_, wx, w1, w2) = w {
-                let r1 = mem_psub_fwd(*f, s, rho, wf_, *w1);
-                let r2 = mem_psub_fwd(*x, s, rho, wx, *w2);
-                covers_join2(s, rho, r1, r2);
+                let r1 = mem_psub_fwd(sig, *f, s, rho, wf_, *w1);
+                let r2 = mem_psub_fwd(sig, *x, s, rho, wx, *w2);
+                covers_join2(sig, s, rho, r1, r2);
                 let r = env_join2(r1, r2);
-                let v1 = choose|v: Wit| #[trigger] mem_w(*f, r1, wf_, v);
-                let v2 = choose|v: Wit| #[trigger] mem_w(*x, r2, wx, v);
-                mem_env_mono(*f, r1, r, wf_, v1);
-                mem_env_mono(*x, r2, r, wx, v2);
-                assert(mem_w(m, r, u, Wit::Ap(wf_, wx, Box::new(v1), Box::new(v2))));
+                let v1 = choose|v: Wit| #[trigger] mem_w(sig, *f, r1, wf_, v);
+                let v2 = choose|v: Wit| #[trigger] mem_w(sig, *x, r2, wx, v);
+                mem_env_mono(sig, *f, r1, r, wf_, v1);
+                mem_env_mono(sig, *x, r2, r, wx, v2);
+                assert(mem_w(sig, m, r, u, Wit::Ap(wf_, wx, Box::new(v1), Box::new(v2))));
                 r
             } else {
                 assert(false);
                 bot_env()
             }
         },
+        ExprSpec::Const(..) => {
+            covers_bot(sig, s, rho);
+            assert(mem_w(sig, m, bot_env(), u, w));
+            bot_env()
+        },
         _ => {
-            covers_bot(s, rho);
-            assert(mem_w(m, bot_env(), u, Wit::Nil));
+            covers_bot(sig, s, rho);
+            assert(mem_w(sig, m, bot_env(), u, Wit::Nil));
             bot_env()
         },
     }
 }
 
 /// Using join-closure at one pair.
-pub proof fn jc_elim(m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt)
+pub proof fn jc_elim(sig: Sig, m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt)
     requires
-        jc(m, rho),
-        mem(m, rho, u1),
-        mem(m, rho, u2),
+        jc(sig, m, rho),
+        mem(sig, m, rho, u1),
+        mem(sig, m, rho, u2),
     ensures
         compat(u1, u2),
-        mem(m, rho, join(u1, u2)),
+        mem(sig, m, rho, join(u1, u2)),
 {
     reveal(jc);
 }
 
 /// Establishing join-closure from every pair.
-pub proof fn jc_intro(m: ExprSpec, rho: Env)
+pub proof fn jc_intro(sig: Sig, m: ExprSpec, rho: Env)
     requires
-        forall|u1: Cpt, u2: Cpt| mem(m, rho, u1) && mem(m, rho, u2) ==> #[trigger] jc_pair(m, rho, u1, u2),
+        forall|u1: Cpt, u2: Cpt| mem(sig, m, rho, u1) && mem(sig, m, rho, u2) ==> #[trigger] jc_pair(sig, m, rho, u1, u2),
     ensures
-        jc(m, rho),
+        jc(sig, m, rho),
 {
     reveal(jc);
-    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(m, rho, u1) && #[trigger] mem(m, rho, u2)
-        implies compat(u1, u2) && mem(m, rho, join(u1, u2)) by {
-        assert(jc_pair(m, rho, u1, u2));
+    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(sig, m, rho, u1) && #[trigger] mem(sig, m, rho, u2)
+        implies compat(u1, u2) && mem(sig, m, rho, join(u1, u2)) by {
+        assert(jc_pair(sig, m, rho, u1, u2));
     }
 }
 
 /// Join-closure at one pair, as an atom.
-pub open spec fn jc_pair(m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt) -> bool {
-    compat(u1, u2) && mem(m, rho, join(u1, u2))
+pub open spec fn jc_pair(sig: Sig, m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt) -> bool {
+    compat(u1, u2) && mem(sig, m, rho, join(u1, u2))
 }
 
 } // verus!

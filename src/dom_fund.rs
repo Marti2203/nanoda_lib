@@ -20,7 +20,7 @@ use crate::dom_typing::*;
 use crate::dom_model::{Env, Wit, ext, mem, mem_w, mem_bot, bot_w, bot_env, typed, typed_up, typed_wf, cstage,
     sortc, mem_lift1, entries_ok, gsteps};
 #[cfg(verus_only)]
-use crate::dom_sound::{fits, fits_var, fits_at, typed_basic, sound, tyd_w, tyd_w_elim};
+use crate::dom_sound::{fits_env, fits_var, fits_at, typed_basic, sound, tyd_w, tyd_w_elim};
 #[cfg(verus_only)]
 use crate::dom_rel::*;
 #[cfg(verus_only)]
@@ -99,26 +99,26 @@ pub proof fn wf_prefix(sig: Sig, w: Deriv, j: nat) -> (r: Deriv)
 }
 
 /// The bottom environment fits every context.
-pub proof fn fits_bot(g: Ctx)
+pub proof fn fits_bot(sig: Sig, g: Ctx)
     ensures
-        fits(g, bot_env()),
+        fits_env(sig, g, bot_env()),
 {
     typed_basic();
-    assert forall|i: nat| i < g.len() implies #[trigger] fits_var(g, bot_env(), i) by {
-        mem_bot(var_ty(g, i), bot_env());
-        assert(mem(var_ty(g, i), bot_env(), Cpt::Bot)) by {
+    assert forall|i: nat| i < g.len() implies #[trigger] fits_var(sig, g, bot_env(), i) by {
+        mem_bot(sig, var_ty(g, i), bot_env());
+        assert(mem(sig, var_ty(g, i), bot_env(), Cpt::Bot)) by {
             reveal(mem);
         }
-        assert(fits_at(g, bot_env(), i, Cpt::Bot));
+        assert(fits_at(sig, g, bot_env(), i, Cpt::Bot));
     }
 }
 
 /// The bottom environment is its own extension by bottom.
-pub proof fn ext_bot(e: ExprSpec, a: Cpt)
+pub proof fn ext_bot(sig: Sig, e: ExprSpec, a: Cpt)
     ensures
-        mem(lift(1, 0, e), bot_env(), a) == mem(e, bot_env(), a),
+        mem(sig, lift(1, 0, e), bot_env(), a) == mem(sig, e, bot_env(), a),
 {
-    mem_lift1(e, bot_env(), Cpt::Bot, a);
+    mem_lift1(sig, e, bot_env(), Cpt::Bot, a);
     assert(ext(bot_env(), Cpt::Bot) =~= bot_env());
 }
 
@@ -150,7 +150,7 @@ pub proof fn wk_related(sig: Sig, g: Ctx, dl: Ctx, k: nat, w: Deriv)
     assert(spair(sig, g, dl, s, s)) by {
         reveal(spair);
     }
-    fits_bot(g);
+    fits_bot(sig, g);
     if g.len() > 0 {
         let g0 = g.drop_last();
         let ta = g.last();
@@ -166,19 +166,19 @@ pub proof fn wk_related(sig: Sig, g: Ctx, dl: Ctx, k: nat, w: Deriv)
             let aa = if i == 0 { ta } else { var_ty(g0, (i - 1) as nat) };
             lift_wk(aa, k);
             assert forall|n: nat, a: Cpt, u: Cpt|
-                mem(var_ty(g, i), bot, a) && has_type(n, a, Cpt::U) && mem(ExprSpec::Var(i), bot, u) && has_type(n, u, a)
+                mem(sig, var_ty(g, i), bot, a) && has_type(n, a, Cpt::U) && mem(sig, ExprSpec::Var(i), bot, u) && has_type(n, u, a)
                 implies #[trigger] vrel_at(sig, g, dl, s, s, i, n, a, u) by {
-                mem_var(i, bot, u);
+                mem_var(sig, i, bot, u);
                 if !(u is Bot) {
                     head_le(u, Cpt::Bot);
                 }
-                ext_bot(aa, a);
+                ext_bot(sig, aa, a);
                 if i == 0 {
                     adeq_type(sig, da, bot, dl, wk(k + 1), wk(k + 1), n, a);
                 } else {
                     let i0 = (i - 1) as nat;
                     assert(var_rel(sig, g0, bot, dl, wk(k + 1), wk(k + 1), i0));
-                    mem_var(i0, bot, Cpt::Bot);
+                    mem_var(sig, i0, bot, Cpt::Bot);
                     le_refl(Cpt::Bot);
                     var_rel_elim(sig, g0, bot, dl, wk(k + 1), wk(k + 1), i0, n, a, Cpt::Bot);
                 }
@@ -205,9 +205,9 @@ pub proof fn fundamental(sig: Sig, d: Deriv, n: nat, u: Cpt, a: Cpt)
     requires
         valid(sig, d),
         concl(d) is Eq,
-        mem(concl(d)->Eq_3, bot_env(), a),
+        mem(sig, concl(d)->Eq_3, bot_env(), a),
         has_type(n, a, Cpt::U),
-        mem(concl(d)->Eq_1, bot_env(), u),
+        mem(sig, concl(d)->Eq_1, bot_env(), u),
         has_type(n, u, a),
     ensures
         rel_tm(sig, n, concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, u, a),
@@ -229,14 +229,14 @@ pub open spec fn pi0() -> Cpt {
 }
 
 /// Every Pi denotes the one-point Pi code.
-pub proof fn mem_pi0(ta: ExprSpec, tb: ExprSpec)
+pub proof fn mem_pi0(sig: Sig, ta: ExprSpec, tb: ExprSpec)
     ensures
-        mem(pi(ta, tb), bot_env(), pi0()),
+        mem(sig, pi(ta, tb), bot_env(), pi0()),
         wf(pi0()),
 {
     reveal(mem);
     typed_basic();
-    mem_bot(ta, bot_env());
+    mem_bot(sig, ta, bot_env());
     let es = Seq::<(Cpt, Cpt)>::empty();
     assert(crate::dom_compact::fun_ok(es));
     assert(wf(pi0())) by {
@@ -245,8 +245,8 @@ pub proof fn mem_pi0(ta: ExprSpec, tb: ExprSpec)
     le_refl(pi0());
     assert(pi0() is Pi && *pi0()->Pi_0 == Cpt::Bot);
     assert(gsteps(pi0()) =~= Seq::<(Cpt, Cpt)>::empty());
-    assert(entries_ok(tb, bot_env(), Cpt::Bot, pi0(), Seq::empty()));
-    assert(mem_w(pi(ta, tb), bot_env(), pi0(), Wit::Gen(Cpt::Bot, pi0(), Box::new(bot_w(ta)), Seq::empty())));
+    assert(entries_ok(sig, tb, bot_env(), Cpt::Bot, pi0(), Seq::empty()));
+    assert(mem_w(sig, pi(ta, tb), bot_env(), pi0(), Wit::Gen(Cpt::Bot, pi0(), Box::new(bot_w(ta)), Seq::empty())));
 }
 
 /// A derivable conversion of a Pi is related, as types, at a Pi code of
@@ -263,11 +263,11 @@ proof fn pi_code_rel(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec) -> (r: (nat
     let g = concl(d)->Eq_0;
     let t = concl(d)->Eq_3;
     let bot = bot_env();
-    fits_bot(g);
+    fits_bot(sig, g);
     sound(sig, d, bot);
-    mem_pi0(ta, tb);
-    assert(tyd_w(pi(ta, tb), bot, t, pi0()));
-    let (v, a) = tyd_w_elim(pi(ta, tb), bot, t, pi0());
+    mem_pi0(sig, ta, tb);
+    assert(tyd_w(sig, pi(ta, tb), bot, t, pi0()));
+    let (v, a) = tyd_w_elim(sig, pi(ta, tb), bot, t, pi0());
     typed_wf(v, a);
     head_le(pi0(), v);
     let nn = cstage(v, a) + cstage(a, Cpt::U);
@@ -294,8 +294,8 @@ pub proof fn pi_inj(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec, ta2: ExprSpe
     let g = concl(d)->Eq_0;
     let (nn, v) = pi_code_rel(sig, d, ta, tb);
     ty_pi(sig, nn, g, pi(ta, tb), pi(ta2, tb2), v);
-    rp_pi(ta, tb);
-    rp_pi(ta2, tb2);
+    rp_pi(sig, ta, tb);
+    rp_pi(sig, ta2, tb2);
 }
 
 /// A Pi never converts with a sort.
@@ -311,9 +311,9 @@ pub proof fn pi_not_sort(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec, l: Leve
     let g = concl(d)->Eq_0;
     let (nn, v) = pi_code_rel(sig, d, ta, tb);
     ty_pi(sig, nn, g, pi(ta, tb), sort(l), v);
-    let p = rp(sort(l));
-    crate::ti_hred::stuck_shapes(sort(l));
-    crate::ti_hred::hred_stuck_self(sort(l), pi(p.0, p.1));
+    let p = rp(sig, sort(l));
+    crate::ti_hred::stuck_shapes(sig, sort(l));
+    crate::ti_hred::hred_stuck_self(sig, sort(l), pi(p.0, p.1));
 }
 
 /// SORT INJECTIVITY: convertible sorts have equivalent levels.
@@ -330,13 +330,13 @@ pub proof fn sort_inj(sig: Sig, d: Deriv, l1: LevelSpec, l2: LevelSpec)
     let t = concl(d)->Eq_3;
     let bot = bot_env();
     let c = sortc(l1);
-    fits_bot(g);
+    fits_bot(sig, g);
     sound(sig, d, bot);
-    mem_sort(l1, bot, c);
-    assert(tyd_w(sort(l1), bot, t, c));
-    let (v, a) = tyd_w_elim(sort(l1), bot, t, c);
+    mem_sort(sig, l1, bot, c);
+    assert(tyd_w(sig, sort(l1), bot, t, c));
+    let (v, a) = tyd_w_elim(sig, sort(l1), bot, t, c);
     typed_wf(v, a);
-    mem_sort(l1, bot, v);
+    mem_sort(sig, l1, bot, v);
     if v is Bot {
         head_le(c, v);
     }
@@ -347,8 +347,8 @@ pub proof fn sort_inj(sig: Sig, d: Deriv, l1: LevelSpec, l2: LevelSpec)
     ty_inv(nn, v, a);
     tm_sort(sig, nn, g, sort(l1), sort(l2), t, v);
     ty_sort(sig, nn, g, sort(l1), sort(l2));
-    rs_sort(l1);
-    rs_sort(l2);
+    rs_sort(sig, l1);
+    rs_sort(sig, l2);
     if crate::ti_syntax::is_zero(l1) {
         assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r) by {
             assert(crate::level_model::interp(l1, r) == 0);

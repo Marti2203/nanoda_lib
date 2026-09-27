@@ -63,8 +63,8 @@ proof fn stab_ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     ty_pi(sig, n + 1, g, t, t2, a);
     let k = (n - 1) as nat;
     let b = *a->Pi_0;
-    let (ta, tb) = rp(t);
-    let (ta2, tb2) = rp(t2);
+    let (ta, tb) = rp(sig, t);
+    let (ta2, tb2) = rp(sig, t2);
     stab_ty(sig, k, g, ta, ta2, b);
     ty_stable(k, b, Cpt::U);
     assert(has_type(n, Cpt::Bot, a));
@@ -146,7 +146,7 @@ proof fn stab_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     stab_ty(sig, n, g, t, t, a);
     let k = (n - 1) as nat;
     let b = *a->Pi_0;
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     ty_stable(k, b, Cpt::U);
     if app_tm(sig, k, g, m, m2, ta, tb, u, a) {
         assert forall|x: ExprSpec, x2: ExprSpec, v: Cpt|

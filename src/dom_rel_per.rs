@@ -78,7 +78,7 @@ pub proof fn symm_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
         Cpt::U => {
             ty_sort(sig, n, g, t, t2);
             ty_sort(sig, n, g, t2, t);
-            lev_eq_symm_trans(rs(t), rs(t2), rs(t2));
+            lev_eq_symm_trans(rs(sig, t), rs(sig, t2), rs(sig, t2));
         },
         Cpt::Prop => {
             ty_sort(sig, n, g, t, t2);
@@ -101,8 +101,8 @@ proof fn symm_ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     ty_pi(sig, n, g, t, t2, a);
     ty_pi(sig, n, g, t2, t, a);
     let b = *a->Pi_0;
-    let (a1, b1) = rp(t);
-    let (a2, b2) = rp(t2);
+    let (a1, b1) = rp(sig, t);
+    let (a2, b2) = rp(sig, t2);
     let k = (n - 1) as nat;
     tchain_sym(sig, g, a1, a2);
     tchain_sym(sig, g.push(a1), b1, b2);
@@ -136,7 +136,7 @@ pub proof fn trans_ty(sig: Sig, n: nat, g: Ctx, t1: ExprSpec, t2: ExprSpec, t3: 
             ty_sort(sig, n, g, t1, t2);
             ty_sort(sig, n, g, t2, t3);
             ty_sort(sig, n, g, t1, t3);
-            lev_eq_symm_trans(rs(t1), rs(t2), rs(t3));
+            lev_eq_symm_trans(rs(sig, t1), rs(sig, t2), rs(sig, t3));
         },
         Cpt::Prop => {
             ty_sort(sig, n, g, t1, t2);
@@ -162,9 +162,9 @@ proof fn trans_ty_pi(sig: Sig, n: nat, g: Ctx, t1: ExprSpec, t2: ExprSpec, t3: E
     ty_pi(sig, n, g, t2, t3, a);
     ty_pi(sig, n, g, t1, t3, a);
     let b = *a->Pi_0;
-    let (a1, b1) = rp(t1);
-    let (a2, b2) = rp(t2);
-    let (a3, b3) = rp(t3);
+    let (a1, b1) = rp(sig, t1);
+    let (a2, b2) = rp(sig, t2);
+    let (a3, b3) = rp(sig, t3);
     let k = (n - 1) as nat;
     tchain_trans(sig, g, a1, a2, a3);
     tchain_sym(sig, g, a1, a2);
@@ -222,7 +222,7 @@ proof fn symm_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     tm_pi(sig, n, g, m2, m, t, u, a);
     ty_pi(sig, n, g, t, t, a);
     let b = *a->Pi_0;
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     let k = (n - 1) as nat;
     assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
         has_type(k, w, b) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b)
@@ -274,7 +274,7 @@ proof fn trans_tm_pi(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: E
     tm_pi(sig, n, g, m1, m3, t, u, a);
     ty_pi(sig, n, g, t, t, a);
     let b = *a->Pi_0;
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     let k = (n - 1) as nat;
     assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
         has_type(k, w, b) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b)
@@ -342,8 +342,8 @@ proof fn conv_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     symm_ty(sig, n, g, t, s, a);
     trans_ty(sig, n, g, s, t, s, a);
     let b = *a->Pi_0;
-    let (at, bt) = rp(t);
-    let (as_, bs) = rp(s);
+    let (at, bt) = rp(sig, t);
+    let (as_, bs) = rp(sig, s);
     let k = (n - 1) as nat;
     symm_ty(sig, k, g, at, as_, b);
     tchain_sym(sig, g, at, as_);
@@ -395,7 +395,7 @@ proof fn bot_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
     ty_pi(sig, n, g, t, t, a);
     tm_pi(sig, n, g, m, m2, t, Cpt::Bot, a);
     let b = *a->Pi_0;
-    let (ta, tb) = rp(t);
+    let (ta, tb) = rp(sig, t);
     let k = (n - 1) as nat;
     assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
         has_type(k, w, b) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, b)

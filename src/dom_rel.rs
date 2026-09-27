@@ -31,27 +31,27 @@ use vstd::prelude::*;
 verus! {
 
 /// The Pi a type reduces to (its domain and codomain), when it does.
-pub open spec fn rp(t: ExprSpec) -> (ExprSpec, ExprSpec) {
-    choose|p: (ExprSpec, ExprSpec)| hred(t, pi(p.0, p.1))
+pub open spec fn rp(sig: Sig, t: ExprSpec) -> (ExprSpec, ExprSpec) {
+    choose|p: (ExprSpec, ExprSpec)| hred(sig, t, pi(p.0, p.1))
 }
 
-pub open spec fn pi_red(t: ExprSpec) -> bool {
-    hred(t, pi(rp(t).0, rp(t).1))
+pub open spec fn pi_red(sig: Sig, t: ExprSpec) -> bool {
+    hred(sig, t, pi(rp(sig, t).0, rp(sig, t).1))
 }
 
 /// The level of the sort a type reduces to, when it does.
-pub open spec fn rs(t: ExprSpec) -> LevelSpec {
-    choose|l: LevelSpec| hred(t, sort(l))
+pub open spec fn rs(sig: Sig, t: ExprSpec) -> LevelSpec {
+    choose|l: LevelSpec| hred(sig, t, sort(l))
 }
 
-pub open spec fn sort_red(t: ExprSpec) -> bool {
-    hred(t, sort(rs(t)))
+pub open spec fn sort_red(sig: Sig, t: ExprSpec) -> bool {
+    hred(sig, t, sort(rs(sig, t)))
 }
 
 /// `t` reduces to a sort of the given kind (Prop or a universe), with the
 /// conversion.
 pub open spec fn to_sort(sig: Sig, g: Ctx, t: ExprSpec, prop: bool) -> bool {
-    sort_red(t) && is_zero(rs(t)) == prop && tchain(sig, g, t, sort(rs(t)))
+    sort_red(sig, t) && is_zero(rs(sig, t)) == prop && tchain(sig, g, t, sort(rs(sig, t)))
 }
 
 /// A Pi's domain and codomain are types.
@@ -77,11 +77,11 @@ pub open spec fn rel_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: 
 {
     match a {
         Cpt::Bot => true,
-        Cpt::U => to_sort(sig, g, t, false) && to_sort(sig, g, t2, false) && crate::conv_cr::lev_eq(rs(t), rs(t2)),
+        Cpt::U => to_sort(sig, g, t, false) && to_sort(sig, g, t2, false) && crate::conv_cr::lev_eq(rs(sig, t), rs(sig, t2)),
         Cpt::Prop => to_sort(sig, g, t, true) && to_sort(sig, g, t2, true),
-        Cpt::Pi(b, _) => n >= 1 && pi_red(t) && pi_red(t2) && {
-            let (ta, tb) = rp(t);
-            let (ta2, tb2) = rp(t2);
+        Cpt::Pi(b, _) => n >= 1 && pi_red(sig, t) && pi_red(sig, t2) && {
+            let (ta, tb) = rp(sig, t);
+            let (ta2, tb2) = rp(sig, t2);
             tchain(sig, g, t, pi(ta, tb)) && tchain(sig, g, t2, pi(ta2, tb2)) && tchain(sig, g, ta, ta2)
                 && tchain(sig, g.push(ta), tb, tb2) && pi_typed(sig, g, ta, tb) && pi_typed(sig, g, ta2, tb2)
                 && rel_ty(sig, (n - 1) as nat, g, ta, ta2, *b)
@@ -114,7 +114,7 @@ pub open spec fn rel_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         Cpt::Bot => true,
         Cpt::U => to_sort(sig, g, t, false) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Prop => to_sort(sig, g, t, true) && rel_ty(sig, n, g, m, m2, u),
-        Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(t).0, rp(t).1, u, a),
+        Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a),
         _ => false,
     }
 }
@@ -144,7 +144,7 @@ pub proof fn ty_bot(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec)
 
 pub proof fn ty_sort(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec)
     ensures
-        rel_ty(sig, n, g, t, t2, Cpt::U) == (to_sort(sig, g, t, false) && to_sort(sig, g, t2, false) && crate::conv_cr::lev_eq(rs(t), rs(t2))),
+        rel_ty(sig, n, g, t, t2, Cpt::U) == (to_sort(sig, g, t, false) && to_sort(sig, g, t2, false) && crate::conv_cr::lev_eq(rs(sig, t), rs(sig, t2))),
         rel_ty(sig, n, g, t, t2, Cpt::Prop) == (to_sort(sig, g, t, true) && to_sort(sig, g, t2, true)),
 {
     reveal_with_fuel(rel_ty, 2);
@@ -155,11 +155,11 @@ pub proof fn ty_sort(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec)
 
 /// The Pi type clause, unfolded.
 pub open spec fn ty_pi_body(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bool {
-    n >= 1 && pi_red(t) && pi_red(t2)
-        && tchain(sig, g, t, pi(rp(t).0, rp(t).1)) && tchain(sig, g, t2, pi(rp(t2).0, rp(t2).1)) && tchain(sig, g, rp(t).0, rp(t2).0)
-        && tchain(sig, g.push(rp(t).0), rp(t).1, rp(t2).1) && pi_typed(sig, g, rp(t).0, rp(t).1) && pi_typed(sig, g, rp(t2).0, rp(t2).1)
-        && rel_ty(sig, (n - 1) as nat, g, rp(t).0, rp(t2).0, *a->Pi_0)
-        && cod_ty(sig, (n - 1) as nat, g, a, rp(t).0, rp(t).1, rp(t2).1)
+    n >= 1 && pi_red(sig, t) && pi_red(sig, t2)
+        && tchain(sig, g, t, pi(rp(sig, t).0, rp(sig, t).1)) && tchain(sig, g, t2, pi(rp(sig, t2).0, rp(sig, t2).1)) && tchain(sig, g, rp(sig, t).0, rp(sig, t2).0)
+        && tchain(sig, g.push(rp(sig, t).0), rp(sig, t).1, rp(sig, t2).1) && pi_typed(sig, g, rp(sig, t).0, rp(sig, t).1) && pi_typed(sig, g, rp(sig, t2).0, rp(sig, t2).1)
+        && rel_ty(sig, (n - 1) as nat, g, rp(sig, t).0, rp(sig, t2).0, *a->Pi_0)
+        && cod_ty(sig, (n - 1) as nat, g, a, rp(sig, t).0, rp(sig, t).1, rp(sig, t2).1)
 }
 
 pub proof fn ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
@@ -211,8 +211,8 @@ pub proof fn tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
     requires
         a is Pi,
     ensures
-        rel_tm(sig, n, g, m, m2, t, u, a) == (n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(t)
-            && app_tm(sig, (n - 1) as nat, g, m, m2, rp(t).0, rp(t).1, u, a)),
+        rel_tm(sig, n, g, m, m2, t, u, a) == (n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t)
+            && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a)),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);

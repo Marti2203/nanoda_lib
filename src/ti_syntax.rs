@@ -66,6 +66,23 @@ pub ghost struct ConstDecl {
 pub ghost struct Sig {
     pub consts: Map<u64, ConstDecl>,
     pub locals: Map<nat, ExprSpec>,
+    /// A constant's rank: a definition's value mentions only lower ranks.
+    pub rank: Map<u64, nat>,
+}
+
+/// `c.{ls}` is a definition at a matching level instance.
+pub open spec fn is_def(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
+    sig.consts.contains_key(c) && sig.consts[c].val is Some && sig.consts[c].lps.len() == ls.len()
+}
+
+/// A definition's value at a level instance.
+pub open spec fn dval(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> ExprSpec {
+    crate::expr_model::subst_expr_levels(sig.consts[c].val->Some_0, sig.consts[c].lps, ls)
+}
+
+/// A constant's type at a level instance.
+pub open spec fn dty_at(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> ExprSpec {
+    crate::expr_model::subst_expr_levels(sig.consts[c].ty, sig.consts[c].lps, ls)
 }
 
 /// The type of `Var i` in `g`, lifted over the entries after it.

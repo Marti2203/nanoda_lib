@@ -19,7 +19,7 @@ use crate::dom_typing::*;
 #[cfg(verus_only)]
 use crate::dom_model::{Env, Wit, ext, mem, mem_w, jc, jc_elim, typed, typed_up, typed_down, mem_lift1, mem_down_e, sortc};
 #[cfg(verus_only)]
-use crate::dom_sound::{fits, fits_ext};
+use crate::dom_sound::{fits_env, fits_ext};
 #[cfg(verus_only)]
 use crate::dom_rel::*;
 #[cfg(verus_only)]
@@ -48,12 +48,12 @@ use vstd::prelude::*;
 verus! {
 
 /// A variable denotes the elements below its value.
-pub proof fn mem_var(i: nat, rho: Env, u: Cpt)
+pub proof fn mem_var(sig: Sig, i: nat, rho: Env, u: Cpt)
     ensures
-        mem(ExprSpec::Var(i), rho, u) == (wf(u) && le(u, rho(i))),
+        mem(sig, ExprSpec::Var(i), rho, u) == (wf(u) && le(u, rho(i))),
 {
     reveal(mem);
-    assert(mem_w(ExprSpec::Var(i), rho, u, Wit::Nil) == (wf(u) && le(u, rho(i))));
+    assert(mem_w(sig, ExprSpec::Var(i), rho, u, Wit::Nil) == (wf(u) && le(u, rho(i))));
 }
 
 /// Typing at a stage persists at every later stage.
@@ -106,13 +106,13 @@ pub proof fn stab_tm_up(sig: Sig, k: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
 #[verifier::opaque]
 pub open spec fn ty_adeq(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, t: ExprSpec, t2: ExprSpec) -> bool {
     forall|n: nat, a: Cpt| #![trigger rel_ty(sig, n, dl, t, t2, a)]
-        mem(ta, rho, a) && has_type(n, a, Cpt::U) ==> rel_ty(sig, n, dl, t, t2, a)
+        mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) ==> rel_ty(sig, n, dl, t, t2, a)
 }
 
 pub proof fn ty_adeq_elim(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, t: ExprSpec, t2: ExprSpec, n: nat, a: Cpt)
     requires
         ty_adeq(sig, rho, dl, ta, t, t2),
-        mem(ta, rho, a),
+        mem(sig, ta, rho, a),
         has_type(n, a, Cpt::U),
     ensures
         rel_ty(sig, n, dl, t, t2, a),
@@ -122,7 +122,7 @@ pub proof fn ty_adeq_elim(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, t: ExprSpec
 
 pub proof fn ty_adeq_intro(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, t: ExprSpec, t2: ExprSpec)
     requires
-        forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) ==> #[trigger] rel_ty(sig, n, dl, t, t2, a),
+        forall|n: nat, a: Cpt| mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) ==> #[trigger] rel_ty(sig, n, dl, t, t2, a),
     ensures
         ty_adeq(sig, rho, dl, ta, t, t2),
 {
@@ -134,14 +134,14 @@ pub proof fn ty_adeq_intro(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, t: ExprSpe
 #[verifier::opaque]
 pub open spec fn tm_adeq(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, m: ExprSpec, m2: ExprSpec, t: ExprSpec, v: Cpt) -> bool {
     forall|n: nat, a: Cpt, u: Cpt| #![trigger rel_tm(sig, n, dl, m, m2, t, u, a)]
-        mem(ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
+        mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
         ==> rel_tm(sig, n, dl, m, m2, t, u, a)
 }
 
 pub proof fn tm_adeq_elim(sig: Sig, rho: Env, dl: Ctx, ta: ExprSpec, m: ExprSpec, m2: ExprSpec, t: ExprSpec, v: Cpt, n: nat, a: Cpt, u: Cpt)
     requires
         tm_adeq(sig, rho, dl, ta, m, m2, t, v),
-        mem(ta, rho, a),
+        mem(sig, ta, rho, a),
         has_type(n, a, Cpt::U),
         wf(u),
         le(u, v),
@@ -161,9 +161,9 @@ pub proof fn adjust(sig: Sig, n: nat, dl: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         rel_tm(sig, n, dl, m, m2, t, v, b),
         has_type(n, v, b),
         has_type(n, b, Cpt::U),
-        jc(ta, rho),
-        mem(ta, rho, b),
-        mem(ta, rho, a),
+        jc(sig, ta, rho),
+        mem(sig, ta, rho, b),
+        mem(sig, ta, rho, a),
         has_type(n, a, Cpt::U),
         has_type(n, u, a),
         le(u, v),
@@ -171,7 +171,7 @@ pub proof fn adjust(sig: Sig, n: nat, dl: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
     ensures
         rel_tm(sig, n, dl, m, m2, t, u, a),
 {
-    jc_elim(ta, rho, b, a);
+    jc_elim(sig, ta, rho, b, a);
     let c = join(b, a);
     ty_join(n, b, a, Cpt::U);
     join_ub(b, a);
@@ -192,15 +192,15 @@ pub proof fn arg_adeq(sig: Sig, k: nat, dl: Ctx, m: ExprSpec, m2: ExprSpec, t: E
         rel_tm(sig, k, dl, m, m2, t, v, b),
         has_type(k, v, b),
         has_type(k, b, Cpt::U),
-        jc(ta, rho),
-        mem(ta, rho, b),
+        jc(sig, ta, rho),
+        mem(sig, ta, rho, b),
         ty_adeq(sig, rho, dl, ta, t, t2),
     ensures
         tm_adeq(sig, rho, dl, ta, m, m2, t, v),
 {
     reveal(tm_adeq);
     assert forall|n: nat, a: Cpt, u: Cpt|
-        mem(ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
+        mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
         implies #[trigger] rel_tm(sig, n, dl, m, m2, t, u, a) by {
         let nn: nat = if n <= k { k } else { n };
         ty_up(k, nn, v, b);
@@ -223,16 +223,16 @@ pub open spec fn vrel_at(sig: Sig, g: Ctx, dl: Ctx, s: Sub, s2: Sub, i: nat, n: 
 #[verifier::opaque]
 pub open spec fn var_rel(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, i: nat) -> bool {
     forall|n: nat, a: Cpt, u: Cpt| #![trigger vrel_at(sig, g, dl, s, s2, i, n, a, u)]
-        mem(var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(ExprSpec::Var(i), rho, u) && has_type(n, u, a)
+        mem(sig, var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(sig, ExprSpec::Var(i), rho, u) && has_type(n, u, a)
         ==> vrel_at(sig, g, dl, s, s2, i, n, a, u)
 }
 
 pub proof fn var_rel_elim(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, i: nat, n: nat, a: Cpt, u: Cpt)
     requires
         var_rel(sig, g, rho, dl, s, s2, i),
-        mem(var_ty(g, i), rho, a),
+        mem(sig, var_ty(g, i), rho, a),
         has_type(n, a, Cpt::U),
-        mem(ExprSpec::Var(i), rho, u),
+        mem(sig, ExprSpec::Var(i), rho, u),
         has_type(n, u, a),
     ensures
         vrel_at(sig, g, dl, s, s2, i, n, a, u),
@@ -243,7 +243,7 @@ pub proof fn var_rel_elim(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, 
 pub proof fn var_rel_intro(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, i: nat)
     requires
         forall|n: nat, a: Cpt, u: Cpt|
-            mem(var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(ExprSpec::Var(i), rho, u) && has_type(n, u, a)
+            mem(sig, var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(sig, ExprSpec::Var(i), rho, u) && has_type(n, u, a)
             ==> #[trigger] vrel_at(sig, g, dl, s, s2, i, n, a, u),
     ensures
         var_rel(sig, g, rho, dl, s, s2, i),
@@ -254,7 +254,7 @@ pub proof fn var_rel_intro(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub,
 /// RELATED SUBSTITUTIONS from `g` into `dl` over `rho`.
 pub open spec fn related(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub) -> bool {
     &&& spair(sig, g, dl, s, s2)
-    &&& fits(g, rho)
+    &&& fits_env(sig, g, rho)
     &&& forall|i: nat| i < g.len() ==> #[trigger] var_rel(sig, g, rho, dl, s, s2, i)
 }
 
@@ -268,7 +268,7 @@ pub proof fn related_sym(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub)
     assert forall|i: nat| i < g.len() implies #[trigger] var_rel(sig, g, rho, dl, s2, s, i) by {
         assert(var_rel(sig, g, rho, dl, s, s2, i));
         assert forall|n: nat, a: Cpt, u: Cpt|
-            mem(var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(ExprSpec::Var(i), rho, u) && has_type(n, u, a)
+            mem(sig, var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(sig, ExprSpec::Var(i), rho, u) && has_type(n, u, a)
             implies #[trigger] vrel_at(sig, g, dl, s2, s, i, n, a, u) by {
             var_rel_elim(sig, g, rho, dl, s, s2, i, n, a, u);
             let t = psub(var_ty(g, i), s);
@@ -291,7 +291,7 @@ pub proof fn related_left(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub)
     assert forall|i: nat| i < g.len() implies #[trigger] var_rel(sig, g, rho, dl, s, s, i) by {
         assert(var_rel(sig, g, rho, dl, s, s2, i));
         assert forall|n: nat, a: Cpt, u: Cpt|
-            mem(var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(ExprSpec::Var(i), rho, u) && has_type(n, u, a)
+            mem(sig, var_ty(g, i), rho, a) && has_type(n, a, Cpt::U) && mem(sig, ExprSpec::Var(i), rho, u) && has_type(n, u, a)
             implies #[trigger] vrel_at(sig, g, dl, s, s, i, n, a, u) by {
             var_rel_elim(sig, g, rho, dl, s, s2, i, n, a, u);
             let t = psub(var_ty(g, i), s);
@@ -322,7 +322,7 @@ pub proof fn related_cons(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, 
         related(sig, g, rho, dl, s, s2),
         derivable(sig, eq(dl, m, m2, psub(ta, s))),
         derivable(sig, eq(dl, psub(ta, s), psub(ta, s2), sort(l))),
-        mem(ta, rho, b),
+        mem(sig, ta, rho, b),
         typed(b, Cpt::U),
         typed(v, b),
         tm_adeq(sig, rho, dl, ta, m, m2, psub(ta, s), v),
@@ -331,7 +331,7 @@ pub proof fn related_cons(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, 
         related(sig, g.push(ta), ext(rho, v), dl, cons(m, s), cons(m2, s2)),
 {
     spair_cons(sig, g, dl, s, s2, ta, m, m2, l);
-    fits_ext(g, rho, ta, b, v);
+    fits_ext(sig, g, rho, ta, b, v);
     let g1 = g.push(ta);
     let rho1 = ext(rho, v);
     let c1 = cons(m, s);
@@ -342,16 +342,16 @@ pub proof fn related_cons(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, 
         psub_lift_cons(aa, m, s);
         psub_lift_cons(aa, m2, s2);
         assert forall|n: nat, a: Cpt, u: Cpt|
-            mem(var_ty(g1, i), rho1, a) && has_type(n, a, Cpt::U) && mem(ExprSpec::Var(i), rho1, u) && has_type(n, u, a)
+            mem(sig, var_ty(g1, i), rho1, a) && has_type(n, a, Cpt::U) && mem(sig, ExprSpec::Var(i), rho1, u) && has_type(n, u, a)
             implies #[trigger] vrel_at(sig, g1, dl, c1, c2, i, n, a, u) by {
-            mem_lift1(aa, rho, v, a);
-            mem_var(i, rho1, u);
+            mem_lift1(sig, aa, rho, v, a);
+            mem_var(sig, i, rho1, u);
             if i == 0 {
                 tm_adeq_elim(sig, rho, dl, ta, m, m2, psub(ta, s), v, n, a, u);
                 ty_adeq_elim(sig, rho, dl, ta, psub(ta, s), psub(ta, s2), n, a);
             } else {
                 let k = (i - 1) as nat;
-                mem_var(k, rho, u);
+                mem_var(sig, k, rho, u);
                 assert(var_rel(sig, g, rho, dl, s, s2, k));
                 var_rel_elim(sig, g, rho, dl, s, s2, k, n, a, u);
             }
@@ -361,30 +361,30 @@ pub proof fn related_cons(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, 
 }
 
 /// A Pi reduces only to itself.
-pub proof fn rp_pi(x: ExprSpec, y: ExprSpec)
+pub proof fn rp_pi(sig: Sig, x: ExprSpec, y: ExprSpec)
     ensures
-        pi_red(pi(x, y)),
-        rp(pi(x, y)) == (x, y),
+        pi_red(sig, pi(x, y)),
+        rp(sig, pi(x, y)) == (x, y),
 {
     let t = pi(x, y);
-    hred_refl(t);
-    assert(hred(t, pi((x, y).0, (x, y).1)));
-    let p = rp(t);
-    stuck_shapes(t);
-    hred_stuck_self(t, pi(p.0, p.1));
+    hred_refl(sig, t);
+    assert(hred(sig, t, pi((x, y).0, (x, y).1)));
+    let p = rp(sig, t);
+    stuck_shapes(sig, t);
+    hred_stuck_self(sig, t, pi(p.0, p.1));
 }
 
 /// A sort reduces only to itself.
-pub proof fn rs_sort(l: LevelSpec)
+pub proof fn rs_sort(sig: Sig, l: LevelSpec)
     ensures
-        sort_red(sort(l)),
-        rs(sort(l)) == l,
+        sort_red(sig, sort(l)),
+        rs(sig, sort(l)) == l,
 {
     let t = sort(l);
-    hred_refl(t);
-    assert(hred(t, sort(l)));
-    stuck_shapes(t);
-    hred_stuck_self(t, sort(rs(t)));
+    hred_refl(sig, t);
+    assert(hred(sig, t, sort(l)));
+    stuck_shapes(sig, t);
+    hred_stuck_self(sig, t, sort(rs(sig, t)));
 }
 
 pub proof fn lev_zero_eq(l: LevelSpec, l2: LevelSpec)
@@ -421,7 +421,7 @@ pub proof fn to_sort_sort(sig: Sig, dl: Ctx, l: LevelSpec)
         to_sort(sig, dl, sort(l), is_zero(l)),
         tchain(sig, dl, sort(l), sort(l)),
 {
-    rs_sort(l);
+    rs_sort(sig, l);
     sort_tconv(sig, dl, l);
     tchain_one(sig, dl, sort(l), sort(l));
 }
@@ -440,29 +440,29 @@ pub proof fn sort_rel(sig: Sig, n: nat, dl: Ctx, l: LevelSpec, l2: LevelSpec, c:
     to_sort_sort(sig, dl, l);
     to_sort_sort(sig, dl, l2);
     lev_zero_eq(l, l2);
-    rs_sort(l);
-    rs_sort(l2);
+    rs_sort(sig, l);
+    rs_sort(sig, l2);
 }
 
 /// A non-bottom element of a Pi's denotation is a Pi code whose domain
 /// lies in the domain's denotation.
-pub proof fn pi_elem(ta: ExprSpec, tb: ExprSpec, rho: Env, u: Cpt)
+pub proof fn pi_elem(sig: Sig, ta: ExprSpec, tb: ExprSpec, rho: Env, u: Cpt)
     requires
-        mem(pi(ta, tb), rho, u),
+        mem(sig, pi(ta, tb), rho, u),
         !(u is Bot),
     ensures
         u is Pi,
         wf(u),
-        mem(ta, rho, *u->Pi_0),
+        mem(sig, ta, rho, *u->Pi_0),
 {
     reveal(mem);
-    let w = choose|w: Wit| #[trigger] mem_w(pi(ta, tb), rho, u, w);
+    let w = choose|w: Wit| #[trigger] mem_w(sig, pi(ta, tb), rho, u, w);
     if let Wit::Gen(a, gen, wa, ws) = w {
         head_le(u, gen);
         assert(u is Pi);
         pi_dom_le(u, gen);
-        assert(mem_w(ta, rho, a, *wa));
-        mem_down_e(ta, rho, a, *u->Pi_0);
+        assert(mem_w(sig, ta, rho, a, *wa));
+        mem_down_e(sig, ta, rho, a, *u->Pi_0);
     }
 }
 

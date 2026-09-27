@@ -19,7 +19,7 @@ use crate::dom_typing::*;
 use crate::dom_model::{Env, Wit, ext, mem, mem_w, mem_wf, mem_down_e, jc, jc_elim, typed, typed_up,
     typed_down, typed_weak, typed_join, typed_wf, cstage, sortc, mem_lift1, mem_env_mono};
 #[cfg(verus_only)]
-use crate::dom_sound::{fits, fits_ext, sound, tyd, tyd_w, tyd_w_elim, dfit, body_jc, type_elem,
+use crate::dom_sound::{fits_env, fits_ext, sound, tyd, tyd_w, tyd_w_elim, dfit, body_jc, type_elem,
     cod_in_body, cod_in_inst, lam_in_body, inst_elem, inst_jc, app_mono, cod_typed_at};
 #[cfg(verus_only)]
 use crate::dom_rel::*;
@@ -57,53 +57,53 @@ use vstd::prelude::*;
 verus! {
 
 /// Sorts denote bottom and their code.
-pub proof fn mem_sort(l: LevelSpec, rho: Env, c: Cpt)
+pub proof fn mem_sort(sig: Sig, l: LevelSpec, rho: Env, c: Cpt)
     ensures
-        mem(ExprSpec::Sort(l), rho, c) == (c is Bot || c == sortc(l)),
+        mem(sig, ExprSpec::Sort(l), rho, c) == (c is Bot || c == sortc(l)),
 {
     reveal(mem);
-    assert(mem_w(ExprSpec::Sort(l), rho, c, Wit::Nil) == (c is Bot || c == sortc(l)));
+    assert(mem_w(sig, ExprSpec::Sort(l), rho, c, Wit::Nil) == (c is Bot || c == sortc(l)));
 }
 
 /// An application denotes the application of its parts' elements.
-pub proof fn mem_app_intro(f: ExprSpec, x: ExprSpec, rho: Env, uf: Cpt, ux: Cpt)
+pub proof fn mem_app_intro(sig: Sig, f: ExprSpec, x: ExprSpec, rho: Env, uf: Cpt, ux: Cpt)
     requires
-        mem(f, rho, uf),
-        mem(x, rho, ux),
+        mem(sig, f, rho, uf),
+        mem(sig, x, rho, ux),
     ensures
-        mem(sapp(f, x), rho, capp(uf, ux)),
+        mem(sig, sapp(f, x), rho, capp(uf, ux)),
 {
     reveal(mem);
-    let w1 = choose|w: Wit| #[trigger] mem_w(f, rho, uf, w);
-    let w2 = choose|w: Wit| #[trigger] mem_w(x, rho, ux, w);
-    mem_wf(f, rho, uf, w1);
-    mem_wf(x, rho, ux, w2);
+    let w1 = choose|w: Wit| #[trigger] mem_w(sig, f, rho, uf, w);
+    let w2 = choose|w: Wit| #[trigger] mem_w(sig, x, rho, ux, w);
+    mem_wf(sig, f, rho, uf, w1);
+    mem_wf(sig, x, rho, ux, w2);
     if uf is Lam {
         crate::dom_compact::appk_wf(uf, ux, true);
     }
     le_refl(capp(uf, ux));
-    assert(mem_w(sapp(f, x), rho, capp(uf, ux), Wit::Ap(uf, ux, Box::new(w1), Box::new(w2))));
+    assert(mem_w(sig, sapp(f, x), rho, capp(uf, ux), Wit::Ap(uf, ux, Box::new(w1), Box::new(w2))));
 }
 
 /// An element of an application lies below the application of its parts'
 /// elements.
-pub proof fn app_parts(f: ExprSpec, x: ExprSpec, rho: Env, u: Cpt) -> (r: (Cpt, Cpt))
+pub proof fn app_parts(sig: Sig, f: ExprSpec, x: ExprSpec, rho: Env, u: Cpt) -> (r: (Cpt, Cpt))
     requires
-        mem(sapp(f, x), rho, u),
+        mem(sig, sapp(f, x), rho, u),
     ensures
-        mem(f, rho, r.0),
-        mem(x, rho, r.1),
+        mem(sig, f, rho, r.0),
+        mem(sig, x, rho, r.1),
         wf(r.0),
         wf(r.1),
         wf(u),
         le(u, capp(r.0, r.1)),
 {
     reveal(mem);
-    let w = choose|w: Wit| #[trigger] mem_w(sapp(f, x), rho, u, w);
+    let w = choose|w: Wit| #[trigger] mem_w(sig, sapp(f, x), rho, u, w);
     if let Wit::Ap(uf, ux, w1, w2) = w {
-        assert(mem_w(f, rho, uf, *w1) && mem_w(x, rho, ux, *w2));
-        mem_wf(f, rho, uf, *w1);
-        mem_wf(x, rho, ux, *w2);
+        assert(mem_w(sig, f, rho, uf, *w1) && mem_w(sig, x, rho, ux, *w2));
+        mem_wf(sig, f, rho, uf, *w1);
+        mem_wf(sig, x, rho, ux, *w2);
         (uf, ux)
     } else {
         assert(false);
@@ -113,28 +113,28 @@ pub proof fn app_parts(f: ExprSpec, x: ExprSpec, rho: Env, u: Cpt) -> (r: (Cpt, 
 
 /// Elements of two instances at the same argument come from one typed
 /// argument element.
-pub proof fn inst_elem2(x: ExprSpec, bm: ExprSpec, bt: ExprSpec, ta: ExprSpec, rho: Env, u: Cpt, a: Cpt) -> (r: (Cpt, Cpt))
+pub proof fn inst_elem2(sig: Sig, x: ExprSpec, bm: ExprSpec, bt: ExprSpec, ta: ExprSpec, rho: Env, u: Cpt, a: Cpt) -> (r: (Cpt, Cpt))
     requires
-        mem(inst(0, x, bm), rho, u),
-        mem(inst(0, x, bt), rho, a),
-        tyd(x, rho, ta),
-        jc(x, rho),
-        jc(ta, rho),
+        mem(sig, inst(0, x, bm), rho, u),
+        mem(sig, inst(0, x, bt), rho, a),
+        tyd(sig, x, rho, ta),
+        jc(sig, x, rho),
+        jc(sig, ta, rho),
         forall|i: nat| #[trigger] wf(rho(i)),
     ensures
-        mem(x, rho, r.0),
-        dfit(ta, rho, r.1, r.0),
-        mem(bm, ext(rho, r.0), u),
-        mem(bt, ext(rho, r.0), a),
+        mem(sig, x, rho, r.0),
+        dfit(sig, ta, rho, r.1, r.0),
+        mem(sig, bm, ext(rho, r.0), u),
+        mem(sig, bt, ext(rho, r.0), a),
 {
-    let (v1, a1) = inst_elem(x, bm, ta, rho, u);
-    let (v2, a2) = inst_elem(x, bt, ta, rho, a);
+    let (v1, a1) = inst_elem(sig, x, bm, ta, rho, u);
+    let (v2, a2) = inst_elem(sig, x, bt, ta, rho, a);
     typed_wf(v1, a1);
     typed_wf(v2, a2);
     typed_wf(a1, Cpt::U);
     typed_wf(a2, Cpt::U);
-    jc_elim(x, rho, v1, v2);
-    jc_elim(ta, rho, a1, a2);
+    jc_elim(sig, x, rho, v1, v2);
+    jc_elim(sig, ta, rho, a1, a2);
     let v = join(v1, v2);
     let ax = join(a1, a2);
     typed_join(a1, a2, Cpt::U);
@@ -144,29 +144,29 @@ pub proof fn inst_elem2(x: ExprSpec, bm: ExprSpec, bt: ExprSpec, ta: ExprSpec, r
     join_ub(v1, v2);
     typed_join(v1, v2, ax);
     reveal(mem);
-    let w1 = choose|w: Wit| #[trigger] mem_w(bm, ext(rho, v1), u, w);
-    let w2 = choose|w: Wit| #[trigger] mem_w(bt, ext(rho, v2), a, w);
+    let w1 = choose|w: Wit| #[trigger] mem_w(sig, bm, ext(rho, v1), u, w);
+    let w2 = choose|w: Wit| #[trigger] mem_w(sig, bt, ext(rho, v2), a, w);
     assert forall|q: nat| #[trigger] le(ext(rho, v1)(q), ext(rho, v)(q)) by {
         if q > 0 {
             le_refl(rho((q - 1) as nat));
         }
     }
-    mem_env_mono(bm, ext(rho, v1), ext(rho, v), u, w1);
+    mem_env_mono(sig, bm, ext(rho, v1), ext(rho, v), u, w1);
     assert forall|q: nat| #[trigger] le(ext(rho, v2)(q), ext(rho, v)(q)) by {
         if q > 0 {
             le_refl(rho((q - 1) as nat));
         }
     }
-    mem_env_mono(bt, ext(rho, v2), ext(rho, v), a, w2);
+    mem_env_mono(sig, bt, ext(rho, v2), ext(rho, v), a, w2);
     (v, ax)
 }
 
 /// What adequacy assumes, at a stage and witnesses.
 pub open spec fn adeq_pre(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, m: ExprSpec, t: ExprSpec, n: nat, u: Cpt, a: Cpt) -> bool {
     &&& related(sig, g, rho, dl, s, s2)
-    &&& mem(t, rho, a)
+    &&& mem(sig, t, rho, a)
     &&& has_type(n, a, Cpt::U)
-    &&& mem(m, rho, u)
+    &&& mem(sig, m, rho, u)
     &&& has_type(n, u, a)
 }
 
@@ -219,7 +219,7 @@ pub proof fn adeq_type(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n
         concl(d) is Eq,
         concl(d)->Eq_3 is Sort,
         related(sig, concl(d)->Eq_0, rho, dl, s, s2),
-        mem(concl(d)->Eq_1, rho, a),
+        mem(sig, concl(d)->Eq_1, rho, a),
         has_type(n, a, Cpt::U),
     ensures
         rel_ty(sig, n, dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), a),
@@ -231,10 +231,10 @@ pub proof fn adeq_type(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n
     let x = psub(ta, s);
     let x2 = psub(concl(d)->Eq_2, s2);
     sound(sig, d, rho);
-    let a2 = type_elem(ta, rho, l, a);
+    let a2 = type_elem(sig, ta, rho, l, a);
     ty_pos(n, a, Cpt::U);
     if !is_zero(l) {
-        mem_sort(l, rho, Cpt::U);
+        mem_sort(sig, l, rho, Cpt::U);
         assert(has_type(n, Cpt::U, Cpt::U));
         adeq(sig, d, rho, dl, s, s2, n, a, Cpt::U);
         tm_sort(sig, n, dl, x, x2, st, a);
@@ -248,7 +248,7 @@ pub proof fn adeq_type(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n
         typed_up(a2, Cpt::Prop, nn);
         typed_up(a2, Cpt::U, nn);
         ty_up(n, nn, a, Cpt::U);
-        mem_sort(l, rho, Cpt::Prop);
+        mem_sort(sig, l, rho, Cpt::Prop);
         assert(has_type(nn, Cpt::Prop, Cpt::U));
         adeq(sig, d, rho, dl, s, s2, nn, a2, Cpt::Prop);
         tm_sort(sig, nn, dl, x, x2, st, a2);
@@ -281,24 +281,24 @@ proof fn ty_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: S
     let (x, xs2, y, y2) = (psub(ta, s), psub(ta, s2), psub(ta2, s), psub(ta2, s2));
     related_left(sig, g, rho, dl, s, s2);
     related_right(sig, g, rho, dl, s, s2);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, y2, a) by {
+    assert forall|n: nat, a: Cpt| mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, y2, a) by {
         adeq_type(sig, p, rho, dl, s, s2, n, a);
     }
     ty_adeq_intro(sig, rho, dl, ta, x, y2);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, xs2, a) by {
+    assert forall|n: nat, a: Cpt| mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, xs2, a) by {
         adeq_type(sig, p, rho, dl, s, s2, n, a);
         adeq_type(sig, p, rho, dl, s2, s2, n, a);
         symm_ty(sig, n, dl, xs2, y2, a);
         trans_ty(sig, n, dl, x, y2, xs2, a);
     }
     ty_adeq_intro(sig, rho, dl, ta, x, xs2);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, x, a) by {
+    assert forall|n: nat, a: Cpt| mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, x, a) by {
         adeq_type(sig, p, rho, dl, s, s, n, a);
         symm_ty(sig, n, dl, x, y, a);
         trans_ty(sig, n, dl, x, y, x, a);
     }
     ty_adeq_intro(sig, rho, dl, ta, x, x);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, xs2, xs2, a) by {
+    assert forall|n: nat, a: Cpt| mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, xs2, xs2, a) by {
         adeq_type(sig, p, rho, dl, s2, s2, n, a);
         symm_ty(sig, n, dl, xs2, y2, a);
         trans_ty(sig, n, dl, xs2, y2, xs2, a);
@@ -314,7 +314,7 @@ proof fn tm_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: S
         0 <= k < d->Node_2.len(),
         concl(d->Node_2[k]) is Eq,
         related(sig, concl(d->Node_2[k])->Eq_0, rho, dl, s, s2),
-        mem(concl(d->Node_2[k])->Eq_1, rho, v),
+        mem(sig, concl(d->Node_2[k])->Eq_1, rho, v),
     ensures
         tm_adeq(sig, rho, dl, concl(d->Node_2[k])->Eq_3, psub(concl(d->Node_2[k])->Eq_1, s),
             psub(concl(d->Node_2[k])->Eq_1, s2), psub(concl(d->Node_2[k])->Eq_3, s), v),
@@ -332,9 +332,9 @@ proof fn tm_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: S
     related_right(sig, g, rho, dl, s, s2);
     reveal(tm_adeq);
     assert forall|n: nat, a: Cpt, u: Cpt|
-        mem(ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
+        mem(sig, ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
         implies #[trigger] rel_tm(sig, n, dl, xs, xs2, t, u, a) by {
-        mem_down_e(x0, rho, v, u);
+        mem_down_e(sig, x0, rho, v, u);
         adeq(sig, p, rho, dl, s, s2, n, u, a);
         adeq(sig, p, rho, dl, s2, s2, n, u, a);
         symm_ty(sig, n, dl, t, t2, a);
@@ -378,8 +378,8 @@ proof fn adeq_univ(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
         spair_wf(sig, g, dl, s, s2);
         succ_nonzero(l);
         assert(crate::conv_cr::lev_eq(succ(l), succ(l)));
-        mem_sort(succ(l), rho, a);
-        mem_sort(l, rho, u);
+        mem_sort(sig, succ(l), rho, a);
+        mem_sort(sig, l, rho, u);
         sort_rel(sig, n, dl, succ(l), succ(l), a);
         if a is Bot {
             tm_bot(sig, n, dl, sort(l), sort(l2), sort(succ(l)), u);
@@ -404,7 +404,7 @@ proof fn adeq_sym(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     sound(sig, ps[0], rho);
-    assert(mem(m2, rho, u));
+    assert(mem(sig, m2, rho, u));
     related_sym(sig, g, rho, dl, s, s2);
     adeq(sig, ps[0], rho, dl, s2, s, n, u, a);
     symm_tm(sig, n, dl, psub(m2, s2), psub(m, s), psub(t, s2), u, a);
@@ -426,7 +426,7 @@ proof fn adeq_trans(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: n
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     let mid = concl(ps[0])->Eq_2;
     sound(sig, ps[0], rho);
-    assert(mem(mid, rho, u));
+    assert(mem(sig, mid, rho, u));
     adeq(sig, ps[0], rho, dl, s, s2, n, u, a);
     related_right(sig, g, rho, dl, s, s2);
     adeq(sig, ps[1], rho, dl, s2, s2, n, u, a);
@@ -449,7 +449,7 @@ proof fn adeq_conv(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     let a0 = concl(ps[0])->Eq_3;
     sound(sig, ps[1], rho);
-    assert(mem(a0, rho, a));
+    assert(mem(sig, a0, rho, a));
     adeq(sig, ps[0], rho, dl, s, s2, n, u, a);
     related_left(sig, g, rho, dl, s, s2);
     adeq_type(sig, ps[1], rho, dl, s, s, n, a);
@@ -473,7 +473,7 @@ proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     if let Rule::Irr(l) = rule {
         sound(sig, ps[0], rho);
-        let a2 = type_elem(t, rho, l, a);
+        let a2 = type_elem(sig, t, rho, l, a);
         if a2 is Bot {
             if !(a is Bot) {
                 head_le(a, a2);
@@ -502,7 +502,7 @@ proof fn pi_rel(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
         0 <= kb < d->Node_2.len(),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb2, sort(l2)),
         related(sig, g, rho, dl, s, s2),
-        jc(ta, rho),
+        jc(sig, ta, rho),
         ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta2, s2)),
         ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s2)),
         ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s)),
@@ -511,7 +511,7 @@ proof fn pi_rel(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
         derivable(sig, eq(dl, psub(ta, s), psub(ta2, s2), sort(l1))),
         derivable(sig, eq(dl, psub(ta2, s2), psub(ta2, s2), sort(l1))),
         derivable(sig, eq(dl.push(psub(ta2, s2)), psub(tb2, up(s2)), psub(tb2, up(s2)), sort(l2))),
-        mem(pi(ta, tb), rho, u),
+        mem(sig, pi(ta, tb), rho, u),
         has_type(n, u, Cpt::U),
     ensures
         rel_ty(sig, n, dl, psub(pi(ta, tb), s), psub(pi(ta2, tb2), s2), u),
@@ -526,13 +526,13 @@ proof fn pi_rel(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
     if u is Bot {
         ty_bot(sig, n, dl, pi(x, bx), pi(x2, bx2));
     } else {
-        pi_elem(ta, tb, rho, u);
+        pi_elem(sig, ta, tb, rho, u);
         let b = *u->Pi_0;
         let k = (n - 1) as nat;
         assert(n >= 1 && has_type(k, b, Cpt::U));
         ty_pi(sig, n, dl, pi(x, bx), pi(x2, bx2), u);
-        rp_pi(x, bx);
-        rp_pi(x2, bx2);
+        rp_pi(sig, x, bx);
+        rp_pi(sig, x2, bx2);
         d_pi_self(sig, dl, x, bx, l1, l2);
         d_pi_self(sig, dl, x2, bx2, l1, l2);
         tchain_one(sig, dl, pi(x, bx), pi(x, bx));
@@ -567,16 +567,16 @@ proof fn pi_cod(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
         0 <= kb < d->Node_2.len(),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb2, sort(l2)),
         related(sig, g, rho, dl, s, s2),
-        jc(ta, rho),
+        jc(sig, ta, rho),
         ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s2)),
         ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s)),
         ty_adeq(sig, rho, dl, ta, psub(ta, s2), psub(ta, s2)),
         binder_ok(sig, dl, s, s2, ta, tb, tb2, l1, l2),
-        mem(pi(ta, tb), rho, u),
+        mem(sig, pi(ta, tb), rho, u),
         has_type(n, u, Cpt::U),
         u is Pi,
         wf(u),
-        mem(ta, rho, *u->Pi_0),
+        mem(sig, ta, rho, *u->Pi_0),
         has_type((n - 1) as nat, v, *u->Pi_0),
         derivable(sig, eq(dl, m, m2, psub(ta, s))),
         rel_tm(sig, (n - 1) as nat, dl, m, m2, psub(ta, s), v, *u->Pi_0),
@@ -595,12 +595,12 @@ proof fn pi_cod(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
     assert(has_type(k, b, Cpt::U));
     typed_down(b, Cpt::U, k);
     typed_down(v, b, k);
-    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) by {
-        fits_ext(g, rho, ta, aa, z);
+    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(sig, ta, rho, aa, z) implies jc(sig, tb, ext(rho, z)) by {
+        fits_ext(sig, g, rho, ta, aa, z);
         sound(sig, pb, ext(rho, z));
     }
     typed_wf(v, b);
-    cod_in_body(ta, tb, rho, u, v, b);
+    cod_in_body(sig, ta, tb, rho, u, v, b);
     cod_typed_at(u, v, n);
     let c = cod(u, v);
     arg_adeq(sig, k, dl, m, m2, x, x, v, b, ta, rho);
@@ -661,7 +661,7 @@ proof fn adeq_pi(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat,
         let (p0, p1, p2) = (ps[0], ps[1], ps[2]);
         spair_wf(sig, g, dl, s, s2);
         assert(crate::conv_cr::lev_eq(lp, lp));
-        mem_sort(lp, rho, a);
+        mem_sort(sig, lp, rho, a);
         sort_rel(sig, n, dl, lp, lp, a);
         if a is Bot {
             tm_bot(sig, n, dl, psub(m, s), psub(m2, s2), t, u);
@@ -699,12 +699,12 @@ proof fn lam_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
         d->Node_0 == Rule::LamCong(l1, l2),
         concl(d) == eq(g, lam(ta, bd), lam(ta2, bd2), pi(ta, tb)),
         related(sig, g, rho, dl, s, s2),
-        mem(lam(ta, bd), rho, u),
+        mem(sig, lam(ta, bd), rho, u),
         u is Lam,
-        mem(pi(ta, tb), rho, a),
+        mem(sig, pi(ta, tb), rho, a),
         a is Pi,
         wf(a),
-        mem(ta, rho, *a->Pi_0),
+        mem(sig, ta, rho, *a->Pi_0),
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
         has_type((n - 1) as nat, w, *a->Pi_0),
@@ -731,13 +731,13 @@ proof fn lam_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     typed_down(w, b, k);
     typed_wf(w, b);
     sound(sig, p0, rho);
-    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) && jc(bd, ext(rho, z)) by {
-        fits_ext(g, rho, ta, aa, z);
+    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(sig, ta, rho, aa, z) implies jc(sig, tb, ext(rho, z)) && jc(sig, bd, ext(rho, z)) by {
+        fits_ext(sig, g, rho, ta, aa, z);
         sound(sig, p1, ext(rho, z));
         sound(sig, p2, ext(rho, z));
     }
-    cod_in_body(ta, tb, rho, a, w, b);
-    lam_in_body(ta, bd, rho, u, w, b);
+    cod_in_body(sig, ta, tb, rho, a, w, b);
+    lam_in_body(sig, ta, bd, rho, u, w, b);
     app_typed_at(n, u, a, w);
     let c = cod(a, w);
     let e = capp(u, w);
@@ -789,10 +789,10 @@ proof fn lam_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     lam_syn(sig, p0, p1, p2, p3, g, dl, s, s2, ta, ta2, tb, bd, bd2, l1, l2, y, y2);
     let lm = lam(x, psub(bd, up(s)));
     let lm2 = lam(psub(ta2, s2), psub(bd2, up(s2)));
-    hred_step(sapp(lm, y));
-    hred_step(sapp(lm, y2));
-    hred_step(sapp(lm2, y));
-    hred_step(sapp(lm2, y2));
+    hred_step(sig, sapp(lm, y));
+    hred_step(sig, sapp(lm, y2));
+    hred_step(sig, sapp(lm2, y));
+    hred_step(sig, sapp(lm2, y2));
     inst_up(bd, s, y);
     inst_up(bd, s, y2);
     inst_up(bd2, s2, y);
@@ -838,12 +838,12 @@ proof fn adeq_lam(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
             if a is Bot {
                 ty_of_bot(n, u);
             }
-            pi_elem(ta, tb, rho, a);
+            pi_elem(sig, ta, tb, rho, a);
             ty_inv(n, u, a);
             let k = (n - 1) as nat;
             let x = psub(ta, s);
             let bx = psub(tb, up(s));
-            rp_pi(x, bx);
+            rp_pi(sig, x, bx);
             ty_pos(n, u, a);
             assert forall|y: ExprSpec, y2: ExprSpec, w: Cpt|
                 has_type(k, w, *a->Pi_0) && derivable(sig, eq(dl, y, y2, x)) && rel_tm(sig, k, dl, y, y2, x, w, *a->Pi_0)
@@ -873,7 +873,7 @@ proof fn app_ty(sig: Sig, d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx
         concl(d->Node_2[kd]) == eq(g, ta, ta, sort(l1)),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb, sort(l2)),
         related(sig, g, rho, dl, s, s2),
-        mem(inst(0, xx, tb), rho, a),
+        mem(sig, inst(0, xx, tb), rho, a),
         has_type(n, a, Cpt::U),
     ensures
         rel_ty(sig, n, dl, psub(inst(0, xx, tb), s), psub(inst(0, xx, tb), s2), a),
@@ -883,7 +883,7 @@ proof fn app_ty(sig: Sig, d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx
     let Deriv::Node(_, _, ps) = d;
     let (px, pd, pb) = (ps[kx], ps[kd], ps[kb]);
     sound(sig, px, rho);
-    let (v, ax) = inst_elem(xx, tb, ta, rho, a);
+    let (v, ax) = inst_elem(sig, xx, tb, ta, rho, a);
     tm_adeq_of(sig, d, kx, rho, dl, s, s2, v);
     ty_adeq_of(sig, d, kd, rho, dl, s, s2);
     let dxl = d_left(sig, px);
@@ -925,15 +925,15 @@ proof fn app_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx
     let pt = pi(ta, tb);
     sound(sig, p0, rho);
     sound(sig, p1, rho);
-    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) by {
-        fits_ext(g, rho, ta, aa, z);
+    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(sig, ta, rho, aa, z) implies jc(sig, tb, ext(rho, z)) by {
+        fits_ext(sig, g, rho, ta, aa, z);
         sound(sig, p3, ext(rho, z));
     }
-    let (uf, ux) = app_parts(f, x0, rho, u);
-    assert(tyd_w(f, rho, pt, uf));
-    let (vf, pp) = tyd_w_elim(f, rho, pt, uf);
-    assert(tyd_w(x0, rho, ta, ux));
-    let (vx, ax) = tyd_w_elim(x0, rho, ta, ux);
+    let (uf, ux) = app_parts(sig, f, x0, rho, u);
+    assert(tyd_w(sig, f, rho, pt, uf));
+    let (vf, pp) = tyd_w_elim(sig, f, rho, pt, uf);
+    assert(tyd_w(sig, x0, rho, ta, ux));
+    let (vx, ax) = tyd_w_elim(sig, x0, rho, ta, ux);
     typed_wf(vf, pp);
     typed_wf(vx, ax);
     app_mono(uf, vf, ux, vx);
@@ -946,19 +946,19 @@ proof fn app_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx
         typed_up(vf, pp, nn);
         typed_up(pp, Cpt::U, nn);
         ty_inv(nn, vf, pp);
-        pi_elem(ta, tb, rho, pp);
+        pi_elem(sig, ta, tb, rho, pp);
         let b = *pp->Pi_0;
         let k = (nn - 1) as nat;
         jproj_props(nn, vf, pp, vx);
         let wj = jproj(vf, pp, vx);
-        mem_down_e(x0, rho, vx, wj);
+        mem_down_e(sig, x0, rho, vx, wj);
         assert(has_type(k, b, Cpt::U));
         adeq(sig, p1, rho, dl, s, s2, k, wj, b);
         adeq(sig, p0, rho, dl, s, s2, nn, vf, pp);
         let xs = psub(ta, s);
         let bs = psub(tb, up(s));
         assert(psub(pt, s) == pi(xs, bs));
-        rp_pi(xs, bs);
+        rp_pi(sig, xs, bs);
         tm_pi(sig, nn, dl, psub(f, s), psub(f2, s2), pi(xs, bs), vf, pp);
         d_sub(sig, p1, dl, s, s2);
         app_tm_elim(sig, k, dl, psub(f, s), psub(f2, s2), xs, bs, vf, pp, psub(x0, s), psub(x2, s2), wj);
@@ -966,9 +966,9 @@ proof fn app_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx
         app_typed_at(nn, vf, pp, wj);
         typed_down(wj, b, k);
         typed_down(b, Cpt::U, k);
-        cod_in_inst(ta, tb, x0, rho, pp, wj, b);
-        inst_jc(ta, tb, x0, rho);
-        assert forall|n2: nat, a2: Cpt| mem(t, rho, a2) && has_type(n2, a2, Cpt::U)
+        cod_in_inst(sig, ta, tb, x0, rho, pp, wj, b);
+        inst_jc(sig, ta, tb, x0, rho);
+        assert forall|n2: nat, a2: Cpt| mem(sig, t, rho, a2) && has_type(n2, a2, Cpt::U)
             implies #[trigger] rel_ty(sig, n2, dl, psub(t, s), psub(t, s2), a2) by {
             app_ty(sig, d, 1, 2, 3, rho, dl, s, s2, g, ta, tb, x0, l1, l2, n2, a2);
         }
@@ -1035,10 +1035,10 @@ proof fn beta_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ct
     let m2 = inst(0, xx, bd);
     let t = inst(0, xx, tb);
     sound(sig, d, rho);
-    assert(mem(m2, rho, u));
+    assert(mem(sig, m2, rho, u));
     sound(sig, p0, rho);
     sound(sig, p2, rho);
-    let (v, ax) = inst_elem2(xx, bd, tb, ta, rho, u, a);
+    let (v, ax) = inst_elem2(sig, xx, bd, tb, ta, rho, u, a);
     tm_adeq_of(sig, d, 2, rho, dl, s, s2, v);
     ty_adeq_of(sig, d, 0, rho, dl, s, s2);
     d_sub(sig, p2, dl, s, s2);
@@ -1057,8 +1057,8 @@ proof fn beta_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ct
     assert(psub(m, s) == sapp(lm, xs)) by {
         reveal_with_fuel(psub, 2);
     }
-    hred_step(sapp(lm, xs));
-    hred_refl(psub(m2, s2));
+    hred_step(sig, sapp(lm, xs));
+    hred_refl(sig, psub(m2, s2));
     related_left(sig, g, rho, dl, s, s2);
     d_sub(sig, d, dl, s, s);
     d_sub(sig, d, dl, s, s2);
@@ -1098,11 +1098,11 @@ proof fn eta_app_rel(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: 
         d->Node_0 == Rule::Eta(l, l2),
         concl(d) == eq(g, m, m2, pi(ta, tb)),
         related(sig, g, rho, dl, s, s2),
-        mem(m, rho, u),
-        mem(pi(ta, tb), rho, a),
+        mem(sig, m, rho, u),
+        mem(sig, pi(ta, tb), rho, a),
         a is Pi,
         wf(a),
-        mem(ta, rho, *a->Pi_0),
+        mem(sig, ta, rho, *a->Pi_0),
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
         has_type((n - 1) as nat, w, *a->Pi_0),
@@ -1129,19 +1129,19 @@ proof fn eta_app_rel(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: 
     typed_down(w, b, k);
     typed_wf(w, b);
     sound(sig, p0, rho);
-    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) by {
-        fits_ext(g, rho, ta, aa, z);
+    assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(sig, ta, rho, aa, z) implies jc(sig, tb, ext(rho, z)) by {
+        fits_ext(sig, g, rho, ta, aa, z);
         sound(sig, p4, ext(rho, z));
     }
-    cod_in_body(ta, tb, rho, a, w, b);
+    cod_in_body(sig, ta, tb, rho, a, w, b);
     app_typed_at(n, u, a, w);
     let ew = ext(rho, w);
     let c = cod(a, w);
     let e = capp(u, w);
-    mem_lift1(m, rho, w, u);
+    mem_lift1(sig, m, rho, w, u);
     le_refl(w);
-    mem_var(0, ew, w);
-    mem_app_intro(lift(1, 0, m), v0, ew, u, w);
+    mem_var(sig, 0, ew, w);
+    mem_app_intro(sig, lift(1, 0, m), v0, ew, u, w);
     ty_adeq_of(sig, d, 0, rho, dl, s, s2);
     arg_adeq(sig, k, dl, y, y2, x, x, w, b, ta, rho);
     d_sub(sig, p0, dl, s, s2);
@@ -1189,16 +1189,16 @@ proof fn adeq_eta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
             if a is Bot {
                 ty_of_bot(n, u);
             }
-            pi_elem(ta, tb, rho, a);
+            pi_elem(sig, ta, tb, rho, a);
             ty_inv(n, u, a);
             sound(sig, d, rho);
-            assert(mem(m2, rho, u));
+            assert(mem(sig, m2, rho, u));
             adeq(sig, p2, rho, dl, s2, s2, n, u, a);
             symm_ty(sig, n, dl, tt, psub(t, s2), a);
             conv_tm(sig, n, dl, ms2, ms2, psub(t, s2), tt, u, a);
             let x = psub(ta, s);
             let bx = psub(tb, up(s));
-            rp_pi(x, bx);
+            rp_pi(sig, x, bx);
             tm_pi(sig, n, dl, ms, ms, tt, u, a);
             tm_pi(sig, n, dl, ms2, ms2, tt, u, a);
             let k = (n - 1) as nat;

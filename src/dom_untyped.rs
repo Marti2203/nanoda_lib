@@ -30,6 +30,8 @@ use crate::dom_adeq::{mem_sort, app_parts};
 use crate::ti_syntax::{sort, lam, succ};
 #[cfg(verus_only)]
 use crate::dom_rel::sapp;
+#[cfg(verus_only)]
+use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -45,27 +47,27 @@ pub open spec fn bad_redex() -> ExprSpec {
 }
 
 /// Its contractum denotes `U`; the redex does not.
-pub proof fn beta_breaks_model()
+pub proof fn beta_breaks_model(sig: Sig, )
     ensures
-        mem(sort(one()), bot_env(), Cpt::U),
-        !mem(bad_redex(), bot_env(), Cpt::U),
+        mem(sig, sort(one()), bot_env(), Cpt::U),
+        !mem(sig, bad_redex(), bot_env(), Cpt::U),
 {
     succ_nonzero(LevelSpec::Zero);
-    mem_sort(one(), bot_env(), Cpt::U);
+    mem_sort(sig, one(), bot_env(), Cpt::U);
     let bot = bot_env();
     let f = lam(sort(LevelSpec::Zero), ExprSpec::Var(0));
-    if mem(bad_redex(), bot, Cpt::U) {
-        let (uf, ux) = app_parts(f, sort(one()), bot, Cpt::U);
+    if mem(sig, bad_redex(), bot, Cpt::U) {
+        let (uf, ux) = app_parts(sig, f, sort(one()), bot, Cpt::U);
         if !(uf is Lam) {
             assert(capp(uf, ux) == Cpt::Bot);
             head_le(Cpt::U, Cpt::Bot);
         } else {
             reveal(mem);
-            let w = choose|w: Wit| #[trigger] mem_w(f, bot, uf, w);
+            let w = choose|w: Wit| #[trigger] mem_w(sig, f, bot, uf, w);
             if let Wit::Gen(a, gen, wa, ws) = w {
-                assert(mem_w(sort(LevelSpec::Zero), bot, a, *wa));
+                assert(mem_w(sig, sort(LevelSpec::Zero), bot, a, *wa));
                 assert(a is Bot || a is Prop);
-                assert(entries_ok(ExprSpec::Var(0), bot, a, gen, ws));
+                assert(entries_ok(sig, ExprSpec::Var(0), bot, a, gen, ws));
                 head_le(uf, gen);
                 let tg = seq![gen];
                 assert(tg[0] == gen);
@@ -76,7 +78,7 @@ pub proof fn beta_breaks_model()
                     sel_lam_mem(tg, ux, ht(gen), 1, y);
                     let k = choose|k: int| 0 <= k < g.len() && #[trigger] g[k].1 == y && le(g[k].0, ux);
                     assert(gsteps(gen)[k] == g[k]);
-                    assert(mem_w(ExprSpec::Var(0), ext(bot, g[k].0), y, ws[k]));
+                    assert(mem_w(sig, ExprSpec::Var(0), ext(bot, g[k].0), y, ws[k]));
                     le_trans(y, g[k].0, ux);
                 }
                 assert forall|y: Cpt, z: Cpt| #[trigger] sm.contains(y) && #[trigger] sm.contains(z) implies crate::dom_compact::compat(y, z) by {
@@ -97,7 +99,7 @@ pub proof fn beta_breaks_model()
                 sel_lam_mem(tg, ux, ht(gen), 1, y);
                 let k = choose|k: int| 0 <= k < g.len() && #[trigger] g[k].1 == y && le(g[k].0, ux);
                 assert(gsteps(gen)[k] == g[k]);
-                assert(mem_w(ExprSpec::Var(0), ext(bot, g[k].0), y, ws[k]));
+                assert(mem_w(sig, ExprSpec::Var(0), ext(bot, g[k].0), y, ws[k]));
                 head_le(Cpt::U, g[k].0);
                 assert(typed(g[k].0, a));
                 reveal(typed);
