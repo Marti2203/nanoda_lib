@@ -1969,6 +1969,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::LamCong(_, _) => sound_lam_d(sig, d, rho),
         Rule::AppCong(_, _) => sound_app_d(sig, d, rho),
         Rule::Beta(_, _) => sound_beta_d(sig, d, rho),
+        Rule::Zeta(_, _) => sound_zeta_d(sig, d, rho),
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
@@ -2289,6 +2290,43 @@ proof fn sound_def_d(sig: Sig, d: Deriv, rho: Env)
         }
     }
     jc_intro(sig, m, rho);
+}
+
+#[verifier::spinoff_prover]
+proof fn sound_zeta_d(sig: Sig, d: Deriv, rho: Env)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        fits_env(sig, concl(d)->Eq_0, rho),
+        d->Node_0 is Zeta,
+    ensures
+        sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    if let Rule::Zeta(l1, l2) = rule {
+        let (ta, x0, bd) = (*m->Let_0, *m->Let_1, *m->Let_2);
+        let tb = concl(ps[1])->Eq_3;
+        sound(sig, ps[2], rho);
+        assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(sig, ta, rho, aa, x) implies sound_ok(sig, bd, bd, tb, ext(rho, x)) by {
+            fits_ext(sig, g, rho, ta, aa, x);
+            sound(sig, ps[1], ext(rho, x));
+        }
+        assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(sig, ta, rho, aa, x) implies jc(sig, bd, ext(rho, x)) && tyd(sig, bd, ext(rho, x), tb) by {
+            assert(sound_ok(sig, bd, bd, tb, ext(rho, x)));
+        }
+        sound_beta(sig, ta, bd, tb, x0, rho);
+        let r = crate::ti_syntax::let_redex(ta, x0, bd);
+        mem_let(sig, ta, x0, bd, rho);
+        assert(sem_eq(sig, r, m, rho));
+        assert(sem_eq(sig, a, a, rho));
+        sound_transfer(sig, r, m, a, a, rho);
+    }
 }
 
 } // verus!

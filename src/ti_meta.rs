@@ -142,6 +142,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::LamCong(_, _) => d_wf(sig, ps[0]),
         Rule::AppCong(_, _) => d_wf(sig, ps[0]),
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
+        Rule::Zeta(_, _) => d_wf(sig, ps[0]),
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
@@ -298,6 +299,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::LamCong(..) => d_ren_lam(sig, d, w, dl, r),
         Rule::AppCong(..) => d_ren_app(sig, d, w, dl, r),
         Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
+        Rule::Zeta(..) => d_ren_zeta(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
         Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
@@ -700,6 +702,55 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             d
         },
     }
+}
+
+#[verifier::spinoff_prover]
+proof fn d_ren_zeta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is Zeta,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    let q = rn(r);
+    let ru = upr(r);
+    let l1 = rule->Zeta_0;
+    let l2 = rule->Zeta_1;
+            let (aa, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
+            let b = concl(ps[1])->Eq_3;
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let w1 = d_cons(sig, w, l1, d0);
+            ren_ok_up(g, dl, r, aa);
+            let d1 = d_ren(sig, ps[1], w1, dl.push(psub(aa, q)), ru);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
+            let d3 = d_ren(sig, ps[3], w1, dl.push(psub(aa, q)), ru);
+            ren_up(b, r);
+            ren_up(body, r);
+            psub_inst0(body, x, q);
+            psub_inst0(b, x, q);
+            assert(psub(m, q) == ExprSpec::Let(Box::new(psub(aa, q)), Box::new(psub(x, q)), Box::new(psub(body, up(q)))));
+            let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+            let ps2 = seq![d0, d1, d2, d3];
+            assert(prems(ps2, seq![
+                eq(dl, psub(aa, q), psub(aa, q), sort(l1)),
+                eq(dl.push(psub(aa, q)), psub(body, up(q)), psub(body, up(q)), psub(b, up(q))),
+                eq(dl, psub(x, q), psub(x, q), psub(aa, q)),
+                eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b, up(q)), sort(l2)),
+            ]));
+            valid_node(sig, Rule::Zeta(l1, l2), j2, ps2);
+            node(Rule::Zeta(l1, l2), j2, ps2)
 }
 
 } // verus!

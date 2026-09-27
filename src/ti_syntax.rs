@@ -84,6 +84,24 @@ pub open spec fn crank(sig: Sig, e: ExprSpec) -> nat
     }
 }
 
+/// Term size, with `let` outweighing the redex it stands for.
+pub open spec fn esize(e: ExprSpec) -> nat
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => 1 + esize(*f) + esize(*x),
+        ExprSpec::Bind(_, t, b) => 1 + esize(*t) + esize(*b),
+        ExprSpec::Let(t, v, b) => 3 + esize(*t) + esize(*v) + esize(*b),
+        ExprSpec::Proj(_, x) => 1 + esize(*x),
+        _ => 1,
+    }
+}
+
+/// The redex a `let` stands for.
+pub open spec fn let_redex(t: ExprSpec, v: ExprSpec, b: ExprSpec) -> ExprSpec {
+    ExprSpec::App(Box::new(ExprSpec::Bind(BinderKind::Lam, Box::new(t), Box::new(b))), Box::new(v))
+}
+
 /// `c.{ls}` is a definition at a matching level instance.
 pub open spec fn is_def(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
     sig.consts.contains_key(c) && sig.consts[c].val is Some && sig.consts[c].lps.len() == ls.len()
@@ -146,6 +164,8 @@ pub enum Rule {
     Local(LevelSpec),
     /// A definition unfolds to its value.
     Delta(LevelSpec),
+    /// A `let` unfolds to its body at the value.
+    Zeta(LevelSpec, LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -259,6 +279,19 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                         eq(g.push(a), b, b, sort(l2)),
                     ])
                 }
+            },
+            _ => false,
+        },
+        Rule::Zeta(l1, l2) => match j {
+            Jd::Eq(g, m, n, t) => m is Let && ps.len() == 4 && concl(ps[1]) is Eq && {
+                let (a, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
+                let b = concl(ps[1])->Eq_3;
+                n == inst(0, x, body) && t == inst(0, x, b) && prems(ps, seq![
+                    eq(g, a, a, sort(l1)),
+                    eq(g.push(a), body, body, b),
+                    eq(g, x, x, a),
+                    eq(g.push(a), b, b, sort(l2)),
+                ])
             },
             _ => false,
         },

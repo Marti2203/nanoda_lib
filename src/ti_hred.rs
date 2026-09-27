@@ -25,6 +25,7 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
             },
         },
         ExprSpec::Const(c, ls) => if crate::ti_syntax::is_def(sig, c, ls) { Some(crate::ti_syntax::dval(sig, c, ls)) } else { None },
+        ExprSpec::Let(_, v, b) => Some(inst(0, *v, *b)),
         _ => None,
     }
 }

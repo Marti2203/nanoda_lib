@@ -367,6 +367,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::LamCong(_, _) => d_sub_lam(sig, d, dl, s, s2),
         Rule::AppCong(_, _) => d_sub_app(sig, d, dl, s, s2),
         Rule::Beta(_, _) => d_sub_beta(sig, d, dl, s, s2),
+        Rule::Zeta(_, _) => d_sub_zeta(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => d_sub_sig(sig, d, dl, s, s2),
@@ -939,6 +940,73 @@ pub open spec fn rule_level(r: Rule) -> LevelSpec {
         Rule::Local(l) => l,
         Rule::Delta(l) => l,
         _ => LevelSpec::Zero,
+    }
+}
+
+#[verifier::spinoff_prover]
+proof fn d_sub_zeta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is Zeta,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    if let Rule::Zeta(l1, l2) = rule {
+        let (p0, p1, p2, p3) = (ps[0], ps[1], ps[2], ps[3]);
+        let (aa, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
+        let b = concl(p1)->Eq_3;
+        spair_left(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p2, dl, s, s);
+        d_sub(sig, p2, dl, s, s2);
+        let sa = dl.push(psub(aa, s));
+        spair_up(sig, g, dl, s, s, aa, psub(aa, s), l1);
+        d_sub(sig, p1, sa, up(s), up(s));
+        d_sub(sig, p3, sa, up(s), up(s));
+        let q0 = get(sig, eq(dl, psub(aa, s), psub(aa, s), sort(l1)));
+        let q1 = get(sig, eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))));
+        let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(aa, s)));
+        let q3 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        let xs = psub(x, s);
+        let lm = ExprSpec::Let(Box::new(psub(aa, s)), Box::new(xs), Box::new(psub(body, up(s))));
+        let bj = eq(dl, lm, inst(0, xs, psub(body, up(s))), inst(0, xs, psub(b, up(s))));
+        let bp = seq![q0, q1, q2, q3];
+        assert(prems(bp, seq![
+            eq(dl, psub(aa, s), psub(aa, s), sort(l1)),
+            eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))),
+            eq(dl, xs, xs, psub(aa, s)),
+            eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
+        ]));
+        valid_node(sig, Rule::Zeta(l1, l2), bj, bp);
+        let bd = node(Rule::Zeta(l1, l2), bj, bp);
+        // then the substituted bodies
+        spair_cons(sig, g, dl, s, s2, aa, psub(x, s), psub(x, s2), l1);
+        d_sub(sig, p1, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
+        d_sub(sig, p3, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
+        inst_up(body, s, psub(x, s));
+        inst_up(body, s2, psub(x, s2));
+        inst_up(b, s, psub(x, s));
+        inst_up(b, s2, psub(x, s2));
+        psub_inst0(body, x, s2);
+        psub_inst0(b, x, s);
+        psub_inst0(b, x, s2);
+        let bb = get(sig, eq(dl, psub(body, cons(psub(x, s), s)), psub(body, cons(psub(x, s2), s2)), psub(b, cons(psub(x, s), s))));
+        let z = d_trans(sig, bd, bb);
+        mk_d(sig, z);
+        assert(psub(m, s) == lm);
+        let tt = get(sig, eq(dl, psub(b, cons(psub(x, s), s)), psub(b, cons(psub(x, s2), s2)), sort(l2)));
+        mk_t(sig, tt, l2);
     }
 }
 

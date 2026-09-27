@@ -62,7 +62,7 @@ pub open spec fn gsteps(gen: Cpt) -> Seq<(Cpt, Cpt)> {
 /// The entries of a generator: typed at the domain, outputs in the body's
 /// denotation at the input.
 pub open spec fn entries_ok(sig: Sig, body: ExprSpec, rho: Env, a: Cpt, gen: Cpt, ws: Seq<Wit>) -> bool
-    decreases crank(sig, body), body, 2int,
+    decreases crank(sig, body), crate::ti_syntax::esize(body), 2int,
 {
     ws.len() == gsteps(gen).len() && forall|i: int| 0 <= i < ws.len() ==>
         typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, body, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
@@ -79,7 +79,8 @@ pub open spec fn unfolds(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
 /// MEMBERSHIP, as witnessed. A definition denotes its value (closed, so in
 /// the empty environment); axioms and locals denote only bottom.
 pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
-    decreases crank(sig, m), m, 1int,
+    decreases crank(sig, m), crate::ti_syntax::esize(m), 1int,
+    via mem_w_decreases
 {
     match m {
         ExprSpec::Var(i) => wf(u) && le(u, rho(i)),
@@ -96,7 +97,36 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
             _ => false,
         },
         ExprSpec::Const(c, ls) => u is Bot || (unfolds(sig, c, ls) && wf(u) && mem_w(sig, dval(sig, c, ls), bot_env(), u, w)),
+        ExprSpec::Let(t, v, b) => mem_w(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, u, w),
         _ => u is Bot,
+    }
+}
+
+#[via_fn]
+proof fn mem_w_decreases(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) {
+    if let ExprSpec::Let(t, v, b) = m {
+        let_measure(sig, *t, *v, *b);
+    }
+}
+
+/// A `let` weighs more than its redex, with the same constants and loose
+/// variables, and substitutes like it.
+pub proof fn let_measure(sig: Sig, t: ExprSpec, v: ExprSpec, b: ExprSpec)
+    ensures
+        crank(sig, crate::ti_syntax::let_redex(t, v, b)) == crank(sig, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
+        crate::ti_syntax::esize(crate::ti_syntax::let_redex(t, v, b)) < crate::ti_syntax::esize(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
+        crate::expr_model::nlbv(crate::ti_syntax::let_redex(t, v, b)) == crate::expr_model::nlbv(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
+        forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(crate::ti_syntax::let_redex(t, v, b), s)
+            == crate::ti_syntax::let_redex(crate::ti_subst::psub(t, s), crate::ti_subst::psub(v, s), crate::ti_subst::psub(b, crate::ti_subst::up(s))),
+        forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)), s)
+            == ExprSpec::Let(Box::new(crate::ti_subst::psub(t, s)), Box::new(crate::ti_subst::psub(v, s)), Box::new(crate::ti_subst::psub(b, crate::ti_subst::up(s)))),
+{
+    reveal_with_fuel(crank, 3);
+    reveal_with_fuel(crate::ti_syntax::esize, 3);
+    reveal_with_fuel(crate::expr_model::nlbv, 3);
+    assert forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(crate::ti_syntax::let_redex(t, v, b), s)
+        == crate::ti_syntax::let_redex(crate::ti_subst::psub(t, s), crate::ti_subst::psub(v, s), crate::ti_subst::psub(b, crate::ti_subst::up(s))) by {
+        reveal_with_fuel(crate::ti_subst::psub, 3);
     }
 }
 
@@ -108,10 +138,14 @@ pub open spec fn mem(sig: Sig, m: ExprSpec, rho: Env, u: Cpt) -> bool {
 
 /// A witness for bottom.
 pub open spec fn bot_w(m: ExprSpec) -> Wit
-    decreases m,
+    decreases crate::ti_syntax::esize(m),
 {
     match m {
         ExprSpec::App(f, x) => Wit::Ap(Cpt::Bot, Cpt::Bot, Box::new(bot_w(*f)), Box::new(bot_w(*x))),
+        ExprSpec::Let(t, v, b) => {
+            let r = crate::ti_syntax::let_redex(*t, *v, *b);
+            if crate::ti_syntax::esize(r) < crate::ti_syntax::esize(m) { bot_w(r) } else { Wit::Nil }
+        },
         _ => Wit::Nil,
     }
 }
@@ -120,7 +154,7 @@ pub open spec fn bot_w(m: ExprSpec) -> Wit
 pub proof fn mem_bot(sig: Sig, m: ExprSpec, rho: Env)
     ensures
         mem_w(sig, m, rho, Cpt::Bot, bot_w(m)),
-    decreases m,
+    decreases crate::ti_syntax::esize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -128,6 +162,9 @@ pub proof fn mem_bot(sig: Sig, m: ExprSpec, rho: Env)
     if let ExprSpec::App(f, x) = m {
         mem_bot(sig, *f, rho);
         mem_bot(sig, *x, rho);
+    } else if let ExprSpec::Let(t, v, b) = m {
+        let_measure(sig, *t, *v, *b);
+        mem_bot(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho);
     }
 }
 
@@ -140,7 +177,7 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
         wf(u2),
     ensures
         mem_w(sig, m, rho, u2, w),
-    decreases crank(sig, m), m,
+    decreases crank(sig, m), crate::ti_syntax::esize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -168,6 +205,10 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
                 le_trans(u2, u, crate::dom_compact::app(wf_, wx));
             }
         },
+        ExprSpec::Let(t, v, b) => {
+            let_measure(sig, *t, *v, *b);
+            mem_down(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, u, u2, w);
+        },
         ExprSpec::Const(c, ls) => {
             if !(u2 is Bot) {
                 head_le(u2, u);
@@ -194,7 +235,7 @@ pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w:
         env_le(rho, rho2),
     ensures
         mem_w(sig, m, rho2, u, w),
-    decreases m,
+    decreases crank(sig, m), crate::ti_syntax::esize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -228,6 +269,10 @@ pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w:
                 mem_env_mono(sig, *x, rho, rho2, wx, *w2);
             }
         },
+        ExprSpec::Let(t, v, b) => {
+            let_measure(sig, *t, *v, *b);
+            mem_env_mono(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, rho2, u, w);
+        },
         _ => {},
     }
 }
@@ -259,7 +304,7 @@ pub open spec fn env_rn(rho: Env, r: spec_fn(nat) -> nat) -> Env {
 pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wit)
     ensures
         mem_w(sig, crate::ti_subst::psub(m, crate::ti_subst::rn(r)), rho, u, w) == mem_w(sig, m, env_rn(rho, r), u, w),
-    decreases m,
+    decreases crank(sig, m), crate::ti_syntax::esize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -294,6 +339,10 @@ pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: 
                 mem_rn(sig, *x, r, rho, wx, *w2);
             }
         },
+        ExprSpec::Let(t, v, b) => {
+            let_measure(sig, *t, *v, *b);
+            mem_rn(sig, crate::ti_syntax::let_redex(*t, *v, *b), r, rho, u, w);
+        },
         _ => {},
     }
 }
@@ -320,10 +369,15 @@ pub proof fn mem_wf(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit)
         mem_w(sig, m, rho, u, w),
     ensures
         wf(u),
+    decreases crank(sig, m), crate::ti_syntax::esize(m),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
+    if let ExprSpec::Let(t, v, b) = m {
+        let_measure(sig, *t, *v, *b);
+        mem_wf(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, u, w);
+    }
 }
 
 /// The environment `rho2` is covered by `s` under `rho`: each entry is in
@@ -370,7 +424,7 @@ pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: 
         covers(sig, s, rho, rho2),
     ensures
         mem(sig, crate::ti_subst::psub(m, s), rho, u),
-    decreases m,
+    decreases crank(sig, m), crate::ti_syntax::esize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -418,6 +472,13 @@ pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: 
         },
         ExprSpec::Const(..) => {
             assert(mem_w(sig, psub(m, s), rho, u, w));
+        },
+        ExprSpec::Let(t, v, b) => {
+            let_measure(sig, *t, *v, *b);
+            let r = crate::ti_syntax::let_redex(*t, *v, *b);
+            mem_psub_back(sig, r, s, rho, rho2, u, w);
+            let w2 = choose|v2: Wit| #[trigger] mem_w(sig, psub(r, s), rho, u, v2);
+            assert(mem_w(sig, psub(m, s), rho, u, w2));
         },
         _ => {
             assert(mem_w(sig, psub(m, s), rho, u, Wit::Nil));
@@ -756,7 +817,7 @@ proof fn entries_fwd(sig: Sig, b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, g
     ensures
         covers(sig, s, rho, acc),
         forall|i: int| 0 <= i < k ==> #[trigger] mem(sig, b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1),
-    decreases b, k + 1,
+    decreases crank(sig, b), crate::ti_syntax::esize(b), k + 1,
 {
     reveal(mem);
     reveal(typed);
@@ -807,7 +868,7 @@ pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: E
     ensures
         covers(sig, s, rho, rho2),
         mem(sig, m, rho2, u),
-    decreases m, 0int,
+    decreases crank(sig, m), crate::ti_syntax::esize(m), 0int,
 {
     reveal(mem);
     reveal(typed);
@@ -883,6 +944,15 @@ pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: E
                 bot_env()
             }
         },
+        ExprSpec::Let(t, v, b) => {
+            let_measure(sig, *t, *v, *b);
+            let r = crate::ti_syntax::let_redex(*t, *v, *b);
+            assert(mem_w(sig, psub(r, s), rho, u, w));
+            let r2 = mem_psub_fwd(sig, r, s, rho, u, w);
+            let w2 = choose|v2: Wit| #[trigger] mem_w(sig, r, r2, u, v2);
+            assert(mem_w(sig, m, r2, u, w2));
+            r2
+        },
         ExprSpec::Const(..) => {
             covers_bot(sig, s, rho);
             assert(mem_w(sig, m, bot_env(), u, w));
@@ -936,7 +1006,7 @@ pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: C
         forall|i: nat| i < k ==> #[trigger] rho(i) == rho2(i),
     ensures
         mem_w(sig, e, rho, u, w) == mem_w(sig, e, rho2, u, w),
-    decreases crank(sig, e), e,
+    decreases crank(sig, e), crate::ti_syntax::esize(e),
 {
     match e {
         ExprSpec::Bind(bk, ta, b) => {
@@ -972,6 +1042,10 @@ pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: C
                 mem_closed(sig, *f, rho, rho2, k, wf_, *w1);
                 mem_closed(sig, *x, rho, rho2, k, wx, *w2);
             }
+        },
+        ExprSpec::Let(t, v, b) => {
+            let_measure(sig, *t, *v, *b);
+            mem_closed(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, rho2, k, u, w);
         },
         _ => {},
     }
@@ -1014,6 +1088,27 @@ pub proof fn mem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt)
         if mem(sig, m, rho, u) && !(u is Bot) {
             let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
             assert(mem_w(sig, dval(sig, c, ls), bot_env(), u, w));
+        }
+    }
+}
+
+/// A `let` denotes its redex.
+pub proof fn mem_let(sig: Sig, t: ExprSpec, v: ExprSpec, b: ExprSpec, rho: Env)
+    ensures
+        forall|u: Cpt| #[trigger] mem(sig, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)), rho, u)
+            == mem(sig, crate::ti_syntax::let_redex(t, v, b), rho, u),
+{
+    reveal(mem);
+    let m = ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b));
+    let r = crate::ti_syntax::let_redex(t, v, b);
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, r, rho, u) by {
+        if mem(sig, m, rho, u) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+            assert(mem_w(sig, r, rho, u, w));
+        }
+        if mem(sig, r, rho, u) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, r, rho, u, w);
+            assert(mem_w(sig, m, rho, u, w));
         }
     }
 }
