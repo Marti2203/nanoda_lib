@@ -27,6 +27,7 @@ pub open spec fn ext(rho: Env, u: Cpt) -> Env {
 }
 
 /// Stage-free semantic typing, at the least stage containing both.
+#[verifier::opaque]
 pub open spec fn typed(u: Cpt, a: Cpt) -> bool {
     has_type(vstd::math::max(ht(u) as int, ht(a) as int) as nat + 1, u, a)
 }
@@ -88,6 +89,7 @@ pub open spec fn mem_w(m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
 }
 
 /// `u` is in the denotation of `m`.
+#[verifier::opaque]
 pub open spec fn mem(m: ExprSpec, rho: Env, u: Cpt) -> bool {
     exists|w: Wit| #[trigger] mem_w(m, rho, u, w)
 }
@@ -108,6 +110,9 @@ pub proof fn mem_bot(m: ExprSpec, rho: Env)
         mem_w(m, rho, Cpt::Bot, bot_w(m)),
     decreases m,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     if let ExprSpec::App(f, x) = m {
         mem_bot(*f, rho);
         mem_bot(*x, rho);
@@ -124,6 +129,9 @@ pub proof fn mem_down(m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
     ensures
         mem_w(m, rho, u2, w),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     match m {
         ExprSpec::Var(i) => {
             le_trans(u2, u, rho(i));
@@ -169,6 +177,9 @@ pub proof fn mem_env_mono(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
         mem_w(m, rho2, u, w),
     decreases m,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     match m {
         ExprSpec::Var(i) => {
             le_trans(u, rho(i), rho2(i));
@@ -210,6 +221,9 @@ pub proof fn mem_env_ext(m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w: Wit)
     ensures
         mem_w(m, rho2, u, w),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     assert forall|i: nat| #[trigger] le(rho(i), rho2(i)) by {
         le_refl(rho(i));
     }
@@ -228,6 +242,9 @@ pub proof fn mem_rn(m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wi
         mem_w(crate::ti_subst::psub(m, crate::ti_subst::rn(r)), rho, u, w) == mem_w(m, env_rn(rho, r), u, w),
     decreases m,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     use crate::ti_subst::{psub, rn, up, upr, up_rn, psub_ext};
     match m {
         ExprSpec::Bind(bk, ta, b) => {
@@ -271,6 +288,9 @@ pub proof fn mem_down_e(m: ExprSpec, rho: Env, u: Cpt, u2: Cpt)
     ensures
         mem(m, rho, u2),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     let w = choose|w: Wit| #[trigger] mem_w(m, rho, u, w);
     mem_down(m, rho, u, u2, w);
 }
@@ -282,6 +302,9 @@ pub proof fn mem_wf(m: ExprSpec, rho: Env, u: Cpt, w: Wit)
     ensures
         wf(u),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
 }
 
 /// The environment `rho2` is covered by `s` under `rho`: each entry is in
@@ -298,6 +321,9 @@ pub proof fn covers_up(s: crate::ti_subst::Sub, rho: Env, rho2: Env, x: Cpt)
     ensures
         covers(crate::ti_subst::up(s), ext(rho, x), ext(rho2, x)),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     use crate::ti_subst::{psub, rn, up, lift_is_rn, lr};
     assert forall|i: nat| #[trigger] mem(up(s)(i), ext(rho, x), ext(rho2, x)(i)) by {
         if i == 0 {
@@ -327,6 +353,9 @@ pub proof fn mem_psub_back(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, rho2:
         mem(crate::ti_subst::psub(m, s), rho, u),
     decreases m,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     use crate::ti_subst::{psub, up};
     match m {
         ExprSpec::Var(i) => {
@@ -388,6 +417,9 @@ pub proof fn typed_up(u: Cpt, a: Cpt, n: nat)
         has_type(n, u, a),
     decreases n,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     if n > cstage(u, a) {
         typed_up(u, a, (n - 1) as nat);
         ty_stable((n - 1) as nat, u, a);
@@ -403,6 +435,9 @@ pub proof fn typed_down(u: Cpt, a: Cpt, n: nat)
         n >= cstage(u, a),
     decreases n,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     ty_pos(n, u, a);
     if n > cstage(u, a) {
         assert(stg((n - 1) as nat, u) && stg((n - 1) as nat, a));
@@ -420,6 +455,9 @@ pub proof fn typed_weak(u: Cpt, a: Cpt, a2: Cpt)
     ensures
         typed(u, a2),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     let n = vstd::math::max(cstage(u, a) as int, cstage(a2, Cpt::U) as int) as nat + ht(u) + 1;
     typed_up(u, a, n);
     typed_up(a2, Cpt::U, n);
@@ -436,6 +474,9 @@ pub proof fn typed_join(u: Cpt, v: Cpt, a: Cpt)
     ensures
         typed(join(u, v), a),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     let n = vstd::math::max(cstage(u, a) as int, cstage(v, a) as int) as nat;
     typed_up(u, a, n);
     typed_up(v, a, n);
@@ -451,6 +492,9 @@ pub proof fn typed_wf(u: Cpt, a: Cpt)
         wf(u),
         wf(a),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
 }
 
 /// A binary join is least.
@@ -464,6 +508,9 @@ pub proof fn join_lub(u: Cpt, v: Cpt, w: Cpt)
     ensures
         le(join(u, v), w),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     let t = seq![u, v];
     compat_refl(u);
     compat_refl(v);
@@ -488,6 +535,7 @@ pub proof fn join_lub(u: Cpt, v: Cpt, w: Cpt)
 }
 
 /// A denotation is closed under compatible joins.
+#[verifier::opaque]
 pub open spec fn jc(m: ExprSpec, rho: Env) -> bool {
     forall|u1: Cpt, u2: Cpt| #[trigger] mem(m, rho, u1) && #[trigger] mem(m, rho, u2)
         ==> compat(u1, u2) && mem(m, rho, join(u1, u2))
@@ -499,6 +547,9 @@ pub proof fn jc_var(i: nat, rho: Env)
     ensures
         jc(ExprSpec::Var(i), rho),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(ExprSpec::Var(i), rho, u1) && #[trigger] mem(ExprSpec::Var(i), rho, u2)
         implies compat(u1, u2) && mem(ExprSpec::Var(i), rho, join(u1, u2)) by {
         let w1 = choose|w: Wit| #[trigger] mem_w(ExprSpec::Var(i), rho, u1, w);
@@ -516,6 +567,9 @@ pub proof fn mem_lift1(t: ExprSpec, rho: Env, x: Cpt, u: Cpt)
     ensures
         mem(crate::subst_algebra::lift(1, 0, t), ext(rho, x), u) == mem(t, rho, u),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     use crate::ti_subst::{lift_is_rn, lr};
     lift_is_rn(1, 0, t);
     assert forall|j: nat| #[trigger] rho(j) == env_rn(ext(rho, x), lr(1, 0))(j) by {}
@@ -538,6 +592,9 @@ pub proof fn jc_lift(t: ExprSpec, rho: Env, x: Cpt)
     ensures
         jc(crate::subst_algebra::lift(1, 0, t), ext(rho, x)),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     let lt = crate::subst_algebra::lift(1, 0, t);
     assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(lt, ext(rho, x), u1) && #[trigger] mem(lt, ext(rho, x), u2)
         implies compat(u1, u2) && mem(lt, ext(rho, x), join(u1, u2)) by {
@@ -557,6 +614,9 @@ pub proof fn jall_mem(m: ExprSpec, rho: Env, t: Seq<Cpt>, k: int)
         mem(m, rho, joinall(t, k)),
     decreases k,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     if k == 0 {
         mem_bot(m, rho);
     } else {
@@ -582,6 +642,9 @@ pub proof fn covers_bot(s: crate::ti_subst::Sub, rho: Env)
     ensures
         covers(s, rho, bot_env()),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     assert forall|i: nat| #[trigger] mem(s(i), rho, bot_env()(i)) by {
         mem_bot(s(i), rho);
     }
@@ -598,6 +661,9 @@ pub proof fn covers_join2(s: crate::ti_subst::Sub, rho: Env, r1: Env, r2: Env)
         env_le(r1, env_join2(r1, r2)),
         env_le(r2, env_join2(r1, r2)),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     assert forall|i: nat| #[trigger] mem(s(i), rho, env_join2(r1, r2)(i)) && le(r1(i), env_join2(r1, r2)(i)) && le(r2(i), env_join2(r1, r2)(i)) by {
         assert(mem(s(i), rho, r1(i)) && mem(s(i), rho, r2(i)));
         assert(jc(s(i), rho));
@@ -623,6 +689,9 @@ pub proof fn jc_up(s: crate::ti_subst::Sub, rho: Env, x: Cpt)
     ensures
         forall|i: nat| #[trigger] jc(crate::ti_subst::up(s)(i), ext(rho, x)),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     assert forall|i: nat| #[trigger] jc(crate::ti_subst::up(s)(i), ext(rho, x)) by {
         if i == 0 {
             jc_var(0, ext(rho, x));
@@ -642,6 +711,9 @@ pub proof fn covers_up_back(s: crate::ti_subst::Sub, rho: Env, x: Cpt, r: Env)
         le(r(0), x),
         covers(s, rho, tail(r)),
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     assert(mem(crate::ti_subst::up(s)(0), ext(rho, x), r(0)));
     let w0 = choose|w: Wit| #[trigger] mem_w(ExprSpec::Var(0), ext(rho, x), r(0), w);
     assert forall|i: nat| #[trigger] mem(s(i), rho, tail(r)(i)) by {
@@ -664,6 +736,9 @@ proof fn entries_fwd(b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, gen: Cpt, w
         forall|i: int| 0 <= i < k ==> #[trigger] mem(b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1),
     decreases b, k + 1,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     if k == 0 {
         covers_bot(s, rho);
         bot_env()
@@ -712,6 +787,9 @@ pub proof fn mem_psub_fwd(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, u: Cpt
         mem(m, rho2, u),
     decreases m, 0int,
 {
+    reveal(mem);
+    reveal(typed);
+    reveal(jc);
     use crate::ti_subst::{psub, up};
     match m {
         ExprSpec::Var(i) => {
@@ -789,6 +867,38 @@ pub proof fn mem_psub_fwd(m: ExprSpec, s: crate::ti_subst::Sub, rho: Env, u: Cpt
             bot_env()
         },
     }
+}
+
+/// Using join-closure at one pair.
+pub proof fn jc_elim(m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt)
+    requires
+        jc(m, rho),
+        mem(m, rho, u1),
+        mem(m, rho, u2),
+    ensures
+        compat(u1, u2),
+        mem(m, rho, join(u1, u2)),
+{
+    reveal(jc);
+}
+
+/// Establishing join-closure from every pair.
+pub proof fn jc_intro(m: ExprSpec, rho: Env)
+    requires
+        forall|u1: Cpt, u2: Cpt| mem(m, rho, u1) && mem(m, rho, u2) ==> #[trigger] jc_pair(m, rho, u1, u2),
+    ensures
+        jc(m, rho),
+{
+    reveal(jc);
+    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(m, rho, u1) && #[trigger] mem(m, rho, u2)
+        implies compat(u1, u2) && mem(m, rho, join(u1, u2)) by {
+        assert(jc_pair(m, rho, u1, u2));
+    }
+}
+
+/// Join-closure at one pair, as an atom.
+pub open spec fn jc_pair(m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt) -> bool {
+    compat(u1, u2) && mem(m, rho, join(u1, u2))
 }
 
 } // verus!

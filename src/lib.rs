@@ -15,6 +15,7 @@ pub mod debug_printer;
 pub mod env;
 pub mod dom_compact;
 pub mod dom_model;
+pub mod dom_sound;
 pub mod dom_typing;
 pub mod e2_cert;
 pub mod e2_lift;

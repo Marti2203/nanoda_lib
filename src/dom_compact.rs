@@ -2171,6 +2171,72 @@ pub proof fn appk_mono_fun(u: Cpt, u2: Cpt, x: Cpt, lam: bool)
     jall_lub(s1, dec(ht(u)), jall(s2));
 }
 
+/// A set with no non-bottom element has no Lam or Pi to select from.
+pub proof fn allbot_sel(s: Seq<Cpt>, x: Cpt, b: nat)
+    requires
+        forall|i: int| 0 <= i < s.len() ==> #[trigger] s[i] is Bot,
+    ensures
+        sel_lam(s, x, b, s.len() as int).len() == 0,
+        sel_pi(s, x, b, s.len() as int).len() == 0,
+{
+    if sel_lam(s, x, b, s.len() as int).len() > 0 {
+        let y = sel_lam(s, x, b, s.len() as int)[0];
+        assert(sel_lam(s, x, b, s.len() as int).contains(y));
+        sel_lam_mem(s, x, b, s.len() as int, y);
+    }
+    if sel_pi(s, x, b, s.len() as int).len() > 0 {
+        let y = sel_pi(s, x, b, s.len() as int)[0];
+        assert(sel_pi(s, x, b, s.len() as int).contains(y));
+        sel_pi_mem(s, x, b, s.len() as int, y);
+    }
+}
+
+/// A well-formed non-bottom element is not below a set of bottoms.
+pub proof fn nonbot_allbot(y: Cpt, s: Seq<Cpt>, c: nat)
+    requires
+        wf(y),
+        !(y is Bot),
+        forall|i: int| 0 <= i < s.len() ==> #[trigger] s[i] is Bot,
+    ensures
+        !le_set(y, s, c),
+{
+    parts_lower(y);
+    if let Cpt::Lam(f) = y {
+        let k = choose|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot);
+        allbot_sel(s, f[k].0, c);
+        assert(sel_lam(s, f[k].0, c, s.len() as int) =~= Seq::<Cpt>::empty());
+        nonbot_empty(f[k].1, dec(c));
+    }
+}
+
+/// A well-formed lambda below a lambda forces a non-bottom output.
+pub proof fn below_lam_nonbot(u: Cpt, gen: Cpt)
+    requires
+        wf(u),
+        u is Lam,
+        le(u, gen),
+    ensures
+        gen is Lam,
+        exists|k: int| 0 <= k < gen->Lam_0.len() && !(#[trigger] gen->Lam_0[k].1 is Bot),
+{
+    head_le(u, gen);
+    let f = u->Lam_0;
+    let k = choose|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot);
+    let t = seq![gen];
+    assert(t[0] == gen);
+    parts_lower(u);
+    let sm = sel_lam(t, f[k].0, ht(gen), 1);
+    assert(le_set(f[k].1, sm, dec(ht(gen))));
+    if forall|q: int| 0 <= q < gen->Lam_0.len() ==> #[trigger] gen->Lam_0[q].1 is Bot {
+        assert forall|i: int| 0 <= i < sm.len() implies #[trigger] sm[i] is Bot by {
+            assert(sm.contains(sm[i]));
+            sel_lam_mem(t, f[k].0, ht(gen), 1, sm[i]);
+            let q = choose|q: int| 0 <= q < gen->Lam_0.len() && #[trigger] gen->Lam_0[q].1 == sm[i] && le(gen->Lam_0[q].0, f[k].0);
+        }
+        nonbot_allbot(f[k].1, sm, dec(ht(gen)));
+    }
+}
+
 /// Sanity examples: the order on concrete elements.
 proof fn order_examples() {
     let f = Cpt::Lam(seq![(Cpt::U, Cpt::U)]);
