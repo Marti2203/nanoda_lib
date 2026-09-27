@@ -315,18 +315,57 @@ impl<'p> ExportFile<'p> {
             }
         }
     }
+
+    /// Check all declarations in this export file using a single thread.
+    /// Returning means every declaration is certified (`export_sound`).
+    ///
+    /// VERUS-REWRITE(index-walk): the `for` over `declars.values()` is the scan
+    /// by index, in the same order.
+    pub(crate) fn check_all_declars_serial(&self)
+        requires
+            crate::inductive::export_ok(*self),
+            crate::inductive::export_rec_names_ok(*self),
+            crate::inductive::export_blocks_ok(*self),
+        ensures
+            crate::export_sound::all_certified(*self),
+    {
+        let ghost keys = self.declars_keys();
+        proof {
+            crate::inductive::export_ok_facts(*self);
+            self.declars_views();
+        }
+        let n = self.declars.len();
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                crate::inductive::export_ok(*self),
+                crate::inductive::export_rec_names_ok(*self),
+                crate::inductive::export_blocks_ok(*self),
+                keys == self.declars_keys(),
+                crate::indexmap_model::imap_wf(&self.declars),
+                self.declars_view() == crate::indexmap_model::imap_view(&self.declars),
+                keys == crate::indexmap_model::imap_keys(&self.declars),
+                n == keys.len(),
+                i <= n,
+                forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
+                    ==> exists|c: int| #[trigger] declar_cert_at(*self, crate::export_sound::decl_at(*self, j), c),
+            decreases n - i,
+        {
+            let (_, d) = self.declars.get_index(i).unwrap();
+            proof {
+                crate::inductive::export_ok_facts(*self);
+                assert(keys.to_set().contains(keys[i as int]));
+                assert(*d == crate::export_sound::decl_at(*self, i as int));
+            }
+            self.check_declar(d);
+            i = i + 1;
+        }
+    }
 }
 
 } // verus!
 
 impl<'p> ExportFile<'p> {
-    /// Check all declarations in this export file using a single thread.
-    pub(crate) fn check_all_declars_serial(&self) {
-        for declar in self.declars.values() {
-            self.check_declar(declar);
-        }
-    }
-
     /// Check all declarations in this export file, spawning `num_threads` as
     /// checkers.
     fn check_all_declars_par(&self, num_threads: usize) {

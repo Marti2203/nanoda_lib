@@ -11,6 +11,13 @@
 //! from each declaration's certificate, the typed ones from the certificate
 //! at its earlier cutoff -- where the induction already gives `kh` -- lifted
 //! to the later environment (`env_model::env_le_at`, `env_weaken`).
+//!
+//! `ExportFile::check_all_declars_serial` ensures `all_certified`, so an
+//! export it accepts has `kh` at every cutoff under `kh_hyp` alone. What that
+//! rests on beyond the named hypotheses: the parser's output (`export_ok`,
+//! `export_rec_names_ok`, `export_blocks_ok` are its unverified boundary),
+//! and the trusted surface (`scripts/trust-surface.sh`). The parallel driver
+//! calls the same `check_declar` on every index, but is not verified.
 #[allow(unused_imports)]
 use crate::expr_model::ExprSpec;
 #[cfg(verus_only)]
