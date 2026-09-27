@@ -81,7 +81,7 @@ pub enum Rule {
     LamCong(LevelSpec, LevelSpec),
     AppCong(LevelSpec, LevelSpec),
     Beta(LevelSpec, LevelSpec),
-    Eta(LevelSpec),
+    Eta(LevelSpec, LevelSpec),
     Irr(LevelSpec),
 }
 
@@ -199,7 +199,7 @@ pub open spec fn step_ok(r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             },
             _ => false,
         },
-        Rule::Eta(l) => match j {
+        Rule::Eta(l, l2) => match j {
             Jd::Eq(g, m, n, t) => t is Bind && t->Bind_0 == BinderKind::Pi && {
                 let (a, b) = (*t->Bind_1, *t->Bind_2);
                 prems(ps, seq![
@@ -207,6 +207,7 @@ pub open spec fn step_ok(r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                     eq(g, m, m, t),
                     eq(g, n, n, t),
                     eq(g.push(a), app(lift(1, 0, m), ExprSpec::Var(0)), app(lift(1, 0, n), ExprSpec::Var(0)), b),
+                    eq(g.push(a), b, b, sort(l2)),
                 ])
             },
             _ => false,

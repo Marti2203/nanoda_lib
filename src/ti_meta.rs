@@ -140,7 +140,7 @@ pub proof fn d_wf(d: Deriv) -> (r: Deriv)
         Rule::LamCong(_, _) => d_wf(ps[0]),
         Rule::AppCong(_, _) => d_wf(ps[0]),
         Rule::Beta(_, _) => d_wf(ps[0]),
-        Rule::Eta(_) => d_wf(ps[0]),
+        Rule::Eta(..) => d_wf(ps[0]),
         Rule::Irr(_) => d_wf(ps[0]),
         _ => {
             assert(false);
@@ -562,6 +562,7 @@ proof fn d_ren_eta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
     let q = rn(r);
     let ru = upr(r);
     let l = rule->Eta_0;
+    let l2 = rule->Eta_1;
             let (aa, b) = (*a->Bind_1, *a->Bind_2);
             let d0 = d_ren(ps[0], w, dl, r);
             let d1 = d_ren(ps[1], w, dl, r);
@@ -569,6 +570,7 @@ proof fn d_ren_eta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
             let w1 = d_cons(w, l, d0);
             ren_ok_up(g, dl, r, aa);
             let d3 = d_ren(ps[3], w1, dl.push(psub(aa, q)), ru);
+            let d4 = d_ren(ps[4], w1, dl.push(psub(aa, q)), ru);
             ren_up(b, r);
             lift_after_rn(m, r);
             lift_after_rn(n, r);
@@ -579,15 +581,16 @@ proof fn d_ren_eta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
             assert(psub(app(lift(1, 0, m), v0), rn(ru)) == app(lift(1, 0, psub(m, q)), v0));
             assert(psub(app(lift(1, 0, n), v0), rn(ru)) == app(lift(1, 0, psub(n, q)), v0));
             let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
-            let ps2 = seq![d0, d1, d2, d3];
+            let ps2 = seq![d0, d1, d2, d3, d4];
             assert(prems(ps2, seq![
                 eq(dl, psub(aa, q), psub(aa, q), sort(l)),
                 eq(dl, psub(m, q), psub(m, q), psub(a, q)),
                 eq(dl, psub(n, q), psub(n, q), psub(a, q)),
                 eq(dl.push(psub(aa, q)), app(lift(1, 0, psub(m, q)), v0), app(lift(1, 0, psub(n, q)), v0), psub(b, up(q))),
+                eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b, up(q)), sort(l2)),
             ]));
-            valid_node(Rule::Eta(l), j2, ps2);
-            node(Rule::Eta(l), j2, ps2)
+            valid_node(Rule::Eta(l, l2), j2, ps2);
+            node(Rule::Eta(l, l2), j2, ps2)
 }
 
 #[verifier::spinoff_prover]

@@ -1211,22 +1211,20 @@ pub proof fn app_jc(f: ExprSpec, x: ExprSpec, rho: Env)
     jc_intro(m, rho);
 }
 
-/// A Pi code of `Pi ta tb`'s denotation, at an argument fitting the
-/// domain, has its codomain in the denotation of `tb[x]`.
+/// A Pi code's codomain at a typed argument lies in the body's
+/// denotation at that argument.
 #[verifier::spinoff_prover]
-pub proof fn cod_in_inst(ta: ExprSpec, tb: ExprSpec, x: ExprSpec, rho: Env, p: Cpt, v: Cpt, ax: Cpt)
+pub proof fn cod_in_body(ta: ExprSpec, tb: ExprSpec, rho: Env, p: Cpt, v: Cpt, ax: Cpt)
     requires
         mem(ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(tb)), rho, p),
         wf(p),
         p is Pi,
         dfit(ta, rho, ax, v),
-        mem(x, rho, v),
         body_jc(ta, tb, rho),
         forall|i: nat| #[trigger] wf(rho(i)),
     ensures
-        mem(inst(0, x, tb), rho, cod(p, v)),
+        mem(tb, ext(rho, v), cod(p, v)),
 {
-    use crate::ti_subst::{psub, isub, inst_is_psub};
     reveal(mem);
     let mpi = ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(tb));
     let w = choose|w: Wit| #[trigger] mem_w(mpi, rho, p, w);
@@ -1288,13 +1286,33 @@ pub proof fn cod_in_inst(ta: ExprSpec, tb: ExprSpec, x: ExprSpec, rho: Env, p: C
         }
         selk_fits(p, v, false);
         jall_lub(sp, dec(ht(p)), j);
-        // into the instance, then down
-        covers_inst(x, rho, v);
         let wj = choose|w2: Wit| #[trigger] mem_w(tb, ev, j, w2);
-        mem_psub_back(tb, isub(0, x), rho, ev, j, wj);
-        inst_is_psub(0, x, tb);
-        mem_down_e(inst(0, x, tb), rho, j, cod(p, v));
+        mem_wf(tb, ev, j, wj);
+        mem_down_e(tb, ev, j, cod(p, v));
     }
+}
+
+/// A Pi code's codomain at an argument's element lies in the instance.
+pub proof fn cod_in_inst(ta: ExprSpec, tb: ExprSpec, x: ExprSpec, rho: Env, p: Cpt, v: Cpt, ax: Cpt)
+    requires
+        mem(ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(tb)), rho, p),
+        wf(p),
+        p is Pi,
+        dfit(ta, rho, ax, v),
+        mem(x, rho, v),
+        body_jc(ta, tb, rho),
+        forall|i: nat| #[trigger] wf(rho(i)),
+    ensures
+        mem(inst(0, x, tb), rho, cod(p, v)),
+{
+    use crate::ti_subst::{isub, inst_is_psub};
+    cod_in_body(ta, tb, rho, p, v, ax);
+    let ev = ext(rho, v);
+    covers_inst(x, rho, v);
+    reveal(mem);
+    let wj = choose|w2: Wit| #[trigger] mem_w(tb, ev, cod(p, v), w2);
+    mem_psub_back(tb, isub(0, x), rho, ev, cod(p, v), wj);
+    inst_is_psub(0, x, tb);
 }
 
 /// THE APPLICATION RULE, TYPING.
@@ -1448,6 +1466,65 @@ pub proof fn sel_below_gen(w: Cpt, gen: Cpt, v: Cpt, lam: bool)
     jall_lub(sw, dec(ht(w)), j);
 }
 
+/// A lambda's application at a typed argument lies in the body's
+/// denotation at that argument.
+#[verifier::spinoff_prover]
+pub proof fn lam_in_body(ta: ExprSpec, body: ExprSpec, rho: Env, fw: Cpt, v2: Cpt, ax: Cpt)
+    requires
+        mem(ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(body)), rho, fw),
+        fw is Lam,
+        dfit(ta, rho, ax, v2),
+        body_jc(ta, body, rho),
+        forall|i: nat| #[trigger] wf(rho(i)),
+    ensures
+        mem(body, ext(rho, v2), crate::dom_compact::app(fw, v2)),
+{
+    let lm = ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(body));
+    reveal(mem);
+    let w1 = choose|w: Wit| #[trigger] mem_w(lm, rho, fw, w);
+    mem_wf(lm, rho, fw, w1);
+    typed_wf(v2, ax);
+    if let Wit::Gen(a, gen, wa, ws) = w1 {
+        let ev = ext(rho, v2);
+        assert(jc(body, ev));
+        assert(entries_ok(body, rho, a, gen, ws));
+        let tg = seq![gen];
+        assert(tg[0] == gen);
+        let g = gen->Lam_0;
+        let sm = selk(tg, v2, ht(gen), true);
+        assert forall|y: Cpt| #[trigger] sm.contains(y) implies mem(body, ev, y) by {
+            sel_lam_mem(tg, v2, ht(gen), 1, y);
+            let k = choose|k: int| 0 <= k < g.len() && #[trigger] g[k].1 == y && le(g[k].0, v2);
+            assert(gsteps(gen)[k] == g[k]);
+            assert(mem_w(body, ext(rho, g[k].0), y, ws[k]));
+            assert forall|q: nat| #[trigger] le(ext(rho, g[k].0)(q), ev(q)) by {
+                if q > 0 {
+                    le_refl(rho((q - 1) as nat));
+                }
+            }
+            mem_env_mono(body, ext(rho, g[k].0), ev, y, ws[k]);
+        }
+        assert forall|y: Cpt| #[trigger] sm.contains(y) implies wf(y) by {
+            let wy = choose|w3: Wit| #[trigger] mem_w(body, ev, y, w3);
+            mem_wf(body, ev, y, wy);
+        }
+        assert forall|y: Cpt, z: Cpt| #[trigger] sm.contains(y) && #[trigger] sm.contains(z) implies compat(y, z) by {
+            jc_elim(body, ev, y, z);
+        }
+        assert forall|i: int| 0 <= i < sm.len() implies #[trigger] mem(body, ev, sm[i]) by {
+            assert(sm.contains(sm[i]));
+        }
+        jall_mem(body, ev, sm, sm.len() as int);
+        let j = jall(sm);
+        head_le(fw, gen);
+        sel_below_gen(fw, gen, v2, true);
+        appk_wf(fw, v2, true);
+        let wj = choose|w3: Wit| #[trigger] mem_w(body, ev, j, w3);
+        mem_wf(body, ev, j, wj);
+        mem_down_e(body, ev, j, crate::dom_compact::app(fw, v2));
+    }
+}
+
 /// BETA, forward: an application of a lambda denotes into the instance.
 #[verifier::spinoff_prover]
 pub proof fn beta_fwd(ta: ExprSpec, body: ExprSpec, x: ExprSpec, rho: Env, u: Cpt)
@@ -1476,50 +1553,16 @@ pub proof fn beta_fwd(ta: ExprSpec, body: ExprSpec, x: ExprSpec, rho: Env, u: Cp
             }
             return;
         }
-        if let Wit::Gen(a, gen, wa, ws) = *w1 {
-            assert(mem(x, rho, xv));
-            let (v2, ax) = tyd_w_elim(x, rho, ta, xv);
-            typed_wf(v2, ax);
-            assert(dfit(ta, rho, ax, v2));
-            let ev = ext(rho, v2);
-            assert(jc(body, ev));
-            assert(entries_ok(body, rho, a, gen, ws));
-            let tg = seq![gen];
-            assert(tg[0] == gen);
-            let g = gen->Lam_0;
-            let sm = selk(tg, v2, ht(gen), true);
-            assert forall|y: Cpt| #[trigger] sm.contains(y) implies mem(body, ev, y) by {
-                sel_lam_mem(tg, v2, ht(gen), 1, y);
-                let k = choose|k: int| 0 <= k < g.len() && #[trigger] g[k].1 == y && le(g[k].0, v2);
-                assert(gsteps(gen)[k] == g[k]);
-                assert(mem_w(body, ext(rho, g[k].0), y, ws[k]));
-                assert forall|q: nat| #[trigger] le(ext(rho, g[k].0)(q), ev(q)) by {
-                    if q > 0 {
-                        le_refl(rho((q - 1) as nat));
-                    }
-                }
-                mem_env_mono(body, ext(rho, g[k].0), ev, y, ws[k]);
-            }
-            assert forall|y: Cpt| #[trigger] sm.contains(y) implies wf(y) by {
-                let wy = choose|w3: Wit| #[trigger] mem_w(body, ev, y, w3);
-                mem_wf(body, ev, y, wy);
-            }
-            assert forall|y: Cpt, z: Cpt| #[trigger] sm.contains(y) && #[trigger] sm.contains(z) implies compat(y, z) by {
-                jc_elim(body, ev, y, z);
-            }
-            assert forall|i: int| 0 <= i < sm.len() implies #[trigger] mem(body, ev, sm[i]) by {
-                assert(sm.contains(sm[i]));
-            }
-            jall_mem(body, ev, sm, sm.len() as int);
-            let j = jall(sm);
-            head_le(fw, gen);
-            sel_below_gen(fw, gen, v2, true);
-            appk_mono_arg(fw, xv, v2, true);
-            le_trans(u, crate::dom_compact::app(fw, xv), crate::dom_compact::app(fw, v2));
-            le_trans(u, crate::dom_compact::app(fw, v2), j);
-            inst_back(x, body, rho, v2, j);
-            mem_down_e(nn, rho, j, u);
-        }
+        assert(mem(x, rho, xv));
+        let (v2, ax) = tyd_w_elim(x, rho, ta, xv);
+        typed_wf(v2, ax);
+        assert(dfit(ta, rho, ax, v2));
+        assert(mem(lm, rho, fw));
+        lam_in_body(ta, body, rho, fw, v2, ax);
+        appk_mono_arg(fw, xv, v2, true);
+        le_trans(u, crate::dom_compact::app(fw, xv), crate::dom_compact::app(fw, v2));
+        inst_back(x, body, rho, v2, crate::dom_compact::app(fw, v2));
+        mem_down_e(nn, rho, crate::dom_compact::app(fw, v2), u);
     }
 }
 
@@ -1924,7 +1967,7 @@ pub proof fn sound(d: Deriv, rho: Env)
         Rule::LamCong(_, _) => sound_lam_d(d, rho),
         Rule::AppCong(_, _) => sound_app_d(d, rho),
         Rule::Beta(_, _) => sound_beta_d(d, rho),
-        Rule::Eta(_) => sound_eta_d(d, rho),
+        Rule::Eta(..) => sound_eta_d(d, rho),
         _ => {},
     }
 }
@@ -2099,7 +2142,7 @@ proof fn sound_eta_d(d: Deriv, rho: Env)
     let m = j->Eq_1;
     let n = j->Eq_2;
     let a = j->Eq_3;
-    if let Rule::Eta(l) = rule {
+    if let Rule::Eta(l, _) = rule {
         let (ta, tb) = (*a->Bind_1, *a->Bind_2);
         sound(ps[1], rho);
         sound(ps[2], rho);

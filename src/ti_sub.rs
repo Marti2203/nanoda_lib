@@ -365,7 +365,7 @@ pub proof fn d_sub(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::LamCong(_, _) => d_sub_lam(d, dl, s, s2),
         Rule::AppCong(_, _) => d_sub_app(d, dl, s, s2),
         Rule::Beta(_, _) => d_sub_beta(d, dl, s, s2),
-        Rule::Eta(_) => d_sub_eta(d, dl, s, s2),
+        Rule::Eta(..) => d_sub_eta(d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(d, dl, s, s2),
         _ => {},
     }
@@ -770,8 +770,8 @@ proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let m = j->Eq_1;
     let n = j->Eq_2;
     let a = j->Eq_3;
-    if let Rule::Eta(l) = rule {
-        let (p0, p1, p2, p3) = (ps[0], ps[1], ps[2], ps[3]);
+    if let Rule::Eta(l, l2) = rule {
+        let (p0, p1, p2, p3, p4) = (ps[0], ps[1], ps[2], ps[3], ps[4]);
         let (aa, b) = (*a->Bind_1, *a->Bind_2);
         spair_left(g, dl, s, s2);
         d_sub(p0, dl, s, s);
@@ -782,6 +782,7 @@ proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let sa = dl.push(psub(aa, s));
         spair_up(g, dl, s, s, aa, psub(aa, s), l);
         d_sub(p3, sa, up(s), up(s));
+        d_sub(p4, sa, up(s), up(s));
         let v0 = ExprSpec::Var(0);
         assert(up(s)(0) == v0);
         assert(psub(v0, up(s)) == v0);
@@ -793,16 +794,18 @@ proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let q1 = get(eq(dl, psub(m, s), psub(m, s), psub(a, s)));
         let q2 = get(eq(dl, psub(n, s), psub(n, s), psub(a, s)));
         let q3 = get(eq(sa, app(lift(1, 0, psub(m, s)), v0), app(lift(1, 0, psub(n, s)), v0), psub(b, up(s))));
+        let q4 = get(eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
         let ej = eq(dl, psub(m, s), psub(n, s), psub(a, s));
-        let ep = seq![q0, q1, q2, q3];
+        let ep = seq![q0, q1, q2, q3, q4];
         assert(prems(ep, seq![
             eq(dl, psub(aa, s), psub(aa, s), sort(l)),
             eq(dl, psub(m, s), psub(m, s), psub(a, s)),
             eq(dl, psub(n, s), psub(n, s), psub(a, s)),
             eq(sa, app(lift(1, 0, psub(m, s)), v0), app(lift(1, 0, psub(n, s)), v0), psub(b, up(s))),
+            eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
         ]));
-        valid_node(Rule::Eta(l), ej, ep);
-        let ed = node(Rule::Eta(l), ej, ep);
+        valid_node(Rule::Eta(l, l2), ej, ep);
+        let ed = node(Rule::Eta(l, l2), ej, ep);
         let nn = get(eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
         let z = d_trans(ed, nn);
         mk_d(z);
