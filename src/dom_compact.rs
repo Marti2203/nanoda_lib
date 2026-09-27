@@ -789,6 +789,1240 @@ pub proof fn le_trans(u: Cpt, v: Cpt, w: Cpt)
     le_set_trans(u, seq![v], seq![w], ht(v), ht(w));
 }
 
+/// Binary join (meaningful on compatible arguments; junk otherwise).
+pub open spec fn join(u: Cpt, v: Cpt) -> Cpt
+    decreases u,
+{
+    match (u, v) {
+        (Cpt::Bot, _) => v,
+        (_, Cpt::Bot) => u,
+        (Cpt::Lam(f), Cpt::Lam(f2)) => Cpt::Lam(f + f2),
+        (Cpt::Pi(a, g), Cpt::Pi(a2, g2)) => Cpt::Pi(Box::new(join(*a, *a2)), g + g2),
+        _ => u,
+    }
+}
+
+/// The join of the first `k` elements.
+pub open spec fn joinall(s: Seq<Cpt>, k: int) -> Cpt
+    decreases k,
+{
+    if k <= 0 || k > s.len() {
+        Cpt::Bot
+    } else {
+        join(joinall(s, k - 1), s[k - 1])
+    }
+}
+
+pub open spec fn jall(s: Seq<Cpt>) -> Cpt {
+    joinall(s, s.len() as int)
+}
+
+/// The head constructor.
+pub open spec fn hd(c: Cpt) -> nat {
+    match c {
+        Cpt::Bot => 0,
+        Cpt::U => 1,
+        Cpt::Prop => 2,
+        Cpt::Lam(_) => 3,
+        Cpt::Pi(_, _) => 4,
+    }
+}
+
+/// The non-bottom elements share a head, and so on through Pi domains:
+/// what makes `jall` the join.
+pub open spec fn coh(s: Seq<Cpt>, b: nat) -> bool
+    decreases b,
+{
+    &&& top_coh(s)
+    &&& (b > 0 ==> coh(pi_doms(s, b, s.len() as int), (b - 1) as nat))
+}
+
+/// The non-bottom elements share a head.
+pub open spec fn top_coh(s: Seq<Cpt>) -> bool {
+    forall|i: int, j: int| 0 <= i < s.len() && 0 <= j < s.len() && !(s[i] is Bot) && !(s[j] is Bot)
+        ==> hd(#[trigger] s[i]) == hd(#[trigger] s[j])
+}
+
+/// SHAPE OF A JOIN: bottom when every element is; otherwise the common
+/// head, with the union of the elements' step entries.
+pub proof fn jall_shape(s: Seq<Cpt>, k: int)
+    requires
+        top_coh(s),
+        0 <= k <= s.len(),
+    ensures
+        (forall|i: int| 0 <= i < k ==> #[trigger] s[i] is Bot) ==> joinall(s, k) is Bot,
+        forall|i: int| 0 <= i < k && !(#[trigger] s[i] is Bot) ==> hd(joinall(s, k)) == hd(s[i]),
+        joinall(s, k) is Lam ==> forall|e: (Cpt, Cpt)| #[trigger] joinall(s, k)->Lam_0.contains(e)
+            <==> exists|i: int| 0 <= i < k && #[trigger] s[i] is Lam && s[i]->Lam_0.contains(e),
+        joinall(s, k) is Pi ==> forall|e: (Cpt, Cpt)| #[trigger] joinall(s, k)->Pi_1.contains(e)
+            <==> exists|i: int| 0 <= i < k && #[trigger] s[i] is Pi && s[i]->Pi_1.contains(e),
+    decreases k,
+{
+    if k > 0 {
+        jall_shape(s, k - 1);
+        let p = joinall(s, k - 1);
+        let x = s[k - 1];
+        if !(x is Bot) && !(p is Bot) {
+            let i0 = choose|i: int| 0 <= i < k - 1 && !(#[trigger] s[i] is Bot);
+            assert(hd(p) == hd(s[i0]));
+            assert(hd(s[i0]) == hd(s[k - 1]));
+        }
+        if p is Bot && !(x is Bot) {
+            assert forall|i: int| 0 <= i < k - 1 implies #[trigger] s[i] is Bot by {
+                if !(s[i] is Bot) {
+                    assert(hd(p) == hd(s[i]));
+                }
+            }
+        }
+        let j = joinall(s, k);
+        if j is Lam {
+            assert forall|e: (Cpt, Cpt)| #[trigger] j->Lam_0.contains(e)
+                <==> exists|i: int| 0 <= i < k && #[trigger] s[i] is Lam && s[i]->Lam_0.contains(e) by {
+                let rhs1 = exists|i: int| 0 <= i < k - 1 && #[trigger] s[i] is Lam && s[i]->Lam_0.contains(e);
+                if exists|i: int| 0 <= i < k && #[trigger] s[i] is Lam && s[i]->Lam_0.contains(e) {
+                    let i = choose|i: int| 0 <= i < k && #[trigger] s[i] is Lam && s[i]->Lam_0.contains(e);
+                    if i < k - 1 {
+                        assert(rhs1);
+                    }
+                }
+                if p is Lam && x is Lam {
+                    seq_concat_contains(p->Lam_0, x->Lam_0, e);
+                    assert(p->Lam_0.contains(e) == rhs1);
+                } else if p is Lam {
+                    assert(p->Lam_0.contains(e) == rhs1);
+                } else {
+                    assert(j == x);
+                    assert(!rhs1);
+                }
+            }
+        }
+        if j is Pi {
+            assert forall|e: (Cpt, Cpt)| #[trigger] j->Pi_1.contains(e)
+                <==> exists|i: int| 0 <= i < k && #[trigger] s[i] is Pi && s[i]->Pi_1.contains(e) by {
+                let rhs1 = exists|i: int| 0 <= i < k - 1 && #[trigger] s[i] is Pi && s[i]->Pi_1.contains(e);
+                if exists|i: int| 0 <= i < k && #[trigger] s[i] is Pi && s[i]->Pi_1.contains(e) {
+                    let i = choose|i: int| 0 <= i < k && #[trigger] s[i] is Pi && s[i]->Pi_1.contains(e);
+                    if i < k - 1 {
+                        assert(rhs1);
+                    }
+                }
+                if p is Pi && x is Pi {
+                    seq_concat_contains(p->Pi_1, x->Pi_1, e);
+                    assert(p->Pi_1.contains(e) == rhs1);
+                } else if p is Pi {
+                    assert(p->Pi_1.contains(e) == rhs1);
+                } else {
+                    assert(j == x);
+                    assert(!rhs1);
+                }
+            }
+        }
+    }
+}
+
+pub proof fn seq_concat_contains<T>(a: Seq<T>, b: Seq<T>, e: T)
+    ensures
+        (a + b).contains(e) <==> a.contains(e) || b.contains(e),
+{
+    let ab = a + b;
+    if ab.contains(e) {
+        let q = choose|q: int| 0 <= q < ab.len() && #[trigger] ab[q] == e;
+        if q < a.len() {
+            assert(a[q] == e);
+        } else {
+            assert(b[q - a.len()] == e);
+        }
+    }
+    if a.contains(e) {
+        let q = choose|q: int| 0 <= q < a.len() && #[trigger] a[q] == e;
+        assert(ab[q] == e);
+    }
+    if b.contains(e) {
+        let q = choose|q: int| 0 <= q < b.len() && #[trigger] b[q] == e;
+        assert(ab[q + a.len()] == e);
+    }
+}
+
+/// `joinall` reads only the first `n` elements.
+pub proof fn joinall_prefix(s1: Seq<Cpt>, s2: Seq<Cpt>, n: int)
+    requires
+        0 <= n <= s1.len(),
+        n <= s2.len(),
+        forall|i: int| 0 <= i < n ==> s1[i] == s2[i],
+    ensures
+        joinall(s1, n) == joinall(s2, n),
+    decreases n,
+{
+    if n > 0 {
+        joinall_prefix(s1, s2, n - 1);
+    }
+}
+
+/// A set with no Pi has no Pi domains.
+pub proof fn pi_doms_none(s: Seq<Cpt>, b: nat, k: int)
+    requires
+        0 <= k <= s.len(),
+        forall|i: int| 0 <= i < k ==> !(#[trigger] s[i] is Pi),
+    ensures
+        pi_doms(s, b, k).len() == 0,
+    decreases k,
+{
+    if k > 0 {
+        pi_doms_none(s, b, k - 1);
+    }
+}
+
+/// The domain of a joined Pi is the join of the domains.
+pub proof fn jall_dom(s: Seq<Cpt>, b: nat, k: int)
+    requires
+        fits(s, b),
+        top_coh(s),
+        0 <= k <= s.len(),
+        joinall(s, k) is Pi,
+    ensures
+        *joinall(s, k)->Pi_0 == jall(pi_doms(s, b, k)),
+    decreases k,
+{
+    jall_shape(s, k);
+    let p = joinall(s, k - 1);
+    let x = s[k - 1];
+    jall_shape(s, k - 1);
+    assert(ht(x) <= b);
+    if x is Bot {
+        assert(joinall(s, k) == p);
+        jall_dom(s, b, k - 1);
+    } else if x is Pi {
+        let d1 = pi_doms(s, b, k - 1);
+        let a = *x->Pi_0;
+        assert(pi_doms(s, b, k) == d1.push(a));
+        joinall_prefix(d1.push(a), d1, d1.len() as int);
+        if p is Bot {
+            assert forall|i: int| 0 <= i < k - 1 implies !(#[trigger] s[i] is Pi) by {
+                if !(s[i] is Bot) {
+                    assert(hd(p) == hd(s[i]));
+                }
+            }
+            pi_doms_none(s, b, k - 1);
+            assert(jall(d1) == Cpt::Bot);
+        } else {
+            if !(p is Pi) {
+                assert(hd(p) == hd(x)) by {
+                    let i0 = choose|i: int| 0 <= i < k - 1 && !(#[trigger] s[i] is Bot);
+                    assert(hd(p) == hd(s[i0]));
+                }
+            }
+            jall_dom(s, b, k - 1);
+        }
+    } else {
+        if !(p is Bot) {
+            let i0 = choose|i: int| 0 <= i < k - 1 && !(#[trigger] s[i] is Bot);
+            assert(hd(p) == hd(s[i0]));
+        }
+    }
+}
+
+/// A step list is no taller than a bound on its entries.
+pub proof fn hts_le(f: Seq<(Cpt, Cpt)>, k: int, m: nat)
+    requires
+        0 <= k <= f.len(),
+        forall|i: int| 0 <= i < k ==> ht(#[trigger] f[i].0) <= m && ht(f[i].1) <= m,
+    ensures
+        hts(f, k) <= m,
+    decreases k,
+{
+    if k > 0 {
+        hts_le(f, k - 1, m);
+    }
+}
+
+pub proof fn hts_concat(f: Seq<(Cpt, Cpt)>, g: Seq<(Cpt, Cpt)>)
+    ensures
+        hts(f + g, (f + g).len() as int) <= vstd::math::max(hts(f, f.len() as int) as int, hts(g, g.len() as int) as int),
+{
+    let m = vstd::math::max(hts(f, f.len() as int) as int, hts(g, g.len() as int) as int) as nat;
+    assert forall|i: int| 0 <= i < (f + g).len() implies ht(#[trigger] (f + g)[i].0) <= m && ht((f + g)[i].1) <= m by {
+        if i < f.len() {
+            hts_bound(f, f.len() as int, i);
+        } else {
+            hts_bound(g, g.len() as int, i - f.len());
+        }
+    }
+    hts_le(f + g, (f + g).len() as int, m);
+}
+
+/// A join is no taller than its arguments.
+pub proof fn ht_join(u: Cpt, v: Cpt)
+    ensures
+        ht(join(u, v)) <= vstd::math::max(ht(u) as int, ht(v) as int),
+    decreases u,
+{
+    match (u, v) {
+        (Cpt::Lam(f), Cpt::Lam(g)) => {
+            hts_concat(f, g);
+        },
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => {
+            hts_concat(f, g);
+            ht_join(*a, *a2);
+        },
+        _ => {},
+    }
+}
+
+pub proof fn jall_fits(s: Seq<Cpt>, b: nat, k: int)
+    requires
+        fits(s, b),
+        0 <= k <= s.len(),
+    ensures
+        ht(joinall(s, k)) <= b,
+    decreases k,
+{
+    if k > 0 {
+        jall_fits(s, b, k - 1);
+        ht_join(joinall(s, k - 1), s[k - 1]);
+    }
+}
+
+/// The selections from a set and from its join have the same members.
+pub proof fn sel_jall(s: Seq<Cpt>, x: Cpt, b: nat)
+    requires
+        fits(s, b),
+        top_coh(s),
+    ensures
+        sub(sel_lam(s, x, b, s.len() as int), sel_lam(seq![jall(s)], x, b, 1)),
+        sub(sel_lam(seq![jall(s)], x, b, 1), sel_lam(s, x, b, s.len() as int)),
+        sub(sel_pi(s, x, b, s.len() as int), sel_pi(seq![jall(s)], x, b, 1)),
+        sub(sel_pi(seq![jall(s)], x, b, 1), sel_pi(s, x, b, s.len() as int)),
+{
+    let n = s.len() as int;
+    let j = jall(s);
+    let t = seq![j];
+    assert(t[0] == j);
+    jall_shape(s, n);
+    jall_fits(s, b, n);
+    assert forall|y: Cpt| #[trigger] sel_lam(s, x, b, n).contains(y) implies sel_lam(t, x, b, 1).contains(y) by {
+        sel_lam_mem(s, x, b, n, y);
+        sel_lam_mem(t, x, b, 1, y);
+        let i = choose|i: int| 0 <= i < n && #[trigger] s[i] is Lam && ht(s[i]) <= b && in_sel(s[i]->Lam_0, x, y);
+        let f = s[i]->Lam_0;
+        let m = choose|m: int| 0 <= m < f.len() && #[trigger] f[m].1 == y && le(f[m].0, x);
+        assert(f.contains(f[m]));
+        assert(hd(j) == 3);
+        assert(j->Lam_0.contains(f[m]));
+        let q = choose|q: int| 0 <= q < j->Lam_0.len() && j->Lam_0[q] == f[m];
+        assert(in_sel(j->Lam_0, x, y));
+        assert(in_sel_lam(t, x, b, 1, y));
+    }
+    assert forall|y: Cpt| #[trigger] sel_lam(t, x, b, 1).contains(y) implies sel_lam(s, x, b, n).contains(y) by {
+        sel_lam_mem(s, x, b, n, y);
+        sel_lam_mem(t, x, b, 1, y);
+        let f = j->Lam_0;
+        let m = choose|m: int| 0 <= m < f.len() && #[trigger] f[m].1 == y && le(f[m].0, x);
+        assert(f.contains(f[m]));
+        let i = choose|i: int| 0 <= i < n && #[trigger] s[i] is Lam && s[i]->Lam_0.contains(f[m]);
+        let g = s[i]->Lam_0;
+        let q = choose|q: int| 0 <= q < g.len() && g[q] == f[m];
+        assert(in_sel(g, x, y));
+        assert(ht(s[i]) <= b);
+        assert(in_sel_lam(s, x, b, n, y));
+    }
+    assert forall|y: Cpt| #[trigger] sel_pi(s, x, b, n).contains(y) implies sel_pi(t, x, b, 1).contains(y) by {
+        sel_pi_mem(s, x, b, n, y);
+        sel_pi_mem(t, x, b, 1, y);
+        let i = choose|i: int| 0 <= i < n && #[trigger] s[i] is Pi && ht(s[i]) <= b && in_sel(s[i]->Pi_1, x, y);
+        let f = s[i]->Pi_1;
+        let m = choose|m: int| 0 <= m < f.len() && #[trigger] f[m].1 == y && le(f[m].0, x);
+        assert(f.contains(f[m]));
+        assert(hd(j) == 4);
+        assert(j->Pi_1.contains(f[m]));
+        let q = choose|q: int| 0 <= q < j->Pi_1.len() && j->Pi_1[q] == f[m];
+        assert(in_sel(j->Pi_1, x, y));
+        assert(in_sel_pi(t, x, b, 1, y));
+    }
+    assert forall|y: Cpt| #[trigger] sel_pi(t, x, b, 1).contains(y) implies sel_pi(s, x, b, n).contains(y) by {
+        sel_pi_mem(s, x, b, n, y);
+        sel_pi_mem(t, x, b, 1, y);
+        let f = j->Pi_1;
+        let m = choose|m: int| 0 <= m < f.len() && #[trigger] f[m].1 == y && le(f[m].0, x);
+        assert(f.contains(f[m]));
+        let i = choose|i: int| 0 <= i < n && #[trigger] s[i] is Pi && s[i]->Pi_1.contains(f[m]);
+        let g = s[i]->Pi_1;
+        let q = choose|q: int| 0 <= q < g.len() && g[q] == f[m];
+        assert(in_sel(g, x, y));
+        assert(ht(s[i]) <= b);
+        assert(in_sel_pi(s, x, b, n, y));
+    }
+}
+
+/// THE JOIN BRIDGE: below the join of a coherent set is below `jall`.
+pub proof fn le_set_jall(v: Cpt, s: Seq<Cpt>, b: nat)
+    requires
+        fits(s, b),
+        coh(s, b),
+    ensures
+        le_set(v, s, b) == le_set(v, seq![jall(s)], b),
+    decreases ht(v),
+{
+    let n = s.len() as int;
+    let j = jall(s);
+    let t = seq![j];
+    assert(t[0] == j);
+    jall_shape(s, n);
+    jall_fits(s, b, n);
+    assert(fits(t, b));
+    parts_lower(v);
+    match v {
+        Cpt::U => {
+            if exists|i: int| 0 <= i < n && s[i] is U {
+                let i = choose|i: int| 0 <= i < n && s[i] is U;
+                assert(hd(j) == hd(s[i]));
+            }
+            if j is U {
+                let i = choose|i: int| 0 <= i < n && !(#[trigger] s[i] is Bot);
+                assert(s[i] is U);
+            }
+        },
+        Cpt::Prop => {
+            if exists|i: int| 0 <= i < n && s[i] is Prop {
+                let i = choose|i: int| 0 <= i < n && s[i] is Prop;
+                assert(hd(j) == hd(s[i]));
+            }
+            if j is Prop {
+                let i = choose|i: int| 0 <= i < n && !(#[trigger] s[i] is Bot);
+                assert(s[i] is Prop);
+            }
+        },
+        Cpt::Lam(g) => {
+            assert forall|k: int| 0 <= k < g.len() implies
+                le_set(g[k].1, sel_lam(s, g[k].0, b, n), dec(b)) == le_set(g[k].1, sel_lam(t, g[k].0, b, 1), dec(b)) by {
+                sel_jall(s, g[k].0, b);
+                sel_lam_fits(s, g[k].0, b, n);
+                sel_lam_fits(t, g[k].0, b, 1);
+                if le_set(g[k].1, sel_lam(s, g[k].0, b, n), dec(b)) {
+                    le_set_sub(g[k].1, sel_lam(s, g[k].0, b, n), sel_lam(t, g[k].0, b, 1), dec(b), dec(b));
+                }
+                if le_set(g[k].1, sel_lam(t, g[k].0, b, 1), dec(b)) {
+                    le_set_sub(g[k].1, sel_lam(t, g[k].0, b, 1), sel_lam(s, g[k].0, b, n), dec(b), dec(b));
+                }
+            }
+        },
+        Cpt::Pi(a, g) => {
+            let has_pi = exists|i: int| 0 <= i < n && s[i] is Pi;
+            if has_pi {
+                let i = choose|i: int| 0 <= i < n && s[i] is Pi;
+                assert(hd(j) == hd(s[i]));
+                fits_pos(s, b, i);
+            }
+            if j is Pi {
+                let i = choose|i: int| 0 <= i < n && !(#[trigger] s[i] is Bot);
+                assert(s[i] is Pi);
+            }
+            if has_pi {
+                let d = pi_doms(s, b, n);
+                jall_dom(s, b, n);
+                assert(pi_doms(t, b, 1) == seq![*j->Pi_0]) by {
+                    assert(pi_doms(t, b, 0) == Seq::<Cpt>::empty());
+                    assert(Seq::<Cpt>::empty().push(*j->Pi_0) =~= seq![*j->Pi_0]);
+                }
+                pi_doms_fits(s, b, n);
+                assert(coh(d, dec(b)));
+                le_set_jall(*a, d, dec(b));
+                assert forall|k: int| 0 <= k < g.len() implies
+                    le_set(g[k].1, sel_pi(s, g[k].0, b, n), dec(b)) == le_set(g[k].1, sel_pi(t, g[k].0, b, 1), dec(b)) by {
+                    sel_jall(s, g[k].0, b);
+                    sel_pi_fits(s, g[k].0, b, n);
+                    sel_pi_fits(t, g[k].0, b, 1);
+                    if le_set(g[k].1, sel_pi(s, g[k].0, b, n), dec(b)) {
+                        le_set_sub(g[k].1, sel_pi(s, g[k].0, b, n), sel_pi(t, g[k].0, b, 1), dec(b), dec(b));
+                    }
+                    if le_set(g[k].1, sel_pi(t, g[k].0, b, 1), dec(b)) {
+                        le_set_sub(g[k].1, sel_pi(t, g[k].0, b, 1), sel_pi(s, g[k].0, b, n), dec(b), dec(b));
+                    }
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+/// Every element of a coherent set lies below its join.
+pub proof fn jall_ub(s: Seq<Cpt>, b: nat, y: Cpt)
+    requires
+        fits(s, b),
+        coh(s, b),
+        s.contains(y),
+    ensures
+        le(y, jall(s)),
+{
+    let j = jall(s);
+    jall_fits(s, b, s.len() as int);
+    assert(seq![j][0] == j);
+    le_set_mem(y, s, b);
+    le_set_jall(y, s, b);
+    le_set_budget(y, seq![j], b, ht(j));
+}
+
+/// THE JOIN IS LEAST: below every upper bound.
+pub proof fn jall_lub(s: Seq<Cpt>, b: nat, w: Cpt)
+    requires
+        fits(s, b),
+        coh(s, b),
+        forall|y: Cpt| #[trigger] s.contains(y) ==> le(y, w),
+    ensures
+        le(jall(s), w),
+{
+    let j = jall(s);
+    jall_fits(s, b, s.len() as int);
+    assert(seq![j][0] == j);
+    assert(seq![j].contains(j));
+    le_set_mem(j, seq![j], b);
+    le_set_jall(j, s, b);
+    assert(seq![w][0] == w);
+    assert(fits(seq![w], ht(w)));
+    le_set_trans(j, s, seq![w], b, ht(w));
+}
+
+/// Compatibility (having an upper bound), structurally: a combined step
+/// list must present a function -- compatible inputs, compatible outputs.
+pub open spec fn compat(u: Cpt, v: Cpt) -> bool
+    decreases vstd::math::max(ht(u) as int, ht(v) as int), 0int,
+    via compat_decreases
+{
+    match (u, v) {
+        (Cpt::Bot, _) => true,
+        (_, Cpt::Bot) => true,
+        (Cpt::U, Cpt::U) => true,
+        (Cpt::Prop, Cpt::Prop) => true,
+        (Cpt::Lam(f), Cpt::Lam(g)) => forall|i: int, j: int| 0 <= i < (f + g).len() && 0 <= j < (f + g).len()
+            && compat((f + g)[i].0, (f + g)[j].0) ==> compat(#[trigger] (f + g)[i].1, #[trigger] (f + g)[j].1),
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => compat(*a, *a2) && forall|i: int, j: int| 0 <= i < (f + g).len() && 0 <= j < (f + g).len()
+            && compat((f + g)[i].0, (f + g)[j].0) ==> compat(#[trigger] (f + g)[i].1, #[trigger] (f + g)[j].1),
+        _ => false,
+    }
+}
+
+/// Entries of a concatenation of two lists are below the taller parent.
+pub proof fn concat_entry_lower(u: Cpt, v: Cpt, f: Seq<(Cpt, Cpt)>, g: Seq<(Cpt, Cpt)>, i: int)
+    requires
+        (u is Lam && u->Lam_0 == f) || (u is Pi && u->Pi_1 == f),
+        (v is Lam && v->Lam_0 == g) || (v is Pi && v->Pi_1 == g),
+        0 <= i < (f + g).len(),
+    ensures
+        ht((f + g)[i].0) < vstd::math::max(ht(u) as int, ht(v) as int),
+        ht((f + g)[i].1) < vstd::math::max(ht(u) as int, ht(v) as int),
+{
+    parts_lower(u);
+    parts_lower(v);
+    if i < f.len() {
+        assert((f + g)[i] == f[i]);
+    } else {
+        assert((f + g)[i] == g[i - f.len()]);
+    }
+}
+
+#[via_fn]
+proof fn compat_decreases(u: Cpt, v: Cpt) {
+    parts_lower(u);
+    parts_lower(v);
+    match (u, v) {
+        (Cpt::Lam(f), Cpt::Lam(g)) => {
+            assert forall|i: int| 0 <= i < (f + g).len() implies
+                ht((f + g)[i].0) < vstd::math::max(ht(u) as int, ht(v) as int)
+                && ht((f + g)[i].1) < vstd::math::max(ht(u) as int, ht(v) as int) by {
+                concat_entry_lower(u, v, f, g, i);
+            }
+        },
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => {
+            assert forall|i: int| 0 <= i < (f + g).len() implies
+                ht((f + g)[i].0) < vstd::math::max(ht(u) as int, ht(v) as int)
+                && ht((f + g)[i].1) < vstd::math::max(ht(u) as int, ht(v) as int) by {
+                concat_entry_lower(u, v, f, g, i);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// A step list presents a function.
+pub open spec fn fun_ok(f: Seq<(Cpt, Cpt)>) -> bool {
+    forall|i: int, j: int| 0 <= i < f.len() && 0 <= j < f.len() && compat(f[i].0, f[j].0)
+        ==> compat(#[trigger] f[i].1, #[trigger] f[j].1)
+}
+
+/// WELL-FORMED: entries well formed, step lists present functions, and a
+/// lambda is not bottom (some output is not bottom: `lambda(bottom) =
+/// bottom` is coalesced away).
+pub open spec fn wf(c: Cpt) -> bool
+    decreases c,
+{
+    match c {
+        Cpt::Lam(f) => (forall|k: int| 0 <= k < f.len() ==> wf(#[trigger] f[k].0) && wf(f[k].1))
+            && fun_ok(f) && exists|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot),
+        Cpt::Pi(a, g) => wf(*a) && (forall|k: int| 0 <= k < g.len() ==> wf(#[trigger] g[k].0) && wf(g[k].1))
+            && fun_ok(g),
+        _ => true,
+    }
+}
+
+/// The function condition on a list, over its members.
+pub open spec fn fok(l: Seq<(Cpt, Cpt)>) -> bool {
+    forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] l.contains(e1) && #[trigger] l.contains(e2) && compat(e1.0, e2.0)
+        ==> compat(e1.1, e2.1)
+}
+
+pub proof fn fok_iff(l: Seq<(Cpt, Cpt)>)
+    ensures
+        fun_ok(l) == fok(l),
+{
+    if fun_ok(l) {
+        assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] l.contains(e1) && #[trigger] l.contains(e2) && compat(e1.0, e2.0)
+            implies compat(e1.1, e2.1) by {
+            let i = choose|i: int| 0 <= i < l.len() && l[i] == e1;
+            let j = choose|j: int| 0 <= j < l.len() && l[j] == e2;
+            assert(compat(l[i].1, l[j].1));
+        }
+    }
+    if fok(l) {
+        assert forall|i: int, j: int| 0 <= i < l.len() && 0 <= j < l.len() && compat(l[i].0, l[j].0)
+            implies compat(#[trigger] l[i].1, #[trigger] l[j].1) by {
+            assert(l.contains(l[i]));
+            assert(l.contains(l[j]));
+        }
+    }
+}
+
+/// The step-list clause of `compat` is `fun_ok` of the concatenation.
+pub proof fn compat_unfold(u: Cpt, v: Cpt)
+    ensures
+        (u is Lam && v is Lam) ==> (compat(u, v) == fun_ok(u->Lam_0 + v->Lam_0)),
+        (u is Pi && v is Pi) ==> (compat(u, v) == (compat(*u->Pi_0, *v->Pi_0) && fun_ok(u->Pi_1 + v->Pi_1))),
+{
+}
+
+pub proof fn compat_symm(u: Cpt, v: Cpt)
+    requires
+        compat(u, v),
+    ensures
+        compat(v, u),
+    decreases ht(u),
+{
+    compat_unfold(u, v);
+    compat_unfold(v, u);
+    match (u, v) {
+        (Cpt::Lam(f), Cpt::Lam(g)) => {
+            fok_iff(f + g);
+            fok_iff(g + f);
+            assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] (g + f).contains(e1) && #[trigger] (g + f).contains(e2) && compat(e1.0, e2.0)
+                implies compat(e1.1, e2.1) by {
+                seq_concat_contains(g, f, e1);
+                seq_concat_contains(g, f, e2);
+                seq_concat_contains(f, g, e1);
+                seq_concat_contains(f, g, e2);
+            }
+        },
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => {
+            parts_lower(u);
+            compat_symm(*a, *a2);
+            fok_iff(f + g);
+            fok_iff(g + f);
+            assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] (g + f).contains(e1) && #[trigger] (g + f).contains(e2) && compat(e1.0, e2.0)
+                implies compat(e1.1, e2.1) by {
+                seq_concat_contains(g, f, e1);
+                seq_concat_contains(g, f, e2);
+                seq_concat_contains(f, g, e1);
+                seq_concat_contains(f, g, e2);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// A well-formed element is compatible with itself.
+pub proof fn compat_refl(u: Cpt)
+    requires
+        wf(u),
+    ensures
+        compat(u, u),
+    decreases ht(u),
+{
+    compat_unfold(u, u);
+    match u {
+        Cpt::Lam(f) => {
+            fok_iff(f);
+            fok_iff(f + f);
+            assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] (f + f).contains(e1) && #[trigger] (f + f).contains(e2) && compat(e1.0, e2.0)
+                implies compat(e1.1, e2.1) by {
+                seq_concat_contains(f, f, e1);
+                seq_concat_contains(f, f, e2);
+            }
+        },
+        Cpt::Pi(a, f) => {
+            parts_lower(u);
+            compat_refl(*a);
+            fok_iff(f);
+            fok_iff(f + f);
+            assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] (f + f).contains(e1) && #[trigger] (f + f).contains(e2) && compat(e1.0, e2.0)
+                implies compat(e1.1, e2.1) by {
+                seq_concat_contains(f, f, e1);
+                seq_concat_contains(f, f, e2);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// COMPATIBILITY IS PAIRWISE: a join of two elements compatible with a
+/// third, and with each other, is compatible with it.
+pub proof fn compat_join3(u: Cpt, v: Cpt, w: Cpt)
+    requires
+        compat(u, v),
+        compat(u, w),
+        compat(v, w),
+    ensures
+        compat(join(u, v), w),
+    decreases ht(u),
+{
+    compat_unfold(u, v);
+    compat_unfold(u, w);
+    compat_unfold(v, w);
+    compat_unfold(join(u, v), w);
+    match (u, v, w) {
+        (Cpt::Lam(f), Cpt::Lam(g), Cpt::Lam(h)) => {
+            fok_iff(f + g);
+            fok_iff(f + h);
+            fok_iff(g + h);
+            fok_iff((f + g) + h);
+            assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] ((f + g) + h).contains(e1) && #[trigger] ((f + g) + h).contains(e2) && compat(e1.0, e2.0)
+                implies compat(e1.1, e2.1) by {
+                seq_concat_contains(f + g, h, e1);
+                seq_concat_contains(f + g, h, e2);
+                seq_concat_contains(f, g, e1);
+                seq_concat_contains(f, g, e2);
+                seq_concat_contains(f, h, e1);
+                seq_concat_contains(f, h, e2);
+                seq_concat_contains(g, h, e1);
+                seq_concat_contains(g, h, e2);
+            }
+        },
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g), Cpt::Pi(a3, h)) => {
+            parts_lower(u);
+            compat_join3(*a, *a2, *a3);
+            fok_iff(f + g);
+            fok_iff(f + h);
+            fok_iff(g + h);
+            fok_iff((f + g) + h);
+            assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] ((f + g) + h).contains(e1) && #[trigger] ((f + g) + h).contains(e2) && compat(e1.0, e2.0)
+                implies compat(e1.1, e2.1) by {
+                seq_concat_contains(f + g, h, e1);
+                seq_concat_contains(f + g, h, e2);
+                seq_concat_contains(f, g, e1);
+                seq_concat_contains(f, g, e2);
+                seq_concat_contains(f, h, e1);
+                seq_concat_contains(f, h, e2);
+                seq_concat_contains(g, h, e1);
+                seq_concat_contains(g, h, e2);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// An entry of a Lam or Pi is selected at its own input.
+pub proof fn entry_selected(j: Cpt, idx: int, b: nat)
+    requires
+        j is Lam || j is Pi,
+        ht(j) <= b,
+        j is Lam ==> 0 <= idx < j->Lam_0.len(),
+        j is Pi ==> 0 <= idx < j->Pi_1.len(),
+    ensures
+        j is Lam ==> sel_lam(seq![j], j->Lam_0[idx].0, b, 1).contains(j->Lam_0[idx].1),
+        j is Pi ==> sel_pi(seq![j], j->Pi_1[idx].0, b, 1).contains(j->Pi_1[idx].1),
+{
+    let t = seq![j];
+    assert(t[0] == j);
+    if j is Lam {
+        let l = j->Lam_0;
+        le_refl(l[idx].0);
+        assert(in_sel(l, l[idx].0, l[idx].1));
+        assert(in_sel_lam(t, l[idx].0, b, 1, l[idx].1));
+        sel_lam_mem(t, l[idx].0, b, 1, l[idx].1);
+    } else {
+        let l = j->Pi_1;
+        le_refl(l[idx].0);
+        assert(in_sel(l, l[idx].0, l[idx].1));
+        assert(in_sel_pi(t, l[idx].0, b, 1, l[idx].1));
+        sel_pi_mem(t, l[idx].0, b, 1, l[idx].1);
+    }
+}
+
+/// Every entry of `f` occurs in `l` (at a known offset), so a Lam/Pi over
+/// `f` lies below a Lam/Pi over `l` for the step-list part.
+pub proof fn entries_below(u: Cpt, j: Cpt, off: int)
+    requires
+        (u is Lam && j is Lam) || (u is Pi && j is Pi),
+        u is Lam ==> forall|k: int| 0 <= k < u->Lam_0.len() ==> 0 <= k + off < j->Lam_0.len() && j->Lam_0[k + off] == #[trigger] u->Lam_0[k],
+        u is Pi ==> forall|k: int| 0 <= k < u->Pi_1.len() ==> 0 <= k + off < j->Pi_1.len() && j->Pi_1[k + off] == #[trigger] u->Pi_1[k],
+    ensures
+        u is Lam ==> forall|k: int| 0 <= k < u->Lam_0.len() ==>
+            le_set(#[trigger] u->Lam_0[k].1, sel_lam(seq![j], u->Lam_0[k].0, ht(j), 1), dec(ht(j))),
+        u is Pi ==> forall|k: int| 0 <= k < u->Pi_1.len() ==>
+            le_set(#[trigger] u->Pi_1[k].1, sel_pi(seq![j], u->Pi_1[k].0, ht(j), 1), dec(ht(j))),
+{
+    if u is Lam {
+        let f = u->Lam_0;
+        assert forall|k: int| 0 <= k < f.len() implies
+            le_set(#[trigger] f[k].1, sel_lam(seq![j], f[k].0, ht(j), 1), dec(ht(j))) by {
+            entry_selected(j, k + off, ht(j));
+            sel_lam_fits(seq![j], f[k].0, ht(j), 1);
+            le_set_mem(f[k].1, sel_lam(seq![j], f[k].0, ht(j), 1), dec(ht(j)));
+        }
+    } else {
+        let f = u->Pi_1;
+        assert forall|k: int| 0 <= k < f.len() implies
+            le_set(#[trigger] f[k].1, sel_pi(seq![j], f[k].0, ht(j), 1), dec(ht(j))) by {
+            entry_selected(j, k + off, ht(j));
+            sel_pi_fits(seq![j], f[k].0, ht(j), 1);
+            le_set_mem(f[k].1, sel_pi(seq![j], f[k].0, ht(j), 1), dec(ht(j)));
+        }
+    }
+}
+
+/// THE JOIN OF COMPATIBLE ELEMENTS: well formed, above both.
+pub proof fn join_ub(u: Cpt, v: Cpt)
+    requires
+        wf(u),
+        wf(v),
+        compat(u, v),
+    ensures
+        wf(join(u, v)),
+        le(u, join(u, v)),
+        le(v, join(u, v)),
+    decreases ht(u),
+{
+    compat_unfold(u, v);
+    let j = join(u, v);
+    match (u, v) {
+        (Cpt::Bot, _) => {
+            le_refl(v);
+        },
+        (_, Cpt::Bot) => {
+            le_refl(u);
+        },
+        (Cpt::Lam(f), Cpt::Lam(g)) => {
+            let l = f + g;
+            assert(j == Cpt::Lam(l));
+            assert(forall|k: int| 0 <= k < f.len() ==> l[k] == f[k]);
+            assert(forall|k: int| 0 <= k < g.len() ==> l[k + f.len()] == g[k]);
+            assert forall|k: int| 0 <= k < l.len() implies wf(#[trigger] l[k].0) && wf(l[k].1) by {
+                if k < f.len() {
+                    assert(l[k] == f[k]);
+                } else {
+                    assert(l[k] == g[k - f.len()]);
+                }
+            }
+            let k0 = choose|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot);
+            assert(l[k0] == f[k0]);
+            assert(!(l[k0].1 is Bot));
+            entries_below(u, j, 0);
+            entries_below(v, j, f.len() as int);
+        },
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => {
+            parts_lower(u);
+            join_ub(*a, *a2);
+            let m = join(*a, *a2);
+            let l = f + g;
+            assert(j == Cpt::Pi(Box::new(m), l));
+            assert(forall|k: int| 0 <= k < f.len() ==> l[k] == f[k]);
+            assert(forall|k: int| 0 <= k < g.len() ==> l[k + f.len()] == g[k]);
+            assert forall|k: int| 0 <= k < l.len() implies wf(#[trigger] l[k].0) && wf(l[k].1) by {
+                if k < f.len() {
+                    assert(l[k] == f[k]);
+                } else {
+                    assert(l[k] == g[k - f.len()]);
+                }
+            }
+            entries_below(u, j, 0);
+            entries_below(v, j, f.len() as int);
+            parts_lower(j);
+            let t = seq![j];
+            assert(t[0] == j);
+            assert(pi_doms(t, ht(j), 1) == seq![m]) by {
+                reveal_with_fuel(pi_doms, 2);
+                assert(t[0] is Pi && *t[0]->Pi_0 == m);
+                assert(pi_doms(t, ht(j), 0) == Seq::<Cpt>::empty());
+                assert(Seq::<Cpt>::empty().push(m) =~= seq![m]);
+            }
+            assert(seq![m][0] == m);
+            assert(fits(seq![m], dec(ht(j))));
+            assert(fits(seq![m], ht(m)));
+            le_set_budget(*a, seq![m], ht(m), dec(ht(j)));
+            le_set_budget(*a2, seq![m], ht(m), dec(ht(j)));
+            assert(t[0] is Pi);
+        },
+        _ => {
+            le_refl(u);
+        },
+    }
+}
+
+/// A set of well-formed, pairwise compatible elements.
+pub open spec fn pw(s: Seq<Cpt>) -> bool {
+    &&& forall|y: Cpt| #[trigger] s.contains(y) ==> wf(y)
+    &&& forall|y: Cpt, z: Cpt| #[trigger] s.contains(y) && #[trigger] s.contains(z) ==> compat(y, z)
+}
+
+/// The join of a pairwise compatible set is well formed and compatible
+/// with every member.
+pub proof fn jall_pw(s: Seq<Cpt>, k: int)
+    requires
+        pw(s),
+        0 <= k <= s.len(),
+    ensures
+        wf(joinall(s, k)),
+        forall|i: int| 0 <= i < s.len() ==> compat(joinall(s, k), #[trigger] s[i]),
+    decreases k,
+{
+    if k > 0 {
+        jall_pw(s, k - 1);
+        let p = joinall(s, k - 1);
+        let x = s[k - 1];
+        assert(s.contains(x));
+        assert(compat(p, x));
+        join_ub(p, x);
+        assert forall|i: int| 0 <= i < s.len() implies compat(joinall(s, k), #[trigger] s[i]) by {
+            assert(s.contains(s[i]));
+            compat_join3(p, x, s[i]);
+        }
+    }
+}
+
+/// Elements of different heads are never compatible.
+pub proof fn compat_heads(y: Cpt, z: Cpt)
+    requires
+        compat(y, z),
+        !(y is Bot),
+        !(z is Bot),
+    ensures
+        hd(y) == hd(z),
+{
+}
+
+/// A pairwise compatible set is coherent.
+pub proof fn pw_coh(s: Seq<Cpt>, b: nat)
+    requires
+        pw(s),
+    ensures
+        coh(s, b),
+    decreases b,
+{
+    assert forall|i: int, j: int| 0 <= i < s.len() && 0 <= j < s.len() && !(s[i] is Bot) && !(s[j] is Bot)
+        implies hd(#[trigger] s[i]) == hd(#[trigger] s[j]) by {
+        assert(s.contains(s[i]));
+        assert(s.contains(s[j]));
+        compat_heads(s[i], s[j]);
+    }
+    if b > 0 {
+        let d = pi_doms(s, b, s.len() as int);
+        assert forall|y: Cpt| #[trigger] d.contains(y) implies wf(y) by {
+            pi_doms_mem(s, b, s.len() as int, y);
+            let i = choose|i: int| 0 <= i < s.len() && #[trigger] s[i] is Pi && ht(s[i]) <= b && *s[i]->Pi_0 == y;
+            assert(s.contains(s[i]));
+        }
+        assert forall|y: Cpt, z: Cpt| #[trigger] d.contains(y) && #[trigger] d.contains(z) implies compat(y, z) by {
+            pi_doms_mem(s, b, s.len() as int, y);
+            pi_doms_mem(s, b, s.len() as int, z);
+            let i = choose|i: int| 0 <= i < s.len() && #[trigger] s[i] is Pi && ht(s[i]) <= b && *s[i]->Pi_0 == y;
+            let j = choose|j: int| 0 <= j < s.len() && #[trigger] s[j] is Pi && ht(s[j]) <= b && *s[j]->Pi_0 == z;
+            assert(s.contains(s[i]));
+            assert(s.contains(s[j]));
+            compat_unfold(s[i], s[j]);
+        }
+        pw_coh(d, (b - 1) as nat);
+    }
+}
+
+/// A well-formed non-bottom element is not below the empty join.
+pub proof fn nonbot_empty(y: Cpt, c: nat)
+    requires
+        wf(y),
+        !(y is Bot),
+    ensures
+        !le_set(y, Seq::empty(), c),
+    decreases ht(y),
+{
+    parts_lower(y);
+    if let Cpt::Lam(f) = y {
+        let k = choose|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot);
+        assert(sel_lam(Seq::<Cpt>::empty(), f[k].0, c, 0) == Seq::<Cpt>::empty());
+        nonbot_empty(f[k].1, dec(c));
+    }
+}
+
+/// Nothing is selected from a singleton of another head.
+pub proof fn sel_other_head(w: Cpt, x: Cpt, b: nat)
+    ensures
+        !(w is Lam) ==> sel_lam(seq![w], x, b, 1) == Seq::<Cpt>::empty(),
+        !(w is Pi) ==> sel_pi(seq![w], x, b, 1) == Seq::<Cpt>::empty(),
+        !(w is Pi) ==> pi_doms(seq![w], b, 1) == Seq::<Cpt>::empty(),
+{
+    assert(seq![w][0] == w);
+    reveal_with_fuel(sel_lam, 2);
+    reveal_with_fuel(sel_pi, 2);
+    reveal_with_fuel(pi_doms, 2);
+}
+
+/// A well-formed non-bottom element and anything above it share a head.
+pub proof fn head_le(u: Cpt, w: Cpt)
+    requires
+        wf(u),
+        !(u is Bot),
+        le(u, w),
+    ensures
+        hd(u) == hd(w),
+{
+    let t = seq![w];
+    assert(t[0] == w);
+    match u {
+        Cpt::U => {
+            let i = choose|i: int| 0 <= i < t.len() && t[i] is U;
+        },
+        Cpt::Prop => {
+            let i = choose|i: int| 0 <= i < t.len() && t[i] is Prop;
+        },
+        Cpt::Pi(_, _) => {
+            let i = choose|i: int| 0 <= i < t.len() && t[i] is Pi;
+        },
+        Cpt::Lam(f) => {
+            if !(w is Lam) {
+                let k = choose|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot);
+                sel_other_head(w, f[k].0, ht(w));
+                parts_lower(u);
+                nonbot_empty(f[k].1, dec(ht(w)));
+            }
+        },
+        _ => {},
+    }
+}
+
+/// Selection is monotone in the argument.
+pub proof fn sel_mono(t: Seq<Cpt>, p: Cpt, m: Cpt, b: nat)
+    requires
+        le(p, m),
+    ensures
+        sub(sel_lam(t, p, b, t.len() as int), sel_lam(t, m, b, t.len() as int)),
+        sub(sel_pi(t, p, b, t.len() as int), sel_pi(t, m, b, t.len() as int)),
+{
+    let n = t.len() as int;
+    assert forall|z: Cpt| #[trigger] sel_lam(t, p, b, n).contains(z) implies sel_lam(t, m, b, n).contains(z) by {
+        sel_lam_mem(t, p, b, n, z);
+        sel_lam_mem(t, m, b, n, z);
+        let j = choose|j: int| 0 <= j < n && #[trigger] t[j] is Lam && ht(t[j]) <= b && in_sel(t[j]->Lam_0, p, z);
+        let h = t[j]->Lam_0;
+        let q = choose|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == z && le(h[q].0, p);
+        le_trans(h[q].0, p, m);
+        assert(in_sel(h, m, z));
+        assert(in_sel_lam(t, m, b, n, z));
+    }
+    assert forall|z: Cpt| #[trigger] sel_pi(t, p, b, n).contains(z) implies sel_pi(t, m, b, n).contains(z) by {
+        sel_pi_mem(t, p, b, n, z);
+        sel_pi_mem(t, m, b, n, z);
+        let j = choose|j: int| 0 <= j < n && #[trigger] t[j] is Pi && ht(t[j]) <= b && in_sel(t[j]->Pi_1, p, z);
+        let h = t[j]->Pi_1;
+        let q = choose|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == z && le(h[q].0, p);
+        le_trans(h[q].0, p, m);
+        assert(in_sel(h, m, z));
+        assert(in_sel_pi(t, m, b, n, z));
+    }
+}
+
+/// The step list of a Lam (`lam`) or Pi, and the matching selection.
+pub open spec fn steps(c: Cpt, lam: bool) -> Seq<(Cpt, Cpt)> {
+    if lam { c->Lam_0 } else { c->Pi_1 }
+}
+
+pub open spec fn selk(t: Seq<Cpt>, x: Cpt, b: nat, lam: bool) -> Seq<Cpt> {
+    if lam { sel_lam(t, x, b, t.len() as int) } else { sel_pi(t, x, b, t.len() as int) }
+}
+
+pub open spec fn kind(c: Cpt, lam: bool) -> bool {
+    if lam { c is Lam } else { c is Pi }
+}
+
+pub open spec fn max3(a: nat, b: nat, c: nat) -> nat {
+    vstd::math::max(vstd::math::max(a as int, b as int), c as int) as nat
+}
+
+/// An entry of an element below `w` lies below the selection of `w` at its
+/// input.
+pub proof fn entry_le(u: Cpt, w: Cpt, e: (Cpt, Cpt), lam: bool)
+    requires
+        kind(u, lam),
+        le(u, w),
+        steps(u, lam).contains(e),
+    ensures
+        le_set(e.1, selk(seq![w], e.0, ht(w), lam), dec(ht(w))),
+{
+    let f = steps(u, lam);
+    let k = choose|k: int| 0 <= k < f.len() && f[k] == e;
+}
+
+/// The outputs a well-formed Lam/Pi selects at a well-formed argument are
+/// pairwise compatible.
+pub proof fn sel_pw(w: Cpt, m: Cpt, lam: bool, bnd: nat)
+    requires
+        wf(w),
+        wf(m),
+        kind(w, lam),
+        ht(w) <= bnd,
+        ht(m) < bnd,
+    ensures
+        pw(selk(seq![w], m, ht(w), lam)),
+    decreases bnd, 0int,
+{
+    let t = seq![w];
+    assert(t[0] == w);
+    let sm = selk(t, m, ht(w), lam);
+    let h = steps(w, lam);
+    parts_lower(w);
+    assert forall|z: Cpt| #[trigger] sm.contains(z) implies exists|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == z && le(h[q].0, m) by {
+        if lam {
+            sel_lam_mem(t, m, ht(w), 1, z);
+        } else {
+            sel_pi_mem(t, m, ht(w), 1, z);
+        }
+    }
+    assert forall|z: Cpt| #[trigger] sm.contains(z) implies wf(z) by {
+        let q = choose|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == z && le(h[q].0, m);
+    }
+    assert forall|z: Cpt, z2: Cpt| #[trigger] sm.contains(z) && #[trigger] sm.contains(z2) implies compat(z, z2) by {
+        let q = choose|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == z && le(h[q].0, m);
+        let q2 = choose|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == z2 && le(h[q].0, m);
+        ub_compat(h[q].0, h[q2].0, m);
+        assert(compat(h[q].1, h[q2].1));
+    }
+}
+
+/// The step lists of two elements below a common bound present a function.
+pub proof fn steps_compat(u: Cpt, v: Cpt, w: Cpt, lam: bool, bnd: nat)
+    requires
+        wf(u),
+        wf(v),
+        wf(w),
+        kind(u, lam),
+        kind(v, lam),
+        kind(w, lam),
+        le(u, w),
+        le(v, w),
+        bnd == max3(ht(u), ht(v), ht(w)),
+    ensures
+        fun_ok(steps(u, lam) + steps(v, lam)),
+    decreases bnd, 1int,
+{
+    let f = steps(u, lam);
+    let g = steps(v, lam);
+    let l = f + g;
+    let t = seq![w];
+    assert(t[0] == w);
+    parts_lower(u);
+    parts_lower(v);
+    parts_lower(w);
+    fok_iff(l);
+    assert forall|e1: (Cpt, Cpt), e2: (Cpt, Cpt)| #[trigger] l.contains(e1) && #[trigger] l.contains(e2) && compat(e1.0, e2.0)
+        implies compat(e1.1, e2.1) by {
+        seq_concat_contains(f, g, e1);
+        seq_concat_contains(f, g, e2);
+        let (p, q) = e1;
+        let (p2, q2) = e2;
+        if f.contains(e1) {
+            entry_le(u, w, e1, lam);
+            let k = choose|k: int| 0 <= k < f.len() && f[k] == e1;
+        } else {
+            entry_le(v, w, e1, lam);
+            let k = choose|k: int| 0 <= k < g.len() && g[k] == e1;
+        }
+        if f.contains(e2) {
+            entry_le(u, w, e2, lam);
+            let k = choose|k: int| 0 <= k < f.len() && f[k] == e2;
+        } else {
+            entry_le(v, w, e2, lam);
+            let k = choose|k: int| 0 <= k < g.len() && g[k] == e2;
+        }
+        let m = join(p, p2);
+        join_ub(p, p2);
+        ht_join(p, p2);
+        let sm = selk(t, m, ht(w), lam);
+        sel_mono(t, p, m, ht(w));
+        sel_mono(t, p2, m, ht(w));
+        if lam {
+            sel_lam_fits(t, p, ht(w), 1);
+            sel_lam_fits(t, p2, ht(w), 1);
+            sel_lam_fits(t, m, ht(w), 1);
+        } else {
+            sel_pi_fits(t, p, ht(w), 1);
+            sel_pi_fits(t, p2, ht(w), 1);
+            sel_pi_fits(t, m, ht(w), 1);
+        }
+        le_set_sub(q, selk(t, p, ht(w), lam), sm, dec(ht(w)), dec(ht(w)));
+        le_set_sub(q2, selk(t, p2, ht(w), lam), sm, dec(ht(w)), dec(ht(w)));
+        sel_pw(w, m, lam, bnd);
+        let j = jall(sm);
+        jall_pw(sm, sm.len() as int);
+        pw_coh(sm, dec(ht(w)));
+        jall_fits(sm, dec(ht(w)), sm.len() as int);
+        le_set_jall(q, sm, dec(ht(w)));
+        le_set_jall(q2, sm, dec(ht(w)));
+        assert(seq![j][0] == j);
+        le_set_budget(q, seq![j], dec(ht(w)), ht(j));
+        le_set_budget(q2, seq![j], dec(ht(w)), ht(j));
+        ub_compat(q, q2, j);
+    }
+}
+
+/// TWO WELL-FORMED ELEMENTS BELOW A COMMON WELL-FORMED BOUND ARE COMPATIBLE.
+pub proof fn ub_compat(u: Cpt, v: Cpt, w: Cpt)
+    requires
+        wf(u),
+        wf(v),
+        wf(w),
+        le(u, w),
+        le(v, w),
+    ensures
+        compat(u, v),
+    decreases max3(ht(u), ht(v), ht(w)), 2int,
+{
+    if u is Bot || v is Bot {
+        return;
+    }
+    head_le(u, w);
+    head_le(v, w);
+    compat_unfold(u, v);
+    match (u, v) {
+        (Cpt::Lam(f), Cpt::Lam(g)) => {
+            steps_compat(u, v, w, true, max3(ht(u), ht(v), ht(w)));
+        },
+        (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => {
+            let t = seq![w];
+            assert(t[0] == w);
+            let d = *w->Pi_0;
+            parts_lower(u);
+            parts_lower(v);
+            parts_lower(w);
+            assert(pi_doms(t, ht(w), 1) == seq![d]) by {
+                reveal_with_fuel(pi_doms, 2);
+                assert(pi_doms(t, ht(w), 0) == Seq::<Cpt>::empty());
+                assert(Seq::<Cpt>::empty().push(d) =~= seq![d]);
+            }
+            assert(seq![d][0] == d);
+            assert(fits(seq![d], dec(ht(w))));
+            assert(fits(seq![d], ht(d)));
+            le_set_budget(*a, seq![d], dec(ht(w)), ht(d));
+            le_set_budget(*a2, seq![d], dec(ht(w)), ht(d));
+            ub_compat(*a, *a2, d);
+            steps_compat(u, v, w, false, max3(ht(u), ht(v), ht(w)));
+        },
+        _ => {},
+    }
+}
+
 /// Sanity examples: the order on concrete elements.
 proof fn order_examples() {
     let f = Cpt::Lam(seq![(Cpt::U, Cpt::U)]);
