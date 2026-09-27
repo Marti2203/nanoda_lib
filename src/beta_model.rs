@@ -318,7 +318,7 @@ pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool
             // `fold_reduct` is the marker trigger.
             ||| (exists|f2: ExprSpec, a2: ExprSpec|
                 (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *a, a2)
-                    && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
+                    && env.nat_fold && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
                     == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))))
             // QUOTIENT REDUCTION: `Quot.lift f h (Quot.mk r a)` and
             // `Quot.ind`, parallel like the others -- step function and
@@ -1189,7 +1189,7 @@ pub open spec fn pstep_fold(
 ) -> bool {
     exists|f2: ExprSpec, a2: ExprSpec|
         (#[trigger] fold_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2)
-            && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(env.export, 
+            && env.nat_fold && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(env.export, 
             ExprSpec::App(Box::new(f2), Box::new(a2)),
         )
 }
@@ -1205,14 +1205,14 @@ pub proof fn pstep_fold_destruct(
     ensures
         ({
             let (f2, a2) = r;
-            pstep(env, f, f2) && pstep(env, a, a2) && nat_fold_ready(env.export, 
+            pstep(env, f, f2) && pstep(env, a, a2) && env.nat_fold && nat_fold_ready(env.export, 
                 ExprSpec::App(Box::new(f2), Box::new(a2)),
             ) && e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
         }),
 {
     let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
         (#[trigger] fold_reduct(f2, a2)) && pstep(env, f, f2) && pstep(env, a, a2)
-            && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(env.export, 
+            && env.nat_fold && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2 == nat_fold_result(env.export, 
             ExprSpec::App(Box::new(f2), Box::new(a2)),
         );
     (f2, a2)
@@ -1229,13 +1229,14 @@ pub proof fn pstep_fold_intro(
     requires
         pstep(env, *f, f2),
         pstep(env, *a, a2),
+        env.nat_fold,
         nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))),
         e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))),
     ensures
         pstep(env, ExprSpec::App(f, a), e2),
 {
     assert(fold_reduct(f2, a2));
-    assert(fold_reduct(f2, a2) && pstep(env, *f, f2) && pstep(env, *a, a2) && nat_fold_ready(env.export, 
+    assert(fold_reduct(f2, a2) && pstep(env, *f, f2) && pstep(env, *a, a2) && env.nat_fold && nat_fold_ready(env.export, 
         ExprSpec::App(Box::new(f2), Box::new(a2)),
     ) && e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))));
 }

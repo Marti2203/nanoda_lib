@@ -335,6 +335,7 @@ pub open spec fn to_model_of_env<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
         struct_ctor: to_model_of_struct_ctor(env),
         ctor_nf: to_model_of_ctor_num_fields(env),
         ctor_ind: to_model_of_ctor_ind(env),
+        nat_fold: true,
     }
 }
 
@@ -364,6 +365,7 @@ pub open spec fn env_model_nofv<'x, 'a>(env: Env<'x, 'a>) -> EnvSpec {
         struct_ctor: m.struct_ctor,
         ctor_nf: m.ctor_nf,
         ctor_ind: m.ctor_ind,
+        nat_fold: true,
     }
 }
 
@@ -904,6 +906,7 @@ pub open spec fn denv_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, ke
         struct_ctor: table_at(view, keys, c, |d: Declar<'a>| struct_ctor_entry(d)),
         ctor_nf: table_at(view, keys, c, |d: Declar<'a>| ctor_nf_entry(d)),
         ctor_ind: table_at(view, keys, c, |d: Declar<'a>| ctor_ind_entry(d)),
+        nat_fold: true,
     }
 }
 

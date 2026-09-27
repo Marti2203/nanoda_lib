@@ -1,5 +1,5 @@
 //! INJECTIVITY (layer 2 of the metatheory). Reduction keeps a Pi a Pi and a
-//! Sort that Sort, so by Church-Rosser (`ceq_jn`) two convertible Pis have
+//! Sort that Sort, so by Church-Rosser (`ceq_jn_into`) two convertible Pis have
 //! convertible domains and codomains, two convertible Sorts have equivalent
 //! levels, and a Sort never converts with a binder.
 #[allow(unused_imports)]
@@ -96,6 +96,7 @@ proof fn bind_chain(env: EnvSpec, bk: BinderKind, t: ExprSpec, b: ExprSpec, ch: 
 /// domains and joinable bodies.
 pub proof fn ceq_bind_inj(
     env: EnvSpec,
+    ne: EnvSpec,
     bk1: BinderKind,
     t1: ExprSpec,
     b1: ExprSpec,
@@ -105,7 +106,7 @@ pub proof fn ceq_bind_inj(
     h: nat,
 )
     requires
-        cr_env(env),
+        cr_into(env, ne),
         ceq(env, ExprSpec::Bind(bk1, Box::new(t1), Box::new(b1)), ExprSpec::Bind(bk2, Box::new(t2), Box::new(b2)), h),
     ensures
         bk1 == bk2,
@@ -114,41 +115,43 @@ pub proof fn ceq_bind_inj(
 {
     let x = ExprSpec::Bind(bk1, Box::new(t1), Box::new(b1));
     let y = ExprSpec::Bind(bk2, Box::new(t2), Box::new(b2));
-    ceq_jn(env, x, y, h);
-    let (x2, y2) = jn_elim(env, x, y);
-    let (t3, b3) = star_bind_inv(env, bk1, t1, b1, x2);
-    let (t4, b4) = star_bind_inv(env, bk2, t2, b2, y2);
+    ceq_jn_into(env, ne, x, y, h);
+    let (x2, y2) = jn_elim(ne, x, y);
+    let (t3, b3) = star_bind_inv(ne, bk1, t1, b1, x2);
+    let (t4, b4) = star_bind_inv(ne, bk2, t2, b2, y2);
     assert(lveq(t3, t4) && lveq(b3, b4));
-    jn_intro(env, t1, t2, t3, t4);
-    jn_intro(env, b1, b2, b3, b4);
+    jn_intro(ne, t1, t2, t3, t4);
+    jn_intro(ne, b1, b2, b3, b4);
+    jn_up(env, ne, t1, t2);
+    jn_up(env, ne, b1, b2);
 }
 
 /// SORT INJECTIVITY: convertible Sorts have equivalent levels.
-pub proof fn ceq_sort_inj(env: EnvSpec, l1: LevelSpec, l2: LevelSpec, h: nat)
+pub proof fn ceq_sort_inj(env: EnvSpec, ne: EnvSpec, l1: LevelSpec, l2: LevelSpec, h: nat)
     requires
-        cr_env(env),
+        cr_into(env, ne),
         ceq(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2), h),
     ensures
         lev_eq(l1, l2),
 {
-    ceq_jn(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2), h);
-    let (x2, y2) = jn_elim(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
-    star_sort_inv(env, l1, x2);
-    star_sort_inv(env, l2, y2);
+    ceq_jn_into(env, ne, ExprSpec::Sort(l1), ExprSpec::Sort(l2), h);
+    let (x2, y2) = jn_elim(ne, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
+    star_sort_inv(ne, l1, x2);
+    star_sort_inv(ne, l2, y2);
 }
 
 /// A Sort never converts with a binder.
-pub proof fn ceq_sort_bind(env: EnvSpec, l: LevelSpec, bk: BinderKind, t: ExprSpec, b: ExprSpec, h: nat)
+pub proof fn ceq_sort_bind(env: EnvSpec, ne: EnvSpec, l: LevelSpec, bk: BinderKind, t: ExprSpec, b: ExprSpec, h: nat)
     requires
-        cr_env(env),
+        cr_into(env, ne),
     ensures
         !ceq(env, ExprSpec::Sort(l), ExprSpec::Bind(bk, Box::new(t), Box::new(b)), h),
 {
     if ceq(env, ExprSpec::Sort(l), ExprSpec::Bind(bk, Box::new(t), Box::new(b)), h) {
-        ceq_jn(env, ExprSpec::Sort(l), ExprSpec::Bind(bk, Box::new(t), Box::new(b)), h);
-        let (x2, y2) = jn_elim(env, ExprSpec::Sort(l), ExprSpec::Bind(bk, Box::new(t), Box::new(b)));
-        star_sort_inv(env, l, x2);
-        let (t2, b2) = star_bind_inv(env, bk, t, b, y2);
+        ceq_jn_into(env, ne, ExprSpec::Sort(l), ExprSpec::Bind(bk, Box::new(t), Box::new(b)), h);
+        let (x2, y2) = jn_elim(ne, ExprSpec::Sort(l), ExprSpec::Bind(bk, Box::new(t), Box::new(b)));
+        star_sort_inv(ne, l, x2);
+        let (t2, b2) = star_bind_inv(ne, bk, t, b, y2);
     }
 }
 

@@ -538,3 +538,29 @@ true → false:
 
 Plus an environment well-formedness hypothesis: every declaration's type (and
 value) is well-typed. The kernel checked it for earlier declarations.
+
+## Church-Rosser and the Nat-literal extension (branch `metatheory`)
+
+Layer 1 (`confluence.rs`, `conv_cr.rs`, `conv_frag.rs`) proves parallel
+reduction confluent and eta-free conversion (`ceq`, a sub-relation of `deq`)
+joinable up to universe-level equivalence; layer 2 (`injectivity.rs`) derives
+Pi and Sort injectivity for `ceq`. Confluence needs the redex kinds not to
+overlap (`env_conf`).
+
+The kernel's Nat-literal extension overlaps with delta: `Nat.add 2 3` folds
+to `5` by built-in arithmetic, and `Nat.add` is also a definition. Nothing
+ties the two for an arbitrary export (`Nat.add a b := 0` makes reduction
+non-confluent), so a real environment is handled under a named hypothesis:
+
+| predicate | says |
+|---|---|
+| `EnvSpec.nat_fold` | whether folding is a reduction rule (always `true` for the kernel) |
+| `nofold(env)` | `env` with folding off: the Nat operations are plain definitions |
+| `h_nat_ext` (`nat_ext.rs`) | every foldable op application is `defeq` in `nofold(env)` to the value the built-in arithmetic returns |
+| `cr_ext` | `env_conf(nofold(env))`, closed environment terms, well-formed recursor rules, `h_nat_ext` |
+
+Under `cr_ext`, every reduction step of `env` is a conversion of
+`nofold(env)` (`pstep_ext_jn`), so `ceq` in `env` lands in joinability there
+(`ceq_jn_ext`), and injectivity holds in `env` (`ceq_bind_inj`,
+`ceq_sort_inj` with `ne = nofold(env)`). `h_nat_ext` is the trust Lean's own
+kernel places in its extension.

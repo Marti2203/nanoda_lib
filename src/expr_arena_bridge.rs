@@ -1457,6 +1457,11 @@ pub ghost struct EnvSpec {
     pub ctor_nf: Map<u64, u16>,
     /// Constructor -> its inductive.
     pub ctor_ind: Map<u64, u64>,
+    /// Whether the kernel's Nat-literal extension (folding `Nat.add 2 3` to
+    /// `5`) is a reduction rule. Always on for the kernel; the metatheory
+    /// turns it off to state that the extension agrees with the Nat
+    /// definitions (`h_nat_ext`).
+    pub nat_fold: bool,
 }
 
 impl EnvSpec {
@@ -1471,6 +1476,7 @@ impl EnvSpec {
             struct_ctor: Map::empty(),
             ctor_nf: Map::empty(),
             ctor_ind: Map::empty(),
+            nat_fold: true,
         }
     }
 
@@ -1506,6 +1512,7 @@ impl EnvSpec {
     /// every reduction under `self` is one under `other`.
     pub open spec fn sub(self, other: EnvSpec) -> bool {
         &&& self.export == other.export
+        &&& (self.nat_fold ==> other.nat_fold)
         &&& forall|k: u64| #[trigger]
             self.defs.contains_key(k) ==> other.defs.contains_key(k) && self.defs[k] == other.defs[k]
         &&& forall|k: u64| #[trigger]

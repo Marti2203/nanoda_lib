@@ -137,6 +137,65 @@ pub open spec fn cr_env(env: EnvSpec) -> bool {
     &&& env_rules_ok(env)
 }
 
+/// The environment with the Nat-literal extension switched off: the Nat
+/// operations are plain definitions.
+pub open spec fn nofold(env: EnvSpec) -> EnvSpec {
+    EnvSpec { nat_fold: false, ..env }
+}
+
+/// What the Church-Rosser argument needs to land eta-free conversion in
+/// `env` inside joinability in `ne` (`env` itself, or its fold-free form):
+/// `ne` is confluent and `env`'s joinability lands in `ne`'s.
+pub open spec fn cr_into(env: EnvSpec, ne: EnvSpec) -> bool {
+    &&& ne == env || ne == nofold(env)
+    &&& env_conf(ne)
+    &&& env_fv_free(env)
+    &&& env_rules_ok(env)
+    &&& forall|x: ExprSpec, y: ExprSpec| #[trigger] defeq(env, x, y) ==> jn(ne, x, y)
+}
+
+pub proof fn cr_into_self(env: EnvSpec)
+    requires
+        cr_env(env),
+    ensures
+        cr_into(env, env),
+{
+    assert forall|x: ExprSpec, y: ExprSpec| #[trigger] defeq(env, x, y) implies jn(env, x, y) by {
+        jn_of_defeq(env, x, y);
+    }
+}
+
+/// `ne` shares every table with `env`; only the extension flag may differ.
+pub proof fn cr_into_tables(env: EnvSpec, ne: EnvSpec)
+    requires
+        ne == env || ne == nofold(env),
+    ensures
+        ne.export == env.export,
+        ne.defs == env.defs,
+        ne.recs == env.recs,
+        ne.ctor_np == env.ctor_np,
+        ne.struct_ctor == env.struct_ctor,
+        ne.ctor_nf == env.ctor_nf,
+        ne.ctor_ind == env.ctor_ind,
+        ne.sub(env),
+{
+}
+
+/// Joinability in `ne` is joinability in `env`: `ne` reduces less.
+pub proof fn jn_up(env: EnvSpec, ne: EnvSpec, x: ExprSpec, y: ExprSpec)
+    requires
+        ne == env || ne == nofold(env),
+        jn(ne, x, y),
+    ensures
+        jn(env, x, y),
+{
+    cr_into_tables(env, ne);
+    let (x2, y2) = jn_elim(ne, x, y);
+    pstep_star_env_weaken(ne, env, x, x2);
+    pstep_star_env_weaken(ne, env, y, y2);
+    jn_intro(env, x, y, x2, y2);
+}
+
 pub proof fn rec_ready_of_u(env: EnvSpec, s: ExprSpec)
     requires
         env_rules_ok(env),
@@ -194,59 +253,77 @@ pub proof fn jn_rec_leaf(env: EnvSpec, x: ExprSpec)
     }
 }
 
-pub proof fn jn_of_leaf(env: EnvSpec, x: ExprSpec, y: ExprSpec)
+/// `rec_ready`/`rec_result` read only the tables `ne` shares with `env`.
+pub proof fn rec_same(env: EnvSpec, ne: EnvSpec, s: ExprSpec)
     requires
-        cr_env(env),
+        ne == env || ne == nofold(env),
+        rec_ready(env, s),
+    ensures
+        rec_ready(ne, s),
+        rec_result(ne, s) == rec_result(env, s),
+{
+    cr_into_tables(env, ne);
+    if ne != env {
+        assert(forall|id: u64| #[trigger] ne.rec_data(id) == env.rec_data(id));
+        assert(forall|id: u64| #[trigger] ne.ctor_num_params(id) == env.ctor_num_params(id));
+    }
+}
+
+pub proof fn jn_of_leaf(env: EnvSpec, ne: EnvSpec, x: ExprSpec, y: ExprSpec)
+    requires
+        cr_into(env, ne),
         defeq(env, x, y) || deq_leaf(x, y) || deq_quot(env.export, x, y) || deq_rec(env, x, y),
     ensures
-        jn(env, x, y),
+        jn(ne, x, y),
 {
+    cr_into_tables(env, ne);
     if defeq(env, x, y) {
-        jn_of_defeq(env, x, y);
     } else if deq_leaf(x, y) {
         assert(lveq(x, y));
-        jn_of_lveq(env, x, y);
+        jn_of_lveq(ne, x, y);
     } else if deq_quot(env.export, x, y) {
         if quot_ready(env.export, x) && y == quot_result(env.export, x) {
-            jn_quot_leaf(env, x);
+            jn_quot_leaf(ne, x);
         } else {
-            jn_quot_leaf(env, y);
-            jn_symm(env, y, x);
+            jn_quot_leaf(ne, y);
+            jn_symm(ne, y, x);
         }
     } else {
         if rec_ready_u(env, x) && y == rec_result(env, x) {
             rec_ready_of_u(env, x);
-            jn_rec_leaf(env, x);
+            rec_same(env, ne, x);
+            jn_rec_leaf(ne, x);
         } else {
             rec_ready_of_u(env, y);
-            jn_rec_leaf(env, y);
-            jn_symm(env, y, x);
+            rec_same(env, ne, y);
+            jn_rec_leaf(ne, y);
+            jn_symm(ne, y, x);
         }
     }
 }
 
 /// ONE ETA-FREE CONVERSION STEP IS JOINABLE.
-pub proof fn ceq_c_jn(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
+pub proof fn ceq_c_jn(env: EnvSpec, ne: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
-        cr_env(env),
+        cr_into(env, ne),
         ceq_c(env, x, y, h),
     ensures
-        jn(env, x, y),
+        jn(ne, x, y),
     decreases h, 0int, 0int,
 {
     if defeq(env, x, y) || deq_leaf(x, y) || deq_quot(env.export, x, y) || deq_rec(env, x, y) {
-        jn_of_leaf(env, x, y);
+        jn_of_leaf(env, ne, x, y);
     } else {
         match (x, y) {
             (ExprSpec::App(f1, a1), ExprSpec::App(f2, a2)) => {
-                ceq_c_jn(env, *f1, *f2, (h - 1) as nat);
-                ceq_c_jn(env, *a1, *a2, (h - 1) as nat);
-                jn_app(env, *f1, *f2, *a1, *a2);
+                ceq_c_jn(env, ne, *f1, *f2, (h - 1) as nat);
+                ceq_c_jn(env, ne, *a1, *a2, (h - 1) as nat);
+                jn_app(ne, *f1, *f2, *a1, *a2);
             },
             (ExprSpec::Bind(bk1, t1, b1), ExprSpec::Bind(bk2, t2, b2)) => {
-                ceq_c_jn(env, *t1, *t2, (h - 1) as nat);
+                ceq_c_jn(env, ne, *t1, *t2, (h - 1) as nat);
                 if ceq_c(env, *b1, *b2, (h - 1) as nat) {
-                    ceq_c_jn(env, *b1, *b2, (h - 1) as nat);
+                    ceq_c_jn(env, ne, *b1, *b2, (h - 1) as nat);
                 } else {
                     let k = choose|k: nat| #[trigger]
                         fresh_marker(k) && fv_absent(*b1, k) && fv_absent(*b2, k) && ceq(
@@ -255,59 +332,73 @@ pub proof fn ceq_c_jn(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
                             inst_free(*b2, k),
                             (h - 1) as nat,
                         );
-                    ceq_jn(env, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat);
-                    jn_open(env, k, *b1, *b2);
+                    ceq_jn_into(env, ne, inst_free(*b1, k), inst_free(*b2, k), (h - 1) as nat);
+                    cr_into_tables(env, ne);
+                    assert(env_fv_free(ne));
+                    jn_open(ne, k, *b1, *b2);
                 }
-                jn_bind(env, bk1, *t1, *t2, *b1, *b2);
+                jn_bind(ne, bk1, *t1, *t2, *b1, *b2);
             },
             (ExprSpec::Let(t1, v1, b1), ExprSpec::Let(t2, v2, b2)) => {
-                ceq_c_jn(env, *t1, *t2, (h - 1) as nat);
-                ceq_c_jn(env, *v1, *v2, (h - 1) as nat);
-                ceq_c_jn(env, *b1, *b2, (h - 1) as nat);
-                jn_let(env, *t1, *t2, *v1, *v2, *b1, *b2);
+                ceq_c_jn(env, ne, *t1, *t2, (h - 1) as nat);
+                ceq_c_jn(env, ne, *v1, *v2, (h - 1) as nat);
+                ceq_c_jn(env, ne, *b1, *b2, (h - 1) as nat);
+                jn_let(ne, *t1, *t2, *v1, *v2, *b1, *b2);
             },
             (ExprSpec::Proj(p1, s1), ExprSpec::Proj(p2, s2)) => {
-                ceq_c_jn(env, *s1, *s2, (h - 1) as nat);
-                jn_proj(env, p1, *s1, *s2);
+                ceq_c_jn(env, ne, *s1, *s2, (h - 1) as nat);
+                jn_proj(ne, p1, *s1, *s2);
             },
             _ => {},
         }
     }
 }
 
-proof fn ceq_chain_jn(env: EnvSpec, ch: Seq<ExprSpec>, h: nat, n: nat)
+proof fn ceq_chain_jn(env: EnvSpec, ne: EnvSpec, ch: Seq<ExprSpec>, h: nat, n: nat)
     requires
-        cr_env(env),
+        cr_into(env, ne),
         ch.len() >= 1,
         n < ch.len(),
         ceq_chain_valid(env, ch, h),
     ensures
-        jn(env, ch[0], ch[n as int]),
+        jn(ne, ch[0], ch[n as int]),
     decreases h, 1int, n,
 {
     if n == 0 {
-        jn_refl(env, ch[0]);
+        jn_refl(ne, ch[0]);
     } else {
         let m = (n - 1) as nat;
-        ceq_chain_jn(env, ch, h, m);
+        ceq_chain_jn(env, ne, ch, h, m);
         assert(ceq_c(env, ch[m as int], ch[m as int + 1], h));
-        ceq_c_jn(env, ch[m as int], ch[n as int], h);
-        jn_trans(env, ch[0], ch[m as int], ch[n as int]);
+        ceq_c_jn(env, ne, ch[m as int], ch[n as int], h);
+        jn_trans(ne, ch[0], ch[m as int], ch[n as int]);
     }
 }
 
-/// CHURCH-ROSSER FOR ETA-FREE CONVERSION: convertible terms reduce to terms
-/// equal up to universe-level equivalence.
+/// CHURCH-ROSSER FOR ETA-FREE CONVERSION: convertible terms reduce (in
+/// `ne`) to terms equal up to universe-level equivalence.
+pub proof fn ceq_jn_into(env: EnvSpec, ne: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
+    requires
+        cr_into(env, ne),
+        ceq(env, x, y, h),
+    ensures
+        jn(ne, x, y),
+    decreases h, 2int, 0int,
+{
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && ceq_chain_valid(env, ch, h);
+    ceq_chain_jn(env, ne, ch, h, (ch.len() - 1) as nat);
+}
+
+/// The overlap-free case: `env` itself is confluent.
 pub proof fn ceq_jn(env: EnvSpec, x: ExprSpec, y: ExprSpec, h: nat)
     requires
         cr_env(env),
         ceq(env, x, y, h),
     ensures
         jn(env, x, y),
-    decreases h, 2int, 0int,
 {
-    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == x && ch[ch.len() - 1] == y && ceq_chain_valid(env, ch, h);
-    ceq_chain_jn(env, ch, h, (ch.len() - 1) as nat);
+    cr_into_self(env);
+    ceq_jn_into(env, env, x, y, h);
 }
 
 } // verus!

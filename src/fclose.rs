@@ -488,4 +488,24 @@ pub proof fn pstep_star_inst(env: EnvSpec, j: nat, a: ExprSpec, e1: ExprSpec, e2
     assert(ch2[ch2.len() - 1] == inst(j, a, e2));
 }
 
+/// Reducing the substituted term reduces the instance.
+pub proof fn pstep_star_inst_arg(env: EnvSpec, j: nat, a: ExprSpec, a2: ExprSpec, e: ExprSpec)
+    requires
+        env_bv_free(env),
+        pstep_star(env, a, a2),
+    ensures
+        pstep_star(env, inst(j, a, e), inst(j, a2, e)),
+{
+    let ch = choose|chain: Seq<ExprSpec>| chain.len() >= 1 && chain[0] == a && chain[chain.len() - 1] == a2 && pstep_chain_valid(env, chain);
+    let ch2 = Seq::new(ch.len(), |i: int| inst(j, ch[i], e));
+    assert(pstep(env, e, e));
+    assert forall|i: int| 0 <= i < ch2.len() - 1 implies #[trigger] pstep(env, ch2[i], ch2[i + 1]) by {
+        assert(pstep(env, ch[i], ch[i + 1]));
+        pstep_inst(env, j, ch[i], ch[i + 1], e, e);
+    }
+    assert(pstep_chain_valid(env, ch2));
+    assert(ch2[0] == inst(j, a, e));
+    assert(ch2[ch2.len() - 1] == inst(j, a2, e));
+}
+
 } // verus!

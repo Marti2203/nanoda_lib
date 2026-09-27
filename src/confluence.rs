@@ -32,7 +32,7 @@ verus! {
 pub open spec fn redex_head(env: EnvSpec, id: u64) -> bool {
     ||| env.rec_data(id) is Some
     ||| env.ctor_num_params(id) is Some
-    ||| nat_bin_op_of(env.export, id) is Some
+    ||| (env.nat_fold && nat_bin_op_of(env.export, id) is Some)
     ||| quot_kind_of(env.export, id) is Some
     ||| id == nat_zero_id(env.export)
     ||| id == nat_succ_id(env.export)
@@ -82,7 +82,7 @@ pub open spec fn proj_result(env: EnvSpec, pidx: usize, s: ExprSpec) -> ExprSpec
 pub open spec fn app_develop(env: EnvSpec, app: ExprSpec) -> ExprSpec {
     if rec_ready(env, app) {
         rec_result(env, app)
-    } else if nat_fold_ready(env.export, app) {
+    } else if env.nat_fold && nat_fold_ready(env.export, app) {
         nat_fold_result(env.export, app)
     } else if quot_ready(env.export, app) {
         quot_result(env.export, app)
@@ -166,7 +166,7 @@ pub proof fn pstep_complete(env: EnvSpec, e: ExprSpec)
                     let app = ExprSpec::App(Box::new(cf), Box::new(ca));
                     if rec_ready(env, app) {
                         pstep_rec_intro(env, f, a, cf, ca, complete(env, e));
-                    } else if nat_fold_ready(env.export, app) {
+                    } else if env.nat_fold && nat_fold_ready(env.export, app) {
                         pstep_fold_intro(env, f, a, cf, ca, complete(env, e));
                     } else if quot_ready(env.export, app) {
                         pstep_quot_intro(env, f, a, cf, ca, complete(env, e));
@@ -218,7 +218,7 @@ pub proof fn pstep_app_destruct(env: EnvSpec, f: ExprSpec, a: ExprSpec, e2: Expr
             &&& kind == 2 ==> (pstep(env, f, x) && pstep(env, a, y) && e2 == ExprSpec::App(Box::new(x), Box::new(y)))
             &&& kind == 3 ==> (pstep(env, f, x) && pstep(env, a, y) && rec_ready(env, ExprSpec::App(Box::new(x), Box::new(y)))
                 && e2 == rec_result(env, ExprSpec::App(Box::new(x), Box::new(y))))
-            &&& kind == 4 ==> (pstep(env, f, x) && pstep(env, a, y) && nat_fold_ready(env.export, ExprSpec::App(Box::new(x), Box::new(y)))
+            &&& kind == 4 ==> (pstep(env, f, x) && pstep(env, a, y) && env.nat_fold && nat_fold_ready(env.export, ExprSpec::App(Box::new(x), Box::new(y)))
                 && e2 == nat_fold_result(env.export, ExprSpec::App(Box::new(x), Box::new(y))))
             &&& kind == 5 ==> (pstep(env, f, x) && pstep(env, a, y) && quot_ready(env.export, ExprSpec::App(Box::new(x), Box::new(y)))
                 && e2 == quot_result(env.export, ExprSpec::App(Box::new(x), Box::new(y))))
@@ -815,7 +815,7 @@ pub proof fn node_join(env: EnvSpec, f: ExprSpec, x: ExprSpec, cf: ExprSpec, cx:
     let c = ExprSpec::App(Box::new(cf), Box::new(cx));
     if rec_ready(env, c) {
         pstep_rec_intro(env, Box::new(f), Box::new(x), cf, cx, app_develop(env, c));
-    } else if nat_fold_ready(env.export, c) {
+    } else if env.nat_fold && nat_fold_ready(env.export, c) {
         pstep_fold_intro(env, Box::new(f), Box::new(x), cf, cx, app_develop(env, c));
     } else if quot_ready(env.export, c) {
         pstep_quot_intro(env, Box::new(f), Box::new(x), cf, cx, app_develop(env, c));
@@ -929,6 +929,7 @@ proof fn fold_vs_develop(env: EnvSpec, f2: ExprSpec, x2: ExprSpec, cf: ExprSpec,
         env_conf(env),
         pstep(env, f2, cf),
         pstep(env, x2, cx),
+        env.nat_fold,
         nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(x2))),
     ensures
         pstep(env, nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(x2))), app_develop(env, ExprSpec::App(Box::new(cf), Box::new(cx)))),
