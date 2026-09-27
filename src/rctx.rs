@@ -265,4 +265,25 @@ pub proof fn reach_chain(g: Map<nat, ExprSpec>, e: ExprSpec, j: nat, k: nat, m: 
     }
 }
 
+/// Reach is transitive through a local: if `e` reaches `i` and `i`'s type
+/// reaches `j`, then `e` reaches `j`.
+pub proof fn reach_trans(g: Map<nat, ExprSpec>, e: ExprSpec, i: nat, j: nat, m: nat, n: nat)
+    requires
+        reach_n(g, e, i, m),
+        g.contains_key(i),
+        reach_n(g, g[i], j, n),
+    ensures
+        reaches(g, e, j),
+    decreases m, e,
+{
+    let s0 = reach_start(g, e, i, m);
+    if s0 == i {
+        reach_via(g, e, i, j, n + 1);
+    } else {
+        reach_trans(g, g[s0], i, j, (m - 1) as nat, n);
+        let m2 = choose|m2: nat| #[trigger] reach_n(g, g[s0], j, m2);
+        reach_via(g, e, s0, j, m2 + 1);
+    }
+}
+
 } // verus!

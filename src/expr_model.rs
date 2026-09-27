@@ -1882,6 +1882,121 @@ pub proof fn abstr_full_removes(e: ExprSpec, x: nat, off: nat)
     }
 }
 
+/// The round trip with the kernel's own bound in place of a depth bound:
+/// `levels_fit` keeps every subterm that mentions a local below `0xFFFF`
+/// binders, which is where abstraction writes its indices.
+pub proof fn abstr_inst_roundtrip_fit(e: ExprSpec, x: nat, off: nat, nob: u16)
+    requires
+        nlbv(e) <= off,
+        levels_fit(e, nob),
+        off <= nob as nat,
+    ensures
+        subst_full(abstr_full(e, seq![x], off), seq![ExprSpec::Free(x)], off) == e,
+    decreases e,
+{
+    if !has_fv(e) {
+        abstr_full_noop(e, seq![x], off);
+        subst_full_noop(e, seq![ExprSpec::Free(x)], off);
+    } else {
+        match e {
+            ExprSpec::Free(id) => {
+                if id == x {
+                    find_from_end_first_match(seq![x], id, 0);
+                    assert(((off + 0) as u32) as nat == off);
+                } else {
+                    find_from_end_no_match(seq![x], id);
+                }
+            },
+            ExprSpec::App(f, a) => {
+                abstr_inst_roundtrip_fit(*f, x, off, nob);
+                abstr_inst_roundtrip_fit(*a, x, off, nob);
+            },
+            ExprSpec::Bind(bk, ty, b) => {
+                abstr_inst_roundtrip_fit(*ty, x, off, nob);
+                abstr_inst_roundtrip_fit(*b, x, off + 1, (nob + 1) as u16);
+            },
+            ExprSpec::Let(ty, v, b) => {
+                abstr_inst_roundtrip_fit(*ty, x, off, nob);
+                abstr_inst_roundtrip_fit(*v, x, off, nob);
+                abstr_inst_roundtrip_fit(*b, x, off + 1, (nob + 1) as u16);
+            },
+            ExprSpec::Proj(_, st) => {
+                abstr_inst_roundtrip_fit(*st, x, off, nob);
+            },
+            _ => {},
+        }
+    }
+}
+
+/// Abstraction adds no local.
+pub proof fn abstr_full_keeps_absent(e: ExprSpec, x: nat, off: nat, i: nat)
+    requires
+        fv_absent(e, i),
+    ensures
+        fv_absent(abstr_full(e, seq![x], off), i),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            if id == x {
+                find_from_end_first_match(seq![x], id, 0);
+            } else {
+                find_from_end_no_match(seq![x], id);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            abstr_full_keeps_absent(*f, x, off, i);
+            abstr_full_keeps_absent(*a, x, off, i);
+        },
+        ExprSpec::Bind(bk, ty, b) => {
+            abstr_full_keeps_absent(*ty, x, off, i);
+            abstr_full_keeps_absent(*b, x, off + 1, i);
+        },
+        ExprSpec::Let(ty, v, b) => {
+            abstr_full_keeps_absent(*ty, x, off, i);
+            abstr_full_keeps_absent(*v, x, off, i);
+            abstr_full_keeps_absent(*b, x, off + 1, i);
+        },
+        ExprSpec::Proj(_, st) => {
+            abstr_full_keeps_absent(*st, x, off, i);
+        },
+        _ => {},
+    }
+}
+
+/// Abstraction keeps `levels_fit`: it only removes locals.
+pub proof fn abstr_full_levels_fit(e: ExprSpec, ids: Seq<nat>, off: nat, nob: u16)
+    requires
+        levels_fit(e, nob),
+    ensures
+        levels_fit(abstr_full(e, ids, off), nob),
+    decreases e,
+{
+    if !has_fv(e) {
+        abstr_full_noop(e, ids, off);
+    } else {
+        match e {
+            ExprSpec::App(f, a) => {
+                abstr_full_levels_fit(*f, ids, off, nob);
+                abstr_full_levels_fit(*a, ids, off, nob);
+            },
+            ExprSpec::Bind(bk, ty, b) => {
+                abstr_full_levels_fit(*ty, ids, off, nob);
+                abstr_full_levels_fit(*b, ids, off + 1, (nob + 1) as u16);
+            },
+            ExprSpec::Let(ty, v, b) => {
+                abstr_full_levels_fit(*ty, ids, off, nob);
+                abstr_full_levels_fit(*v, ids, off, nob);
+                abstr_full_levels_fit(*b, ids, off + 1, (nob + 1) as u16);
+            },
+            ExprSpec::Proj(_, st) => {
+                abstr_full_levels_fit(*st, ids, off, nob);
+            },
+            _ => {},
+        }
+    }
+}
+
 /// Abstracting one id adds one loose index at most.
 pub proof fn abstr_full_nlbv1(e: ExprSpec, x: nat, off: nat)
     requires

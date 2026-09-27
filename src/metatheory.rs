@@ -270,6 +270,16 @@ pub open spec fn h_pi_inj_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec
             ==> tconv(dty, denv, lctx, subst_full(b1, seq![arg], 0), subst_full(b2, seq![arg], 0))
 }
 
+/// PI-INJECTIVITY, domain half: convertible Pi types have convertible
+/// domains. Regularity of an application uses it: the argument's type
+/// converts to the domain of the Pi the kernel inferred for the function,
+/// through the one real typing assigns.
+pub open spec fn h_pi_inj_dom(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
+    forall|a1: ExprSpec, b1: ExprSpec, a2: ExprSpec, b2: ExprSpec|
+        #![trigger tconv(dty, denv, lctx, pi(a1, b1), pi(a2, b2))]
+        tconv(dty, denv, lctx, pi(a1, b1), pi(a2, b2)) ==> tconv(dty, denv, lctx, a1, a2)
+}
+
 /// SORT-INJECTIVITY: convertible sorts have equivalent levels.
 pub open spec fn h_sort_inj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
     forall|l1: LevelSpec, l2: LevelSpec|
@@ -289,7 +299,7 @@ pub open spec fn h_unique_in(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
 }
 
 pub open spec fn hyps(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
-    h_pi_inj_app(dty, denv, lctx) && h_sort_inj(dty, denv, lctx) && h_unique_in(dty, denv, lctx)
+    h_pi_inj_app(dty, denv, lctx) && h_pi_inj_dom(dty, denv, lctx) && h_sort_inj(dty, denv, lctx) && h_unique_in(dty, denv, lctx)
 }
 
 /// The hypotheses in every context: the scoped theories extend the context

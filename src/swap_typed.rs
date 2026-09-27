@@ -1175,6 +1175,125 @@ pub proof fn scoped_pi_intro(
 }
 
 
+/// LAMBDA INTRODUCTION from one far local, likewise; the codomain mentions
+/// only locals of the context.
+pub proof fn lam_intro_far(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<nat, ExprSpec>,
+    io: IoMode,
+    a: ExprSpec,
+    body: ExprSpec,
+    cod: ExprSpec,
+    s: ExprSpec,
+    l: LevelSpec,
+    lid: nat,
+    infd: ExprSpec,
+    f: nat,
+)
+    requires
+        fv_free(dty, denv),
+        io != IoMode::Infer,
+        !lctx.contains_key(lid),
+        ctx_fresh(lctx, lid),
+        fv_absent(a, lid),
+        fv_absent(body, lid),
+        fv_in(cod, lctx),
+        f > 0,
+        io == IoMode::InferWt || (types_to(dty, denv, lctx, io, a, s, (f - 1) as nat)
+            && deq_p(dty, denv, lctx, io, s, ExprSpec::Sort(l), (f - 1) as nat)),
+        types_to(dty, denv, lctx.insert(lid, a), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, (f - 1) as nat),
+        deq_p(dty, denv, lctx.insert(lid, a), io, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), (f - 1) as nat),
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            io,
+            ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(body)),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(cod)),
+            f,
+        ),
+{
+    let r = io;
+    let g1 = (f - 1) as nat;
+    assert(fv_absent(cod, lid) || lctx.contains_key(lid));
+    assert(fresh_marker(lid));
+    assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) implies
+        fv_absent(cod, k) && exists|infd2: ExprSpec| #[trigger] real_body_marker(k, infd2)
+        && types_to(dty, denv, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), infd2, g1)
+        && deq_p(dty, denv, lctx.insert(k, a), r, infd2, subst_full(cod, seq![ExprSpec::Free(k)], 0), g1) by {
+        assert(fv_absent(cod, k) || lctx.contains_key(k));
+        sw_types_to(dty, denv, lctx.insert(lid, a), r, subst_full(body, seq![ExprSpec::Free(lid)], 0), infd, g1, lid, k);
+        sw_deq_p(dty, denv, lctx.insert(lid, a), r, infd, subst_full(cod, seq![ExprSpec::Free(lid)], 0), g1, lid, k);
+        cswap_insert(lctx, lid, a, lid, k);
+        cswap_fixed_fresh(lctx, lid, k);
+        fswap_noop(a, lid, k);
+        open_rename(body, lid, k);
+        open_rename(cod, lid, k);
+        assert(real_body_marker(k, fswap(infd, lid, k)));
+    }
+    assert(real_lam_marker(cod, s, l));
+}
+
+/// PI INTRODUCTION from one local that is outside the context, fresh for
+/// it, and absent from the binder: `scoped_pi_intro` without asking the
+/// whole context to be closed under reach.
+pub proof fn pi_intro_far(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    lctx: Map<nat, ExprSpec>,
+    io: IoMode,
+    a: ExprSpec,
+    body: ExprSpec,
+    bt_ty: ExprSpec,
+    dl: LevelSpec,
+    cl: LevelSpec,
+    lid: nat,
+    instd: ExprSpec,
+    f: nat,
+)
+    requires
+        fv_free(dty, denv),
+        io != IoMode::Infer,
+        !lctx.contains_key(lid),
+        ctx_fresh(lctx, lid),
+        fv_absent(a, lid),
+        fv_absent(body, lid),
+        f > 0,
+        types_to(dty, denv, lctx, io, a, bt_ty, (f - 1) as nat),
+        deq_p(dty, denv, lctx, io, bt_ty, ExprSpec::Sort(dl), (f - 1) as nat),
+        types_to(dty, denv, lctx.insert(lid, a), io, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, (f - 1) as nat),
+        deq_p(dty, denv, lctx.insert(lid, a), io, instd, ExprSpec::Sort(cl), (f - 1) as nat),
+    ensures
+        types_to(
+            dty,
+            denv,
+            lctx,
+            io,
+            ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(body)),
+            ExprSpec::Sort(LevelSpec::IMax(Box::new(dl), Box::new(cl))),
+            f,
+        ),
+{
+    let r = io;
+    let g1 = (f - 1) as nat;
+    assert(fresh_marker(lid));
+    assert forall|k: nat| #[trigger] fresh_marker(k) && !lctx.contains_key(k) && ctx_fresh(lctx, k) && fv_absent(a, k) && fv_absent(body, k) implies
+        exists|instd2: ExprSpec| #[trigger] real_body_marker(k, instd2)
+        && types_to(dty, denv, lctx.insert(k, a), r, subst_full(body, seq![ExprSpec::Free(k)], 0), instd2, g1)
+        && deq_p(dty, denv, lctx.insert(k, a), r, instd2, ExprSpec::Sort(cl), g1) by {
+        sw_types_to(dty, denv, lctx.insert(lid, a), r, subst_full(body, seq![ExprSpec::Free(lid)], 0), instd, g1, lid, k);
+        sw_deq_p(dty, denv, lctx.insert(lid, a), r, instd, ExprSpec::Sort(cl), g1, lid, k);
+        cswap_insert(lctx, lid, a, lid, k);
+        cswap_fixed_fresh(lctx, lid, k);
+        fswap_noop(a, lid, k);
+        open_rename(body, lid, k);
+        assert(real_body_marker(k, fswap(instd, lid, k)));
+    }
+    assert(real_pi_marker(bt_ty, dl, cl));
+}
+
 // ---------------------------------------------------------------------------
 // M2: a fresh local always exists (local ids are `nat`, contexts finite).
 // ---------------------------------------------------------------------------

@@ -3002,6 +3002,8 @@ pub proof fn deq_quot_intro(
         ),
     ensures
         deq_quot(export, spine_app(head_m, args2), r),
+        quot_ready(export, spine_app(head_m, args2)),
+        r == quot_result(export, spine_app(head_m, args2)),
 {
     let sp = spine_app(head_m, args2);
     spine_destruct_app(head_m, args2);

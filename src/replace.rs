@@ -17,6 +17,8 @@ use crate::metatheory::*;
 #[cfg(verus_only)]
 use crate::tc_model::*;
 #[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+#[allow(unused_imports)]
 use vstd::prelude::*;
 
 verus! {
@@ -163,6 +165,172 @@ pub proof fn spine_replace(
         tconv_of(dty, denv, d, t, t, 0);
         t
     }
+}
+
+
+/// REPLACING THE HEAD of a spine by a term whose type converts to the
+/// head's: every application goes through with the same result type.
+pub proof fn spine_replace_head(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    h: ExprSpec,
+    h2: ExprSpec,
+    th: ExprSpec,
+    th2: ExprSpec,
+    args: Seq<ExprSpec>,
+    t: ExprSpec,
+) -> (t2: ExprSpec)
+    requires
+        hyps_all(dty, denv),
+        typed(dty, denv, d, spine_app(h, args), t),
+        typed(dty, denv, d, h, th),
+        typed(dty, denv, d, h2, th2),
+        tconv(dty, denv, d, th2, th),
+    ensures
+        typed(dty, denv, d, spine_app(h2, args), t2),
+        tconv(dty, denv, d, t2, t),
+    decreases args.len(),
+{
+    assert(hyps(dty, denv, d));
+    if args.len() == 0 {
+        assert(typed(dty, denv, d, h, t));
+        assert(tconv(dty, denv, d, th, t));
+        tconv_trans(dty, denv, d, th2, th, t);
+        th2
+    } else {
+        let n = args.len() - 1;
+        let pre = args.subrange(0, n);
+        let f = spine_app(h, pre);
+        let (ft, aty, bt, aty2) = gen_app_ty(dty, denv, d, f, args[n], t);
+        let tf2 = spine_replace_head(dty, denv, d, h, h2, th, th2, pre, ft);
+        let f2 = spine_app(h2, pre);
+        tconv_trans(dty, denv, d, tf2, ft, pi(aty, bt));
+        app_intro(dty, denv, d, f2, args[n], tf2, aty, bt, aty2);
+        assert(spine_app(h2, args) == ExprSpec::App(Box::new(f2), Box::new(args[n])));
+        deq_p_refl(dty, denv, d, IoMode::Real, t, 0);
+        tconv_of(dty, denv, d, t, t, 0);
+        t
+    }
+}
+
+/// A projection's field walk survives replacing the structure (and the
+/// starting type) by convertible ones: every step reduces to the same `Pi`,
+/// and the substituted projections convert by substitutivity. The field
+/// type it reads off is the same.
+pub proof fn proj_walk_replace(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    h: nat,
+    cur: ExprSpec,
+    cur2: ExprSpec,
+    args: Seq<ExprSpec>,
+    np: nat,
+    fld: usize,
+    remaining: nat,
+    s: ExprSpec,
+    s2: ExprSpec,
+    t: ExprSpec,
+) -> (h2: nat)
+    requires
+        proj_field_type(dty, denv, d, IoMode::Real, h, cur, args, np, fld, remaining, s, t),
+        tconv(dty, denv, d, cur2, cur),
+        tconv(dty, denv, d, s2, s),
+    ensures
+        proj_field_type(dty, denv, d, IoMode::Real, h2, cur2, args, np, fld, remaining, s2, t),
+    decreases np + remaining,
+{
+    let r = IoMode::Real;
+    let (bt, body) = choose|bt: ExprSpec, body: ExprSpec| #[trigger]
+        proj_step_marker(bt, body) && deq_p(dty, denv, d, r, cur, ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), h)
+        && (if np > 0 {
+            args.len() > 0 && proj_field_type(dty, denv, d, r, h, subst_full(body, seq![args[0]], 0), args.drop_first(), (np - 1) as nat, fld, remaining, s, t)
+        } else if remaining > 0 {
+            proj_field_type(dty, denv, d, r, h, subst_full(body, seq![ExprSpec::Proj(fld, Box::new(s))], 0), args, 0, (fld + 1) as usize, (remaining - 1) as nat, s, t)
+        } else {
+            t == bt
+        });
+    let p = ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body));
+    let hc = choose|hh: nat| #[trigger] deq_p(dty, denv, d, r, cur2, cur, hh);
+    let m = h + hc;
+    deq_p_mono(dty, denv, d, r, cur2, cur, hc, m);
+    deq_p_mono(dty, denv, d, r, cur, p, h, m);
+    deq_p_trans(dty, denv, d, r, cur2, cur, p, m);
+    if np > 0 {
+        let nx = subst_full(body, seq![args[0]], 0);
+        deq_p_refl(dty, denv, d, r, nx, 0);
+        tconv_of(dty, denv, d, nx, nx, 0);
+        let hr = proj_walk_replace(dty, denv, d, h, nx, nx, args.drop_first(), (np - 1) as nat, fld, remaining, s, s2, t);
+        let big = m + hr;
+        deq_p_mono(dty, denv, d, r, cur2, p, m, big);
+        proj_field_type_mono(dty, denv, d, r, hr, big, nx, args.drop_first(), (np - 1) as nat, fld, remaining, s2, t);
+        assert(proj_step_marker(bt, body));
+        big
+    } else if remaining > 0 {
+        let q = ExprSpec::Proj(fld, Box::new(s));
+        let q2 = ExprSpec::Proj(fld, Box::new(s2));
+        deq_p_any_proj_congr(dty, denv, d, r, fld, s2, s);
+        tconv_subst(dty, denv, d, body, q2, q, 0);
+        let nx = subst_full(body, seq![q], 0);
+        let nx2 = subst_full(body, seq![q2], 0);
+        let hr = proj_walk_replace(dty, denv, d, h, nx, nx2, args, 0, (fld + 1) as usize, (remaining - 1) as nat, s, s2, t);
+        let big = m + hr;
+        deq_p_mono(dty, denv, d, r, cur2, p, m, big);
+        proj_field_type_mono(dty, denv, d, r, hr, big, nx2, args, 0, (fld + 1) as usize, (remaining - 1) as nat, s2, t);
+        assert(proj_step_marker(bt, body));
+        big
+    } else {
+        assert(proj_step_marker(bt, body));
+        m
+    }
+}
+
+/// REPLACING A PROJECTION'S STRUCTURE by a convertible term whose types
+/// convert to the structure's keeps the projection typed, at the same type.
+pub proof fn proj_replace(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    s2: ExprSpec,
+    t: ExprSpec,
+)
+    requires
+        typed(dty, denv, d, ExprSpec::Proj(idx, Box::new(s)), t),
+        tconv(dty, denv, d, s2, s),
+        forall|t0: ExprSpec| #[trigger] typed(dty, denv, d, s, t0)
+            ==> exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, s2, t2) && tconv(dty, denv, d, t2, t0),
+    ensures
+        typed(dty, denv, d, ExprSpec::Proj(idx, Box::new(s2)), t),
+{
+    let r = IoMode::Real;
+    let n = choose|n: nat| #[trigger] types_to(dty, denv, d, r, ExprSpec::Proj(idx, Box::new(s)), t, n);
+    let (f2, sty, ind, ls, args, cid, np, cty) = choose|f2: nat, sty: ExprSpec, ind_id: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, ctor_id: u64, np: u16, ctor_ty0: ExprSpec|
+        #[trigger] proj_marker(f2, sty, ind_id, ls, args, ctor_id, np, ctor_ty0) && f2 < n
+        && types_to(dty, denv, d, r, s, sty, f2)
+        && deq_p(dty, denv, d, r, sty, spine_app(ExprSpec::Const(ind_id, ls), args), f2)
+        && denv.struct_ctor(ind_id) == Some(ctor_id) && denv.ctor_num_params(ctor_id) == Some(np)
+        && types_to(dty, denv, d, r, ExprSpec::Const(ctor_id, ls), ctor_ty0, f2) && (np as nat) <= args.len()
+        && proj_field_type(dty, denv, d, r, f2, ctor_ty0, args, np as nat, 0, idx as nat, s, t);
+    assert(typed(dty, denv, d, s, sty));
+    let sty2 = choose|t2: ExprSpec| #[trigger] typed(dty, denv, d, s2, t2) && tconv(dty, denv, d, t2, sty);
+    let st = spine_app(ExprSpec::Const(ind, ls), args);
+    tconv_of(dty, denv, d, sty, st, f2);
+    tconv_trans(dty, denv, d, sty2, sty, st);
+    let h1 = choose|hh: nat| #[trigger] deq_p(dty, denv, d, r, sty2, st, hh);
+    let g2 = choose|g: nat| #[trigger] types_to(dty, denv, d, r, s2, sty2, g);
+    deq_p_refl(dty, denv, d, r, cty, 0);
+    tconv_of(dty, denv, d, cty, cty, 0);
+    let h2 = proj_walk_replace(dty, denv, d, f2, cty, cty, args, np as nat, 0, idx as nat, s, s2, t);
+    let m = max3(max3(h1, h2, g2), f2, 0);
+    deq_p_mono(dty, denv, d, r, sty2, st, h1, m);
+    types_to_mono(dty, denv, d, r, s2, sty2, g2, m);
+    types_to_mono(dty, denv, d, r, ExprSpec::Const(cid, ls), cty, f2, m);
+    proj_field_type_mono(dty, denv, d, r, h2, m, cty, args, np as nat, 0, idx as nat, s2, t);
+    assert(proj_marker(m, sty2, ind, ls, args, cid, np, cty));
+    assert(types_to(dty, denv, d, r, ExprSpec::Proj(idx, Box::new(s2)), t, m + 1));
 }
 
 } // verus!

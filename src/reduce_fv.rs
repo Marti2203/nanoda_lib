@@ -375,4 +375,27 @@ pub proof fn quot_result_fv(export: nat, sp: ExprSpec, i: nat)
     spine_app_fv(ExprSpec::App(Box::new(args[3int]), Box::new(x)), rest, i);
 }
 
+
+/// The quotient eliminator's result of a closed term is closed.
+pub proof fn quot_result_nlbv(export: nat, sp: ExprSpec)
+    requires
+        quot_ready(export, sp),
+        crate::expr_model::nlbv(sp) <= 0,
+    ensures
+        crate::expr_model::nlbv(quot_result(export, sp)) <= 0,
+{
+    spine_recompose(sp);
+    let args = spine_args(sp);
+    spine_app_nlbv_decompose(spine_head(sp), args);
+    let qi = quot_major_idx(export, sp)->Some_0;
+    let m = args[qi as int];
+    spine_recompose(m);
+    spine_app_nlbv_decompose(spine_head(m), spine_args(m));
+    let rest = args.skip(qi as int + 1);
+    assert forall|k: int| 0 <= k < rest.len() implies crate::expr_model::nlbv(rest[k]) <= 0 by {
+        assert(rest[k] == args[qi + 1 + k]);
+    }
+    spine_app_nlbv(ExprSpec::App(Box::new(args[3int]), Box::new(spine_args(m)[2])), rest);
+}
+
 } // verus!

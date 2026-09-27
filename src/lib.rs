@@ -32,6 +32,7 @@ pub mod name_arena_bridge;
 pub mod name_model;
 pub mod nat_lit_model;
 pub mod parser;
+pub mod proj_reg;
 pub mod pretty_printer;
 pub mod quot;
 pub mod quot_model;
