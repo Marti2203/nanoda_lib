@@ -17,6 +17,7 @@ pub mod e2_cert;
 pub mod e2_lift;
 pub mod env_model;
 pub mod confluence;
+pub mod conv_cr;
 pub mod env_weaken;
 pub mod expr;
 pub mod expr_arena_bridge;
