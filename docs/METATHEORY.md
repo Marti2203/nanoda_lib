@@ -18,6 +18,35 @@ the typing/conversion those leaves consult. So the theorem is: a typed leaf that
 fires under `InferOnly` typing also fires under real typing, on well-typed
 terms.
 
+## `tconv` is degenerate: the hypotheses are false (2026-09-27)
+
+`hyps_refuted.rs` proves `!kh_hyp(dty, env)` for EVERY environment, so
+`export_kh` (and the conditional `kconv ⟹ tconv` theorem) currently hold
+vacuously. `def_eq ⊆ kconv` does not use the hypotheses and is unaffected.
+
+The chain: in the local context `P : Prop, h : P`, the lambdas `λz:P. z`
+and `λz:P. h` are both proofs of `P → P`, so the proof-irrelevance leaf
+relates them. `deq_p_c`'s application congruence checks no typing, so
+`(λz:P. z) X` and `(λz:P. h) X` convert for ANY `X`, and untyped beta
+reduces them to `X` and `h`. So every sort converts with `h`, and
+`Sort 0` with `Sort 1`, against `h_sort_inj`. `hyps_all` quantifies over
+every local context, so it fails everywhere; the same chain breaks the
+Pi-injectivity hypotheses. Endpoint typing premises would not help: `Sort 0`
+and `Sort 1` are well typed; the chain's middle terms are not.
+
+The same finding closes option B in its stated form: `tconv` relates
+every pair of terms in such a context, so no semantics (and no proof of
+injectivity) can be invariant under it. `dom_untyped.rs` shows the domain
+model is not invariant under untyped beta either: `(λx:Prop. x) (Sort 1)`
+and `Sort 1` convert, but only the second denotes `U`.
+
+The kernel's real conversion only ever relates well-typed terms: whnf
+keeps well-typed terms well typed, congruence descends into subterms of
+well-typed terms, and the typed leaves fire only between typed terms. The
+target relation has to say so -- a typed judgment (`ti_syntax`'s shape), or
+`deq_p` chains whose every term is really typed in its context -- and the
+hypotheses restated over it.
+
 ## Status and what is missing (2026-09-27, branch `metatheory`)
 
 **Proven.**

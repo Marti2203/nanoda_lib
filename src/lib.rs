@@ -27,6 +27,8 @@ pub mod dom_rel_per;
 pub mod dom_rel_stab;
 pub mod dom_sound;
 pub mod dom_typing;
+pub mod hyps_refuted;
+pub mod dom_untyped;
 pub mod e2_cert;
 pub mod e2_lift;
 pub mod env_model;
