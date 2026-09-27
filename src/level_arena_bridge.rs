@@ -295,25 +295,66 @@ pub proof fn level_ptr_eq_iff_same_param<'t, 'p, 'a>(
 
 /// What a `LevelsPtr` (a hash-consed LIST of levels -- e.g. a
 /// declaration's `uparams`, or a `Const`'s level arguments) denotes: the
-/// sequence of models its elements denote, in order. Same trust boundary
-/// as `to_model` itself, just lifted to lists.
-pub uninterp spec fn to_model_of_levels<'a>(ptr: LevelsPtr<'a>) -> Seq<LevelSpec>;
+/// models of the elements of the list its arena's history holds at its
+/// index, in order (`arena_history.rs`, as `to_model`); empty past the end.
+pub closed spec fn to_model_of_levels<'a>(ptr: LevelsPtr<'a>) -> Seq<LevelSpec> {
+    let h = crate::arena_history::arena_hist::<std::sync::Arc<[LevelPtr<'a>]>>(crate::util::arena_of(ptr));
+    let i = ptr_index(ptr);
+    if i >= h.len() {
+        Seq::empty()
+    } else {
+        Seq::new(h[i as int]@.len(), |j: int| to_model(h[i as int]@[j]))
+    }
+}
 
-/// The `Arc`-returning reader the kernel's own `subst_level` uses -- same
-/// contract as the `Vec` wrapper below, which exists for the mirror. This one
-/// is what lets the kernel function be verified in place rather than around.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::read_levels ](
-    ctx: &TcCtx<'t, 'p>,
-    p: LevelsPtr<'t>,
-) -> (result: std::sync::Arc<[LevelPtr<'t>]>) where 'p: 't
-    requires
-        crate::util_model::owns(*ctx, p),
+pub proof fn to_model_of_levels_at<'a>(p: LevelsPtr<'a>)
     ensures
-        crate::util_model::owns_all(*ctx, result@),
-        result@.len() == to_model_of_levels(p).len(),
-        forall|i: int|
-            0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i],
-;
+        ({
+            let h = crate::arena_history::arena_hist::<std::sync::Arc<[LevelPtr<'a>]>>(crate::util::arena_of(p));
+            ptr_index(p) < h.len() ==> to_model_of_levels(p).len() == h[ptr_index(p) as int]@.len()
+                && forall|j: int| 0 <= j < h[ptr_index(p) as int]@.len()
+                    ==> #[trigger] to_model_of_levels(p)[j] == to_model(h[ptr_index(p) as int]@[j])
+        }),
+{
+}
+
+/// THE HASH-TABLE KEY MODEL FOR LEVEL LISTS: `Arc<[LevelPtr]>`'s `==`
+/// compares the elements in order by their `==` (`raw`), and its `Hash`
+/// hashes them in order. So `==` is faithful on a set of lists in which
+/// runtime-equal means equal.
+#[verifier::external_body]
+pub proof fn level_list_keys_obey_model<'a>(s: Set<std::sync::Arc<[LevelPtr<'a>]>>)
+    requires
+        forall|a: std::sync::Arc<[LevelPtr<'a>]>, b: std::sync::Arc<[LevelPtr<'a>]>|
+            #![trigger s.contains(a), s.contains(b)]
+            s.contains(a) && s.contains(b) && a@.len() == b@.len()
+                && (forall|j: int| 0 <= j < a@.len() ==> crate::util_model::ptr_raw(#[trigger] a@[j]) == crate::util_model::ptr_raw(b@[j]))
+                ==> a == b,
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<std::sync::Arc<[LevelPtr<'a>]>>(s),
+{
+}
+
+/// Level lists whose elements belong to one arena pair obey the key model.
+pub proof fn owned_level_lists_keys_obey_model<'a>(ids: (nat, nat), s: Set<std::sync::Arc<[LevelPtr<'a>]>>)
+    requires
+        forall|l: std::sync::Arc<[LevelPtr<'a>]>, j: int| #[trigger] s.contains(l) && 0 <= j < l@.len()
+            ==> crate::util_model::owns_in(ids, #[trigger] l@[j]),
+    ensures
+        vstd::std_specs::hash::keys_obey_model::<std::sync::Arc<[LevelPtr<'a>]>>(s),
+{
+    assert forall|a: std::sync::Arc<[LevelPtr<'a>]>, b: std::sync::Arc<[LevelPtr<'a>]>|
+        #![trigger s.contains(a), s.contains(b)]
+        s.contains(a) && s.contains(b) && a@.len() == b@.len()
+            && (forall|j: int| 0 <= j < a@.len() ==> crate::util_model::ptr_raw(#[trigger] a@[j]) == crate::util_model::ptr_raw(b@[j]))
+            implies a == b by {
+        assert forall|j: int| 0 <= j < a@.len() implies a@[j] == b@[j] by {
+            crate::util_model::owned_raw_eq_in(ids, a@[j], b@[j]);
+        }
+        assert(a@ =~= b@);
+    }
+    level_list_keys_obey_model(s);
+}
 
 /// Was an `assume_specification`. The body is a `collect()` over
 /// `iter().copied()`, which `Copied`'s concretely-defined `remaining()` now

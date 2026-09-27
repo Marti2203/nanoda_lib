@@ -478,8 +478,8 @@ pub struct ExportFile<'p> {
 
 impl<'p> ExportFile<'p> {
     /// The name cache's arena is the dag's: the export tier's pointers
-    /// (tagged with the cache's id) index the dag's storage. The parser builds
-    /// both; unverified, so assumed of every export file.
+    /// (tagged with the cache's id) index the dag's storage. Established by
+    /// `from_parts`, which the verified export builder calls.
     #[verifier::type_invariant]
     spec fn inv(self) -> bool {
         &&& self.name_cache.arena_id() == self.dag.id()
@@ -519,6 +519,35 @@ impl<'p> ExportFile<'p> {
 }
 
 /// `arena`'s definition, for proofs inside the crate.
+impl<'p> ExportFile<'p> {
+    /// An export file from its parts (`export_builder::ExportBuilder::finish`).
+    pub(crate) fn from_parts(
+        dag: LeanDag<'p>,
+        declars: DeclarMap<'p>,
+        notations: NotationMap<'p>,
+        name_cache: NameCache<'p>,
+        config: Config,
+        mutual_block_sizes: FxHashMap<NamePtr<'p>, (usize, usize)>,
+        ind_name_to_recursor_names: FxHashMap<NamePtr<'p>, FxHashSet<NamePtr<'p>>>,
+    ) -> (result: Self)
+        requires
+            name_cache.arena_id() == dag.id(),
+            !dag.is_tc(),
+            dag.partner() == dag.id(),
+            crate::indexmap_model::iset_keys(&dag.names).len() >= 1,
+            crate::indexmap_model::iset_keys(&dag.names)[0] == Name::Anon,
+            crate::indexmap_model::iset_keys(&dag.levels).len() >= 1,
+            crate::indexmap_model::iset_keys(&dag.levels)[0] == Level::Zero,
+        ensures
+            result.arena() == dag.id(),
+            result.declars == declars,
+            result.mutual_block_sizes == mutual_block_sizes,
+            result.ind_name_to_recursor_names == ind_name_to_recursor_names,
+    {
+        ExportFile { dag, declars, notations, name_cache, config, mutual_block_sizes, ind_name_to_recursor_names }
+    }
+}
+
 pub(crate) broadcast proof fn lemma_export_arena<'p>(ef: ExportFile<'p>)
     ensures
         #[trigger] ef.arena() == ef.name_cache.arena_id(),
@@ -777,6 +806,143 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let r = self.export_file.dag.anonymous();
         proof { crate::name_arena_bridge::to_model_name_at(r); }
         r
+    }
+
+    /// Verified in place, body unchanged: the list the pointer's dag stores at
+    /// its index, which is what the pointer denotes (`to_model_of_levels`).
+    pub fn read_levels(&self, p: LevelsPtr<'t>) -> (result: Arc<[LevelPtr<'t>]>)
+        requires
+            crate::util_model::owns(*self, p),
+        ensures
+            crate::util_model::owns_all(*self, result@),
+            result@.len() == crate::level_arena_bridge::to_model_of_levels(p).len(),
+            forall|i: int|
+                0 <= i < result@.len() ==> #[trigger] crate::level_arena_bridge::to_model(result@[i]) == crate::level_arena_bridge::to_model_of_levels(p)[i],
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            crate::util_model::ptr_is_tc_agree(p);
+            crate::level_arena_bridge::to_model_of_levels_at(p);
+        }
+        let r = match p.dag_marker() {
+            DagMarker::ExportFile => self.export_file.dag.uparams.get_index(p.idx()).cloned().unwrap(),
+            DagMarker::TcCtx => self.dag.uparams.get_index(p.idx()).cloned().unwrap(),
+        };
+        proof {
+            let ids = crate::util_model::arena_ids(*self);
+            let i = crate::name_arena_bridge::ptr_index(p) as int;
+            if crate::util_model::ptr_is_tc(p) {
+                let k = crate::indexmap_model::iset_keys(&self.dag.uparams);
+                assert(k[i] == crate::arena_history::arena_hist::<Arc<[LevelPtr<'t>]>>(self.dag.id())[i]);
+                assert forall|j: int| 0 <= j < r@.len() implies crate::util_model::owns_in(ids, #[trigger] r@[j]) by {
+                    assert(crate::util_model::owns_in((self.dag.id(), self.dag.partner()), k[i]@[j]));
+                }
+            } else {
+                let k = crate::indexmap_model::iset_keys(&self.export_file.dag.uparams);
+                assert(k[i] == crate::arena_history::arena_hist::<Arc<[LevelPtr<'t>]>>(self.export_file.dag.id())[i]);
+                assert forall|j: int| 0 <= j < r@.len() implies crate::util_model::owns_in(ids, #[trigger] r@[j]) by {
+                    assert(crate::util_model::owns_in((self.export_file.dag.id(), self.export_file.dag.partner()), k[i]@[j]));
+                    assert(!crate::util_model::ptr_is_tc(k[i]@[j]));
+                }
+            }
+        }
+        r
+    }
+
+    /// Store a `BigUint` (a bignum), getting back a pointer to the allocated item. If the item was
+    /// already stored, forego the allocation and return a pointer to the previously inserted
+    /// element. Checks the longer-lived storage first.
+    ///
+    /// Used for Nat literals. Verified: the pointer denotes the number
+    /// (`bignum_ptr_value`). VERUS-REWRITE(arena-tokens): the insertion is
+    /// `insert_export_bignum` (the set taken out and put back, with its token).
+    pub(crate) fn alloc_bignum(&mut self, n: BigUint) -> (result: Option<BigUintPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
+        ensures
+            result matches Some(r) ==> crate::util_model::owns(*final(self), r),
+            match result {
+                Some(p) => crate::expr_arena_bridge::bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
+                None => true,
+            },
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            crate::util_model::biguint_obeys_key_model();
+        }
+        let found = match self.export_file.dag.bignums.as_ref() {
+            Some(eb) => {
+                proof {
+                    vstd::std_specs::hash::axiom_obeys_key_model_borrowed_keys(crate::indexmap_model::iset_keys(eb).to_set(), &n);
+                }
+                match eb.get_index_of(&n) {
+                    Some(idx) => {
+                        proof {
+                            let h = crate::arena_history::arena_hist::<BigUint>(self.export_file.dag.id());
+                            assert(crate::indexmap_model::iset_keys(eb)[idx as int] == h[idx as int]);
+                        }
+                        Some(idx)
+                    },
+                    None => None,
+                }
+            },
+            None => return None,
+        };
+        match found {
+            Some(idx) => {
+                let r = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()));
+                proof {
+                    crate::expr_arena_bridge::bignum_ptr_value_at(r);
+                }
+                Some(r)
+            },
+            None => {
+                let i = self.dag.insert_export_bignum(n)?;
+                Some(Ptr::from_in(DagMarker::TcCtx, i, Ghost(self.dag.id())))
+            },
+        }
+    }
+
+    /// Store a string (a `CowStr`), getting back a pointer to the allocated item. If the item was
+    /// already stored, forego the allocation and return a pointer to the previously inserted
+    /// element. Checks the longer-lived storage first.
+    ///
+    /// Verified: a string has no model beyond its opaque `string_id`, so the
+    /// claim is only that the pointer belongs to the context.
+    /// VERUS-REWRITE(arena-tokens): as in `alloc_name`.
+    pub(crate) fn alloc_string(&mut self, s: CowStr<'t>) -> (result: StringPtr<'t>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            crate::util_model::cowstr_obeys_key_model();
+            vstd::std_specs::hash::axiom_obeys_key_model_borrowed_keys(crate::indexmap_model::iset_keys(&self.export_file.dag.strings).to_set(), &s);
+        }
+        if let Some(idx) = self.export_file.dag.strings.get_index_of(&s) {
+            Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()))
+        } else {
+            let (idx, _) = self.dag.insert_export_string(s);
+            Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()))
+        }
     }
 
     /// Verified in place, body unchanged: the node the pointer's dag stores at
@@ -1185,37 +1351,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    pub fn read_levels(&self, p: LevelsPtr<'t>) -> Arc<[LevelPtr<'t>]> {
-        match p.dag_marker() {
-            DagMarker::ExportFile => self.export_file.dag.uparams.get_index(p.idx()).cloned().unwrap(),
-            DagMarker::TcCtx => self.dag.uparams.get_index(p.idx()).cloned().unwrap(),
-        }
-    }
-
-    /// Store a string (a `CowStr`), getting back a pointer to the allocated item. If the item was
-    /// already stored, forego the allocation and return a pointer to the previously inserted
-    /// element. Checks the longer-lived storage first.
-    pub(crate) fn alloc_string(&mut self, s: CowStr<'t>) -> StringPtr<'t> {
-        if let Some(idx) = self.export_file.dag.strings.get_index_of(&s) {
-            Ptr::from(DagMarker::ExportFile, idx)
-        } else {
-            Ptr::from(DagMarker::TcCtx, self.dag.strings.insert_full(s).0)
-        }
-    }
-
     /// Store a `BigUint` (a bignum), getting back a pointer to the allocated item. If the item was
     /// already stored, forego the allocation and return a pointer to the previously inserted
     /// element. Checks the longer-lived storage first.
     ///
     /// Used for Nat literals.
-    pub(crate) fn alloc_bignum(&mut self, n: BigUint) -> Option<BigUintPtr<'t>> {
-        if let Some(idx) = self.export_file.dag.bignums.as_ref()?.get_index_of(&n) {
-            Some(Ptr::from(DagMarker::ExportFile, idx))
-        } else {
-            Some(Ptr::from(DagMarker::TcCtx, self.dag.bignums.as_mut()?.insert_full(n).0))
-        }
-    }
-
     /// Store a sequence of `Level` items, getting back a pointer to the allocated sequence.
     /// If the sequence was already stored, return a pointer to the previously inserted sequence.
     /// Checks the longer-lived storage first.
@@ -1339,6 +1479,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Shortcut to make an `Expr::NatLit` directly from a `BigUint`, rather than
     /// going `alloc_bignum` and `mk_nat_lit`
     pub fn mk_nat_lit_quick(&mut self, n: BigUint) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::ctx_ok(*old(self)),
         ensures
             result matches Some(r) ==> crate::util_model::owns(*final(self), r),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
@@ -1361,8 +1503,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 ///
 /// The ghost `toks` field (erased at run time) counts, per set, the positions pinned to the arena's history
 /// (`arena_history.rs`); the type invariant says each set is exactly that
-/// pinned prefix. Values built by unverified code (`LeanDag::new`, the
-/// parser) are assumed to satisfy it -- the boundary the parser already is.
+/// pinned prefix. `LeanDag::new` (unverified) is assumed to build an empty
+/// dag satisfying it; every insertion after that is verified, the export
+/// file's included (`export_builder.rs`).
 pub struct LeanDag<'a> {
     pub names: UniqueIndexSet<Name<'a>>,
     pub levels: UniqueIndexSet<Level<'a>>,
@@ -1408,6 +1551,10 @@ impl<'a> LeanDag<'a> {
             ==> crate::level_arena_bridge::level_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.levels)[i], i as nat, t.is_tc, t.names.id(), t.partner)
         &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.exprs).len()
             ==> crate::expr_arena_bridge::expr_node_ok(#[trigger] crate::indexmap_model::iset_keys(&self.exprs)[i], i as nat, t.is_tc, t.names.id(), t.partner)
+        &&& forall|i: int, j: int| 0 <= i < crate::indexmap_model::iset_keys(&self.uparams).len()
+            && 0 <= j < crate::indexmap_model::iset_keys(&self.uparams)[i]@.len()
+            ==> crate::util_model::owns_in((t.names.id(), t.partner), #[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i]@[j])
+                && (!t.is_tc ==> !crate::util_model::ptr_is_tc(crate::indexmap_model::iset_keys(&self.uparams)[i]@[j]))
     }
 
     /// The dag's arena.
@@ -1464,6 +1611,376 @@ impl<'a> LeanDag<'a> {
     {
         debug_assert_eq!(self.levels.get_index(0).copied().unwrap(), Level::Zero);
         Ptr::from_in(DagMarker::ExportFile, 0, Ghost(self.id()))
+    }
+
+    /// An export file's dag, holding only the anonymous name and level zero
+    /// at position 0 (the export format back-references them undeclared).
+    pub(crate) fn new_export(config: &Config) -> (result: Self)
+        ensures
+            !result.is_tc(),
+            result.partner() == result.id(),
+            crate::indexmap_model::iset_keys(&result.names) == seq![Name::Anon],
+            crate::indexmap_model::iset_keys(&result.levels) == seq![Level::Zero],
+            crate::indexmap_model::iset_keys(&result.exprs).len() == 0,
+            crate::indexmap_model::iset_keys(&result.uparams).len() == 0,
+            crate::indexmap_model::iset_keys(&result.strings).len() == 0,
+    {
+        let mut dag = LeanDag::new(config);
+        proof {
+            use_type_invariant(&dag);
+            dag.toks.borrow_mut().is_tc = false;
+            dag.toks.borrow_mut().partner = dag.toks@.names.id();
+        }
+        let ghost ids = (dag.id(), dag.id());
+        proof {
+            use_type_invariant(&dag);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            assert(crate::indexmap_model::iset_keys(&dag.names).to_set().insert(Name::Anon) =~= set![Name::Anon]);
+            crate::name_arena_bridge::owned_names_keys_obey_model(ids, set![Name::Anon]);
+        }
+        let _ = crate::arena_history::arena_insert(&mut dag.names, Tracked(&mut dag.toks.borrow_mut().names), Name::Anon);
+        proof {
+            use_type_invariant(&dag);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            assert(crate::indexmap_model::iset_keys(&dag.levels).to_set().insert(Level::Zero) =~= set![Level::Zero]);
+            crate::level_arena_bridge::owned_levels_keys_obey_model(ids, set![Level::Zero]);
+        }
+        let _ = crate::arena_history::arena_insert(&mut dag.levels, Tracked(&mut dag.toks.borrow_mut().levels), Level::Zero);
+        proof {
+            use_type_invariant(&dag);
+        }
+        dag
+    }
+
+    /// Store a name in an export file's dag.
+    pub(crate) fn insert_export_name(&mut self, n: Name<'a>) -> (result: (usize, bool))
+        requires
+            !old(self).is_tc(),
+            old(self).partner() == old(self).id(),
+            crate::name_arena_bridge::name_node_ok(n, crate::indexmap_model::iset_keys(&old(self).names).len(), false, old(self).id(), old(self).id()),
+        ensures
+            final(self).id() == old(self).id(),
+            final(self).is_tc() == old(self).is_tc(),
+            final(self).partner() == old(self).partner(),
+            crate::indexmap_model::iset_keys(&final(self).names) == if crate::indexmap_model::iset_keys(&old(self).names).contains(n) {
+                crate::indexmap_model::iset_keys(&old(self).names)
+            } else {
+                crate::indexmap_model::iset_keys(&old(self).names).push(n)
+            },
+            result.0 < crate::indexmap_model::iset_keys(&final(self).names).len(),
+            crate::indexmap_model::iset_keys(&final(self).names)[result.0 as int] == n,
+            crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
+            crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),
+            crate::indexmap_model::iset_keys(&final(self).uparams) == crate::indexmap_model::iset_keys(&old(self).uparams),
+            crate::indexmap_model::iset_keys(&final(self).strings) == crate::indexmap_model::iset_keys(&old(self).strings),
+        no_unwind
+    {
+        proof {
+            use_type_invariant(&*self);
+        }
+        let ghost ids = (self.id(), self.id());
+        let ghost tk = crate::indexmap_model::iset_keys(&self.names);
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            assert forall|m: Name<'a>| #[trigger] tk.to_set().insert(n).contains(m)
+                implies crate::name_arena_bridge::name_parts_owned_in(ids, m) by {
+                if m != n {
+                    let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                    assert(crate::name_arena_bridge::name_node_ok(tk[i], i as nat, false, self.id(), self.partner()));
+                }
+            }
+            crate::name_arena_bridge::owned_names_keys_obey_model(ids, tk.to_set().insert(n));
+        }
+        let r = crate::arena_history::arena_insert(&mut self.names, Tracked(&mut self.toks.borrow_mut().names), n);
+        proof {
+            use_type_invariant(&*self);
+        }
+        r
+    }
+
+    /// Store a string (strings carry no pointers, so any dag).
+    pub(crate) fn insert_export_string(&mut self, t: CowStr<'a>) -> (result: (usize, bool))
+        ensures
+            final(self).id() == old(self).id(),
+            final(self).is_tc() == old(self).is_tc(),
+            final(self).partner() == old(self).partner(),
+            result.0 < crate::indexmap_model::iset_keys(&final(self).strings).len(),
+            crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
+            crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
+            crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),
+            crate::indexmap_model::iset_keys(&final(self).uparams) == crate::indexmap_model::iset_keys(&old(self).uparams),
+        no_unwind
+    {
+        proof {
+            use_type_invariant(&*self);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            crate::util_model::cowstr_obeys_key_model();
+            vstd::std_specs::hash::axiom_obeys_key_model_keys(crate::indexmap_model::iset_keys(&self.strings).to_set().insert(t));
+        }
+        let r = crate::arena_history::arena_insert(&mut self.strings, Tracked(&mut self.toks.borrow_mut().strings), t);
+        proof {
+            use_type_invariant(&*self);
+        }
+        r
+    }
+
+    /// Store a number, in a dag that has the nat-literal arena
+    /// (`nat_extension`); numbers carry no pointers, so any dag.
+    pub(crate) fn insert_export_bignum(&mut self, n: BigUint) -> (result: Option<usize>)
+        ensures
+            result matches Some(i) ==> forall|p: BigUintPtr<'a>| arena_of(p) == final(self).id() && crate::name_arena_bridge::ptr_index(p) == i
+                ==> #[trigger] crate::expr_arena_bridge::bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
+            final(self).id() == old(self).id(),
+            final(self).is_tc() == old(self).is_tc(),
+            final(self).partner() == old(self).partner(),
+            crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
+            crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
+            crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),
+            crate::indexmap_model::iset_keys(&final(self).uparams) == crate::indexmap_model::iset_keys(&old(self).uparams),
+            crate::indexmap_model::iset_keys(&final(self).strings) == crate::indexmap_model::iset_keys(&old(self).strings),
+        no_unwind
+    {
+        proof {
+            use_type_invariant(&*self);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            crate::util_model::biguint_obeys_key_model();
+        }
+        match self.bignums.take() {
+            Some(mut b) => {
+                proof {
+                    vstd::std_specs::hash::axiom_obeys_key_model_keys(crate::indexmap_model::iset_keys(&b).to_set().insert(n));
+                }
+                let ghost nv = n;
+                let r = crate::arena_history::arena_insert(&mut b, Tracked(&mut self.toks.borrow_mut().bignums), n);
+                self.bignums = Some(b);
+                proof {
+                    use_type_invariant(&*self);
+                    let h = crate::arena_history::arena_hist::<BigUint>(self.id());
+                    assert(crate::indexmap_model::iset_keys(&b)[r.0 as int] == h[r.0 as int]);
+                    assert forall|p: BigUintPtr<'a>| arena_of(p) == self.id() && crate::name_arena_bridge::ptr_index(p) == r.0
+                        implies #[trigger] crate::expr_arena_bridge::bignum_ptr_value(p) == crate::nat_lit_model::to_nat(nv) by {
+                        crate::expr_arena_bridge::bignum_ptr_value_at(p);
+                    }
+                }
+                Some(r.0)
+            },
+            None => None,
+        }
+    }
+
+    /// The stored node of an export expression, and what its cached flags say
+    /// of its denotation.
+    pub(crate) fn read_export_expr(&self, p: ExprPtr<'a>) -> (result: Expr<'a>)
+        requires
+            !self.is_tc(),
+            self.partner() == self.id(),
+            arena_of(p) == self.id(),
+            !crate::util_model::ptr_is_tc(p),
+            crate::name_arena_bridge::ptr_index(p) < crate::indexmap_model::iset_keys(&self.exprs).len(),
+        ensures
+            crate::expr_arena_bridge::node_cache_ok(result),
+            result.num_loose_bvars_spec() == crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(p)),
+            result.has_fvars_spec() == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(p)),
+    {
+        proof {
+            use_type_invariant(self);
+            crate::util_model::ptr_is_tc_agree(p);
+            crate::expr_arena_bridge::to_model_at(p);
+            let i = crate::name_arena_bridge::ptr_index(p) as int;
+            assert(crate::indexmap_model::iset_keys(&self.exprs)[i] == crate::arena_history::arena_hist::<Expr<'a>>(self.id())[i]);
+        }
+        self.exprs.get_index(p.idx()).copied().unwrap()
+    }
+
+    /// Store an expression in an export file's dag.
+    pub(crate) fn insert_export_expr(&mut self, e: Expr<'a>) -> (result: (usize, bool))
+        requires
+            !old(self).is_tc(),
+            old(self).partner() == old(self).id(),
+            crate::expr_arena_bridge::expr_node_ok(e, crate::indexmap_model::iset_keys(&old(self).exprs).len(), false, old(self).id(), old(self).id()),
+        ensures
+            final(self).id() == old(self).id(),
+            final(self).is_tc() == old(self).is_tc(),
+            final(self).partner() == old(self).partner(),
+            crate::indexmap_model::iset_keys(&final(self).exprs) == if crate::indexmap_model::iset_keys(&old(self).exprs).contains(e) {
+                crate::indexmap_model::iset_keys(&old(self).exprs)
+            } else {
+                crate::indexmap_model::iset_keys(&old(self).exprs).push(e)
+            },
+            result.0 < crate::indexmap_model::iset_keys(&final(self).exprs).len(),
+            crate::indexmap_model::iset_keys(&final(self).exprs)[result.0 as int] == e,
+            crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
+            crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
+            crate::indexmap_model::iset_keys(&final(self).uparams) == crate::indexmap_model::iset_keys(&old(self).uparams),
+            crate::indexmap_model::iset_keys(&final(self).strings) == crate::indexmap_model::iset_keys(&old(self).strings),
+        no_unwind
+    {
+        proof {
+            use_type_invariant(&*self);
+        }
+        let ghost ids = (self.id(), self.id());
+        let ghost tk = crate::indexmap_model::iset_keys(&self.exprs);
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            assert forall|m: Expr<'a>| #[trigger] tk.to_set().insert(e).contains(m)
+                implies crate::expr_arena_bridge::expr_parts_owned_in(ids, m) by {
+                if m != e {
+                    let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                    assert(crate::expr_arena_bridge::expr_node_ok(tk[i], i as nat, false, self.id(), self.partner()));
+                }
+            }
+            crate::expr_arena_bridge::owned_exprs_keys_obey_model(ids, tk.to_set().insert(e));
+        }
+        let r = crate::arena_history::arena_insert(&mut self.exprs, Tracked(&mut self.toks.borrow_mut().exprs), e);
+        proof {
+            use_type_invariant(&*self);
+        }
+        r
+    }
+
+    /// Where an export file's dag stores `l`, if it does.
+    pub(crate) fn find_export_level(&self, l: &Level<'a>) -> (result: Option<usize>)
+        requires
+            !self.is_tc(),
+            self.partner() == self.id(),
+            crate::level_arena_bridge::level_parts_owned_in((self.id(), self.id()), *l),
+        ensures
+            result matches Some(i) ==> i < crate::indexmap_model::iset_keys(&self.levels).len()
+                && crate::indexmap_model::iset_keys(&self.levels)[i as int] == *l
+                && forall|p: LevelPtr<'a>| arena_of(p) == self.id() && !crate::util_model::ptr_is_tc(p) && crate::name_arena_bridge::ptr_index(p) == i
+                    ==> #[trigger] crate::level_arena_bridge::to_model(p) == crate::level_arena_bridge::to_model_of_level(*l),
+    {
+        proof {
+            use_type_invariant(self);
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            let ids = (self.id(), self.id());
+            let tk = crate::indexmap_model::iset_keys(&self.levels);
+            assert forall|m: Level<'a>| #[trigger] tk.to_set().insert(*l).contains(m)
+                implies crate::level_arena_bridge::level_parts_owned_in(ids, m) by {
+                if m != *l {
+                    let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                    assert(crate::level_arena_bridge::level_node_ok(tk[i], i as nat, false, self.id(), self.partner()));
+                }
+            }
+            crate::level_arena_bridge::owned_levels_keys_obey_model(ids, tk.to_set().insert(*l));
+        }
+        let r = self.levels.get_index_of(l);
+        proof {
+            if let Some(i) = r {
+                let tk = crate::indexmap_model::iset_keys(&self.levels);
+                assert(tk[i as int] == crate::arena_history::arena_hist::<Level<'a>>(self.id())[i as int]);
+                assert(crate::level_arena_bridge::level_node_ok(tk[i as int], i as nat, false, self.id(), self.partner()));
+                assert forall|p: LevelPtr<'a>| arena_of(p) == self.id() && !crate::util_model::ptr_is_tc(p) && crate::name_arena_bridge::ptr_index(p) == i
+                    implies #[trigger] crate::level_arena_bridge::to_model(p) == crate::level_arena_bridge::to_model_of_level(*l) by {
+                    crate::level_arena_bridge::to_model_at(p);
+                }
+            }
+        }
+        r
+    }
+
+    /// Store a level list in an export file's dag.
+    pub(crate) fn insert_export_levels(&mut self, a: Arc<[LevelPtr<'a>]>) -> (result: usize)
+        requires
+            !old(self).is_tc(),
+            old(self).partner() == old(self).id(),
+            forall|j: int| 0 <= j < a@.len() ==> crate::util_model::export_tagged(old(self).id(), #[trigger] a@[j]),
+        ensures
+            final(self).id() == old(self).id(),
+            final(self).is_tc() == old(self).is_tc(),
+            final(self).partner() == old(self).partner(),
+            forall|p: LevelsPtr<'a>| arena_of(p) == final(self).id() && crate::name_arena_bridge::ptr_index(p) == result
+                ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(p).len() == a@.len()
+                    && forall|j: int| 0 <= j < a@.len() ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(p)[j] == crate::level_arena_bridge::to_model(a@[j]),
+            crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
+            crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
+            crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),
+            crate::indexmap_model::iset_keys(&final(self).strings) == crate::indexmap_model::iset_keys(&old(self).strings),
+        no_unwind
+    {
+        proof {
+            use_type_invariant(&*self);
+        }
+        let ghost ids = (self.id(), self.id());
+        let ghost lv = a@;
+        let ghost tk = crate::indexmap_model::iset_keys(&self.uparams);
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            assert forall|l: Arc<[LevelPtr<'a>]>, j: int| #[trigger] tk.to_set().insert(a).contains(l) && 0 <= j < l@.len()
+                implies crate::util_model::owns_in(ids, #[trigger] l@[j]) by {
+                if l != a {
+                    let i = choose|i: int| 0 <= i < tk.len() && tk[i] == l;
+                    assert(crate::util_model::owns_in((self.id(), self.partner()), tk[i]@[j]));
+                }
+            }
+            crate::level_arena_bridge::owned_level_lists_keys_obey_model(ids, tk.to_set().insert(a));
+        }
+        let r = crate::arena_history::arena_insert(&mut self.uparams, Tracked(&mut self.toks.borrow_mut().uparams), a);
+        proof {
+            use_type_invariant(&*self);
+            let h = crate::arena_history::arena_hist::<Arc<[LevelPtr<'a>]>>(self.id());
+            assert(crate::indexmap_model::iset_keys(&self.uparams)[r.0 as int] == h[r.0 as int]);
+            assert forall|p: LevelsPtr<'a>| arena_of(p) == self.id() && crate::name_arena_bridge::ptr_index(p) == r.0
+                implies #[trigger] crate::level_arena_bridge::to_model_of_levels(p).len() == lv.len()
+                    && forall|j: int| 0 <= j < lv.len() ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(p)[j] == crate::level_arena_bridge::to_model(lv[j]) by {
+                crate::level_arena_bridge::to_model_of_levels_at(p);
+            }
+        }
+        r.0
+    }
+
+    /// Store a level in an export file's dag.
+    pub(crate) fn insert_export_level(&mut self, l: Level<'a>) -> (result: (usize, bool))
+        requires
+            !old(self).is_tc(),
+            old(self).partner() == old(self).id(),
+            crate::level_arena_bridge::level_node_ok(l, crate::indexmap_model::iset_keys(&old(self).levels).len(), false, old(self).id(), old(self).id()),
+        ensures
+            final(self).id() == old(self).id(),
+            final(self).is_tc() == old(self).is_tc(),
+            final(self).partner() == old(self).partner(),
+            crate::indexmap_model::iset_keys(&final(self).levels) == if crate::indexmap_model::iset_keys(&old(self).levels).contains(l) {
+                crate::indexmap_model::iset_keys(&old(self).levels)
+            } else {
+                crate::indexmap_model::iset_keys(&old(self).levels).push(l)
+            },
+            result.0 < crate::indexmap_model::iset_keys(&final(self).levels).len(),
+            crate::indexmap_model::iset_keys(&final(self).levels)[result.0 as int] == l,
+            crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
+            crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),
+            crate::indexmap_model::iset_keys(&final(self).uparams) == crate::indexmap_model::iset_keys(&old(self).uparams),
+            crate::indexmap_model::iset_keys(&final(self).strings) == crate::indexmap_model::iset_keys(&old(self).strings),
+        no_unwind
+    {
+        proof {
+            use_type_invariant(&*self);
+        }
+        let ghost ids = (self.id(), self.id());
+        let ghost tk = crate::indexmap_model::iset_keys(&self.levels);
+        proof {
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            assert forall|m: Level<'a>| #[trigger] tk.to_set().insert(l).contains(m)
+                implies crate::level_arena_bridge::level_parts_owned_in(ids, m) by {
+                if m != l {
+                    let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                    assert(crate::level_arena_bridge::level_node_ok(tk[i], i as nat, false, self.id(), self.partner()));
+                }
+            }
+            crate::level_arena_bridge::owned_levels_keys_obey_model(ids, tk.to_set().insert(l));
+        }
+        let r = crate::arena_history::arena_insert(&mut self.levels, Tracked(&mut self.toks.borrow_mut().levels), l);
+        proof {
+            use_type_invariant(&*self);
+        }
+        r
     }
 }
 

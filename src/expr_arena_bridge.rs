@@ -2011,7 +2011,25 @@ pub open spec fn nat_lit_ptr_of<'a>(ptr: ExprPtr<'a>) -> crate::util::BigUintPtr
     }
 }
 
-pub uninterp spec fn bignum_ptr_value<'a>(p: crate::util::BigUintPtr<'a>) -> nat;
+/// The number a nat-literal pointer denotes: the one its arena's history
+/// holds at its index (`arena_history.rs`); zero past the end.
+pub closed spec fn bignum_ptr_value<'a>(p: crate::util::BigUintPtr<'a>) -> nat {
+    let h = crate::arena_history::arena_hist::<num_bigint::BigUint>(crate::util::arena_of(p));
+    if ptr_index(p) < h.len() {
+        crate::nat_lit_model::to_nat(h[ptr_index(p) as int])
+    } else {
+        0
+    }
+}
+
+pub proof fn bignum_ptr_value_at<'a>(p: crate::util::BigUintPtr<'a>)
+    ensures
+        ({
+            let h = crate::arena_history::arena_hist::<num_bigint::BigUint>(crate::util::arena_of(p));
+            ptr_index(p) < h.len() ==> bignum_ptr_value(p) == crate::nat_lit_model::to_nat(h[ptr_index(p) as int])
+        }),
+{
+}
 
 pub open spec fn nat_lit_value<'a>(ptr: ExprPtr<'a>) -> nat {
     bignum_ptr_value(nat_lit_ptr_of(ptr))
@@ -2263,28 +2281,6 @@ pub fn expr_as_proj<'t>(e: &Expr<'t>) -> (result: Option<(NamePtr<'t>, usize, Ex
     }
 }
 
-/// THE storage primitive for bignums: allocation returns a pointer denoting
-/// exactly the value handed in. Hash-consing may return an existing pointer
-/// rather than appending, but either way the stored value IS `n`.
-///
-/// This replaces `mk_nat_lit_quick`'s own axiom. The assumption is the same
-/// size but sits in a better place: a fact about what STORAGE holds, rather
-/// than about what one convenience constructor returns -- and with it both
-/// `mk_nat_lit` and `mk_nat_lit_quick` are proved rather than assumed.
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_bignum ](
-    ctx: &mut TcCtx<'t, 'p>,
-    n: num_bigint::BigUint,
-) -> (result: Option<crate::util::BigUintPtr<'t>>) where 'p: 't
-    ensures
-        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
-        match result {
-            Some(p) => bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
-            None => true,
-        },
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
 
 /// Adapter over the kernel's own `TcCtx::inst`, which is verified in place now
 /// (`expr.rs`). This was a 110-line reimplementation with its own fuel

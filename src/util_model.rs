@@ -95,6 +95,25 @@ pub proof fn build_hasher_default_valid_fx()
 {
 }
 
+/// `Cow<str>`'s `==` compares the text and its `Hash` hashes the text, so
+/// runtime equality is equality: the key model std's `String` would have.
+/// The export file's string arena is keyed by it.
+#[verifier::external_body]
+pub proof fn cowstr_obeys_key_model<'a>()
+    ensures
+        vstd::std_specs::hash::obeys_key_model::<crate::util::CowStr<'a>>(),
+{
+}
+
+/// `BigUint`'s `==` and `Hash` both see the number (its digits normalized),
+/// so runtime equality is equality. The nat-literal arena is keyed by it.
+#[verifier::external_body]
+pub proof fn biguint_obeys_key_model()
+    ensures
+        vstd::std_specs::hash::obeys_key_model::<num_bigint::BigUint>(),
+{
+}
+
 #[verifier::external_body]
 pub proof fn build_hasher_default_valid_unique()
     ensures
@@ -116,6 +135,15 @@ pub proof fn build_hasher_default_valid_unique()
 pub assume_specification<'a>[ crate::util::LeanDag::<'a>::new ](config: &crate::util::Config) -> (result: crate::util::LeanDag<'a>)
     ensures
         result.fresh(),
+;
+
+/// The name cache is the export file's: its arena tag is the dag's id. Its
+/// slots (which names are `Nat.succ`, `Quot.mk`, ...) are found by their
+/// text, which the model does not carry; that identification is
+/// `NameCache`'s type invariant, assumed of this unverified constructor.
+pub assume_specification<'a>[ crate::util::LeanDag::<'a>::mk_name_cache ](dag: &crate::util::LeanDag<'a>) -> (result: crate::util::NameCache<'a>)
+    ensures
+        result.arena_id() == dag.id(),
 ;
 
 /// Pointers owned by one arena pair obey the hash-table key model: same raw

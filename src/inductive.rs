@@ -944,6 +944,40 @@ pub closed spec fn export_ok<'p>(ef: ExportFile<'p>) -> bool {
             && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k
 }
 
+/// `export_ok`, from its parts (the verified export builder).
+pub(crate) proof fn export_ok_intro<'p>(ef: ExportFile<'p>)
+    requires
+        crate::indexmap_model::imap_wf(&ef.declars),
+        forall|k: NamePtr<'p>| #[trigger] crate::indexmap_model::imap_view(&ef.declars).contains_key(k)
+            ==> crate::util_model::export_tagged(ef.arena(), k)
+                && declar_export_tagged(ef.arena(), crate::indexmap_model::imap_view(&ef.declars)[k])
+                && crate::env_model::declar_params_ok(crate::indexmap_model::imap_view(&ef.declars)[k])
+                && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k,
+    ensures
+        export_ok(ef),
+{
+}
+
+/// `export_rec_names_ok`, from its parts.
+pub(crate) proof fn export_rec_names_ok_intro<'p>(ef: ExportFile<'p>)
+    requires
+        forall|k: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@.contains_key(k)
+            ==> crate::util_model::export_tagged(ef.arena(), k)
+                && forall|n: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@[k]@.contains(n) ==> crate::util_model::export_tagged(ef.arena(), n),
+    ensures
+        export_rec_names_ok(ef),
+{
+}
+
+/// `export_blocks_ok`, from its parts.
+pub(crate) proof fn export_blocks_ok_intro<'p>(ef: ExportFile<'p>)
+    requires
+        forall|k: NamePtr<'p>| #[trigger] ef.mutual_block_sizes@.contains_key(k) ==> crate::util_model::export_tagged(ef.arena(), k),
+    ensures
+        export_blocks_ok(ef),
+{
+}
+
 /// The export's keys have distinct name ids.
 pub(crate) proof fn export_keys_ids_inj<'p>(ef: ExportFile<'p>)
     requires

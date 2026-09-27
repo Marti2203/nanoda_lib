@@ -27,7 +27,9 @@ a function of the pointer alone.
   set's keys are a prefix of the history for the dag's id, the keys are
   distinct, and every stored node is well formed (cached flags, children
   owned and below). The invariant is assumed of values unverified code builds
-  (the parser, `LeanDag::new`), which is the boundary the parser already is.
+  (`LeanDag::new`, which builds an empty dag). The export file's dag is
+  filled by the verified `ExportBuilder` (2026-09-27), so the parser is no
+  longer part of that boundary.
 - **One trusted primitive: pinning.** Appending stores whatever the history
   says is at that position. `arena_pin` states it, and consumes a tracked
   `ArenaTok` that counts the positions pinned so far. The token is linear and
@@ -63,8 +65,11 @@ IndexMap's), and a key-model fact per node type.
 4. (done) Levels: `to_model` defined; `read_level`, `alloc_level`, `zero` verified. The level-SEQUENCE arena (`read_levels`, `alloc_levels_slice`) waits on a vstd rule for looking up an `Arc<[T]>` by `&[T]`.
 5. (done) Expressions: `to_model` defined, the payload projections (`const_name_of` and the rest) are the stored node's fields, the local serials are read from the history; `read_expr` and `alloc_expr` verified; `is_const_shape_model` and its three siblings are lemmas.
 6. Not done yet. Each remaining arena fact, and what it waits on:
-   - `read_levels`, `alloc_levels_slice` (the level-sequence arena): a vstd
-     rule for looking up an `Arc<[T]>` key by `&[T]`.
+   - `alloc_levels_slice` (the level-sequence arena): a vstd rule for
+     looking up an `Arc<[T]>` key by `&[T]`. `to_model_of_levels` is now
+     DEFINED over the history (2026-09-27, with a key-model fact for
+     `Arc<[LevelPtr]>`), so `read_levels` only waits on being rewritten as
+     an index read.
    - `alloc_string`, `alloc_bignum`, `read_bignum_value`: a key-model fact
      for `Cow<str>` / `BigUint` (third-party types), which would replace
      them one for one or better.
@@ -88,4 +93,4 @@ Also done along the way: the level (`mk_dbj_level`) and closing
 A soundness finding: defining the name denotation made
 `to_model_name_injective` refutable, because every dag held a copy of the
 anonymous name at index 0 (so two owned pointers provably denoted it).
-Checker dags now start empty; see `Parser::new`.
+Checker dags now start empty; see `LeanDag::new_export`.

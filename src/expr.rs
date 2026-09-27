@@ -1210,6 +1210,32 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 ::vstd::prelude::verus! {
 
 impl<'a> Expr<'a> {
+    /// What `num_loose_bvars` returns, as a spec function.
+    pub open spec fn num_loose_bvars_spec(&self) -> nat {
+        match self {
+            Expr::Var { dbj_idx, .. } => *dbj_idx as nat + 1,
+            Expr::App { num_loose_bvars, .. }
+            | Expr::Pi { num_loose_bvars, .. }
+            | Expr::Lambda { num_loose_bvars, .. }
+            | Expr::Let { num_loose_bvars, .. }
+            | Expr::Proj { num_loose_bvars, .. } => *num_loose_bvars as nat,
+            _ => 0,
+        }
+    }
+
+    /// What `has_fvars` returns, as a spec function.
+    pub open spec fn has_fvars_spec(&self) -> bool {
+        match self {
+            Expr::Local { .. } => true,
+            Expr::App { has_fvars, .. }
+            | Expr::Pi { has_fvars, .. }
+            | Expr::Lambda { has_fvars, .. }
+            | Expr::Let { has_fvars, .. }
+            | Expr::Proj { has_fvars, .. } => *has_fvars,
+            _ => false,
+        }
+    }
+
     /// Verified in place, body unchanged. The cached arms are discharged by
     /// `node_cache_ok`, which the caller gets from `read_expr`; the `Var` and
     /// leaf arms need no assumption at all -- `nlbv(Var(i)) == i + 1` and the
@@ -1221,6 +1247,7 @@ impl<'a> Expr<'a> {
             result as nat == crate::expr_model::nlbv(
                 crate::expr_arena_bridge::to_model_of_expr(*self),
             ),
+            result as nat == self.num_loose_bvars_spec(),
     {
         match self {
             Sort { .. } | Const { .. } | Local { .. } | StringLit { .. } | NatLit { .. } => 0,
@@ -1245,6 +1272,7 @@ impl<'a> Expr<'a> {
             crate::expr_arena_bridge::node_cache_ok(*self),
         ensures
             result == crate::expr_model::has_fv(crate::expr_arena_bridge::to_model_of_expr(*self)),
+            result == self.has_fvars_spec(),
     {
         match self {
             Local { .. } => true,
