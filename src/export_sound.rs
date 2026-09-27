@@ -41,14 +41,11 @@ pub open spec fn all_certified<'p>(ef: crate::util::ExportFile<'p>) -> bool {
         ==> exists|c: int| #[trigger] crate::tc::declar_cert_at(ef, decl_at(ef, i), c)
 }
 
-/// What the checker does not establish: the metatheory's named hypotheses,
-/// and -- until the inductive checker's certificates carry it -- the
-/// constructor parameter fact E2'.
+/// What the checker does not establish: the metatheory's named hypotheses.
 pub open spec fn kh_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& crate::metatheory::hyps_all(dty, denv)
     &&& crate::metatheory::h_sr(dty, denv)
     &&& crate::kclaims::h_sr_leaf(dty, denv)
-    &&& crate::ctor_typing::ctor_params_ok(dty, denv)
 }
 
 /// A name visible at a cutoff is one of the declarations before it.
@@ -189,6 +186,71 @@ proof fn struct_ok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
 }
 
+/// One constructor's parameters (E2'), from its certificate at an earlier
+/// cutoff, where `kh` already holds.
+#[verifier::spinoff_prover]
+proof fn e2_at1<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        crate::inductive::export_ok(ef),
+        all_certified(ef),
+        0 <= cc <= ef.declars_keys().len(),
+        forall|c: int| 0 <= c < cc ==> #[trigger] crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)),
+        crate::metatheory::hyps_all(m_dty(ef, cc), m_denv(ef, cc)),
+        crate::swap_typed::fv_free(m_dty(ef, cc), m_denv(ef, cc)),
+        crate::level_typed::dty_lp_ok(m_dty(ef, cc)),
+        crate::level_inst::env_lp_ok(m_denv(ef, cc)),
+        crate::metatheory::env_wf(m_dty(ef, cc), m_denv(ef, cc)),
+        m_denv(ef, cc).ctor_ind.contains_key(cid),
+    ensures
+        crate::ctor_typing::ctor_params_ok1(m_dty(ef, cc), m_denv(ef, cc), m_denv(ef, cc).ctor_ind[cid], cid),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let a = ef.arena();
+    let dty = m_dty(ef, cc);
+    let denv = m_denv(ef, cc);
+    let em = Map::<nat, ExprSpec>::empty();
+    crate::inductive::export_ok_facts(ef);
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    let i2 = entry_of(ef, cc, cid);
+    let dc = decl_at(ef, i2);
+    let c2 = cert_of(ef, i2);
+    assert(keys.to_set().contains(keys[i2]));
+    if let crate::env::Declar::Constructor(c) = dc {
+        let ind = crate::level_arena_bridge::name_id(c.inductive_name);
+        let np = c.num_params as nat;
+        assert(denv.ctor_ind[cid] == ind);
+        assert(denv.ctor_np.contains_key(cid) && denv.ctor_np[cid] == c.num_params);
+        assert(dty.contains_key(cid));
+        let ls0 = crate::level_arena_bridge::to_model_of_levels(c.info.uparams);
+        assert(dty[cid] == (crate::level_model::level_names(ls0), crate::expr_arena_bridge::to_model(c.info.ty)));
+        let (dc2, nc2) = (m_dty(ef, c2), m_denv(ef, c2));
+        assert(crate::tc::ctor_e2_cert(dc2, nc2, c));
+        assert(crate::kclaims::kh(dc2, nc2));
+        crate::env_model::env_le_at(a, view, keys, c2, cc);
+        assert(dty.contains_key(ind) && dty[ind] == dc2[ind]);
+        let lm = crate::e2_lift::lmk(dty[ind].1, dty[cid].1, np);
+        let t0 = choose|t: ExprSpec| #[trigger] crate::metatheory::typed(dc2, nc2, em, lm, t);
+        crate::env_weaken::ew_typed(dc2, nc2, dty, denv, em, lm, t0);
+        let fu = choose|f: nat| #[trigger] crate::tc_model::types_to(dty, denv, em, crate::tc_model::IoMode::Real, lm, t0, f);
+        // the inductive's type: closed, no loose variable
+        assert(crate::metatheory::is_type(dty, denv, em, dty[ind].1));
+        let (sx, lx) = choose|s: ExprSpec, l: crate::level_model::LevelSpec| #![trigger crate::metatheory::typed(dty, denv, em, dty[ind].1, s), crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l))]
+            crate::metatheory::typed(dty, denv, em, dty[ind].1, s) && crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l));
+        let fx = choose|f: nat| #[trigger] crate::tc_model::types_to(dty, denv, em, crate::tc_model::IoMode::Real, dty[ind].1, sx, f);
+        crate::real_gen::rt_closed(dty, denv, em, dty[ind].1, sx, fx);
+        assert(!crate::expr_model::has_fv(dty[ind].1));
+        assert(!crate::expr_model::has_fv(dty[cid].1));
+        assert forall|d: Map<nat, ExprSpec>, ls: Seq<crate::level_model::LevelSpec>, ps: Seq<ExprSpec>, rest: Seq<ExprSpec>, s: ExprSpec|
+            #![trigger crate::metatheory::typed(dty, denv, d, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), ps + rest), s), crate::beta_model::spine_app(ExprSpec::Const(cid, ls), ps)]
+            ps.len() == denv.ctor_np[cid] as nat && crate::metatheory::typed(dty, denv, d, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), ps + rest), s)
+            implies exists|t: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, d, crate::beta_model::spine_app(ExprSpec::Const(cid, ls), ps), t) by {
+            let t = crate::e2_lift::e2_one(dty, denv, d, ind, cid, ls, ps, rest, s, np, t0, fu);
+        }
+    }
+}
+
 /// THE CHECKER'S GUARANTEE: every declaration certified, and the named
 /// hypotheses at every cutoff, give `kh` at every cutoff.
 pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
@@ -257,6 +319,13 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     assert(crate::swap_model::env_fv_free(denv));
     assert(crate::level_typed::dty_lp_ok(dty));
     assert(crate::level_inst::env_lp_ok(denv));
+    // the constructors' parameters
+    assert forall|c: int| 0 <= c < cc implies #[trigger] crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)) by {
+        export_kh(ef, c);
+    }
+    assert forall|cid: u64| #[trigger] denv.ctor_ind.contains_key(cid) implies crate::ctor_typing::ctor_params_ok1(dty, denv, denv.ctor_ind[cid], cid) by {
+        e2_at1(ef, cc, cid);
+    }
 }
 
 } // verus!

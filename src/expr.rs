@@ -3381,6 +3381,143 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
+    /// THE CONSTRUCTOR'S PARAMETER TERM `λ (f : ctor_ty) (x_0 : A_0) ..
+    /// (x_{np-1} : A_{np-1}), f x_0 .. x_{np-1}`, the `A_i` being the first
+    /// `np` Pi binders of `ind_ty`; `None` when it has fewer.
+    pub(crate) fn ctor_param_term(
+        &mut self,
+        ind_ty: ExprPtr<'t>,
+        ctor_ty: ExprPtr<'t>,
+        ctor_name: NamePtr<'t>,
+        np: u16,
+    ) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::owns(*old(self), ind_ty),
+            crate::util_model::owns(*old(self), ctor_ty),
+            crate::util_model::owns(*old(self), ctor_name),
+            np < u16::MAX,
+        ensures
+            result matches Some(l) ==> crate::util_model::owns(*final(self), l)
+                && crate::expr_arena_bridge::to_model(l) == crate::e2_lift::lmk(
+                    crate::expr_arena_bridge::to_model(ind_ty),
+                    crate::expr_arena_bridge::to_model(ctor_ty),
+                    np as nat,
+                ),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        let ghost ti = crate::expr_arena_bridge::to_model(ind_ty);
+        let mut names: Vec<NamePtr<'t>> = Vec::new();
+        let mut styles: Vec<BinderStyle> = Vec::new();
+        let mut doms: Vec<ExprPtr<'t>> = Vec::new();
+        let mut cur = ind_ty;
+        let mut k: u16 = 0;
+        while k < np
+            invariant
+                crate::util_model::owns(*self, cur),
+                crate::util_model::owns_all(*self, names@),
+                crate::util_model::owns_all(*self, doms@),
+                k <= np,
+                names@.len() == k && styles@.len() == k && doms@.len() == k,
+                crate::expr_arena_bridge::to_model(cur) == crate::e2_lift::pr(ti, k as nat),
+                forall|j: int| 0 <= j < k ==> crate::e2_lift::pr(ti, j as nat) == crate::expr_model::ExprSpec::Bind(
+                    crate::expr_model::BinderKind::Pi,
+                    Box::new(crate::expr_arena_bridge::to_model(#[trigger] doms@[j])),
+                    Box::new(crate::e2_lift::pr(ti, (j + 1) as nat)),
+                ),
+            decreases np - k,
+        {
+            match self.read_expr(cur) {
+                Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    proof {
+                        assert(crate::expr_arena_bridge::to_model(cur) == crate::expr_model::ExprSpec::Bind(
+                            crate::expr_model::BinderKind::Pi,
+                            Box::new(crate::expr_arena_bridge::to_model(binder_type)),
+                            Box::new(crate::expr_arena_bridge::to_model(body)),
+                        ));
+                        crate::util_model::owns_all_push(*self, names@, binder_name);
+                        crate::util_model::owns_all_push(*self, doms@, binder_type);
+                    }
+                    names.push(binder_name);
+                    styles.push(binder_style);
+                    doms.push(binder_type);
+                    cur = body;
+                },
+                _ => {
+                    return None;
+                },
+            }
+            k = k + 1;
+        }
+        let ghost n = np as nat;
+        let mut acc = self.mk_var(np);
+        let mut i: u16 = 0;
+        while i < np
+            invariant
+                crate::util_model::owns(*self, acc),
+                crate::util_model::owns_all(*self, names@),
+                crate::util_model::owns_all(*self, doms@),
+                crate::util_model::same_arenas(*old(self), *self),
+                self.expr_cache == old(self).expr_cache,
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                i <= np,
+                n == np as nat,
+                crate::expr_arena_bridge::to_model(acc) == crate::beta_model::spine_app(
+                    crate::expr_model::ExprSpec::Var(np as u32),
+                    crate::e2_lift::vargs0(n).subrange(0, i as int),
+                ),
+            decreases np - i,
+        {
+            let v = self.mk_var(np - 1 - i);
+            acc = self.mk_app(acc, v);
+            proof {
+                let a = crate::e2_lift::vargs0(n);
+                assert(a.subrange(0, i as int + 1) =~= a.subrange(0, i as int).push(a[i as int]));
+                crate::beta_model::spine_app_compose_last(crate::expr_model::ExprSpec::Var(np as u32), a.subrange(0, i as int), a[i as int]);
+            }
+            i = i + 1;
+        }
+        proof {
+            assert(crate::e2_lift::vargs0(n).subrange(0, n as int) =~= crate::e2_lift::vargs0(n));
+        }
+        let mut j: u16 = np;
+        while j > 0
+            invariant
+                crate::util_model::owns(*self, acc),
+                crate::util_model::owns_all(*self, names@),
+                crate::util_model::owns_all(*self, doms@),
+                crate::util_model::same_arenas(*old(self), *self),
+                self.expr_cache == old(self).expr_cache,
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                j <= np,
+                n == np as nat,
+                names@.len() == np && styles@.len() == np && doms@.len() == np,
+                forall|q: int| 0 <= q < np ==> crate::e2_lift::pr(ti, q as nat) == crate::expr_model::ExprSpec::Bind(
+                    crate::expr_model::BinderKind::Pi,
+                    Box::new(crate::expr_arena_bridge::to_model(#[trigger] doms@[q])),
+                    Box::new(crate::e2_lift::pr(ti, (q + 1) as nat)),
+                ),
+                crate::expr_arena_bridge::to_model(acc) == crate::e2_lift::lamify(crate::e2_lift::pr(ti, j as nat), (n - j) as nat, crate::e2_lift::vb0(n)),
+            decreases j,
+        {
+            j = j - 1;
+            acc = self.mk_lambda(names[j as usize], styles[j as usize], doms[j as usize], acc);
+            proof {
+                assert(doms@[j as int] == doms@[j as int]);
+                assert(crate::e2_lift::pr(ti, j as nat) == crate::expr_model::ExprSpec::Bind(
+                    crate::expr_model::BinderKind::Pi,
+                    Box::new(crate::expr_arena_bridge::to_model(doms@[j as int])),
+                    Box::new(crate::e2_lift::pr(ti, (j + 1) as nat)),
+                ));
+            }
+        }
+        proof {
+            assert(crate::e2_lift::pr(ti, 0) == ti);
+        }
+        Some(self.mk_lambda(ctor_name, BinderStyle::Default, ctor_ty, acc))
+    }
+
     /// A structure constructor's declared type has the structure shape:
     /// `np + nf` Pi binders, then the structure at the constructor's universe
     /// parameters applied to the parameters, as bound variables.

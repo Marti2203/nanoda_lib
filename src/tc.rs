@@ -225,7 +225,28 @@ impl<'p> ExportFile<'p> {
                     }
                     let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
                     tc.check_declar_info_unwrap(d);
+                    // VERUS-REWRITE(tested-input): the constructor's parameters are
+                    // checked against its inductive's -- the inductive is declared
+                    // before it with the same universe parameters, and
+                    // `λ (f : C) (params of the inductive), f params` is inferred
+                    // in `Check` mode. Never fails on a constructor Lean accepted.
+                    let ind = match tc.env.get_inductive(&ctor_data.inductive_name) {
+                        Some(i) => i,
+                        None => { assert!(false, "constructor: its inductive is not declared before it"); return; },
+                    };
+                    assert!(ind.info.uparams == ctor_data.info.uparams, "constructor: universe parameters differ from its inductive's");
+                    assert!(ctor_data.num_params < u16::MAX, "constructor: too many parameters");
+                    let l = match tc.ctx.ctor_param_term(ind.info.ty, ctor_data.info.ty, ctor_data.info.name, ctor_data.num_params) {
+                        Some(l) => l,
+                        None => { assert!(false, "constructor: its inductive has fewer binders than parameters"); return; },
+                    };
+                    tc.assert_closed(l);
                     proof {
+                        no_fv_in_scope(tc, l);
+                    }
+                    let inf = tc.infer(l, InferFlag::Check);
+                    proof {
+                        ctor_e2_cert_intro(env, *ctor_data, *ind, to_model_expr(l), to_model_expr(inf));
                         declar_cert_intro(*self, env, *d);
                     }
                 }
@@ -244,17 +265,25 @@ impl<'p> ExportFile<'p> {
                     }
                     let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
                     tc.check_declar_info_unwrap(d);
-                    proof {
-                        assert forall|j: int| 0 <= j < recursor_data.rec_rules@.len() implies crate::util_model::owns(*tc.ctx, #[trigger] recursor_data.rec_rules@[j].val) by {
-                            crate::inductive::export_tagged_owned(*tc.ctx, recursor_data.rec_rules@[j].val);
-                        }
-                    }
                     // VERUS-REWRITE(tested-input): the recursor's rules are checked
                     // too -- each value closed, and inferred in `Check` mode, so its
                     // universe levels are the recursor's. The block's checker only
-                    // compares them with the rules it builds, by conversion. Never
-                    // fails on the rules Lean exports.
-                    tc.check_rec_rules(&recursor_data.rec_rules);
+                    // compares them with the rules it builds, by conversion. They
+                    // are inferred in the whole environment: a recursive type's
+                    // rules call the recursor itself. Never fails on the rules
+                    // Lean exports.
+                    {
+                        let mut rdag = crate::util::LeanDag::new(&self.config);
+                        let mut rctx = TcCtx::new(self, &mut rdag);
+                        let renv = crate::env_model::ctx_env(&rctx, crate::env::EnvLimit::PpUnlimited);
+                        let mut rtc = TypeChecker::new(&mut rctx, &renv, Some(*d.info()));
+                        proof {
+                            assert forall|j: int| 0 <= j < recursor_data.rec_rules@.len() implies crate::util_model::owns(*rtc.ctx, #[trigger] recursor_data.rec_rules@[j].val) by {
+                                crate::inductive::export_tagged_owned(*rtc.ctx, recursor_data.rec_rules@[j].val);
+                            }
+                        }
+                        rtc.check_rec_rules(&recursor_data.rec_rules);
+                    }
                     proof {
                         declar_cert_intro(*self, env, *d);
                     }
@@ -6041,6 +6070,19 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
     &&& (d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
         ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] r.rec_rules@[j].val))
             && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))))
+    &&& (d matches crate::env::Declar::Constructor(c) ==> ctor_e2_cert(dty, denv, c))
+}
+
+/// A CONSTRUCTOR'S PARAMETER CERTIFICATE: its inductive is declared before
+/// it, with the same universe parameters, and under the environment's
+/// hypotheses the parameter term (`e2_lift::lmk`) is really typed. E2'
+/// follows (`e2_lift::e2_one`).
+pub open spec fn ctor_e2_cert<'p>(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, c: crate::env::ConstructorData<'p>) -> bool {
+    let ind = crate::level_arena_bridge::name_id(c.inductive_name);
+    &&& dty.contains_key(ind)
+    &&& dty[ind].0 == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
+    &&& (crate::kclaims::kh(dty, denv) ==> crate::kclaims::rtyped(dty, denv, Map::empty(),
+        crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
 }
 
 /// A STRUCTURE'S CONSTRUCTOR SHAPE, over the export: the structure's one
@@ -6097,6 +6139,7 @@ pub proof fn declar_cert_intro<'x, 't, 'p>(ef: crate::util::ExportFile<'p>, env:
         d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
             ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] r.rec_rules@[j].val))
                 && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))),
+        d matches crate::env::Declar::Constructor(c) ==> ctor_e2_cert(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), c),
     ensures
         declar_cert_at(ef, d, env.visible()),
 {
@@ -6117,6 +6160,28 @@ pub proof fn declar_cert_intro<'x, 't, 'p>(ef: crate::util::ExportFile<'p>, env:
             assert(keys[env.visible()] == n);
             assert(keys.no_duplicates());
         }
+    }
+}
+
+/// From the constructor's check to its parameter certificate.
+pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::ConstructorData<'t>, i: crate::env::InductiveData<'t>, l: ExprSpec, inf: ExprSpec)
+    requires
+        env.find(crate::level_arena_bridge::name_id(c.inductive_name)) == Some(crate::env::Declar::Inductive(i)),
+        crate::level_arena_bridge::to_model_of_levels(i.info.uparams) == crate::level_arena_bridge::to_model_of_levels(c.info.uparams),
+        l == crate::e2_lift::lmk(to_model_expr(i.info.ty), to_model_expr(c.info.ty), c.num_params as nat),
+        !crate::expr_model::has_fv(l),
+        kcc(env, l, inf),
+    ensures
+        ctor_e2_cert(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), c),
+{
+    let (dty, denv) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env));
+    let ind = crate::level_arena_bridge::name_id(c.inductive_name);
+    crate::env_model::to_model_of_declar_ty_at(env, ind);
+    if crate::kclaims::kh(dty, denv) {
+        crate::kclaims::cc_closed_typed(dty, denv, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), l, inf);
+        let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), l, t2)
+            && crate::metatheory::tconv(dty, denv, Map::empty(), t2, inf);
+        assert(crate::kclaims::rtyped(dty, denv, Map::empty(), l));
     }
 }
 

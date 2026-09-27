@@ -355,7 +355,7 @@ proof fn stage_arg(
 }
 
 /// A prefix of a really typed spine is really typed.
-proof fn spine_prefix_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, h: ExprSpec, args: Seq<ExprSpec>, t: ExprSpec, k: nat)
+pub proof fn spine_prefix_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, h: ExprSpec, args: Seq<ExprSpec>, t: ExprSpec, k: nat)
     -> (tk: ExprSpec)
     requires
         typed(dty, denv, d, spine_app(h, args), t),
