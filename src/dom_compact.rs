@@ -2349,6 +2349,58 @@ pub proof fn gen_raise(u: Cpt, j: Cpt, lam: bool)
     }
 }
 
+/// The largest height among the first `k` elements.
+pub open spec fn mxh(s: Seq<Cpt>, k: int) -> nat
+    decreases k,
+{
+    if k <= 0 || k > s.len() { 0 } else { vstd::math::max(mxh(s, k - 1) as int, ht(s[k - 1]) as int) as nat }
+}
+
+pub proof fn mxh_fits(s: Seq<Cpt>)
+    ensures
+        fits(s, mxh(s, s.len() as int)),
+{
+    assert forall|i: int| 0 <= i < s.len() implies ht(#[trigger] s[i]) <= mxh(s, s.len() as int) by {
+        mxh_mono(s, i + 1, s.len() as int);
+    }
+}
+
+proof fn mxh_mono(s: Seq<Cpt>, k: int, k2: int)
+    requires
+        0 < k <= k2 <= s.len(),
+    ensures
+        ht(s[k - 1]) <= mxh(s, k2),
+    decreases k2,
+{
+    if k2 > k {
+        mxh_mono(s, k, k2 - 1);
+    }
+}
+
+/// A Pi below a Pi has the lower domain.
+pub proof fn pi_dom_le(p: Cpt, g: Cpt)
+    requires
+        p is Pi,
+        g is Pi,
+        le(p, g),
+    ensures
+        le(*p->Pi_0, *g->Pi_0),
+{
+    let t = seq![g];
+    assert(t[0] == g);
+    let d = *g->Pi_0;
+    parts_lower(g);
+    assert(pi_doms(t, ht(g), 1) == seq![d]) by {
+        reveal_with_fuel(pi_doms, 2);
+        assert(pi_doms(t, ht(g), 0) == Seq::<Cpt>::empty());
+        assert(Seq::<Cpt>::empty().push(d) =~= seq![d]);
+    }
+    assert(seq![d][0] == d);
+    assert(fits(seq![d], dec(ht(g))));
+    assert(fits(seq![d], ht(d)));
+    le_set_budget(*p->Pi_0, seq![d], dec(ht(g)), ht(d));
+}
+
 /// Sanity examples: the order on concrete elements.
 proof fn order_examples() {
     let f = Cpt::Lam(seq![(Cpt::U, Cpt::U)]);
