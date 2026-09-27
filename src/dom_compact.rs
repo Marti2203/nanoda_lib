@@ -2023,6 +2023,154 @@ pub proof fn ub_compat(u: Cpt, v: Cpt, w: Cpt)
     }
 }
 
+/// Application of a Lam (`lam`) or a Pi's codomain to an argument: the
+/// join of the outputs selected at it.
+pub open spec fn appk(u: Cpt, x: Cpt, lam: bool) -> Cpt {
+    if kind(u, lam) { jall(selk(seq![u], x, ht(u), lam)) } else { Cpt::Bot }
+}
+
+/// `app(u, x)`: a lambda applied to `x` (bottom for a non-lambda).
+pub open spec fn app(u: Cpt, x: Cpt) -> Cpt {
+    appk(u, x, true)
+}
+
+/// `cod(p, x)`: a Pi's codomain at `x`.
+pub open spec fn cod(p: Cpt, x: Cpt) -> Cpt {
+    appk(p, x, false)
+}
+
+pub proof fn selk_fits(u: Cpt, x: Cpt, lam: bool)
+    ensures
+        fits(selk(seq![u], x, ht(u), lam), dec(ht(u))),
+{
+    if lam {
+        sel_lam_fits(seq![u], x, ht(u), 1);
+    } else {
+        sel_pi_fits(seq![u], x, ht(u), 1);
+    }
+}
+
+/// Application of well-formed arguments is well formed, and the selection
+/// it joins is coherent.
+pub proof fn appk_wf(u: Cpt, x: Cpt, lam: bool)
+    requires
+        wf(u),
+        wf(x),
+        kind(u, lam),
+    ensures
+        wf(appk(u, x, lam)),
+        pw(selk(seq![u], x, ht(u), lam)),
+        coh(selk(seq![u], x, ht(u), lam), dec(ht(u))),
+        ht(appk(u, x, lam)) <= dec(ht(u)),
+{
+    let sm = selk(seq![u], x, ht(u), lam);
+    sel_pw(u, x, lam, ht(u) + ht(x) + 1);
+    jall_pw(sm, sm.len() as int);
+    pw_coh(sm, dec(ht(u)));
+    selk_fits(u, x, lam);
+    jall_fits(sm, dec(ht(u)), sm.len() as int);
+}
+
+/// An element below the selection of `u` at `x` is below `appk(u, x)`.
+pub proof fn below_appk(u: Cpt, x: Cpt, lam: bool, y: Cpt)
+    requires
+        wf(u),
+        wf(x),
+        kind(u, lam),
+        le_set(y, selk(seq![u], x, ht(u), lam), dec(ht(u))),
+    ensures
+        le(y, appk(u, x, lam)),
+{
+    let sm = selk(seq![u], x, ht(u), lam);
+    appk_wf(u, x, lam);
+    selk_fits(u, x, lam);
+    let j = jall(sm);
+    le_set_jall(y, sm, dec(ht(u)));
+    assert(seq![j][0] == j);
+    le_set_budget(y, seq![j], dec(ht(u)), ht(j));
+}
+
+/// An entry's output is below the application at its input.
+pub proof fn entry_appk(u: Cpt, e: (Cpt, Cpt), lam: bool)
+    requires
+        wf(u),
+        kind(u, lam),
+        steps(u, lam).contains(e),
+    ensures
+        le(e.1, appk(u, e.0, lam)),
+{
+    let f = steps(u, lam);
+    let k = choose|k: int| 0 <= k < f.len() && f[k] == e;
+    parts_lower(u);
+    entry_selected(u, k, ht(u));
+    selk_fits(u, e.0, lam);
+    le_set_mem(e.1, selk(seq![u], e.0, ht(u), lam), dec(ht(u)));
+    below_appk(u, e.0, lam, e.1);
+}
+
+/// APPLICATION IS MONOTONE in the argument.
+pub proof fn appk_mono_arg(u: Cpt, x: Cpt, x2: Cpt, lam: bool)
+    requires
+        wf(u),
+        wf(x),
+        wf(x2),
+        kind(u, lam),
+        le(x, x2),
+    ensures
+        le(appk(u, x, lam), appk(u, x2, lam)),
+{
+    let t = seq![u];
+    let s1 = selk(t, x, ht(u), lam);
+    let s2 = selk(t, x2, ht(u), lam);
+    appk_wf(u, x, lam);
+    appk_wf(u, x2, lam);
+    selk_fits(u, x, lam);
+    selk_fits(u, x2, lam);
+    sel_mono(t, x, x2, ht(u));
+    assert forall|y: Cpt| #[trigger] s1.contains(y) implies le(y, jall(s2)) by {
+        jall_ub(s2, dec(ht(u)), y);
+    }
+    jall_lub(s1, dec(ht(u)), jall(s2));
+}
+
+/// APPLICATION IS MONOTONE in the function.
+pub proof fn appk_mono_fun(u: Cpt, u2: Cpt, x: Cpt, lam: bool)
+    requires
+        wf(u),
+        wf(u2),
+        wf(x),
+        kind(u, lam),
+        kind(u2, lam),
+        le(u, u2),
+    ensures
+        le(appk(u, x, lam), appk(u2, x, lam)),
+{
+    let s1 = selk(seq![u], x, ht(u), lam);
+    let s2 = selk(seq![u2], x, ht(u2), lam);
+    appk_wf(u, x, lam);
+    appk_wf(u2, x, lam);
+    selk_fits(u, x, lam);
+    let h = steps(u, lam);
+    assert forall|y: Cpt| #[trigger] s1.contains(y) implies le(y, jall(s2)) by {
+        let t = seq![u];
+        assert(t[0] == u);
+        if lam {
+            sel_lam_mem(t, x, ht(u), 1, y);
+        } else {
+            sel_pi_mem(t, x, ht(u), 1, y);
+        }
+        let q = choose|q: int| 0 <= q < h.len() && #[trigger] h[q].1 == y && le(h[q].0, x);
+        assert(h.contains(h[q]));
+        entry_le(u, u2, h[q], lam);
+        sel_mono(seq![u2], h[q].0, x, ht(u2));
+        selk_fits(u2, h[q].0, lam);
+        selk_fits(u2, x, lam);
+        le_set_sub(y, selk(seq![u2], h[q].0, ht(u2), lam), s2, dec(ht(u2)), dec(ht(u2)));
+        below_appk(u2, x, lam, y);
+    }
+    jall_lub(s1, dec(ht(u)), jall(s2));
+}
+
 /// Sanity examples: the order on concrete elements.
 proof fn order_examples() {
     let f = Cpt::Lam(seq![(Cpt::U, Cpt::U)]);
