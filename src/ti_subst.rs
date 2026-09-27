@@ -416,4 +416,61 @@ pub proof fn psub_inst0(b: ExprSpec, x: ExprSpec, s: Sub)
     psub_ext(b, comp_ss(isub(0, x), s), cons(psub(x, s), s));
 }
 
+/// `up` keeps a substitution the identity below one more index.
+proof fn up_fix(s: Sub, k: nat)
+    requires
+        forall|i: nat| i < k ==> #[trigger] s(i) == ExprSpec::Var(i),
+    ensures
+        forall|i: nat| i < k + 1 ==> #[trigger] up(s)(i) == ExprSpec::Var(i),
+{
+    assert forall|i: nat| i < k + 1 implies #[trigger] up(s)(i) == ExprSpec::Var(i) by {
+        if i > 0 {
+            assert(s((i - 1) as nat) == ExprSpec::Var((i - 1) as nat));
+        }
+    }
+}
+
+/// A substitution that is the identity below `k` fixes a term with no
+/// loose variable from `k` on.
+pub proof fn psub_fix(e: ExprSpec, s: Sub, k: nat)
+    requires
+        crate::expr_model::nlbv(e) <= k,
+        forall|i: nat| i < k ==> #[trigger] s(i) == ExprSpec::Var(i),
+    ensures
+        psub(e, s) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            psub_fix(*f, s, k);
+            psub_fix(*a, s, k);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            psub_fix(*t, s, k);
+            up_fix(s, k);
+            psub_fix(*b, up(s), k + 1);
+        },
+        ExprSpec::Let(t, v, b) => {
+            psub_fix(*t, s, k);
+            psub_fix(*v, s, k);
+            up_fix(s, k);
+            psub_fix(*b, up(s), k + 1);
+        },
+        ExprSpec::Proj(_, x) => {
+            psub_fix(*x, s, k);
+        },
+        _ => {},
+    }
+}
+
+/// Closed terms are fixed by every substitution.
+pub proof fn psub_closed(e: ExprSpec, s: Sub)
+    requires
+        crate::expr_model::nlbv(e) == 0,
+    ensures
+        psub(e, s) == e,
+{
+    psub_fix(e, s, 0);
+}
+
 } // verus!

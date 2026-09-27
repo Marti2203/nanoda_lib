@@ -144,6 +144,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
         _ => {
             assert(false);
             d
@@ -299,6 +300,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
+        Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
         _ => {
             assert(false);
             d
@@ -630,6 +632,74 @@ proof fn d_ren_irr(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             ]));
             valid_node(sig, Rule::Irr(l), j2, ps2);
             node(Rule::Irr(l), j2, ps2)
+}
+
+/// The signature's rules mention only closed terms, which renaming fixes.
+#[verifier::spinoff_prover]
+proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    use crate::ti_subst::psub_closed;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    let q = rn(r);
+    psub_closed(a, q);
+    psub_closed(m, q);
+    let j2 = eq(dl, m, n, a);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    match rule {
+        Rule::ConstAx(l) => {
+            psub_closed(n, q);
+            let ps2 = seq![w, d1];
+            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
+            valid_node(sig, rule, j2, ps2);
+            node(rule, j2, ps2)
+        },
+        Rule::Local(l) => {
+            let ps2 = seq![w, d1];
+            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
+            valid_node(sig, rule, j2, ps2);
+            node(rule, j2, ps2)
+        },
+        Rule::ConstDef(l) => {
+            psub_closed(n, q);
+            let (c, ls) = (m->Const_0, m->Const_1);
+            let ls2 = n->Const_1;
+            psub_closed(dval(sig, c, ls), q);
+            psub_closed(dval(sig, c, ls2), q);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
+            let ps2 = seq![w, d1, d2];
+            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l)), eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a)]));
+            valid_node(sig, rule, j2, ps2);
+            node(rule, j2, ps2)
+        },
+        Rule::Delta(l) => {
+            psub_closed(n, q);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
+            let ps2 = seq![w, d1, d2];
+            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l)), eq(dl, n, n, a)]));
+            valid_node(sig, rule, j2, ps2);
+            node(rule, j2, ps2)
+        },
+        _ => {
+            assert(false);
+            d
+        },
+    }
 }
 
 } // verus!

@@ -369,6 +369,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::Beta(_, _) => d_sub_beta(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => d_sub_sig(sig, d, dl, s, s2),
         _ => {},
     }
 }
@@ -854,6 +855,90 @@ proof fn d_sub_irr(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         mk_d(sig, node(Rule::Irr(l), ij, ip));
         let t = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
         mk_t(sig, t, l);
+    }
+}
+
+/// The signature's rules mention only closed terms, which substitution
+/// fixes.
+#[verifier::spinoff_prover]
+proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    use crate::ti_subst::psub_closed;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    spair_left(sig, g, dl, s, s2);
+    psub_closed(a, s);
+    psub_closed(a, s2);
+    psub_closed(m, s);
+    reveal(spair);
+    let w = get(sig, Jd::Wf(dl));
+    d_sub(sig, ps[1], dl, s, s);
+    let q1 = get(sig, eq(dl, a, a, sort(rule_level(rule))));
+    let j2 = eq(dl, m, n, a);
+    match rule {
+        Rule::ConstAx(l) => {
+            psub_closed(n, s2);
+            let ip = seq![w, q1];
+            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
+            valid_node(sig, rule, j2, ip);
+            mk_d(sig, node(rule, j2, ip));
+        },
+        Rule::Local(l) => {
+            psub_closed(n, s2);
+            let ip = seq![w, q1];
+            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
+            valid_node(sig, rule, j2, ip);
+            mk_d(sig, node(rule, j2, ip));
+        },
+        Rule::ConstDef(l) => {
+            psub_closed(n, s2);
+            let (c, ls) = (m->Const_0, m->Const_1);
+            let ls2 = n->Const_1;
+            psub_closed(dval(sig, c, ls), s);
+            psub_closed(dval(sig, c, ls2), s);
+            d_sub(sig, ps[2], dl, s, s);
+            let q2 = get(sig, eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a));
+            let ip = seq![w, q1, q2];
+            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l)), eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a)]));
+            valid_node(sig, rule, j2, ip);
+            mk_d(sig, node(rule, j2, ip));
+        },
+        Rule::Delta(l) => {
+            psub_closed(n, s);
+            psub_closed(n, s2);
+            d_sub(sig, ps[2], dl, s, s);
+            let q2 = get(sig, eq(dl, n, n, a));
+            let ip = seq![w, q1, q2];
+            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l)), eq(dl, n, n, a)]));
+            valid_node(sig, rule, j2, ip);
+            mk_d(sig, node(rule, j2, ip));
+        },
+        _ => {},
+    }
+    mk_t(sig, q1, rule_level(rule));
+}
+
+/// The sort level a signature rule carries.
+pub open spec fn rule_level(r: Rule) -> LevelSpec {
+    match r {
+        Rule::ConstAx(l) => l,
+        Rule::ConstDef(l) => l,
+        Rule::Local(l) => l,
+        Rule::Delta(l) => l,
+        _ => LevelSpec::Zero,
     }
 }
 

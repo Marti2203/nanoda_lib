@@ -70,6 +70,20 @@ pub ghost struct Sig {
     pub rank: Map<u64, nat>,
 }
 
+/// The highest rank of a constant `e` mentions, plus one (0 for none).
+pub open spec fn crank(sig: Sig, e: ExprSpec) -> nat
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, _) => if sig.rank.contains_key(c) { sig.rank[c] + 1 } else { 0 },
+        ExprSpec::App(f, x) => vstd::math::max(crank(sig, *f) as int, crank(sig, *x) as int) as nat,
+        ExprSpec::Bind(_, t, b) => vstd::math::max(crank(sig, *t) as int, crank(sig, *b) as int) as nat,
+        ExprSpec::Let(t, v, b) => vstd::math::max(crank(sig, *t) as int, vstd::math::max(crank(sig, *v) as int, crank(sig, *b) as int)) as nat,
+        ExprSpec::Proj(_, x) => crank(sig, *x),
+        _ => 0,
+    }
+}
+
 /// `c.{ls}` is a definition at a matching level instance.
 pub open spec fn is_def(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
     sig.consts.contains_key(c) && sig.consts[c].val is Some && sig.consts[c].lps.len() == ls.len()
@@ -78,6 +92,15 @@ pub open spec fn is_def(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
 /// A definition's value at a level instance.
 pub open spec fn dval(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> ExprSpec {
     crate::expr_model::subst_expr_levels(sig.consts[c].val->Some_0, sig.consts[c].lps, ls)
+}
+
+/// A definition's value at a level instance is closed and mentions only
+/// lower-ranked constants.
+pub open spec fn def_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
+    &&& is_def(sig, c, ls)
+    &&& crate::expr_model::nlbv(dval(sig, c, ls)) == 0
+    &&& sig.rank.contains_key(c)
+    &&& crank(sig, dval(sig, c, ls)) <= sig.rank[c]
 }
 
 /// A constant's type at a level instance.
@@ -115,6 +138,14 @@ pub enum Rule {
     Beta(LevelSpec, LevelSpec),
     Eta(LevelSpec, LevelSpec),
     Irr(LevelSpec),
+    /// An axiom at level-equivalent instances.
+    ConstAx(LevelSpec),
+    /// A definition at level-equivalent instances, whose values convert.
+    ConstDef(LevelSpec),
+    /// A kernel local, an axiom of the signature.
+    Local(LevelSpec),
+    /// A definition unfolds to its value.
+    Delta(LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -241,6 +272,45 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                     eq(g.push(a), app(lift(1, 0, m), ExprSpec::Var(0)), app(lift(1, 0, n), ExprSpec::Var(0)), b),
                     eq(g.push(a), b, b, sort(l2)),
                 ])
+            },
+            _ => false,
+        },
+        Rule::ConstAx(l) => match j {
+            Jd::Eq(g, m, n, t) => match (m, n) {
+                (ExprSpec::Const(c, ls), ExprSpec::Const(c2, ls2)) => c == c2 && sig.consts.contains_key(c)
+                    && sig.consts[c].val is None && ls.len() == sig.consts[c].lps.len()
+                    && crate::conv_cr::levs_eq(ls, ls2) && t == dty_at(sig, c, ls)
+                    && crate::expr_model::nlbv(t) == 0
+                    && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l))]),
+                _ => false,
+            },
+            _ => false,
+        },
+        Rule::ConstDef(l) => match j {
+            Jd::Eq(g, m, n, t) => match (m, n) {
+                (ExprSpec::Const(c, ls), ExprSpec::Const(c2, ls2)) => c == c2 && is_def(sig, c, ls)
+                    && crate::conv_cr::levs_eq(ls, ls2) && t == dty_at(sig, c, ls)
+                    && crate::expr_model::nlbv(t) == 0 && def_ok(sig, c, ls) && def_ok(sig, c, ls2)
+                    && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l)), eq(g, dval(sig, c, ls), dval(sig, c, ls2), t)]),
+                _ => false,
+            },
+            _ => false,
+        },
+        Rule::Local(l) => match j {
+            Jd::Eq(g, m, n, a) => match m {
+                ExprSpec::Free(k) => n == m && sig.locals.contains_key(k) && a == sig.locals[k]
+                    && crate::expr_model::nlbv(a) == 0
+                    && prems(ps, seq![Jd::Wf(g), eq(g, a, a, sort(l))]),
+                _ => false,
+            },
+            _ => false,
+        },
+        Rule::Delta(l) => match j {
+            Jd::Eq(g, m, n, t) => match m {
+                ExprSpec::Const(c, ls) => is_def(sig, c, ls) && n == dval(sig, c, ls) && t == dty_at(sig, c, ls)
+                    && crate::expr_model::nlbv(t) == 0 && def_ok(sig, c, ls)
+                    && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l)), eq(g, n, n, t)]),
+                _ => false,
             },
             _ => false,
         },

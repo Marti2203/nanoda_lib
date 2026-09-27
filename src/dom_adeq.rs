@@ -206,6 +206,8 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::AppCong(_, _) => adeq_app(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Beta(_, _) => adeq_beta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::ConstAx(_) | Rule::Local(_) => adeq_leaf(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::ConstDef(_) | Rule::Delta(_) => adeq_def(sig, d, rho, dl, s, s2, n, u, a),
         _ => {},
     }
 }
@@ -1213,6 +1215,107 @@ proof fn adeq_eta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
             app_tm_intro(sig, k, dl, ms, ms2, x, bx, u, a);
             tm_pi(sig, n, dl, ms, ms2, tt, u, a);
         }
+    }
+}
+
+/// AXIOMS AND LOCALS: their only element is bottom; the type premise
+/// relates the (closed) type.
+#[verifier::spinoff_prover]
+proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is ConstAx || d->Node_0 is Local,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    use crate::ti_subst::psub_closed;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (m, m2, t) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    psub_closed(t, s);
+    psub_closed(t, s2);
+    psub_closed(m, s);
+    psub_closed(m2, s2);
+    match m {
+        ExprSpec::Const(c, ls) => {
+            crate::dom_model::mem_const(sig, c, ls, rho, u);
+        },
+        _ => {
+            reveal(mem);
+            let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+        },
+    }
+    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    bot_tm(sig, n, dl, m, m2, t, a);
+}
+
+/// DEFINITIONS: each side head-reduces to its value; the value premise
+/// relates the values.
+#[verifier::spinoff_prover]
+proof fn adeq_def(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is ConstDef || d->Node_0 is Delta,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    use crate::ti_subst::psub_closed;
+    use crate::ti_syntax::dval;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let (c, ls) = (m->Const_0, m->Const_1);
+    let v1 = dval(sig, c, ls);
+    let v2 = concl(ps[2])->Eq_2;
+    let l = crate::ti_sub::rule_level(rule);
+    psub_closed(t, s);
+    psub_closed(t, s2);
+    psub_closed(m, s);
+    psub_closed(m2, s2);
+    psub_closed(v1, s);
+    // the value premise, at the same witnesses
+    crate::dom_model::mem_const(sig, c, ls, rho, u);
+    if !(u is Bot) {
+        crate::dom_model::mem_closed_env(sig, v1, rho, u);
+    } else {
+        crate::dom_model::mem_bot(sig, v1, rho);
+        assert(mem(sig, v1, rho, u)) by {
+            reveal(mem);
+        }
+    }
+    adeq(sig, ps[2], rho, dl, s, s2, n, u, a);
+    // the delta steps, typed
+    related_left(sig, g, rho, dl, s, s2);
+    reveal(spair);
+    let w = crate::ti_sub::get(sig, Jd::Wf(dl));
+    d_sub(sig, ps[1], dl, s, s);
+    let q1 = crate::ti_sub::get(sig, eq(dl, t, t, sort(l)));
+    let p2l = d_left(sig, ps[2]);
+    d_sub(sig, p2l, dl, s, s);
+    let q2 = crate::ti_sub::get(sig, eq(dl, v1, v1, t));
+    let dj = eq(dl, m, v1, t);
+    let dp = seq![w, q1, q2];
+    assert(crate::ti_syntax::prems(dp, seq![Jd::Wf(dl), eq(dl, t, t, sort(l)), eq(dl, v1, v1, t)]));
+    crate::ti_meta::valid_node(sig, Rule::Delta(l), dj, dp);
+    let dd = crate::ti_meta::node(Rule::Delta(l), dj, dp);
+    crate::ti_meta::mk_d(sig, dd);
+    crate::ti_hred::hred_step(sig, m);
+    if rule is ConstDef {
+        let ls2 = m2->Const_1;
+        psub_closed(v2, s2);
+        crate::ti_hred::hred_step(sig, m2);
+        // m2 == m == v1 == v2, all at t
+        d_sub(sig, d, dl, s, s2);
+        d_sub(sig, ps[2], dl, s, s2);
+        dsym(sig, dl, m, m2, t);
+        dtrans(sig, dl, m2, m, v1, t);
+        dtrans(sig, dl, m2, v1, v2, t);
+        expand_tm(sig, n, dl, v1, v2, m, m2, t, u, a);
+    } else {
+        hred_refl(sig, v1);
+        expand_tm(sig, n, dl, v1, v1, m, v1, t, u, a);
     }
 }
 

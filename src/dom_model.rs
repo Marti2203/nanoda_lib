@@ -14,7 +14,7 @@ use crate::dom_compact::*;
 #[cfg(verus_only)]
 use crate::dom_typing::*;
 #[cfg(verus_only)]
-use crate::ti_syntax::{is_zero, dval};
+use crate::ti_syntax::{is_zero, dval, crank};
 #[cfg(verus_only)]
 use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
@@ -66,20 +66,6 @@ pub open spec fn entries_ok(sig: Sig, body: ExprSpec, rho: Env, a: Cpt, gen: Cpt
 {
     ws.len() == gsteps(gen).len() && forall|i: int| 0 <= i < ws.len() ==>
         typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, body, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
-}
-
-/// The highest rank of a constant `e` mentions, plus one (0 for none).
-pub open spec fn crank(sig: Sig, e: ExprSpec) -> nat
-    decreases e,
-{
-    match e {
-        ExprSpec::Const(c, _) => if sig.rank.contains_key(c) { sig.rank[c] + 1 } else { 0 },
-        ExprSpec::App(f, x) => vstd::math::max(crank(sig, *f) as int, crank(sig, *x) as int) as nat,
-        ExprSpec::Bind(_, t, b) => vstd::math::max(crank(sig, *t) as int, crank(sig, *b) as int) as nat,
-        ExprSpec::Let(t, v, b) => vstd::math::max(crank(sig, *t) as int, vstd::math::max(crank(sig, *v) as int, crank(sig, *b) as int)) as nat,
-        ExprSpec::Proj(_, x) => crank(sig, *x),
-        _ => 0,
-    }
 }
 
 /// `c.{ls}` unfolds: a definition at a matching level instance, whose value
@@ -940,6 +926,96 @@ pub proof fn jc_intro(sig: Sig, m: ExprSpec, rho: Env)
 /// Join-closure at one pair, as an atom.
 pub open spec fn jc_pair(sig: Sig, m: ExprSpec, rho: Env, u1: Cpt, u2: Cpt) -> bool {
     compat(u1, u2) && mem(sig, m, rho, join(u1, u2))
+}
+
+/// Environments that agree below `k` give a term with no loose variable
+/// from `k` on the same members, with the same witnesses.
+pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: Cpt, w: Wit)
+    requires
+        crate::expr_model::nlbv(e) <= k,
+        forall|i: nat| i < k ==> #[trigger] rho(i) == rho2(i),
+    ensures
+        mem_w(sig, e, rho, u, w) == mem_w(sig, e, rho2, u, w),
+    decreases crank(sig, e), e,
+{
+    match e {
+        ExprSpec::Bind(bk, ta, b) => {
+            if let Wit::Gen(a, gen, wa, ws) = w {
+                mem_closed(sig, *ta, rho, rho2, k, a, *wa);
+                assert forall|i: int| 0 <= i < gsteps(gen).len() implies
+                    #[trigger] mem_w(sig, *b, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
+                        == mem_w(sig, *b, ext(rho2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
+                    let x = gsteps(gen)[i].0;
+                    assert forall|j: nat| j < k + 1 implies #[trigger] ext(rho, x)(j) == ext(rho2, x)(j) by {
+                        if j > 0 {
+                            assert(rho((j - 1) as nat) == rho2((j - 1) as nat));
+                        }
+                    }
+                    mem_closed(sig, *b, ext(rho, x), ext(rho2, x), k + 1, gsteps(gen)[i].1, ws[i]);
+                }
+                if entries_ok(sig, *b, rho, a, gen, ws) {
+                    assert forall|i: int| 0 <= i < ws.len() implies typed(#[trigger] gsteps(gen)[i].0, a)
+                        && mem_w(sig, *b, ext(rho2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
+                        assert(typed(gsteps(gen)[i].0, a) && mem_w(sig, *b, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]));
+                    }
+                }
+                if entries_ok(sig, *b, rho2, a, gen, ws) {
+                    assert forall|i: int| 0 <= i < ws.len() implies typed(#[trigger] gsteps(gen)[i].0, a)
+                        && mem_w(sig, *b, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]) by {
+                        assert(typed(gsteps(gen)[i].0, a) && mem_w(sig, *b, ext(rho2, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]));
+                    }
+                }
+            }
+        },
+        ExprSpec::App(f, x) => {
+            if let Wit::Ap(wf_, wx, w1, w2) = w {
+                mem_closed(sig, *f, rho, rho2, k, wf_, *w1);
+                mem_closed(sig, *x, rho, rho2, k, wx, *w2);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// A closed term denotes the same in every environment.
+pub proof fn mem_closed_env(sig: Sig, e: ExprSpec, rho: Env, u: Cpt)
+    requires
+        crate::expr_model::nlbv(e) == 0,
+    ensures
+        mem(sig, e, rho, u) == mem(sig, e, bot_env(), u),
+{
+    reveal(mem);
+    if mem(sig, e, rho, u) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, e, rho, u, w);
+        mem_closed(sig, e, rho, bot_env(), 0, u, w);
+    }
+    if mem(sig, e, bot_env(), u) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, e, bot_env(), u, w);
+        mem_closed(sig, e, rho, bot_env(), 0, u, w);
+    }
+}
+
+/// What a constant denotes: bottom, and a definition's value.
+pub proof fn mem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt)
+    ensures
+        crate::ti_syntax::def_ok(sig, c, ls) ==> mem(sig, ExprSpec::Const(c, ls), rho, u) == (u is Bot || mem(sig, dval(sig, c, ls), bot_env(), u)),
+        !crate::ti_syntax::is_def(sig, c, ls) ==> mem(sig, ExprSpec::Const(c, ls), rho, u) == (u is Bot),
+{
+    reveal(mem);
+    let m = ExprSpec::Const(c, ls);
+    assert(mem_w(sig, m, rho, Cpt::Bot, Wit::Nil));
+    if crate::ti_syntax::def_ok(sig, c, ls) {
+        assert(unfolds(sig, c, ls));
+        if mem(sig, dval(sig, c, ls), bot_env(), u) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, dval(sig, c, ls), bot_env(), u, w);
+            mem_wf(sig, dval(sig, c, ls), bot_env(), u, w);
+            assert(mem_w(sig, m, rho, u, w));
+        }
+        if mem(sig, m, rho, u) && !(u is Bot) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+            assert(mem_w(sig, dval(sig, c, ls), bot_env(), u, w));
+        }
+    }
 }
 
 } // verus!

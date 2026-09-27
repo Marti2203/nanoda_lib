@@ -1970,6 +1970,8 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::AppCong(_, _) => sound_app_d(sig, d, rho),
         Rule::Beta(_, _) => sound_beta_d(sig, d, rho),
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
+        Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
+        Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
         _ => {},
     }
 }
@@ -2158,6 +2160,135 @@ proof fn sound_eta_d(sig: Sig, d: Deriv, rho: Env)
         assert(a == ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(tb)));
         sound_eta(sig, ta, tb, m, n, rho);
     }
+}
+
+/// Terms denoting only bottom are sound.
+pub proof fn sound_bot_only(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, rho: Env)
+    requires
+        forall|u: Cpt| #[trigger] mem(sig, m, rho, u) ==> u is Bot,
+        forall|u: Cpt| #[trigger] mem(sig, n, rho, u) ==> u is Bot,
+    ensures
+        sound_ok(sig, m, n, t, rho),
+{
+    mem_bot(sig, m, rho);
+    mem_bot(sig, n, rho);
+    assert(mem(sig, m, rho, Cpt::Bot) && mem(sig, n, rho, Cpt::Bot)) by {
+        reveal(mem);
+    }
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, n, rho, u) by {}
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) implies tyd_w(sig, m, rho, t, u) by {
+        tyd_bot(sig, m, rho, t);
+    }
+    assert forall|u1: Cpt, u2: Cpt| mem(sig, m, rho, u1) && mem(sig, m, rho, u2) implies #[trigger] jc_pair(sig, m, rho, u1, u2) by {
+        assert(join(Cpt::Bot, Cpt::Bot) == Cpt::Bot);
+    }
+    jc_intro(sig, m, rho);
+}
+
+/// AXIOMS AND LOCALS: they denote only bottom.
+#[verifier::spinoff_prover]
+proof fn sound_leaf_d(sig: Sig, d: Deriv, rho: Env)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        fits_env(sig, concl(d)->Eq_0, rho),
+        d->Node_0 is ConstAx || d->Node_0 is Local,
+    ensures
+        sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    match m {
+        ExprSpec::Const(c, ls) => {
+            let ls2 = n->Const_1;
+            assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) implies u is Bot by {
+                mem_const(sig, c, ls, rho, u);
+            }
+            assert forall|u: Cpt| #[trigger] mem(sig, n, rho, u) implies u is Bot by {
+                mem_const(sig, c, ls2, rho, u);
+            }
+        },
+        _ => {
+            assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) implies u is Bot by {
+                reveal(mem);
+                let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+            }
+        },
+    }
+    sound_bot_only(sig, m, n, a, rho);
+}
+
+/// DEFINITIONS: a definition denotes its value, which its premise makes
+/// sound (in the bottom environment; the value is closed).
+#[verifier::spinoff_prover]
+proof fn sound_def_d(sig: Sig, d: Deriv, rho: Env)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        fits_env(sig, concl(d)->Eq_0, rho),
+        d->Node_0 is ConstDef || d->Node_0 is Delta,
+    ensures
+        sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let t = j->Eq_3;
+    let bot = bot_env();
+    let c = m->Const_0;
+    let ls = m->Const_1;
+    let v1 = crate::ti_syntax::dval(sig, c, ls);
+    crate::dom_fund::fits_bot(sig, g);
+    sound(sig, ps[2], bot);
+    let v2 = concl(ps[2])->Eq_2;
+    // the members
+    if rule is ConstDef {
+        let ls2 = n->Const_1;
+        assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, n, rho, u) by {
+            mem_const(sig, c, ls, rho, u);
+            mem_const(sig, c, ls2, rho, u);
+            assert(mem(sig, v1, bot, u) == mem(sig, v2, bot, u));
+        }
+    } else {
+        mem_bot(sig, v1, bot);
+        assert(mem(sig, v1, bot, Cpt::Bot)) by {
+            reveal(mem);
+        }
+        assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, n, rho, u) by {
+            mem_const(sig, c, ls, rho, u);
+            mem_closed_env(sig, v1, rho, u);
+        }
+    }
+    // typed below the type's elements (the type is closed)
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) implies tyd_w(sig, m, rho, t, u) by {
+        mem_const(sig, c, ls, rho, u);
+        if u is Bot {
+            tyd_bot(sig, m, rho, t);
+        } else {
+            assert(tyd_w(sig, v1, bot, t, u));
+            let (vv, aa) = tyd_w_elim(sig, v1, bot, t, u);
+            mem_const(sig, c, ls, rho, vv);
+            mem_closed_env(sig, t, rho, aa);
+            tyd_w_intro(sig, m, rho, t, u, vv, aa);
+        }
+    }
+    // join-closed
+    assert forall|u1: Cpt, u2: Cpt| mem(sig, m, rho, u1) && mem(sig, m, rho, u2) implies #[trigger] jc_pair(sig, m, rho, u1, u2) by {
+        mem_const(sig, c, ls, rho, u1);
+        mem_const(sig, c, ls, rho, u2);
+        if !(u1 is Bot) && !(u2 is Bot) {
+            jc_elim(sig, v1, bot, u1, u2);
+            mem_const(sig, c, ls, rho, join(u1, u2));
+        }
+    }
+    jc_intro(sig, m, rho);
 }
 
 } // verus!
