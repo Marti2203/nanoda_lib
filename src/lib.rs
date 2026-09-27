@@ -46,6 +46,7 @@ pub mod real_gen;
 pub mod reduce_fv;
 pub mod replace;
 pub mod regularity;
+pub mod subst_algebra;
 pub mod subst_model;
 pub mod subst_conv;
 pub mod subst_typed;
