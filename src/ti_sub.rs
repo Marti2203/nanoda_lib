@@ -13,90 +13,92 @@ use crate::ti_subst::*;
 use crate::ti_meta::*;
 #[cfg(verus_only)]
 use crate::subst_algebra::{inst, lift};
+#[cfg(verus_only)]
+use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
 verus! {
 
 /// Some derivation of `j` (any, when one exists).
-pub open spec fn pick(j: Jd) -> Deriv {
-    choose|d: Deriv| valid(d) && concl(d) == j
+pub open spec fn pick(sig: Sig, j: Jd) -> Deriv {
+    choose|d: Deriv| valid(sig, d) && concl(d) == j
 }
 
-pub proof fn pick_of(d: Deriv)
+pub proof fn pick_of(sig: Sig, d: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
     ensures
-        valid(pick(concl(d))),
-        concl(pick(concl(d))) == concl(d),
+        valid(sig, pick(sig, concl(d))),
+        concl(pick(sig, concl(d))) == concl(d),
 {
-    assert(valid(d) && concl(d) == concl(d));
+    assert(valid(sig, d) && concl(d) == concl(d));
 }
 
 /// `x` and `y` are convertible types in `dl`.
 #[verifier::opaque]
-pub open spec fn tconvd(dl: Ctx, x: ExprSpec, y: ExprSpec) -> bool {
-    exists|l: LevelSpec| #[trigger] derivable(eq(dl, x, y, sort(l)))
+pub open spec fn tconvd(sig: Sig, dl: Ctx, x: ExprSpec, y: ExprSpec) -> bool {
+    exists|l: LevelSpec| #[trigger] derivable(sig, eq(dl, x, y, sort(l)))
 }
 
 /// A related substitution pair from `g` into `dl`: every variable's
 /// images convert at its type, and its type's images convert.
 #[verifier::opaque]
-pub open spec fn spair(g: Ctx, dl: Ctx, s: Sub, s2: Sub) -> bool {
-    &&& derivable(Jd::Wf(dl))
-    &&& forall|i: nat| i < g.len() ==> #[trigger] derivable(eq(dl, s(i), s2(i), psub(var_ty(g, i), s)))
-    &&& forall|i: nat| i < g.len() ==> #[trigger] tconvd(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2))
+pub open spec fn spair(sig: Sig, g: Ctx, dl: Ctx, s: Sub, s2: Sub) -> bool {
+    &&& derivable(sig, Jd::Wf(dl))
+    &&& forall|i: nat| i < g.len() ==> #[trigger] derivable(sig, eq(dl, s(i), s2(i), psub(var_ty(g, i), s)))
+    &&& forall|i: nat| i < g.len() ==> #[trigger] tconvd(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2))
 }
 
 /// The derivation of a derivable judgment.
-pub proof fn get(j: Jd) -> (d: Deriv)
+pub proof fn get(sig: Sig, j: Jd) -> (d: Deriv)
     requires
-        derivable(j),
+        derivable(sig, j),
     ensures
-        valid(d),
+        valid(sig, d),
         concl(d) == j,
 {
     reveal(derivable);
-    choose|d: Deriv| valid(d) && concl(d) == j
+    choose|d: Deriv| valid(sig, d) && concl(d) == j
 }
 
 /// A type conversion's level and derivation.
-pub proof fn get_t(dl: Ctx, x: ExprSpec, y: ExprSpec) -> (r: (LevelSpec, Deriv))
+pub proof fn get_t(sig: Sig, dl: Ctx, x: ExprSpec, y: ExprSpec) -> (r: (LevelSpec, Deriv))
     requires
-        tconvd(dl, x, y),
+        tconvd(sig, dl, x, y),
     ensures
-        valid(r.1),
+        valid(sig, r.1),
         concl(r.1) == eq(dl, x, y, sort(r.0)),
 {
     reveal(tconvd);
-    let l = choose|l: LevelSpec| #[trigger] derivable(eq(dl, x, y, sort(l)));
-    (l, get(eq(dl, x, y, sort(l))))
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(dl, x, y, sort(l)));
+    (l, get(sig, eq(dl, x, y, sort(l))))
 }
 
-pub proof fn mk_t(d: Deriv, l: LevelSpec)
+pub proof fn mk_t(sig: Sig, d: Deriv, l: LevelSpec)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_3 == sort(l),
     ensures
-        tconvd(concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2),
+        tconvd(sig, concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2),
 {
-    mk_d(d);
+    mk_d(sig, d);
     reveal(tconvd);
-    assert(derivable(eq(concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, sort(l))));
+    assert(derivable(sig, eq(concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, sort(l))));
 }
 
 /// WEAKENING: a judgment holds in an extended context, lifted.
-pub proof fn d_wk(d: Deriv, w: Deriv) -> (r: Deriv)
+pub proof fn d_wk(sig: Sig, d: Deriv, w: Deriv) -> (r: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        valid(w),
+        valid(sig, w),
         concl(w) is Wf,
         concl(w)->Wf_0.len() == concl(d)->Eq_0.len() + 1,
         concl(w)->Wf_0.drop_last() == concl(d)->Eq_0,
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(w)->Wf_0, lift(1, 0, concl(d)->Eq_1), lift(1, 0, concl(d)->Eq_2), lift(1, 0, concl(d)->Eq_3)),
 {
     let g = concl(d)->Eq_0;
@@ -108,7 +110,7 @@ pub proof fn d_wk(d: Deriv, w: Deriv) -> (r: Deriv)
         var_ty_push(g, x, i + 1);
         lift_is_rn(1, 0, var_ty(g, i));
     }
-    let res = d_ren(d, w, gx, r);
+    let res = d_ren(sig, d, w, gx, r);
     lift_is_rn(1, 0, concl(d)->Eq_1);
     lift_is_rn(1, 0, concl(d)->Eq_2);
     lift_is_rn(1, 0, concl(d)->Eq_3);
@@ -116,59 +118,59 @@ pub proof fn d_wk(d: Deriv, w: Deriv) -> (r: Deriv)
 }
 
 /// A related pair, reversed.
-pub proof fn spair_sym(g: Ctx, dl: Ctx, s: Sub, s2: Sub)
+pub proof fn spair_sym(sig: Sig, g: Ctx, dl: Ctx, s: Sub, s2: Sub)
     requires
-        spair(g, dl, s, s2),
+        spair(sig, g, dl, s, s2),
     ensures
-        spair(g, dl, s2, s),
+        spair(sig, g, dl, s2, s),
 {
     reveal(spair);
-    assert forall|i: nat| i < g.len() implies #[trigger] derivable(eq(dl, s2(i), s(i), psub(var_ty(g, i), s2))) by {
-        let d = get(eq(dl, s(i), s2(i), psub(var_ty(g, i), s)));
-        assert(tconvd(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2)));
-        let (l, t) = get_t(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2));
-        let ds = d_sym(d);
-        let c = d_conv(ds, t, l);
-        mk_d(c);
+    assert forall|i: nat| i < g.len() implies #[trigger] derivable(sig, eq(dl, s2(i), s(i), psub(var_ty(g, i), s2))) by {
+        let d = get(sig, eq(dl, s(i), s2(i), psub(var_ty(g, i), s)));
+        assert(tconvd(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2)));
+        let (l, t) = get_t(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2));
+        let ds = d_sym(sig, d);
+        let c = d_conv(sig, ds, t, l);
+        mk_d(sig, c);
     }
-    assert forall|i: nat| i < g.len() implies #[trigger] tconvd(dl, psub(var_ty(g, i), s2), psub(var_ty(g, i), s)) by {
-        assert(tconvd(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2)));
-        let (l, t) = get_t(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2));
-        let ts = d_sym(t);
-        mk_t(ts, l);
+    assert forall|i: nat| i < g.len() implies #[trigger] tconvd(sig, dl, psub(var_ty(g, i), s2), psub(var_ty(g, i), s)) by {
+        assert(tconvd(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2)));
+        let (l, t) = get_t(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2));
+        let ts = d_sym(sig, t);
+        mk_t(sig, ts, l);
     }
 }
 
 /// The left diagonal of a related pair.
-pub proof fn spair_left(g: Ctx, dl: Ctx, s: Sub, s2: Sub)
+pub proof fn spair_left(sig: Sig, g: Ctx, dl: Ctx, s: Sub, s2: Sub)
     requires
-        spair(g, dl, s, s2),
+        spair(sig, g, dl, s, s2),
     ensures
-        spair(g, dl, s, s),
+        spair(sig, g, dl, s, s),
 {
     reveal(spair);
-    assert forall|i: nat| i < g.len() implies #[trigger] derivable(eq(dl, s(i), s(i), psub(var_ty(g, i), s))) by {
-        let d = get(eq(dl, s(i), s2(i), psub(var_ty(g, i), s)));
-        let dd = d_left(d);
-        mk_d(dd);
+    assert forall|i: nat| i < g.len() implies #[trigger] derivable(sig, eq(dl, s(i), s(i), psub(var_ty(g, i), s))) by {
+        let d = get(sig, eq(dl, s(i), s2(i), psub(var_ty(g, i), s)));
+        let dd = d_left(sig, d);
+        mk_d(sig, dd);
     }
-    assert forall|i: nat| i < g.len() implies #[trigger] tconvd(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s)) by {
-        assert(tconvd(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2)));
-        let (l, t) = get_t(dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2));
-        let tl = d_left(t);
-        mk_t(tl, l);
+    assert forall|i: nat| i < g.len() implies #[trigger] tconvd(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s)) by {
+        assert(tconvd(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2)));
+        let (l, t) = get_t(sig, dl, psub(var_ty(g, i), s), psub(var_ty(g, i), s2));
+        let tl = d_left(sig, t);
+        mk_t(sig, tl, l);
     }
 }
 
 /// Conversion of the type, as a derivation.
-pub proof fn d_conv(d: Deriv, t: Deriv, l: LevelSpec) -> (r: Deriv)
+pub proof fn d_conv(sig: Sig, d: Deriv, t: Deriv, l: LevelSpec) -> (r: Deriv)
     requires
-        valid(d),
-        valid(t),
+        valid(sig, d),
+        valid(sig, t),
         concl(d) is Eq,
         concl(t) == eq(concl(d)->Eq_0, concl(d)->Eq_3, concl(t)->Eq_2, sort(l)),
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, concl(t)->Eq_2),
 {
     let (g, m, n, a) = (concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3);
@@ -176,79 +178,79 @@ pub proof fn d_conv(d: Deriv, t: Deriv, l: LevelSpec) -> (r: Deriv)
     let j = eq(g, m, n, b);
     let ps = seq![d, t];
     assert(prems(ps, seq![eq(g, m, n, a), eq(g, a, b, sort(l))]));
-    valid_node(Rule::Conv(l), j, ps);
+    valid_node(sig, Rule::Conv(l), j, ps);
     node(Rule::Conv(l), j, ps)
 }
 
 /// A variable, as a derivation.
-pub proof fn d_var(w: Deriv, i: nat) -> (r: Deriv)
+pub proof fn d_var(sig: Sig, w: Deriv, i: nat) -> (r: Deriv)
     requires
-        valid(w),
+        valid(sig, w),
         concl(w) is Wf,
         i < concl(w)->Wf_0.len(),
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(w)->Wf_0, ExprSpec::Var(i), ExprSpec::Var(i), var_ty(concl(w)->Wf_0, i)),
 {
     let g = concl(w)->Wf_0;
     let j = eq(g, ExprSpec::Var(i), ExprSpec::Var(i), var_ty(g, i));
     let ps = seq![w];
     assert(prems(ps, seq![Jd::Wf(g)]));
-    valid_node(Rule::Var(i), j, ps);
+    valid_node(sig, Rule::Var(i), j, ps);
     node(Rule::Var(i), j, ps)
 }
 
 /// A RELATED PAIR UNDER A BINDER: into `dl` extended by `x`, a type
 /// convertible to the substituted domain.
-pub proof fn spair_up(g: Ctx, dl: Ctx, s: Sub, s2: Sub, a: ExprSpec, x: ExprSpec, l: LevelSpec)
+pub proof fn spair_up(sig: Sig, g: Ctx, dl: Ctx, s: Sub, s2: Sub, a: ExprSpec, x: ExprSpec, l: LevelSpec)
     requires
-        spair(g, dl, s, s2),
-        derivable(eq(dl, x, psub(a, s), sort(l))),
-        derivable(eq(dl, psub(a, s), psub(a, s2), sort(l))),
+        spair(sig, g, dl, s, s2),
+        derivable(sig, eq(dl, x, psub(a, s), sort(l))),
+        derivable(sig, eq(dl, psub(a, s), psub(a, s2), sort(l))),
     ensures
-        spair(g.push(a), dl.push(x), up(s), up(s2)),
+        spair(sig, g.push(a), dl.push(x), up(s), up(s2)),
 {
     reveal(spair);
-    let w0 = get(Jd::Wf(dl));
-    let dx = get(eq(dl, x, psub(a, s), sort(l)));
-    let dxl = d_left(dx);
-    let w = d_cons(w0, l, dxl);
-    mk_d(w);
+    let w0 = get(sig, Jd::Wf(dl));
+    let dx = get(sig, eq(dl, x, psub(a, s), sort(l)));
+    let dxl = d_left(sig, dx);
+    let w = d_cons(sig, w0, l, dxl);
+    mk_d(sig, w);
     let gx = dl.push(x);
     assert(gx.drop_last() =~= dl);
-    let da = get(eq(dl, psub(a, s), psub(a, s2), sort(l)));
-    assert forall|i: nat| i < g.push(a).len() implies #[trigger] derivable(eq(gx, up(s)(i), up(s2)(i), psub(var_ty(g.push(a), i), up(s)))) by {
+    let da = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
+    assert forall|i: nat| i < g.push(a).len() implies #[trigger] derivable(sig, eq(gx, up(s)(i), up(s2)(i), psub(var_ty(g.push(a), i), up(s)))) by {
         var_ty_push(g, a, i);
         if i == 0 {
             var_ty_push(dl, x, 0);
-            let v = d_var(w, 0);
-            let dxw = d_wk(dx, w);
+            let v = d_var(sig, w, 0);
+            let dxw = d_wk(sig, dx, w);
             lift_under_up(a, s);
-            let c = d_conv(v, dxw, l);
-            mk_d(c);
+            let c = d_conv(sig, v, dxw, l);
+            mk_d(sig, c);
         } else {
             let k = (i - 1) as nat;
-            let dk = get(eq(dl, s(k), s2(k), psub(var_ty(g, k), s)));
-            let dkw = d_wk(dk, w);
-            mk_d(dkw);
+            let dk = get(sig, eq(dl, s(k), s2(k), psub(var_ty(g, k), s)));
+            let dkw = d_wk(sig, dk, w);
+            mk_d(sig, dkw);
             lift_under_up(var_ty(g, k), s);
         }
     }
-    assert forall|i: nat| i < g.push(a).len() implies #[trigger] tconvd(gx, psub(var_ty(g.push(a), i), up(s)), psub(var_ty(g.push(a), i), up(s2))) by {
+    assert forall|i: nat| i < g.push(a).len() implies #[trigger] tconvd(sig, gx, psub(var_ty(g.push(a), i), up(s)), psub(var_ty(g.push(a), i), up(s2))) by {
         var_ty_push(g, a, i);
         if i == 0 {
-            let daw = d_wk(da, w);
+            let daw = d_wk(sig, da, w);
             lift_under_up(a, s);
             lift_under_up(a, s2);
-            mk_t(daw, l);
+            mk_t(sig, daw, l);
         } else {
             let k = (i - 1) as nat;
-            assert(tconvd(dl, psub(var_ty(g, k), s), psub(var_ty(g, k), s2)));
-            let (lk, t) = get_t(dl, psub(var_ty(g, k), s), psub(var_ty(g, k), s2));
-            let tw = d_wk(t, w);
+            assert(tconvd(sig, dl, psub(var_ty(g, k), s), psub(var_ty(g, k), s2)));
+            let (lk, t) = get_t(sig, dl, psub(var_ty(g, k), s), psub(var_ty(g, k), s2));
+            let tw = d_wk(sig, t, w);
             lift_under_up(var_ty(g, k), s);
             lift_under_up(var_ty(g, k), s2);
-            mk_t(tw, lk);
+            mk_t(sig, tw, lk);
         }
     }
 }
@@ -265,16 +267,16 @@ pub proof fn psub_lift_cons(e: ExprSpec, m: ExprSpec, s: Sub)
 }
 
 /// A related pair extended by related terms for the new variable.
-pub proof fn spair_cons(g: Ctx, dl: Ctx, s: Sub, s2: Sub, a: ExprSpec, m: ExprSpec, m2: ExprSpec, l: LevelSpec)
+pub proof fn spair_cons(sig: Sig, g: Ctx, dl: Ctx, s: Sub, s2: Sub, a: ExprSpec, m: ExprSpec, m2: ExprSpec, l: LevelSpec)
     requires
-        spair(g, dl, s, s2),
-        derivable(eq(dl, m, m2, psub(a, s))),
-        derivable(eq(dl, psub(a, s), psub(a, s2), sort(l))),
+        spair(sig, g, dl, s, s2),
+        derivable(sig, eq(dl, m, m2, psub(a, s))),
+        derivable(sig, eq(dl, psub(a, s), psub(a, s2), sort(l))),
     ensures
-        spair(g.push(a), dl, cons(m, s), cons(m2, s2)),
+        spair(sig, g.push(a), dl, cons(m, s), cons(m2, s2)),
 {
     reveal(spair);
-    assert forall|i: nat| i < g.push(a).len() implies #[trigger] derivable(eq(dl, cons(m, s)(i), cons(m2, s2)(i), psub(var_ty(g.push(a), i), cons(m, s)))) by {
+    assert forall|i: nat| i < g.push(a).len() implies #[trigger] derivable(sig, eq(dl, cons(m, s)(i), cons(m2, s2)(i), psub(var_ty(g.push(a), i), cons(m, s)))) by {
         var_ty_push(g, a, i);
         if i == 0 {
             psub_lift_cons(a, m, s);
@@ -282,66 +284,66 @@ pub proof fn spair_cons(g: Ctx, dl: Ctx, s: Sub, s2: Sub, a: ExprSpec, m: ExprSp
             psub_lift_cons(var_ty(g, (i - 1) as nat), m, s);
         }
     }
-    assert forall|i: nat| i < g.push(a).len() implies #[trigger] tconvd(dl, psub(var_ty(g.push(a), i), cons(m, s)), psub(var_ty(g.push(a), i), cons(m2, s2))) by {
+    assert forall|i: nat| i < g.push(a).len() implies #[trigger] tconvd(sig, dl, psub(var_ty(g.push(a), i), cons(m, s)), psub(var_ty(g.push(a), i), cons(m2, s2))) by {
         var_ty_push(g, a, i);
         if i == 0 {
             psub_lift_cons(a, m, s);
             psub_lift_cons(a, m2, s2);
-            let d = get(eq(dl, psub(a, s), psub(a, s2), sort(l)));
-            mk_t(d, l);
+            let d = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
+            mk_t(sig, d, l);
         } else {
             let k = (i - 1) as nat;
             psub_lift_cons(var_ty(g, k), m, s);
             psub_lift_cons(var_ty(g, k), m2, s2);
-            assert(tconvd(dl, psub(var_ty(g, k), s), psub(var_ty(g, k), s2)));
+            assert(tconvd(sig, dl, psub(var_ty(g, k), s), psub(var_ty(g, k), s2)));
         }
     }
 }
 
 /// A sort's own conversion.
-pub proof fn d_univ(w: Deriv, l: LevelSpec, l2: LevelSpec) -> (r: Deriv)
+pub proof fn d_univ(sig: Sig, w: Deriv, l: LevelSpec, l2: LevelSpec) -> (r: Deriv)
     requires
-        valid(w),
+        valid(sig, w),
         concl(w) is Wf,
         crate::conv_cr::lev_eq(l, l2),
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(w)->Wf_0, sort(l), sort(l2), sort(succ(l))),
 {
     let g = concl(w)->Wf_0;
     let j = eq(g, sort(l), sort(l2), sort(succ(l)));
     let ps = seq![w];
     assert(prems(ps, seq![Jd::Wf(g)]));
-    valid_node(Rule::Univ(l, l2), j, ps);
+    valid_node(sig, Rule::Univ(l, l2), j, ps);
     node(Rule::Univ(l, l2), j, ps)
 }
 
 /// A sort converts to itself, as a type.
-pub proof fn sort_tconv(dl: Ctx, l: LevelSpec)
+pub proof fn sort_tconv(sig: Sig, dl: Ctx, l: LevelSpec)
     requires
-        derivable(Jd::Wf(dl)),
+        derivable(sig, Jd::Wf(dl)),
     ensures
-        tconvd(dl, sort(l), sort(l)),
+        tconvd(sig, dl, sort(l), sort(l)),
 {
-    let w = get(Jd::Wf(dl));
+    let w = get(sig, Jd::Wf(dl));
     assert(crate::conv_cr::lev_eq(l, l));
-    let d = d_univ(w, l, l);
-    mk_t(d, succ(l));
+    let d = d_univ(sig, w, l, l);
+    mk_t(sig, d, succ(l));
 }
 
 /// THE SUBSTITUTION LEMMA: a derivation, substituted along a related
 /// pair, stays derivable, and so does its type's conversion.
-pub proof fn d_sub(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 1int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -353,37 +355,37 @@ pub proof fn d_sub(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         },
         Rule::Univ(l, l2) => {
             reveal(spair);
-            let w = get(Jd::Wf(dl));
-            let u = d_univ(w, l, l2);
-            mk_d(u);
-            sort_tconv(dl, succ(l));
+            let w = get(sig, Jd::Wf(dl));
+            let u = d_univ(sig, w, l, l2);
+            mk_d(sig, u);
+            sort_tconv(sig, dl, succ(l));
         },
-        Rule::Sym => d_sub_sym(d, dl, s, s2),
-        Rule::Trans => d_sub_trans(d, dl, s, s2),
-        Rule::Conv(_) => d_sub_conv(d, dl, s, s2),
-        Rule::PiCong(_, _) => d_sub_pi(d, dl, s, s2),
-        Rule::LamCong(_, _) => d_sub_lam(d, dl, s, s2),
-        Rule::AppCong(_, _) => d_sub_app(d, dl, s, s2),
-        Rule::Beta(_, _) => d_sub_beta(d, dl, s, s2),
-        Rule::Eta(..) => d_sub_eta(d, dl, s, s2),
-        Rule::Irr(_) => d_sub_irr(d, dl, s, s2),
+        Rule::Sym => d_sub_sym(sig, d, dl, s, s2),
+        Rule::Trans => d_sub_trans(sig, d, dl, s, s2),
+        Rule::Conv(_) => d_sub_conv(sig, d, dl, s, s2),
+        Rule::PiCong(_, _) => d_sub_pi(sig, d, dl, s, s2),
+        Rule::LamCong(_, _) => d_sub_lam(sig, d, dl, s, s2),
+        Rule::AppCong(_, _) => d_sub_app(sig, d, dl, s, s2),
+        Rule::Beta(_, _) => d_sub_beta(sig, d, dl, s, s2),
+        Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
+        Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
         _ => {},
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_sym(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_sym(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is Sym,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -391,30 +393,30 @@ proof fn d_sub_sym(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let a = j->Eq_3;
     if let Rule::Sym = rule {
         let p0 = ps[0];
-        spair_sym(g, dl, s, s2);
-        d_sub(p0, dl, s2, s);
-        d_sub(p0, dl, s, s2);
-        let x = get(eq(dl, psub(n, s2), psub(m, s), psub(a, s2)));
-        let xs = d_sym(x);
-        let (l, t) = get_t(dl, psub(a, s2), psub(a, s));
-        let c = d_conv(xs, t, l);
-        mk_d(c);
+        spair_sym(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s2, s);
+        d_sub(sig, p0, dl, s, s2);
+        let x = get(sig, eq(dl, psub(n, s2), psub(m, s), psub(a, s2)));
+        let xs = d_sym(sig, x);
+        let (l, t) = get_t(sig, dl, psub(a, s2), psub(a, s));
+        let c = d_conv(sig, xs, t, l);
+        mk_d(sig, c);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_trans(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_trans(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is Trans,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -423,29 +425,29 @@ proof fn d_sub_trans(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     if let Rule::Trans = rule {
         let (p0, p1) = (ps[0], ps[1]);
         let mid = concl(p0)->Eq_2;
-        spair_left(g, dl, s, s2);
-        d_sub(p0, dl, s, s);
-        d_sub(p1, dl, s, s2);
-        let x = get(eq(dl, psub(m, s), psub(mid, s), psub(a, s)));
-        let y = get(eq(dl, psub(mid, s), psub(n, s2), psub(a, s)));
-        let z = d_trans(x, y);
-        mk_d(z);
+        spair_left(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p1, dl, s, s2);
+        let x = get(sig, eq(dl, psub(m, s), psub(mid, s), psub(a, s)));
+        let y = get(sig, eq(dl, psub(mid, s), psub(n, s2), psub(a, s)));
+        let z = d_trans(sig, x, y);
+        mk_d(sig, z);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_conv(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_conv(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is Conv,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -454,34 +456,34 @@ proof fn d_sub_conv(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     if let Rule::Conv(l) = rule {
         let (p0, p1) = (ps[0], ps[1]);
         let a0 = concl(p0)->Eq_3;
-        spair_left(g, dl, s, s2);
-        d_sub(p0, dl, s, s2);
-        d_sub(p1, dl, s, s);
-        d_sub(p1, dl, s, s2);
-        let x = get(eq(dl, psub(m, s), psub(n, s2), psub(a0, s)));
-        let t = get(eq(dl, psub(a0, s), psub(a, s), sort(l)));
-        let c = d_conv(x, t, l);
-        mk_d(c);
-        let t2 = get(eq(dl, psub(a0, s), psub(a, s2), sort(l)));
-        let ts = d_sym(t);
-        let tt = d_trans(ts, t2);
-        mk_t(tt, l);
+        spair_left(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p1, dl, s, s);
+        d_sub(sig, p1, dl, s, s2);
+        let x = get(sig, eq(dl, psub(m, s), psub(n, s2), psub(a0, s)));
+        let t = get(sig, eq(dl, psub(a0, s), psub(a, s), sort(l)));
+        let c = d_conv(sig, x, t, l);
+        mk_d(sig, c);
+        let t2 = get(sig, eq(dl, psub(a0, s), psub(a, s2), sort(l)));
+        let ts = d_sym(sig, t);
+        let tt = d_trans(sig, ts, t2);
+        mk_t(sig, tt, l);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_pi(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_pi(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is PiCong,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -491,31 +493,31 @@ proof fn d_sub_pi(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let (p0, p1, p2) = (ps[0], ps[1], ps[2]);
         let (aa, b) = (*m->Bind_1, *m->Bind_2);
         let (aa2, b2) = (*n->Bind_1, *n->Bind_2);
-        spair_left(g, dl, s, s2);
-        spair_sym(g, dl, s, s2);
-        spair_left(g, dl, s2, s);
-        d_sub(p0, dl, s, s2);
-        d_sub(p0, dl, s, s);
-        d_sub(p0, dl, s2, s2);
-        let e1 = get(eq(dl, psub(aa, s), psub(aa2, s2), sort(l1)));
-        let e2 = get(eq(dl, psub(aa, s), psub(aa2, s), sort(l1)));
-        let e3 = get(eq(dl, psub(aa, s2), psub(aa2, s2), sort(l1)));
-        let e3s = d_sym(e3);
-        let ass = d_trans(e1, e3s);
-        let e2s = d_sym(e2);
-        let a2ss = d_trans(e2s, e1);
-        let a2ssr = d_sym(a2ss);
-        let asl = d_left(e1);
-        mk_d(asl);
-        mk_d(ass);
-        mk_d(a2ss);
-        mk_d(a2ssr);
-        spair_up(g, dl, s, s2, aa, psub(aa, s), l1);
-        d_sub(p1, dl.push(psub(aa, s)), up(s), up(s2));
-        spair_up(g, dl, s, s2, aa2, psub(aa2, s2), l1);
-        d_sub(p2, dl.push(psub(aa2, s2)), up(s), up(s2));
-        let q1 = get(eq(dl.push(psub(aa, s)), psub(b, up(s)), psub(b2, up(s2)), sort(l2)));
-        let q2 = get(eq(dl.push(psub(aa2, s2)), psub(b, up(s)), psub(b2, up(s2)), sort(l2)));
+        spair_left(sig, g, dl, s, s2);
+        spair_sym(sig, g, dl, s, s2);
+        spair_left(sig, g, dl, s2, s);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p0, dl, s2, s2);
+        let e1 = get(sig, eq(dl, psub(aa, s), psub(aa2, s2), sort(l1)));
+        let e2 = get(sig, eq(dl, psub(aa, s), psub(aa2, s), sort(l1)));
+        let e3 = get(sig, eq(dl, psub(aa, s2), psub(aa2, s2), sort(l1)));
+        let e3s = d_sym(sig, e3);
+        let ass = d_trans(sig, e1, e3s);
+        let e2s = d_sym(sig, e2);
+        let a2ss = d_trans(sig, e2s, e1);
+        let a2ssr = d_sym(sig, a2ss);
+        let asl = d_left(sig, e1);
+        mk_d(sig, asl);
+        mk_d(sig, ass);
+        mk_d(sig, a2ss);
+        mk_d(sig, a2ssr);
+        spair_up(sig, g, dl, s, s2, aa, psub(aa, s), l1);
+        d_sub(sig, p1, dl.push(psub(aa, s)), up(s), up(s2));
+        spair_up(sig, g, dl, s, s2, aa2, psub(aa2, s2), l1);
+        d_sub(sig, p2, dl.push(psub(aa2, s2)), up(s), up(s2));
+        let q1 = get(sig, eq(dl.push(psub(aa, s)), psub(b, up(s)), psub(b2, up(s2)), sort(l2)));
+        let q2 = get(sig, eq(dl.push(psub(aa2, s2)), psub(b, up(s)), psub(b2, up(s2)), sort(l2)));
         let jj = eq(dl, psub(m, s), psub(n, s2), psub(a, s));
         let pp = seq![e1, q1, q2];
         assert(prems(pp, seq![
@@ -523,26 +525,26 @@ proof fn d_sub_pi(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(dl.push(psub(aa, s)), psub(b, up(s)), psub(b2, up(s2)), sort(l2)),
             eq(dl.push(psub(aa2, s2)), psub(b, up(s)), psub(b2, up(s2)), sort(l2)),
         ]));
-        valid_node(Rule::PiCong(l1, l2), jj, pp);
-        mk_d(node(Rule::PiCong(l1, l2), jj, pp));
-        assert(derivable(Jd::Wf(dl))) by { reveal(spair); }
-        sort_tconv(dl, imax(l1, l2));
+        valid_node(sig, Rule::PiCong(l1, l2), jj, pp);
+        mk_d(sig, node(Rule::PiCong(l1, l2), jj, pp));
+        assert(derivable(sig, Jd::Wf(dl))) by { reveal(spair); }
+        sort_tconv(sig, dl, imax(l1, l2));
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_lam(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_lam(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is LamCong,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -553,37 +555,37 @@ proof fn d_sub_lam(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let (aa, body) = (*m->Bind_1, *m->Bind_2);
         let (aa2, body2) = (*n->Bind_1, *n->Bind_2);
         let b = *a->Bind_2;
-        spair_left(g, dl, s, s2);
-        spair_sym(g, dl, s, s2);
-        spair_left(g, dl, s2, s);
-        d_sub(p0, dl, s, s2);
-        d_sub(p0, dl, s, s);
-        d_sub(p0, dl, s2, s2);
-        let e1 = get(eq(dl, psub(aa, s), psub(aa2, s2), sort(l1)));
-        let e2 = get(eq(dl, psub(aa, s), psub(aa2, s), sort(l1)));
-        let e3 = get(eq(dl, psub(aa, s2), psub(aa2, s2), sort(l1)));
-        let e3s = d_sym(e3);
-        let ass = d_trans(e1, e3s);
-        let e2s = d_sym(e2);
-        let a2ss = d_trans(e2s, e1);
-        let a2ssr = d_sym(a2ss);
-        let asl = d_left(e1);
-        mk_d(asl);
-        mk_d(ass);
-        mk_d(a2ss);
-        mk_d(a2ssr);
+        spair_left(sig, g, dl, s, s2);
+        spair_sym(sig, g, dl, s, s2);
+        spair_left(sig, g, dl, s2, s);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p0, dl, s2, s2);
+        let e1 = get(sig, eq(dl, psub(aa, s), psub(aa2, s2), sort(l1)));
+        let e2 = get(sig, eq(dl, psub(aa, s), psub(aa2, s), sort(l1)));
+        let e3 = get(sig, eq(dl, psub(aa, s2), psub(aa2, s2), sort(l1)));
+        let e3s = d_sym(sig, e3);
+        let ass = d_trans(sig, e1, e3s);
+        let e2s = d_sym(sig, e2);
+        let a2ss = d_trans(sig, e2s, e1);
+        let a2ssr = d_sym(sig, a2ss);
+        let asl = d_left(sig, e1);
+        mk_d(sig, asl);
+        mk_d(sig, ass);
+        mk_d(sig, a2ss);
+        mk_d(sig, a2ssr);
         let sa = dl.push(psub(aa, s));
-        spair_up(g, dl, s, s2, aa, psub(aa, s), l1);
-        spair_left(g.push(aa), sa, up(s), up(s2));
-        d_sub(p1, sa, up(s), up(s));
-        d_sub(p1, sa, up(s), up(s2));
-        d_sub(p2, sa, up(s), up(s2));
+        spair_up(sig, g, dl, s, s2, aa, psub(aa, s), l1);
+        spair_left(sig, g.push(aa), sa, up(s), up(s2));
+        d_sub(sig, p1, sa, up(s), up(s));
+        d_sub(sig, p1, sa, up(s), up(s2));
+        d_sub(sig, p2, sa, up(s), up(s2));
         let sa2 = dl.push(psub(aa2, s2));
-        spair_up(g, dl, s, s2, aa2, psub(aa2, s2), l1);
-        d_sub(p3, sa2, up(s), up(s2));
-        let q1 = get(eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
-        let q2 = get(eq(sa, psub(body, up(s)), psub(body2, up(s2)), psub(b, up(s))));
-        let q3 = get(eq(sa2, psub(body, up(s)), psub(body2, up(s2)), psub(b, up(s))));
+        spair_up(sig, g, dl, s, s2, aa2, psub(aa2, s2), l1);
+        d_sub(sig, p3, sa2, up(s), up(s2));
+        let q1 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        let q2 = get(sig, eq(sa, psub(body, up(s)), psub(body2, up(s2)), psub(b, up(s))));
+        let q3 = get(sig, eq(sa2, psub(body, up(s)), psub(body2, up(s2)), psub(b, up(s))));
         let jj = eq(dl, psub(m, s), psub(n, s2), psub(a, s));
         let pp = seq![e1, q1, q2, q3];
         assert(prems(pp, seq![
@@ -592,16 +594,16 @@ proof fn d_sub_lam(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(sa, psub(body, up(s)), psub(body2, up(s2)), psub(b, up(s))),
             eq(sa2, psub(body, up(s)), psub(body2, up(s2)), psub(b, up(s))),
         ]));
-        valid_node(Rule::LamCong(l1, l2), jj, pp);
-        mk_d(node(Rule::LamCong(l1, l2), jj, pp));
+        valid_node(sig, Rule::LamCong(l1, l2), jj, pp);
+        mk_d(sig, node(Rule::LamCong(l1, l2), jj, pp));
         // the type: Pi(A[s], B[up s]) == Pi(A[s2], B[up s2])
-        let assr = d_sym(ass);
-        mk_d(assr);
+        let assr = d_sym(sig, ass);
+        mk_d(sig, assr);
         let sb = dl.push(psub(aa, s2));
-        spair_up(g, dl, s, s2, aa, psub(aa, s2), l1);
-        d_sub(p1, sb, up(s), up(s2));
-        let r1 = get(eq(sa, psub(b, up(s)), psub(b, up(s2)), sort(l2)));
-        let r2 = get(eq(sb, psub(b, up(s)), psub(b, up(s2)), sort(l2)));
+        spair_up(sig, g, dl, s, s2, aa, psub(aa, s2), l1);
+        d_sub(sig, p1, sb, up(s), up(s2));
+        let r1 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s2)), sort(l2)));
+        let r2 = get(sig, eq(sb, psub(b, up(s)), psub(b, up(s2)), sort(l2)));
         let tj = eq(dl, psub(a, s), psub(a, s2), sort(imax(l1, l2)));
         let tp = seq![ass, r1, r2];
         assert(prems(tp, seq![
@@ -609,24 +611,24 @@ proof fn d_sub_lam(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(sa, psub(b, up(s)), psub(b, up(s2)), sort(l2)),
             eq(sb, psub(b, up(s)), psub(b, up(s2)), sort(l2)),
         ]));
-        valid_node(Rule::PiCong(l1, l2), tj, tp);
-        mk_t(node(Rule::PiCong(l1, l2), tj, tp), imax(l1, l2));
+        valid_node(sig, Rule::PiCong(l1, l2), tj, tp);
+        mk_t(sig, node(Rule::PiCong(l1, l2), tj, tp), imax(l1, l2));
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_app(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_app(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is AppCong,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -638,21 +640,21 @@ proof fn d_sub_app(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let (aa, b) = (*pt->Bind_1, *pt->Bind_2);
         let (f, x) = (*m->App_0, *m->App_1);
         let (f2, x2) = (*n->App_0, *n->App_1);
-        spair_left(g, dl, s, s2);
-        spair_sym(g, dl, s, s2);
-        spair_left(g, dl, s2, s);
-        d_sub(p0, dl, s, s2);
-        d_sub(p1, dl, s, s2);
-        d_sub(p1, dl, s2, s2);
-        d_sub(p2, dl, s, s);
-        d_sub(p2, dl, s, s2);
-        let ea = get(eq(dl, psub(aa, s), psub(aa, s), sort(l1)));
+        spair_left(sig, g, dl, s, s2);
+        spair_sym(sig, g, dl, s, s2);
+        spair_left(sig, g, dl, s2, s);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p1, dl, s, s2);
+        d_sub(sig, p1, dl, s2, s2);
+        d_sub(sig, p2, dl, s, s);
+        d_sub(sig, p2, dl, s, s2);
+        let ea = get(sig, eq(dl, psub(aa, s), psub(aa, s), sort(l1)));
         let sa = dl.push(psub(aa, s));
-        spair_up(g, dl, s, s, aa, psub(aa, s), l1);
-        d_sub(p3, sa, up(s), up(s));
-        let q0 = get(eq(dl, psub(f, s), psub(f2, s2), psub(pt, s)));
-        let q1 = get(eq(dl, psub(x, s), psub(x2, s2), psub(aa, s)));
-        let q3 = get(eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        spair_up(sig, g, dl, s, s, aa, psub(aa, s), l1);
+        d_sub(sig, p3, sa, up(s), up(s));
+        let q0 = get(sig, eq(dl, psub(f, s), psub(f2, s2), psub(pt, s)));
+        let q1 = get(sig, eq(dl, psub(x, s), psub(x2, s2), psub(aa, s)));
+        let q3 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
         psub_inst0(b, x, s);
         psub_inst0(b, x, s2);
         let jj = eq(dl, psub(m, s), psub(n, s2), psub(a, s));
@@ -663,38 +665,38 @@ proof fn d_sub_app(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(dl, psub(aa, s), psub(aa, s), sort(l1)),
             eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
         ]));
-        valid_node(Rule::AppCong(l1, l2), jj, pp);
-        mk_d(node(Rule::AppCong(l1, l2), jj, pp));
+        valid_node(sig, Rule::AppCong(l1, l2), jj, pp);
+        mk_d(sig, node(Rule::AppCong(l1, l2), jj, pp));
         // the type: B[x[s], s] == B[x[s2], s2]
-        let as2 = get(eq(dl, psub(aa, s), psub(aa, s2), sort(l1)));
-        let as2r = d_sym(as2);
-        let xx = get(eq(dl, psub(x, s2), psub(x2, s2), psub(aa, s2)));
-        let xxc = d_conv(xx, as2r, l1);
-        let xxs = d_sym(xxc);
-        let xss = d_trans(q1, xxs);
-        mk_d(xss);
-        spair_cons(g, dl, s, s2, aa, psub(x, s), psub(x, s2), l1);
-        d_sub(p3, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
+        let as2 = get(sig, eq(dl, psub(aa, s), psub(aa, s2), sort(l1)));
+        let as2r = d_sym(sig, as2);
+        let xx = get(sig, eq(dl, psub(x, s2), psub(x2, s2), psub(aa, s2)));
+        let xxc = d_conv(sig, xx, as2r, l1);
+        let xxs = d_sym(sig, xxc);
+        let xss = d_trans(sig, q1, xxs);
+        mk_d(sig, xss);
+        spair_cons(sig, g, dl, s, s2, aa, psub(x, s), psub(x, s2), l1);
+        d_sub(sig, p3, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
         inst_up(b, s, psub(x, s));
         inst_up(b, s2, psub(x, s2));
-        let tt = get(eq(dl, psub(b, cons(psub(x, s), s)), psub(b, cons(psub(x, s2), s2)), sort(l2)));
-        mk_t(tt, l2);
+        let tt = get(sig, eq(dl, psub(b, cons(psub(x, s), s)), psub(b, cons(psub(x, s2), s2)), sort(l2)));
+        mk_t(sig, tt, l2);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_beta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_beta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is Beta,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -705,19 +707,19 @@ proof fn d_sub_beta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let (f, x) = (*m->App_0, *m->App_1);
         let (aa, body) = (*f->Bind_1, *f->Bind_2);
         let b = concl(p1)->Eq_3;
-        spair_left(g, dl, s, s2);
-        d_sub(p0, dl, s, s);
-        d_sub(p0, dl, s, s2);
-        d_sub(p2, dl, s, s);
-        d_sub(p2, dl, s, s2);
+        spair_left(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p2, dl, s, s);
+        d_sub(sig, p2, dl, s, s2);
         let sa = dl.push(psub(aa, s));
-        spair_up(g, dl, s, s, aa, psub(aa, s), l1);
-        d_sub(p1, sa, up(s), up(s));
-        d_sub(p3, sa, up(s), up(s));
-        let q0 = get(eq(dl, psub(aa, s), psub(aa, s), sort(l1)));
-        let q1 = get(eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))));
-        let q2 = get(eq(dl, psub(x, s), psub(x, s), psub(aa, s)));
-        let q3 = get(eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        spair_up(sig, g, dl, s, s, aa, psub(aa, s), l1);
+        d_sub(sig, p1, sa, up(s), up(s));
+        d_sub(sig, p3, sa, up(s), up(s));
+        let q0 = get(sig, eq(dl, psub(aa, s), psub(aa, s), sort(l1)));
+        let q1 = get(sig, eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))));
+        let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(aa, s)));
+        let q3 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
         let xs = psub(x, s);
         let lm = lam(psub(aa, s), psub(body, up(s)));
         let bj = eq(dl, app(lm, xs), inst(0, xs, psub(body, up(s))), inst(0, xs, psub(b, up(s))));
@@ -728,12 +730,12 @@ proof fn d_sub_beta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(dl, xs, xs, psub(aa, s)),
             eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
         ]));
-        valid_node(Rule::Beta(l1, l2), bj, bp);
+        valid_node(sig, Rule::Beta(l1, l2), bj, bp);
         let bd = node(Rule::Beta(l1, l2), bj, bp);
         // then the substituted bodies
-        spair_cons(g, dl, s, s2, aa, psub(x, s), psub(x, s2), l1);
-        d_sub(p1, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
-        d_sub(p3, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
+        spair_cons(sig, g, dl, s, s2, aa, psub(x, s), psub(x, s2), l1);
+        d_sub(sig, p1, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
+        d_sub(sig, p3, dl, cons(psub(x, s), s), cons(psub(x, s2), s2));
         inst_up(body, s, psub(x, s));
         inst_up(body, s2, psub(x, s2));
         inst_up(b, s, psub(x, s));
@@ -741,30 +743,30 @@ proof fn d_sub_beta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         psub_inst0(body, x, s2);
         psub_inst0(b, x, s);
         psub_inst0(b, x, s2);
-        let bb = get(eq(dl, psub(body, cons(psub(x, s), s)), psub(body, cons(psub(x, s2), s2)), psub(b, cons(psub(x, s), s))));
-        let z = d_trans(bd, bb);
-        mk_d(z);
+        let bb = get(sig, eq(dl, psub(body, cons(psub(x, s), s)), psub(body, cons(psub(x, s2), s2)), psub(b, cons(psub(x, s), s))));
+        let z = d_trans(sig, bd, bb);
+        mk_d(sig, z);
         assert(f == lam(aa, body));
         assert(psub(f, s) == lm);
         assert(psub(m, s) == app(lm, xs));
-        let tt = get(eq(dl, psub(b, cons(psub(x, s), s)), psub(b, cons(psub(x, s2), s2)), sort(l2)));
-        mk_t(tt, l2);
+        let tt = get(sig, eq(dl, psub(b, cons(psub(x, s), s)), psub(b, cons(psub(x, s2), s2)), sort(l2)));
+        mk_t(sig, tt, l2);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_eta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is Eta,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -773,16 +775,16 @@ proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     if let Rule::Eta(l, l2) = rule {
         let (p0, p1, p2, p3, p4) = (ps[0], ps[1], ps[2], ps[3], ps[4]);
         let (aa, b) = (*a->Bind_1, *a->Bind_2);
-        spair_left(g, dl, s, s2);
-        d_sub(p0, dl, s, s);
-        d_sub(p1, dl, s, s);
-        d_sub(p1, dl, s, s2);
-        d_sub(p2, dl, s, s);
-        d_sub(p2, dl, s, s2);
+        spair_left(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p1, dl, s, s);
+        d_sub(sig, p1, dl, s, s2);
+        d_sub(sig, p2, dl, s, s);
+        d_sub(sig, p2, dl, s, s2);
         let sa = dl.push(psub(aa, s));
-        spair_up(g, dl, s, s, aa, psub(aa, s), l);
-        d_sub(p3, sa, up(s), up(s));
-        d_sub(p4, sa, up(s), up(s));
+        spair_up(sig, g, dl, s, s, aa, psub(aa, s), l);
+        d_sub(sig, p3, sa, up(s), up(s));
+        d_sub(sig, p4, sa, up(s), up(s));
         let v0 = ExprSpec::Var(0);
         assert(up(s)(0) == v0);
         assert(psub(v0, up(s)) == v0);
@@ -790,11 +792,11 @@ proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         lift_under_up(n, s);
         assert(psub(app(lift(1, 0, m), v0), up(s)) == app(lift(1, 0, psub(m, s)), v0));
         assert(psub(app(lift(1, 0, n), v0), up(s)) == app(lift(1, 0, psub(n, s)), v0));
-        let q0 = get(eq(dl, psub(aa, s), psub(aa, s), sort(l)));
-        let q1 = get(eq(dl, psub(m, s), psub(m, s), psub(a, s)));
-        let q2 = get(eq(dl, psub(n, s), psub(n, s), psub(a, s)));
-        let q3 = get(eq(sa, app(lift(1, 0, psub(m, s)), v0), app(lift(1, 0, psub(n, s)), v0), psub(b, up(s))));
-        let q4 = get(eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        let q0 = get(sig, eq(dl, psub(aa, s), psub(aa, s), sort(l)));
+        let q1 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
+        let q2 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
+        let q3 = get(sig, eq(sa, app(lift(1, 0, psub(m, s)), v0), app(lift(1, 0, psub(n, s)), v0), psub(b, up(s))));
+        let q4 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
         let ej = eq(dl, psub(m, s), psub(n, s), psub(a, s));
         let ep = seq![q0, q1, q2, q3, q4];
         assert(prems(ep, seq![
@@ -804,27 +806,27 @@ proof fn d_sub_eta(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(sa, app(lift(1, 0, psub(m, s)), v0), app(lift(1, 0, psub(n, s)), v0), psub(b, up(s))),
             eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
         ]));
-        valid_node(Rule::Eta(l, l2), ej, ep);
+        valid_node(sig, Rule::Eta(l, l2), ej, ep);
         let ed = node(Rule::Eta(l, l2), ej, ep);
-        let nn = get(eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
-        let z = d_trans(ed, nn);
-        mk_d(z);
+        let nn = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
+        let z = d_trans(sig, ed, nn);
+        mk_d(sig, z);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_irr(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_irr(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        spair(concl(d)->Eq_0, dl, s, s2),
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
         d->Node_0 is Irr,
     ensures
-        derivable(eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
-        tconvd(dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -832,15 +834,15 @@ proof fn d_sub_irr(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let a = j->Eq_3;
     if let Rule::Irr(l) = rule {
         let (p0, p1, p2) = (ps[0], ps[1], ps[2]);
-        spair_left(g, dl, s, s2);
-        d_sub(p0, dl, s, s);
-        d_sub(p0, dl, s, s2);
-        d_sub(p1, dl, s, s);
-        d_sub(p2, dl, s, s2);
-        let q0 = get(eq(dl, psub(a, s), psub(a, s), sort(l)));
-        let q1 = get(eq(dl, psub(m, s), psub(m, s), psub(a, s)));
-        let nn = get(eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
-        let q2 = d_right(nn);
+        spair_left(sig, g, dl, s, s2);
+        d_sub(sig, p0, dl, s, s);
+        d_sub(sig, p0, dl, s, s2);
+        d_sub(sig, p1, dl, s, s);
+        d_sub(sig, p2, dl, s, s2);
+        let q0 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+        let q1 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
+        let nn = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
+        let q2 = d_right(sig, nn);
         let ij = eq(dl, psub(m, s), psub(n, s2), psub(a, s));
         let ip = seq![q0, q1, q2];
         assert(prems(ip, seq![
@@ -848,10 +850,10 @@ proof fn d_sub_irr(d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             eq(dl, psub(m, s), psub(m, s), psub(a, s)),
             eq(dl, psub(n, s2), psub(n, s2), psub(a, s)),
         ]));
-        valid_node(Rule::Irr(l), ij, ip);
-        mk_d(node(Rule::Irr(l), ij, ip));
-        let t = get(eq(dl, psub(a, s), psub(a, s2), sort(l)));
-        mk_t(t, l);
+        valid_node(sig, Rule::Irr(l), ij, ip);
+        mk_d(sig, node(Rule::Irr(l), ij, ip));
+        let t = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
+        mk_t(sig, t, l);
     }
 }
 

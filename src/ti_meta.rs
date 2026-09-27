@@ -11,6 +11,8 @@ use crate::ti_syntax::*;
 use crate::ti_subst::*;
 #[cfg(verus_only)]
 use crate::subst_algebra::{inst, lift, lift_lift};
+#[cfg(verus_only)]
+use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -20,66 +22,66 @@ pub open spec fn node(r: Rule, j: Jd, ps: Seq<Deriv>) -> Deriv {
     Deriv::Node(r, j, ps)
 }
 
-pub proof fn valid_node(r: Rule, j: Jd, ps: Seq<Deriv>)
+pub proof fn valid_node(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     requires
-        step_ok(r, j, ps),
-        forall|k: int| 0 <= k < ps.len() ==> valid(#[trigger] ps[k]),
+        step_ok(sig, r, j, ps),
+        forall|k: int| 0 <= k < ps.len() ==> valid(sig, #[trigger] ps[k]),
     ensures
-        valid(node(r, j, ps)),
+        valid(sig, node(r, j, ps)),
         concl(node(r, j, ps)) == j,
 {
     reveal_with_fuel(valid, 1);
 }
 
 /// The premises of a valid node are valid.
-pub proof fn valid_prems(d: Deriv)
+pub proof fn valid_prems(sig: Sig, d: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
     ensures
-        forall|k: int| 0 <= k < d->Node_2.len() ==> valid(#[trigger] d->Node_2[k]),
-        step_ok(d->Node_0, d->Node_1, d->Node_2),
+        forall|k: int| 0 <= k < d->Node_2.len() ==> valid(sig, #[trigger] d->Node_2[k]),
+        step_ok(sig, d->Node_0, d->Node_1, d->Node_2),
 {
     reveal_with_fuel(valid, 1);
 }
 
 /// A valid derivation proves its conclusion.
-pub proof fn mk_d(d: Deriv)
+pub proof fn mk_d(sig: Sig, d: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
     ensures
-        derivable(concl(d)),
+        derivable(sig, concl(d)),
 {
     reveal(derivable);
 }
 
 /// Symmetry, transitivity and the diagonals, as derivations.
-pub proof fn d_sym(d: Deriv) -> (r: Deriv)
+pub proof fn d_sym(sig: Sig, d: Deriv) -> (r: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(d)->Eq_0, concl(d)->Eq_2, concl(d)->Eq_1, concl(d)->Eq_3),
 {
     let (g, m, n, a) = (concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3);
     let j = eq(g, n, m, a);
     let ps = seq![d];
     assert(prems(ps, seq![eq(g, m, n, a)]));
-    valid_node(Rule::Sym, j, ps);
+    valid_node(sig, Rule::Sym, j, ps);
     node(Rule::Sym, j, ps)
 }
 
-pub proof fn d_trans(d1: Deriv, d2: Deriv) -> (r: Deriv)
+pub proof fn d_trans(sig: Sig, d1: Deriv, d2: Deriv) -> (r: Deriv)
     requires
-        valid(d1),
-        valid(d2),
+        valid(sig, d1),
+        valid(sig, d2),
         concl(d1) is Eq,
         concl(d2) is Eq,
         concl(d2)->Eq_0 == concl(d1)->Eq_0,
         concl(d2)->Eq_1 == concl(d1)->Eq_2,
         concl(d2)->Eq_3 == concl(d1)->Eq_3,
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(d1)->Eq_0, concl(d1)->Eq_1, concl(d2)->Eq_2, concl(d1)->Eq_3),
 {
     let (g, m, mid, a) = (concl(d1)->Eq_0, concl(d1)->Eq_1, concl(d1)->Eq_2, concl(d1)->Eq_3);
@@ -87,61 +89,61 @@ pub proof fn d_trans(d1: Deriv, d2: Deriv) -> (r: Deriv)
     let j = eq(g, m, n, a);
     let ps = seq![d1, d2];
     assert(prems(ps, seq![eq(g, m, mid, a), eq(g, mid, n, a)]));
-    valid_node(Rule::Trans, j, ps);
+    valid_node(sig, Rule::Trans, j, ps);
     node(Rule::Trans, j, ps)
 }
 
 /// The right diagonal: `n == n : a` from `m == n : a`.
-pub proof fn d_right(d: Deriv) -> (r: Deriv)
+pub proof fn d_right(sig: Sig, d: Deriv) -> (r: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(d)->Eq_0, concl(d)->Eq_2, concl(d)->Eq_2, concl(d)->Eq_3),
 {
-    let s = d_sym(d);
-    d_trans(s, d)
+    let s = d_sym(sig, d);
+    d_trans(sig, s, d)
 }
 
 /// The left diagonal.
-pub proof fn d_left(d: Deriv) -> (r: Deriv)
+pub proof fn d_left(sig: Sig, d: Deriv) -> (r: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == eq(concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_1, concl(d)->Eq_3),
 {
-    let s = d_sym(d);
-    d_trans(d, s)
+    let s = d_sym(sig, d);
+    d_trans(sig, d, s)
 }
 
 /// THE CONTEXT IS WELL FORMED: every conversion's context has a
 /// well-formedness derivation.
-pub proof fn d_wf(d: Deriv) -> (r: Deriv)
+pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == Jd::Wf(concl(d)->Eq_0),
     decreases d,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     match rule {
         Rule::Var(_) => ps[0],
         Rule::Univ(_, _) => ps[0],
-        Rule::Sym => d_wf(ps[0]),
-        Rule::Trans => d_wf(ps[0]),
-        Rule::Conv(_) => d_wf(ps[0]),
-        Rule::PiCong(_, _) => d_wf(ps[0]),
-        Rule::LamCong(_, _) => d_wf(ps[0]),
-        Rule::AppCong(_, _) => d_wf(ps[0]),
-        Rule::Beta(_, _) => d_wf(ps[0]),
-        Rule::Eta(..) => d_wf(ps[0]),
-        Rule::Irr(_) => d_wf(ps[0]),
+        Rule::Sym => d_wf(sig, ps[0]),
+        Rule::Trans => d_wf(sig, ps[0]),
+        Rule::Conv(_) => d_wf(sig, ps[0]),
+        Rule::PiCong(_, _) => d_wf(sig, ps[0]),
+        Rule::LamCong(_, _) => d_wf(sig, ps[0]),
+        Rule::AppCong(_, _) => d_wf(sig, ps[0]),
+        Rule::Beta(_, _) => d_wf(sig, ps[0]),
+        Rule::Eta(..) => d_wf(sig, ps[0]),
+        Rule::Irr(_) => d_wf(sig, ps[0]),
         _ => {
             assert(false);
             d
@@ -150,16 +152,16 @@ pub proof fn d_wf(d: Deriv) -> (r: Deriv)
 }
 
 /// A well-formed extended context types its last entry.
-pub proof fn d_wf_last(d: Deriv) -> (r: (LevelSpec, Deriv))
+pub proof fn d_wf_last(sig: Sig, d: Deriv) -> (r: (LevelSpec, Deriv))
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Wf,
         concl(d)->Wf_0.len() > 0,
     ensures
-        valid(r.1),
+        valid(sig, r.1),
         concl(r.1) == eq(concl(d)->Wf_0.drop_last(), concl(d)->Wf_0.last(), concl(d)->Wf_0.last(), sort(r.0)),
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     match rule {
         Rule::CtxCons(l) => (l, ps[1]),
@@ -223,14 +225,14 @@ pub proof fn ren_up(b: ExprSpec, r: spec_fn(nat) -> nat)
 }
 
 /// Extend a well-formed context by a typed entry.
-pub proof fn d_cons(w: Deriv, l: LevelSpec, da: Deriv) -> (r: Deriv)
+pub proof fn d_cons(sig: Sig, w: Deriv, l: LevelSpec, da: Deriv) -> (r: Deriv)
     requires
-        valid(w),
-        valid(da),
+        valid(sig, w),
+        valid(sig, da),
         concl(w) is Wf,
         concl(da) == eq(concl(w)->Wf_0, concl(da)->Eq_1, concl(da)->Eq_1, sort(l)),
     ensures
-        valid(r),
+        valid(sig, r),
         concl(r) == Jd::Wf(concl(w)->Wf_0.push(concl(da)->Eq_1)),
 {
     let g = concl(w)->Wf_0;
@@ -239,25 +241,25 @@ pub proof fn d_cons(w: Deriv, l: LevelSpec, da: Deriv) -> (r: Deriv)
     let ps = seq![w, da];
     assert(g.push(a).drop_last() =~= g);
     assert(prems(ps, seq![Jd::Wf(g), eq(g, a, a, sort(l))]));
-    valid_node(Rule::CtxCons(l), j, ps);
+    valid_node(sig, Rule::CtxCons(l), j, ps);
     node(Rule::CtxCons(l), j, ps)
 }
 
 /// THE RENAMING LEMMA: a derivation renamed along a type-preserving
 /// renaming into a well-formed context.
-pub proof fn d_ren(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 1int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -271,32 +273,32 @@ pub proof fn d_ren(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
             let j2 = eq(dl, ExprSpec::Var(r(i)), ExprSpec::Var(r(i)), var_ty(dl, r(i)));
             let ps2 = seq![w];
             assert(prems(ps2, seq![Jd::Wf(dl)]));
-            valid_node(Rule::Var(r(i)), j2, ps2);
+            valid_node(sig, Rule::Var(r(i)), j2, ps2);
             node(Rule::Var(r(i)), j2, ps2)
         },
         Rule::Univ(l, l2) => {
             let j2 = eq(dl, m, n, a);
             let ps2 = seq![w];
             assert(prems(ps2, seq![Jd::Wf(dl)]));
-            valid_node(Rule::Univ(l, l2), j2, ps2);
+            valid_node(sig, Rule::Univ(l, l2), j2, ps2);
             node(Rule::Univ(l, l2), j2, ps2)
         },
         Rule::Sym => {
-            let d0 = d_ren(ps[0], w, dl, r);
-            d_sym(d0)
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            d_sym(sig, d0)
         },
         Rule::Trans => {
-            let d0 = d_ren(ps[0], w, dl, r);
-            let d1 = d_ren(ps[1], w, dl, r);
-            d_trans(d0, d1)
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let d1 = d_ren(sig, ps[1], w, dl, r);
+            d_trans(sig, d0, d1)
         },
-        Rule::Conv(..) => d_ren_conv(d, w, dl, r),
-        Rule::PiCong(..) => d_ren_pi(d, w, dl, r),
-        Rule::LamCong(..) => d_ren_lam(d, w, dl, r),
-        Rule::AppCong(..) => d_ren_app(d, w, dl, r),
-        Rule::Beta(..) => d_ren_beta(d, w, dl, r),
-        Rule::Eta(..) => d_ren_eta(d, w, dl, r),
-        Rule::Irr(..) => d_ren_irr(d, w, dl, r),
+        Rule::Conv(..) => d_ren_conv(sig, d, w, dl, r),
+        Rule::PiCong(..) => d_ren_pi(sig, d, w, dl, r),
+        Rule::LamCong(..) => d_ren_lam(sig, d, w, dl, r),
+        Rule::AppCong(..) => d_ren_app(sig, d, w, dl, r),
+        Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
+        Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
+        Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
         _ => {
             assert(false);
             d
@@ -305,20 +307,20 @@ pub proof fn d_ren(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_conv(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_conv(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is Conv,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -327,31 +329,31 @@ proof fn d_ren_conv(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res
     let q = rn(r);
     let ru = upr(r);
     let l = rule->Conv_0;
-            let d0 = d_ren(ps[0], w, dl, r);
-            let d1 = d_ren(ps[1], w, dl, r);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let d1 = d_ren(sig, ps[1], w, dl, r);
             let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
             let ps2 = seq![d0, d1];
             let a0 = concl(ps[0])->Eq_3;
             assert(prems(ps2, seq![eq(dl, psub(m, q), psub(n, q), psub(a0, q)), eq(dl, psub(a0, q), psub(a, q), sort(l))]));
-            valid_node(Rule::Conv(l), j2, ps2);
+            valid_node(sig, Rule::Conv(l), j2, ps2);
             node(Rule::Conv(l), j2, ps2)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_pi(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_pi(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is PiCong,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -363,15 +365,15 @@ proof fn d_ren_pi(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: 
     let l2 = rule->PiCong_1;
             let (aa, b) = (*m->Bind_1, *m->Bind_2);
             let (aa2, b2) = (*n->Bind_1, *n->Bind_2);
-            let d0 = d_ren(ps[0], w, dl, r);
-            let dl0 = d_left(d0);
-            let w1 = d_cons(w, l1, dl0);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let dl0 = d_left(sig, d0);
+            let w1 = d_cons(sig, w, l1, dl0);
             ren_ok_up(g, dl, r, aa);
-            let d1 = d_ren(ps[1], w1, dl.push(psub(aa, q)), ru);
-            let dr0 = d_right(d0);
-            let w2 = d_cons(w, l1, dr0);
+            let d1 = d_ren(sig, ps[1], w1, dl.push(psub(aa, q)), ru);
+            let dr0 = d_right(sig, d0);
+            let w2 = d_cons(sig, w, l1, dr0);
             ren_ok_up(g, dl, r, aa2);
-            let d2 = d_ren(ps[2], w2, dl.push(psub(aa2, q)), ru);
+            let d2 = d_ren(sig, ps[2], w2, dl.push(psub(aa2, q)), ru);
             ren_up(b, r);
             ren_up(b2, r);
             let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
@@ -381,25 +383,25 @@ proof fn d_ren_pi(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: 
                 eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b2, up(q)), sort(l2)),
                 eq(dl.push(psub(aa2, q)), psub(b, up(q)), psub(b2, up(q)), sort(l2)),
             ]));
-            valid_node(Rule::PiCong(l1, l2), j2, ps2);
+            valid_node(sig, Rule::PiCong(l1, l2), j2, ps2);
             node(Rule::PiCong(l1, l2), j2, ps2)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_lam(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_lam(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is LamCong,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -412,16 +414,16 @@ proof fn d_ren_lam(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
             let (aa, body) = (*m->Bind_1, *m->Bind_2);
             let (aa2, body2) = (*n->Bind_1, *n->Bind_2);
             let b = *a->Bind_2;
-            let d0 = d_ren(ps[0], w, dl, r);
-            let dl0 = d_left(d0);
-            let w1 = d_cons(w, l1, dl0);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let dl0 = d_left(sig, d0);
+            let w1 = d_cons(sig, w, l1, dl0);
             ren_ok_up(g, dl, r, aa);
-            let d1 = d_ren(ps[1], w1, dl.push(psub(aa, q)), ru);
-            let d2 = d_ren(ps[2], w1, dl.push(psub(aa, q)), ru);
-            let dr0 = d_right(d0);
-            let w2 = d_cons(w, l1, dr0);
+            let d1 = d_ren(sig, ps[1], w1, dl.push(psub(aa, q)), ru);
+            let d2 = d_ren(sig, ps[2], w1, dl.push(psub(aa, q)), ru);
+            let dr0 = d_right(sig, d0);
+            let w2 = d_cons(sig, w, l1, dr0);
             ren_ok_up(g, dl, r, aa2);
-            let d3 = d_ren(ps[3], w2, dl.push(psub(aa2, q)), ru);
+            let d3 = d_ren(sig, ps[3], w2, dl.push(psub(aa2, q)), ru);
             ren_up(b, r);
             ren_up(body, r);
             ren_up(body2, r);
@@ -433,25 +435,25 @@ proof fn d_ren_lam(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
                 eq(dl.push(psub(aa, q)), psub(body, up(q)), psub(body2, up(q)), psub(b, up(q))),
                 eq(dl.push(psub(aa2, q)), psub(body, up(q)), psub(body2, up(q)), psub(b, up(q))),
             ]));
-            valid_node(Rule::LamCong(l1, l2), j2, ps2);
+            valid_node(sig, Rule::LamCong(l1, l2), j2, ps2);
             node(Rule::LamCong(l1, l2), j2, ps2)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_app(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_app(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is AppCong,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -465,12 +467,12 @@ proof fn d_ren_app(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
             let (aa, b) = (*pt->Bind_1, *pt->Bind_2);
             let (f, x) = (*m->App_0, *m->App_1);
             let (f2, x2) = (*n->App_0, *n->App_1);
-            let d0 = d_ren(ps[0], w, dl, r);
-            let d1 = d_ren(ps[1], w, dl, r);
-            let d2 = d_ren(ps[2], w, dl, r);
-            let w1 = d_cons(w, l1, d2);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let d1 = d_ren(sig, ps[1], w, dl, r);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
+            let w1 = d_cons(sig, w, l1, d2);
             ren_ok_up(g, dl, r, aa);
-            let d3 = d_ren(ps[3], w1, dl.push(psub(aa, q)), ru);
+            let d3 = d_ren(sig, ps[3], w1, dl.push(psub(aa, q)), ru);
             ren_up(b, r);
             psub_inst0(b, x, q);
             let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
@@ -481,25 +483,25 @@ proof fn d_ren_app(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
                 eq(dl, psub(aa, q), psub(aa, q), sort(l1)),
                 eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b, up(q)), sort(l2)),
             ]));
-            valid_node(Rule::AppCong(l1, l2), j2, ps2);
+            valid_node(sig, Rule::AppCong(l1, l2), j2, ps2);
             node(Rule::AppCong(l1, l2), j2, ps2)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_beta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_beta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is Beta,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -512,12 +514,12 @@ proof fn d_ren_beta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res
             let (f, x) = (*m->App_0, *m->App_1);
             let (aa, body) = (*f->Bind_1, *f->Bind_2);
             let b = concl(ps[1])->Eq_3;
-            let d0 = d_ren(ps[0], w, dl, r);
-            let w1 = d_cons(w, l1, d0);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let w1 = d_cons(sig, w, l1, d0);
             ren_ok_up(g, dl, r, aa);
-            let d1 = d_ren(ps[1], w1, dl.push(psub(aa, q)), ru);
-            let d2 = d_ren(ps[2], w, dl, r);
-            let d3 = d_ren(ps[3], w1, dl.push(psub(aa, q)), ru);
+            let d1 = d_ren(sig, ps[1], w1, dl.push(psub(aa, q)), ru);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
+            let d3 = d_ren(sig, ps[3], w1, dl.push(psub(aa, q)), ru);
             ren_up(b, r);
             ren_up(body, r);
             psub_inst0(body, x, q);
@@ -535,25 +537,25 @@ proof fn d_ren_beta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res
                 eq(dl, psub(x, q), psub(x, q), psub(aa, q)),
                 eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b, up(q)), sort(l2)),
             ]));
-            valid_node(Rule::Beta(l1, l2), j2, ps2);
+            valid_node(sig, Rule::Beta(l1, l2), j2, ps2);
             node(Rule::Beta(l1, l2), j2, ps2)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_eta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_eta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is Eta,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -564,13 +566,13 @@ proof fn d_ren_eta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
     let l = rule->Eta_0;
     let l2 = rule->Eta_1;
             let (aa, b) = (*a->Bind_1, *a->Bind_2);
-            let d0 = d_ren(ps[0], w, dl, r);
-            let d1 = d_ren(ps[1], w, dl, r);
-            let d2 = d_ren(ps[2], w, dl, r);
-            let w1 = d_cons(w, l, d0);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let d1 = d_ren(sig, ps[1], w, dl, r);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
+            let w1 = d_cons(sig, w, l, d0);
             ren_ok_up(g, dl, r, aa);
-            let d3 = d_ren(ps[3], w1, dl.push(psub(aa, q)), ru);
-            let d4 = d_ren(ps[4], w1, dl.push(psub(aa, q)), ru);
+            let d3 = d_ren(sig, ps[3], w1, dl.push(psub(aa, q)), ru);
+            let d4 = d_ren(sig, ps[4], w1, dl.push(psub(aa, q)), ru);
             ren_up(b, r);
             lift_after_rn(m, r);
             lift_after_rn(n, r);
@@ -589,25 +591,25 @@ proof fn d_ren_eta(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
                 eq(dl.push(psub(aa, q)), app(lift(1, 0, psub(m, q)), v0), app(lift(1, 0, psub(n, q)), v0), psub(b, up(q))),
                 eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b, up(q)), sort(l2)),
             ]));
-            valid_node(Rule::Eta(l, l2), j2, ps2);
+            valid_node(sig, Rule::Eta(l, l2), j2, ps2);
             node(Rule::Eta(l, l2), j2, ps2)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_ren_irr(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_irr(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         d->Node_0 is Irr,
-        valid(w),
+        valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
     ensures
-        valid(res),
+        valid(sig, res),
         concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -616,9 +618,9 @@ proof fn d_ren_irr(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
     let q = rn(r);
     let ru = upr(r);
     let l = rule->Irr_0;
-            let d0 = d_ren(ps[0], w, dl, r);
-            let d1 = d_ren(ps[1], w, dl, r);
-            let d2 = d_ren(ps[2], w, dl, r);
+            let d0 = d_ren(sig, ps[0], w, dl, r);
+            let d1 = d_ren(sig, ps[1], w, dl, r);
+            let d2 = d_ren(sig, ps[2], w, dl, r);
             let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
             let ps2 = seq![d0, d1, d2];
             assert(prems(ps2, seq![
@@ -626,7 +628,7 @@ proof fn d_ren_irr(d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res:
                 eq(dl, psub(m, q), psub(m, q), psub(a, q)),
                 eq(dl, psub(n, q), psub(n, q), psub(a, q)),
             ]));
-            valid_node(Rule::Irr(l), j2, ps2);
+            valid_node(sig, Rule::Irr(l), j2, ps2);
             node(Rule::Irr(l), j2, ps2)
 }
 

@@ -53,6 +53,21 @@ pub open spec fn is_zero(l: LevelSpec) -> bool {
 /// A context: its entries, the last one innermost (`Var 0`).
 pub type Ctx = Seq<ExprSpec>;
 
+/// A declared constant: its universe parameters, its type, and its value
+/// when it is a definition.
+pub ghost struct ConstDecl {
+    pub lps: Seq<u64>,
+    pub ty: ExprSpec,
+    pub val: Option<ExprSpec>,
+}
+
+/// THE SIGNATURE a judgment is made in: the environment's constants, and
+/// the kernel's local variables (`Free`) as axioms.
+pub ghost struct Sig {
+    pub consts: Map<u64, ConstDecl>,
+    pub locals: Map<nat, ExprSpec>,
+}
+
 /// The type of `Var i` in `g`, lifted over the entries after it.
 pub open spec fn var_ty(g: Ctx, i: nat) -> ExprSpec {
     lift(i + 1, 0, g[g.len() - 1 - i])
@@ -100,7 +115,7 @@ pub open spec fn prems(ps: Seq<Deriv>, js: Seq<Jd>) -> bool {
 }
 
 /// One rule instance is correct.
-pub open spec fn step_ok(r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
+pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
     match r {
         Rule::CtxNil => j == Jd::Wf(Seq::empty()) && ps.len() == 0,
         Rule::CtxCons(l) => match j {
@@ -225,18 +240,18 @@ pub open spec fn step_ok(r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 
 /// A derivation is valid: every rule instance is correct.
 #[verifier::opaque]
-pub open spec fn valid(d: Deriv) -> bool
+pub open spec fn valid(sig: Sig, d: Deriv) -> bool
     decreases d,
 {
     match d {
-        Deriv::Node(r, j, ps) => step_ok(r, j, ps) && forall|k: int| 0 <= k < ps.len() ==> valid(#[trigger] ps[k]),
+        Deriv::Node(r, j, ps) => step_ok(sig, r, j, ps) && forall|k: int| 0 <= k < ps.len() ==> valid(sig, #[trigger] ps[k]),
     }
 }
 
 /// `j` is derivable.
 #[verifier::opaque]
-pub open spec fn derivable(j: Jd) -> bool {
-    exists|d: Deriv| valid(d) && #[trigger] concl(d) == j
+pub open spec fn derivable(sig: Sig, j: Jd) -> bool {
+    exists|d: Deriv| valid(sig, d) && #[trigger] concl(d) == j
 }
 
 } // verus!

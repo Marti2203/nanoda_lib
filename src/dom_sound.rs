@@ -19,6 +19,8 @@ use crate::ti_syntax::{Ctx, var_ty, is_zero, Deriv, Rule, Jd, valid, concl, step
 use crate::ti_meta::valid_prems;
 #[cfg(verus_only)]
 use crate::subst_algebra::{inst, lift, lift_zero};
+#[cfg(verus_only)]
+use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -1921,16 +1923,16 @@ pub proof fn sound_eta(ta: ExprSpec, tb: ExprSpec, m: ExprSpec, n: ExprSpec, rho
 /// SOUNDNESS OF THE MODEL (the paper's Theorem 2.31): under a fitting
 /// environment, a derivation's sides denote the same join-closed set,
 /// typed within its type.
-pub proof fn sound(d: Deriv, rho: Env)
+pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         fits(concl(d)->Eq_0, rho),
     ensures
         sound_ok(concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
     decreases d, 1int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -1944,38 +1946,38 @@ pub proof fn sound(d: Deriv, rho: Env)
             sound_univ(l, l2, rho);
         },
         Rule::Sym => {
-            sound(ps[0], rho);
+            sound(sig, ps[0], rho);
             sound_sym(m, n, a, rho);
         },
         Rule::Trans => {
-            sound(ps[0], rho);
-            sound(ps[1], rho);
+            sound(sig, ps[0], rho);
+            sound(sig, ps[1], rho);
             sound_trans(m, concl(ps[0])->Eq_2, n, a, rho);
         },
         Rule::Conv(l) => {
-            sound(ps[0], rho);
-            sound(ps[1], rho);
+            sound(sig, ps[0], rho);
+            sound(sig, ps[1], rho);
             sound_conv(m, n, concl(ps[0])->Eq_3, a, rho);
         },
         Rule::Irr(l) => {
-            sound(ps[0], rho);
-            sound(ps[1], rho);
-            sound(ps[2], rho);
+            sound(sig, ps[0], rho);
+            sound(sig, ps[1], rho);
+            sound(sig, ps[2], rho);
             sound_irr(m, n, a, l, rho);
         },
-        Rule::PiCong(_, _) => sound_pi_d(d, rho),
-        Rule::LamCong(_, _) => sound_lam_d(d, rho),
-        Rule::AppCong(_, _) => sound_app_d(d, rho),
-        Rule::Beta(_, _) => sound_beta_d(d, rho),
-        Rule::Eta(..) => sound_eta_d(d, rho),
+        Rule::PiCong(_, _) => sound_pi_d(sig, d, rho),
+        Rule::LamCong(_, _) => sound_lam_d(sig, d, rho),
+        Rule::AppCong(_, _) => sound_app_d(sig, d, rho),
+        Rule::Beta(_, _) => sound_beta_d(sig, d, rho),
+        Rule::Eta(..) => sound_eta_d(sig, d, rho),
         _ => {},
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn sound_pi_d(d: Deriv, rho: Env)
+proof fn sound_pi_d(sig: Sig, d: Deriv, rho: Env)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         fits(concl(d)->Eq_0, rho),
         d->Node_0 is PiCong,
@@ -1983,7 +1985,7 @@ proof fn sound_pi_d(d: Deriv, rho: Env)
         sound_ok(concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -1992,10 +1994,10 @@ proof fn sound_pi_d(d: Deriv, rho: Env)
     if let Rule::PiCong(l1, l2) = rule {
         let (ta, b) = (*m->Bind_1, *m->Bind_2);
         let (ta2, b2) = (*n->Bind_1, *n->Bind_2);
-        sound(ps[0], rho);
+        sound(sig, ps[0], rho);
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sound_ok(b, b2, ExprSpec::Sort(l2), ext(rho, x)) by {
             fits_ext(g, rho, ta, aa, x);
-            sound(ps[1], ext(rho, x));
+            sound(sig, ps[1], ext(rho, x));
         }
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sem_eq(b, b2, ext(rho, x)) by {
             assert(sound_ok(b, b2, ExprSpec::Sort(l2), ext(rho, x)));
@@ -2013,9 +2015,9 @@ proof fn sound_pi_d(d: Deriv, rho: Env)
 }
 
 #[verifier::spinoff_prover]
-proof fn sound_lam_d(d: Deriv, rho: Env)
+proof fn sound_lam_d(sig: Sig, d: Deriv, rho: Env)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         fits(concl(d)->Eq_0, rho),
         d->Node_0 is LamCong,
@@ -2023,7 +2025,7 @@ proof fn sound_lam_d(d: Deriv, rho: Env)
         sound_ok(concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2033,14 +2035,14 @@ proof fn sound_lam_d(d: Deriv, rho: Env)
         let (ta, bd) = (*m->Bind_1, *m->Bind_2);
         let (ta2, bd2) = (*n->Bind_1, *n->Bind_2);
         let tb = *a->Bind_2;
-        sound(ps[0], rho);
+        sound(sig, ps[0], rho);
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sound_ok(tb, tb, ExprSpec::Sort(l2), ext(rho, x)) by {
             fits_ext(g, rho, ta, aa, x);
-            sound(ps[1], ext(rho, x));
+            sound(sig, ps[1], ext(rho, x));
         }
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sound_ok(bd, bd2, tb, ext(rho, x)) by {
             fits_ext(g, rho, ta, aa, x);
-            sound(ps[2], ext(rho, x));
+            sound(sig, ps[2], ext(rho, x));
         }
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sem_eq(bd, bd2, ext(rho, x)) && jc(bd, ext(rho, x))
             && tyd(bd, ext(rho, x), tb) && jc(tb, ext(rho, x)) by {
@@ -2054,9 +2056,9 @@ proof fn sound_lam_d(d: Deriv, rho: Env)
 }
 
 #[verifier::spinoff_prover]
-proof fn sound_app_d(d: Deriv, rho: Env)
+proof fn sound_app_d(sig: Sig, d: Deriv, rho: Env)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         fits(concl(d)->Eq_0, rho),
         d->Node_0 is AppCong,
@@ -2064,7 +2066,7 @@ proof fn sound_app_d(d: Deriv, rho: Env)
         sound_ok(concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2075,11 +2077,11 @@ proof fn sound_app_d(d: Deriv, rho: Env)
         let (ta, tb) = (*pt->Bind_1, *pt->Bind_2);
         let (f, x0) = (*m->App_0, *m->App_1);
         let (f2, x2) = (*n->App_0, *n->App_1);
-        sound(ps[0], rho);
-        sound(ps[1], rho);
+        sound(sig, ps[0], rho);
+        sound(sig, ps[1], rho);
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sound_ok(tb, tb, ExprSpec::Sort(l2), ext(rho, x)) by {
             fits_ext(g, rho, ta, aa, x);
-            sound(ps[3], ext(rho, x));
+            sound(sig, ps[3], ext(rho, x));
         }
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies jc(tb, ext(rho, x)) by {
             assert(sound_ok(tb, tb, ExprSpec::Sort(l2), ext(rho, x)));
@@ -2092,9 +2094,9 @@ proof fn sound_app_d(d: Deriv, rho: Env)
 }
 
 #[verifier::spinoff_prover]
-proof fn sound_beta_d(d: Deriv, rho: Env)
+proof fn sound_beta_d(sig: Sig, d: Deriv, rho: Env)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         fits(concl(d)->Eq_0, rho),
         d->Node_0 is Beta,
@@ -2102,7 +2104,7 @@ proof fn sound_beta_d(d: Deriv, rho: Env)
         sound_ok(concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2112,10 +2114,10 @@ proof fn sound_beta_d(d: Deriv, rho: Env)
         let (fl, x0) = (*m->App_0, *m->App_1);
         let (ta, bd) = (*fl->Bind_1, *fl->Bind_2);
         let tb = concl(ps[1])->Eq_3;
-        sound(ps[2], rho);
+        sound(sig, ps[2], rho);
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sound_ok(bd, bd, tb, ext(rho, x)) by {
             fits_ext(g, rho, ta, aa, x);
-            sound(ps[1], ext(rho, x));
+            sound(sig, ps[1], ext(rho, x));
         }
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies jc(bd, ext(rho, x)) && tyd(bd, ext(rho, x), tb) by {
             assert(sound_ok(bd, bd, tb, ext(rho, x)));
@@ -2126,9 +2128,9 @@ proof fn sound_beta_d(d: Deriv, rho: Env)
 }
 
 #[verifier::spinoff_prover]
-proof fn sound_eta_d(d: Deriv, rho: Env)
+proof fn sound_eta_d(sig: Sig, d: Deriv, rho: Env)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         fits(concl(d)->Eq_0, rho),
         d->Node_0 is Eta,
@@ -2136,7 +2138,7 @@ proof fn sound_eta_d(d: Deriv, rho: Env)
         sound_ok(concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
     decreases d, 0int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2144,11 +2146,11 @@ proof fn sound_eta_d(d: Deriv, rho: Env)
     let a = j->Eq_3;
     if let Rule::Eta(l, _) = rule {
         let (ta, tb) = (*a->Bind_1, *a->Bind_2);
-        sound(ps[1], rho);
-        sound(ps[2], rho);
+        sound(sig, ps[1], rho);
+        sound(sig, ps[2], rho);
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sound_ok(crate::ti_syntax::app(lift(1, 0, m), ExprSpec::Var(0)), crate::ti_syntax::app(lift(1, 0, n), ExprSpec::Var(0)), tb, ext(rho, x)) by {
             fits_ext(g, rho, ta, aa, x);
-            sound(ps[3], ext(rho, x));
+            sound(sig, ps[3], ext(rho, x));
         }
         assert forall|x: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, x) implies sem_eq(eta_app(m), eta_app(n), ext(rho, x)) by {
             assert(sound_ok(crate::ti_syntax::app(lift(1, 0, m), ExprSpec::Var(0)), crate::ti_syntax::app(lift(1, 0, n), ExprSpec::Var(0)), tb, ext(rho, x)));

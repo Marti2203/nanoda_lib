@@ -49,6 +49,8 @@ use crate::ti_chain::tchain_one;
 use crate::ti_hred::{hred_refl, hred_step};
 #[cfg(verus_only)]
 use crate::subst_algebra::{inst, lift};
+#[cfg(verus_only)]
+use crate::ti_syntax::Sig;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -160,8 +162,8 @@ pub proof fn inst_elem2(x: ExprSpec, bm: ExprSpec, bt: ExprSpec, ta: ExprSpec, r
 }
 
 /// What adequacy assumes, at a stage and witnesses.
-pub open spec fn adeq_pre(g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, m: ExprSpec, t: ExprSpec, n: nat, u: Cpt, a: Cpt) -> bool {
-    &&& related(g, rho, dl, s, s2)
+pub open spec fn adeq_pre(sig: Sig, g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, m: ExprSpec, t: ExprSpec, n: nat, u: Cpt, a: Cpt) -> bool {
+    &&& related(sig, g, rho, dl, s, s2)
     &&& mem(t, rho, a)
     &&& has_type(n, a, Cpt::U)
     &&& mem(m, rho, u)
@@ -170,40 +172,40 @@ pub open spec fn adeq_pre(g: Ctx, rho: Env, dl: Ctx, s: Sub, s2: Sub, m: ExprSpe
 
 /// What adequacy concludes: the substituted sides are related, and so are
 /// the substituted types.
-pub open spec fn adeq_ok(n: nat, dl: Ctx, s: Sub, s2: Sub, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt) -> bool {
-    &&& rel_tm(n, dl, psub(m, s), psub(m2, s2), psub(t, s), u, a)
-    &&& rel_ty(n, dl, psub(t, s), psub(t, s2), a)
+pub open spec fn adeq_ok(sig: Sig, n: nat, dl: Ctx, s: Sub, s2: Sub, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt) -> bool {
+    &&& rel_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(t, s), u, a)
+    &&& rel_ty(sig, n, dl, psub(t, s), psub(t, s2), a)
 }
 
-pub open spec fn adeq_req(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt) -> bool {
-    valid(d) && concl(d) is Eq && adeq_pre(concl(d)->Eq_0, rho, dl, s, s2, concl(d)->Eq_1, concl(d)->Eq_3, n, u, a)
+pub open spec fn adeq_req(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt) -> bool {
+    valid(sig, d) && concl(d) is Eq && adeq_pre(sig, concl(d)->Eq_0, rho, dl, s, s2, concl(d)->Eq_1, concl(d)->Eq_3, n, u, a)
 }
 
-pub open spec fn adeq_ens(d: Deriv, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt) -> bool {
-    adeq_ok(n, dl, s, s2, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, u, a)
+pub open spec fn adeq_ens(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt) -> bool {
+    adeq_ok(sig, n, dl, s, s2, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, u, a)
 }
 
 /// THEOREM 2.35 (ADEQUACY).
-pub proof fn adeq(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 20int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     match d->Node_0 {
-        Rule::Var(_) => adeq_var(d, rho, dl, s, s2, n, u, a),
-        Rule::Univ(_, _) => adeq_univ(d, rho, dl, s, s2, n, u, a),
-        Rule::Sym => adeq_sym(d, rho, dl, s, s2, n, u, a),
-        Rule::Trans => adeq_trans(d, rho, dl, s, s2, n, u, a),
-        Rule::Conv(_) => adeq_conv(d, rho, dl, s, s2, n, u, a),
-        Rule::Irr(_) => adeq_irr(d, rho, dl, s, s2, n, u, a),
-        Rule::PiCong(_, _) => adeq_pi(d, rho, dl, s, s2, n, u, a),
-        Rule::LamCong(_, _) => adeq_lam(d, rho, dl, s, s2, n, u, a),
-        Rule::AppCong(_, _) => adeq_app(d, rho, dl, s, s2, n, u, a),
-        Rule::Beta(_, _) => adeq_beta(d, rho, dl, s, s2, n, u, a),
-        Rule::Eta(_, _) => adeq_eta(d, rho, dl, s, s2, n, u, a),
+        Rule::Var(_) => adeq_var(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Univ(_, _) => adeq_univ(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Sym => adeq_sym(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Trans => adeq_trans(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Conv(_) => adeq_conv(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Irr(_) => adeq_irr(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::PiCong(_, _) => adeq_pi(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::LamCong(_, _) => adeq_lam(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::AppCong(_, _) => adeq_app(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Beta(_, _) => adeq_beta(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
         _ => {},
     }
 }
@@ -211,16 +213,16 @@ pub proof fn adeq(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, 
 /// THE TYPE STATEMENT: types convertible at a sort are related at every
 /// stage-typed element of the left one's denotation (via the Prop
 /// witness when the sort is Prop).
-pub proof fn adeq_type(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, a: Cpt)
+pub proof fn adeq_type(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, a: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_3 is Sort,
-        related(concl(d)->Eq_0, rho, dl, s, s2),
+        related(sig, concl(d)->Eq_0, rho, dl, s, s2),
         mem(concl(d)->Eq_1, rho, a),
         has_type(n, a, Cpt::U),
     ensures
-        rel_ty(n, dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), a),
+        rel_ty(sig, n, dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), a),
     decreases d, 22int,
 {
     let ta = concl(d)->Eq_1;
@@ -228,19 +230,19 @@ pub proof fn adeq_type(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, a: 
     let l = st->Sort_0;
     let x = psub(ta, s);
     let x2 = psub(concl(d)->Eq_2, s2);
-    sound(d, rho);
+    sound(sig, d, rho);
     let a2 = type_elem(ta, rho, l, a);
     ty_pos(n, a, Cpt::U);
     if !is_zero(l) {
         mem_sort(l, rho, Cpt::U);
         assert(has_type(n, Cpt::U, Cpt::U));
-        adeq(d, rho, dl, s, s2, n, a, Cpt::U);
-        tm_sort(n, dl, x, x2, st, a);
+        adeq(sig, d, rho, dl, s, s2, n, a, Cpt::U);
+        tm_sort(sig, n, dl, x, x2, st, a);
     } else if a2 is Bot {
         if !(a is Bot) {
             head_le(a, a2);
         }
-        ty_bot(n, dl, x, x2);
+        ty_bot(sig, n, dl, x, x2);
     } else {
         let nn = n + cstage(a2, Cpt::Prop) + cstage(a2, Cpt::U);
         typed_up(a2, Cpt::Prop, nn);
@@ -248,77 +250,77 @@ pub proof fn adeq_type(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, a: 
         ty_up(n, nn, a, Cpt::U);
         mem_sort(l, rho, Cpt::Prop);
         assert(has_type(nn, Cpt::Prop, Cpt::U));
-        adeq(d, rho, dl, s, s2, nn, a2, Cpt::Prop);
-        tm_sort(nn, dl, x, x2, st, a2);
-        decr_ty(nn, dl, x, x2, a, a2);
-        stab_ty_up(n, nn, dl, x, x2, a);
+        adeq(sig, d, rho, dl, s, s2, nn, a2, Cpt::Prop);
+        tm_sort(sig, nn, dl, x, x2, st, a2);
+        decr_ty(sig, nn, dl, x, x2, a, a2);
+        stab_ty_up(sig, n, nn, dl, x, x2, a);
     }
 }
 
 /// A type premise's adequacy, as the facts relatedness extension needs.
-proof fn ty_adeq_of(d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub)
+proof fn ty_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub)
     requires
-        valid(d),
+        valid(sig, d),
         0 <= k < d->Node_2.len(),
         concl(d->Node_2[k]) is Eq,
         concl(d->Node_2[k])->Eq_3 is Sort,
-        related(concl(d->Node_2[k])->Eq_0, rho, dl, s, s2),
+        related(sig, concl(d->Node_2[k])->Eq_0, rho, dl, s, s2),
     ensures
-        ty_adeq(rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s), psub(concl(d->Node_2[k])->Eq_2, s2)),
-        ty_adeq(rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s), psub(concl(d->Node_2[k])->Eq_1, s2)),
-        ty_adeq(rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s), psub(concl(d->Node_2[k])->Eq_1, s)),
-        ty_adeq(rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s2), psub(concl(d->Node_2[k])->Eq_1, s2)),
+        ty_adeq(sig, rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s), psub(concl(d->Node_2[k])->Eq_2, s2)),
+        ty_adeq(sig, rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s), psub(concl(d->Node_2[k])->Eq_1, s2)),
+        ty_adeq(sig, rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s), psub(concl(d->Node_2[k])->Eq_1, s)),
+        ty_adeq(sig, rho, dl, concl(d->Node_2[k])->Eq_1, psub(concl(d->Node_2[k])->Eq_1, s2), psub(concl(d->Node_2[k])->Eq_1, s2)),
     decreases d, 13int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let p = ps[k];
     let g = concl(p)->Eq_0;
     let ta = concl(p)->Eq_1;
     let ta2 = concl(p)->Eq_2;
     let (x, xs2, y, y2) = (psub(ta, s), psub(ta, s2), psub(ta2, s), psub(ta2, s2));
-    related_left(g, rho, dl, s, s2);
-    related_right(g, rho, dl, s, s2);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(n, dl, x, y2, a) by {
-        adeq_type(p, rho, dl, s, s2, n, a);
+    related_left(sig, g, rho, dl, s, s2);
+    related_right(sig, g, rho, dl, s, s2);
+    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, y2, a) by {
+        adeq_type(sig, p, rho, dl, s, s2, n, a);
     }
-    ty_adeq_intro(rho, dl, ta, x, y2);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(n, dl, x, xs2, a) by {
-        adeq_type(p, rho, dl, s, s2, n, a);
-        adeq_type(p, rho, dl, s2, s2, n, a);
-        symm_ty(n, dl, xs2, y2, a);
-        trans_ty(n, dl, x, y2, xs2, a);
+    ty_adeq_intro(sig, rho, dl, ta, x, y2);
+    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, xs2, a) by {
+        adeq_type(sig, p, rho, dl, s, s2, n, a);
+        adeq_type(sig, p, rho, dl, s2, s2, n, a);
+        symm_ty(sig, n, dl, xs2, y2, a);
+        trans_ty(sig, n, dl, x, y2, xs2, a);
     }
-    ty_adeq_intro(rho, dl, ta, x, xs2);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(n, dl, x, x, a) by {
-        adeq_type(p, rho, dl, s, s, n, a);
-        symm_ty(n, dl, x, y, a);
-        trans_ty(n, dl, x, y, x, a);
+    ty_adeq_intro(sig, rho, dl, ta, x, xs2);
+    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, x, x, a) by {
+        adeq_type(sig, p, rho, dl, s, s, n, a);
+        symm_ty(sig, n, dl, x, y, a);
+        trans_ty(sig, n, dl, x, y, x, a);
     }
-    ty_adeq_intro(rho, dl, ta, x, x);
-    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(n, dl, xs2, xs2, a) by {
-        adeq_type(p, rho, dl, s2, s2, n, a);
-        symm_ty(n, dl, xs2, y2, a);
-        trans_ty(n, dl, xs2, y2, xs2, a);
+    ty_adeq_intro(sig, rho, dl, ta, x, x);
+    assert forall|n: nat, a: Cpt| mem(ta, rho, a) && has_type(n, a, Cpt::U) implies #[trigger] rel_ty(sig, n, dl, xs2, xs2, a) by {
+        adeq_type(sig, p, rho, dl, s2, s2, n, a);
+        symm_ty(sig, n, dl, xs2, y2, a);
+        trans_ty(sig, n, dl, xs2, y2, xs2, a);
     }
-    ty_adeq_intro(rho, dl, ta, xs2, xs2);
+    ty_adeq_intro(sig, rho, dl, ta, xs2, xs2);
 }
 
 /// A term premise's adequacy at every witness below an element of its
 /// left side, both images from the left side.
-proof fn tm_adeq_of(d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, v: Cpt)
+proof fn tm_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, v: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         0 <= k < d->Node_2.len(),
         concl(d->Node_2[k]) is Eq,
-        related(concl(d->Node_2[k])->Eq_0, rho, dl, s, s2),
+        related(sig, concl(d->Node_2[k])->Eq_0, rho, dl, s, s2),
         mem(concl(d->Node_2[k])->Eq_1, rho, v),
     ensures
-        tm_adeq(rho, dl, concl(d->Node_2[k])->Eq_3, psub(concl(d->Node_2[k])->Eq_1, s),
+        tm_adeq(sig, rho, dl, concl(d->Node_2[k])->Eq_3, psub(concl(d->Node_2[k])->Eq_1, s),
             psub(concl(d->Node_2[k])->Eq_1, s2), psub(concl(d->Node_2[k])->Eq_3, s), v),
     decreases d, 13int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let p = ps[k];
     let g = concl(p)->Eq_0;
@@ -327,150 +329,150 @@ proof fn tm_adeq_of(d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, v: Cpt
     let ta = concl(p)->Eq_3;
     let (xs, xs2, ys2) = (psub(x0, s), psub(x0, s2), psub(x2, s2));
     let (t, t2) = (psub(ta, s), psub(ta, s2));
-    related_right(g, rho, dl, s, s2);
+    related_right(sig, g, rho, dl, s, s2);
     reveal(tm_adeq);
     assert forall|n: nat, a: Cpt, u: Cpt|
         mem(ta, rho, a) && has_type(n, a, Cpt::U) && wf(u) && le(u, v) && has_type(n, u, a)
-        implies #[trigger] rel_tm(n, dl, xs, xs2, t, u, a) by {
+        implies #[trigger] rel_tm(sig, n, dl, xs, xs2, t, u, a) by {
         mem_down_e(x0, rho, v, u);
-        adeq(p, rho, dl, s, s2, n, u, a);
-        adeq(p, rho, dl, s2, s2, n, u, a);
-        symm_ty(n, dl, t, t2, a);
-        conv_tm(n, dl, xs2, ys2, t2, t, u, a);
-        symm_tm(n, dl, xs2, ys2, t, u, a);
-        trans_tm(n, dl, xs, ys2, xs2, t, u, a);
+        adeq(sig, p, rho, dl, s, s2, n, u, a);
+        adeq(sig, p, rho, dl, s2, s2, n, u, a);
+        symm_ty(sig, n, dl, t, t2, a);
+        conv_tm(sig, n, dl, xs2, ys2, t2, t, u, a);
+        symm_tm(sig, n, dl, xs2, ys2, t, u, a);
+        trans_tm(sig, n, dl, xs, ys2, xs2, t, u, a);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_var(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_var(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Var,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::Var(i) = rule {
         let g = j->Eq_0;
-        assert(var_rel(g, rho, dl, s, s2, i));
-        var_rel_elim(g, rho, dl, s, s2, i, n, a, u);
+        assert(var_rel(sig, g, rho, dl, s, s2, i));
+        var_rel_elim(sig, g, rho, dl, s, s2, i, n, a, u);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_univ(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_univ(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Univ,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::Univ(l, l2) = rule {
         let g = j->Eq_0;
-        spair_wf(g, dl, s, s2);
+        spair_wf(sig, g, dl, s, s2);
         succ_nonzero(l);
         assert(crate::conv_cr::lev_eq(succ(l), succ(l)));
         mem_sort(succ(l), rho, a);
         mem_sort(l, rho, u);
-        sort_rel(n, dl, succ(l), succ(l), a);
+        sort_rel(sig, n, dl, succ(l), succ(l), a);
         if a is Bot {
-            tm_bot(n, dl, sort(l), sort(l2), sort(succ(l)), u);
+            tm_bot(sig, n, dl, sort(l), sort(l2), sort(succ(l)), u);
         } else {
-            tm_sort(n, dl, sort(l), sort(l2), sort(succ(l)), u);
-            to_sort_sort(dl, succ(l));
-            sort_rel(n, dl, l, l2, u);
+            tm_sort(sig, n, dl, sort(l), sort(l2), sort(succ(l)), u);
+            to_sort_sort(sig, dl, succ(l));
+            sort_rel(sig, n, dl, l, l2, u);
         }
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_sym(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_sym(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Sym,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
-    sound(ps[0], rho);
+    sound(sig, ps[0], rho);
     assert(mem(m2, rho, u));
-    related_sym(g, rho, dl, s, s2);
-    adeq(ps[0], rho, dl, s2, s, n, u, a);
-    symm_tm(n, dl, psub(m2, s2), psub(m, s), psub(t, s2), u, a);
-    conv_tm(n, dl, psub(m, s), psub(m2, s2), psub(t, s2), psub(t, s), u, a);
-    symm_ty(n, dl, psub(t, s2), psub(t, s), a);
+    related_sym(sig, g, rho, dl, s, s2);
+    adeq(sig, ps[0], rho, dl, s2, s, n, u, a);
+    symm_tm(sig, n, dl, psub(m2, s2), psub(m, s), psub(t, s2), u, a);
+    conv_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(t, s2), psub(t, s), u, a);
+    symm_ty(sig, n, dl, psub(t, s2), psub(t, s), a);
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_trans(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_trans(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Trans,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     let mid = concl(ps[0])->Eq_2;
-    sound(ps[0], rho);
+    sound(sig, ps[0], rho);
     assert(mem(mid, rho, u));
-    adeq(ps[0], rho, dl, s, s2, n, u, a);
-    related_right(g, rho, dl, s, s2);
-    adeq(ps[1], rho, dl, s2, s2, n, u, a);
-    symm_ty(n, dl, psub(t, s), psub(t, s2), a);
-    conv_tm(n, dl, psub(mid, s2), psub(m2, s2), psub(t, s2), psub(t, s), u, a);
-    trans_tm(n, dl, psub(m, s), psub(mid, s2), psub(m2, s2), psub(t, s), u, a);
+    adeq(sig, ps[0], rho, dl, s, s2, n, u, a);
+    related_right(sig, g, rho, dl, s, s2);
+    adeq(sig, ps[1], rho, dl, s2, s2, n, u, a);
+    symm_ty(sig, n, dl, psub(t, s), psub(t, s2), a);
+    conv_tm(sig, n, dl, psub(mid, s2), psub(m2, s2), psub(t, s2), psub(t, s), u, a);
+    trans_tm(sig, n, dl, psub(m, s), psub(mid, s2), psub(m2, s2), psub(t, s), u, a);
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_conv(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_conv(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Conv,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     let a0 = concl(ps[0])->Eq_3;
-    sound(ps[1], rho);
+    sound(sig, ps[1], rho);
     assert(mem(a0, rho, a));
-    adeq(ps[0], rho, dl, s, s2, n, u, a);
-    related_left(g, rho, dl, s, s2);
-    adeq_type(ps[1], rho, dl, s, s, n, a);
-    conv_tm(n, dl, psub(m, s), psub(m2, s2), psub(a0, s), psub(t, s), u, a);
-    adeq_type(ps[1], rho, dl, s, s2, n, a);
-    symm_ty(n, dl, psub(a0, s), psub(t, s), a);
-    trans_ty(n, dl, psub(t, s), psub(a0, s), psub(t, s2), a);
+    adeq(sig, ps[0], rho, dl, s, s2, n, u, a);
+    related_left(sig, g, rho, dl, s, s2);
+    adeq_type(sig, ps[1], rho, dl, s, s, n, a);
+    conv_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(a0, s), psub(t, s), u, a);
+    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    symm_ty(sig, n, dl, psub(a0, s), psub(t, s), a);
+    trans_ty(sig, n, dl, psub(t, s), psub(a0, s), psub(t, s2), a);
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_irr(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Irr,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     if let Rule::Irr(l) = rule {
-        sound(ps[0], rho);
+        sound(sig, ps[0], rho);
         let a2 = type_elem(t, rho, l, a);
         if a2 is Bot {
             if !(a is Bot) {
@@ -483,36 +485,36 @@ proof fn adeq_irr(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, 
             ty_up(n, nn, u, a);
             below_prop_bot(nn, u, a, a2);
         }
-        related_left(g, rho, dl, s, s2);
-        adeq_type(ps[0], rho, dl, s, s, n, a);
-        bot_tm(n, dl, psub(m, s), psub(m2, s2), psub(t, s), a);
-        adeq_type(ps[0], rho, dl, s, s2, n, a);
+        related_left(sig, g, rho, dl, s, s2);
+        adeq_type(sig, ps[0], rho, dl, s, s, n, a);
+        bot_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(t, s), a);
+        adeq_type(sig, ps[0], rho, dl, s, s2, n, a);
     }
 }
 
 /// THE PI TYPE CLAUSE, from a body premise: the substituted Pis are
 /// related at every U-typed element of the left one's denotation.
 #[verifier::spinoff_prover]
-proof fn pi_rel(d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
+proof fn pi_rel(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, ta2: ExprSpec, tb: ExprSpec, tb2: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         0 <= kb < d->Node_2.len(),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb2, sort(l2)),
-        related(g, rho, dl, s, s2),
+        related(sig, g, rho, dl, s, s2),
         jc(ta, rho),
-        ty_adeq(rho, dl, ta, psub(ta, s), psub(ta2, s2)),
-        ty_adeq(rho, dl, ta, psub(ta, s), psub(ta, s2)),
-        ty_adeq(rho, dl, ta, psub(ta, s), psub(ta, s)),
-        ty_adeq(rho, dl, ta, psub(ta, s2), psub(ta, s2)),
-        binder_ok(dl, s, s2, ta, tb, tb2, l1, l2),
-        derivable(eq(dl, psub(ta, s), psub(ta2, s2), sort(l1))),
-        derivable(eq(dl, psub(ta2, s2), psub(ta2, s2), sort(l1))),
-        derivable(eq(dl.push(psub(ta2, s2)), psub(tb2, up(s2)), psub(tb2, up(s2)), sort(l2))),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta2, s2)),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s2)),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s)),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s2), psub(ta, s2)),
+        binder_ok(sig, dl, s, s2, ta, tb, tb2, l1, l2),
+        derivable(sig, eq(dl, psub(ta, s), psub(ta2, s2), sort(l1))),
+        derivable(sig, eq(dl, psub(ta2, s2), psub(ta2, s2), sort(l1))),
+        derivable(sig, eq(dl.push(psub(ta2, s2)), psub(tb2, up(s2)), psub(tb2, up(s2)), sort(l2))),
         mem(pi(ta, tb), rho, u),
         has_type(n, u, Cpt::U),
     ensures
-        rel_ty(n, dl, psub(pi(ta, tb), s), psub(pi(ta2, tb2), s2), u),
+        rel_ty(sig, n, dl, psub(pi(ta, tb), s), psub(pi(ta2, tb2), s2), u),
     decreases d, 12int,
 {
     let x = psub(ta, s);
@@ -522,67 +524,67 @@ proof fn pi_rel(d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     assert(psub(pi(ta, tb), s) == pi(x, bx));
     assert(psub(pi(ta2, tb2), s2) == pi(x2, bx2));
     if u is Bot {
-        ty_bot(n, dl, pi(x, bx), pi(x2, bx2));
+        ty_bot(sig, n, dl, pi(x, bx), pi(x2, bx2));
     } else {
         pi_elem(ta, tb, rho, u);
         let b = *u->Pi_0;
         let k = (n - 1) as nat;
         assert(n >= 1 && has_type(k, b, Cpt::U));
-        ty_pi(n, dl, pi(x, bx), pi(x2, bx2), u);
+        ty_pi(sig, n, dl, pi(x, bx), pi(x2, bx2), u);
         rp_pi(x, bx);
         rp_pi(x2, bx2);
-        d_pi_self(dl, x, bx, l1, l2);
-        d_pi_self(dl, x2, bx2, l1, l2);
-        tchain_one(dl, pi(x, bx), pi(x, bx));
-        tchain_one(dl, pi(x2, bx2), pi(x2, bx2));
-        tconv_of(dl, x, x2, l1);
-        tchain_one(dl, x, x2);
-        tconv_of(dl.push(x), bx, bx2, l2);
-        tchain_one(dl.push(x), bx, bx2);
-        tconv_of(dl, x2, x2, l1);
-        tconv_of(dl.push(x2), bx2, bx2, l2);
-        tconv_of(dl.push(x), bx, bx, l2);
-        tconv_of(dl, x, x, l1);
-        assert(pi_typed(dl, x, bx));
-        assert(pi_typed(dl, x2, bx2));
-        ty_adeq_elim(rho, dl, ta, x, x2, k, b);
+        d_pi_self(sig, dl, x, bx, l1, l2);
+        d_pi_self(sig, dl, x2, bx2, l1, l2);
+        tchain_one(sig, dl, pi(x, bx), pi(x, bx));
+        tchain_one(sig, dl, pi(x2, bx2), pi(x2, bx2));
+        tconv_of(sig, dl, x, x2, l1);
+        tchain_one(sig, dl, x, x2);
+        tconv_of(sig, dl.push(x), bx, bx2, l2);
+        tchain_one(sig, dl.push(x), bx, bx2);
+        tconv_of(sig, dl, x2, x2, l1);
+        tconv_of(sig, dl.push(x2), bx2, bx2, l2);
+        tconv_of(sig, dl.push(x), bx, bx, l2);
+        tconv_of(sig, dl, x, x, l1);
+        assert(pi_typed(sig, dl, x, bx));
+        assert(pi_typed(sig, dl, x2, bx2));
+        ty_adeq_elim(sig, rho, dl, ta, x, x2, k, b);
         assert forall|m: ExprSpec, m2: ExprSpec, v: Cpt|
-            has_type(k, v, b) && derivable(eq(dl, m, m2, x)) && rel_tm(k, dl, m, m2, x, v, b)
-            implies #[trigger] cod_at(k, dl, u, bx, bx2, m, m2, v) by {
-            pi_cod(d, kb, rho, dl, s, s2, g, ta, ta2, tb, tb2, l1, l2, n, u, m, m2, v);
+            has_type(k, v, b) && derivable(sig, eq(dl, m, m2, x)) && rel_tm(sig, k, dl, m, m2, x, v, b)
+            implies #[trigger] cod_at(sig, k, dl, u, bx, bx2, m, m2, v) by {
+            pi_cod(sig, d, kb, rho, dl, s, s2, g, ta, ta2, tb, tb2, l1, l2, n, u, m, m2, v);
         }
-        cod_ty_intro(k, dl, u, x, bx, bx2);
+        cod_ty_intro(sig, k, dl, u, x, bx, bx2);
     }
 }
 
 /// The Pi type clause's codomains at one argument pair.
 #[verifier::spinoff_prover]
-proof fn pi_cod(d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
+proof fn pi_cod(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, ta2: ExprSpec, tb: ExprSpec, tb2: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt,
     m: ExprSpec, m2: ExprSpec, v: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         0 <= kb < d->Node_2.len(),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb2, sort(l2)),
-        related(g, rho, dl, s, s2),
+        related(sig, g, rho, dl, s, s2),
         jc(ta, rho),
-        ty_adeq(rho, dl, ta, psub(ta, s), psub(ta, s2)),
-        ty_adeq(rho, dl, ta, psub(ta, s), psub(ta, s)),
-        ty_adeq(rho, dl, ta, psub(ta, s2), psub(ta, s2)),
-        binder_ok(dl, s, s2, ta, tb, tb2, l1, l2),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s2)),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s), psub(ta, s)),
+        ty_adeq(sig, rho, dl, ta, psub(ta, s2), psub(ta, s2)),
+        binder_ok(sig, dl, s, s2, ta, tb, tb2, l1, l2),
         mem(pi(ta, tb), rho, u),
         has_type(n, u, Cpt::U),
         u is Pi,
         wf(u),
         mem(ta, rho, *u->Pi_0),
         has_type((n - 1) as nat, v, *u->Pi_0),
-        derivable(eq(dl, m, m2, psub(ta, s))),
-        rel_tm((n - 1) as nat, dl, m, m2, psub(ta, s), v, *u->Pi_0),
+        derivable(sig, eq(dl, m, m2, psub(ta, s))),
+        rel_tm(sig, (n - 1) as nat, dl, m, m2, psub(ta, s), v, *u->Pi_0),
     ensures
-        cod_at((n - 1) as nat, dl, u, psub(tb, up(s)), psub(tb2, up(s2)), m, m2, v),
+        cod_at(sig, (n - 1) as nat, dl, u, psub(tb, up(s)), psub(tb2, up(s2)), m, m2, v),
     decreases d, 10int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let pb = ps[kb];
     let k = (n - 1) as nat;
@@ -595,36 +597,36 @@ proof fn pi_cod(d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     typed_down(v, b, k);
     assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) by {
         fits_ext(g, rho, ta, aa, z);
-        sound(pb, ext(rho, z));
+        sound(sig, pb, ext(rho, z));
     }
     typed_wf(v, b);
     cod_in_body(ta, tb, rho, u, v, b);
     cod_typed_at(u, v, n);
     let c = cod(u, v);
-    arg_adeq(k, dl, m, m2, x, x, v, b, ta, rho);
-    per_diag(k, dl, m, m2, x, v, b);
-    arg_adeq(k, dl, m2, m2, x, x, v, b, ta, rho);
-    ty_adeq_elim(rho, dl, ta, x, y, k, b);
-    conv_tm(k, dl, m, m2, x, y, v, b);
-    per_diag(k, dl, m, m2, y, v, b);
-    arg_adeq(k, dl, m, m2, y, y, v, b, ta, rho);
-    arg_adeq(k, dl, m, m, y, y, v, b, ta, rho);
-    dsym(dl, m, m2, x);
-    dconv(dl, m, m2, x, y, l1);
-    dsym(dl, m, m2, y);
-    related_left(g, rho, dl, s, s2);
-    related_right(g, rho, dl, s, s2);
-    related_cons(g, rho, dl, s, s2, ta, l1, m, m2, v, b);
-    related_cons(g, rho, dl, s, s, ta, l1, m, m2, v, b);
-    related_cons(g, rho, dl, s, s, ta, l1, m2, m2, v, b);
-    related_cons(g, rho, dl, s2, s2, ta, l1, m, m2, v, b);
-    related_cons(g, rho, dl, s2, s2, ta, l1, m, m, v, b);
+    arg_adeq(sig, k, dl, m, m2, x, x, v, b, ta, rho);
+    per_diag(sig, k, dl, m, m2, x, v, b);
+    arg_adeq(sig, k, dl, m2, m2, x, x, v, b, ta, rho);
+    ty_adeq_elim(sig, rho, dl, ta, x, y, k, b);
+    conv_tm(sig, k, dl, m, m2, x, y, v, b);
+    per_diag(sig, k, dl, m, m2, y, v, b);
+    arg_adeq(sig, k, dl, m, m2, y, y, v, b, ta, rho);
+    arg_adeq(sig, k, dl, m, m, y, y, v, b, ta, rho);
+    dsym(sig, dl, m, m2, x);
+    dconv(sig, dl, m, m2, x, y, l1);
+    dsym(sig, dl, m, m2, y);
+    related_left(sig, g, rho, dl, s, s2);
+    related_right(sig, g, rho, dl, s, s2);
+    related_cons(sig, g, rho, dl, s, s2, ta, l1, m, m2, v, b);
+    related_cons(sig, g, rho, dl, s, s, ta, l1, m, m2, v, b);
+    related_cons(sig, g, rho, dl, s, s, ta, l1, m2, m2, v, b);
+    related_cons(sig, g, rho, dl, s2, s2, ta, l1, m, m2, v, b);
+    related_cons(sig, g, rho, dl, s2, s2, ta, l1, m, m, v, b);
     let e = ext(rho, v);
-    adeq_type(pb, e, dl, cons(m, s), cons(m2, s2), k, c);
-    adeq_type(pb, e, dl, cons(m, s), cons(m2, s), k, c);
-    adeq_type(pb, e, dl, cons(m2, s), cons(m2, s), k, c);
-    adeq_type(pb, e, dl, cons(m, s2), cons(m2, s2), k, c);
-    adeq_type(pb, e, dl, cons(m, s2), cons(m, s2), k, c);
+    adeq_type(sig, pb, e, dl, cons(m, s), cons(m2, s2), k, c);
+    adeq_type(sig, pb, e, dl, cons(m, s), cons(m2, s), k, c);
+    adeq_type(sig, pb, e, dl, cons(m2, s), cons(m2, s), k, c);
+    adeq_type(sig, pb, e, dl, cons(m, s2), cons(m2, s2), k, c);
+    adeq_type(sig, pb, e, dl, cons(m, s2), cons(m, s2), k, c);
     inst_up(tb, s, m);
     inst_up(tb, s, m2);
     inst_up(tb2, s2, m);
@@ -633,22 +635,22 @@ proof fn pi_cod(d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     let b2 = psub(tb, cons(m2, s));
     let c1 = psub(tb2, cons(m, s2));
     let c2 = psub(tb2, cons(m2, s2));
-    symm_ty(k, dl, b2, psub(tb2, cons(m2, s)), c);
-    trans_ty(k, dl, b1, psub(tb2, cons(m2, s)), b2, c);
-    symm_ty(k, dl, psub(tb, cons(m, s2)), c1, c);
-    trans_ty(k, dl, c1, psub(tb, cons(m, s2)), c2, c);
+    symm_ty(sig, k, dl, b2, psub(tb2, cons(m2, s)), c);
+    trans_ty(sig, k, dl, b1, psub(tb2, cons(m2, s)), b2, c);
+    symm_ty(sig, k, dl, psub(tb, cons(m, s2)), c1, c);
+    trans_ty(sig, k, dl, c1, psub(tb, cons(m, s2)), c2, c);
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_pi(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_pi(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is PiCong,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::PiCong(l1, l2) = rule {
         let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
@@ -657,31 +659,31 @@ proof fn adeq_pi(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a
         assert(m == pi(ta, tb) && m2 == pi(ta2, tb2));
         let lp = imax(l1, l2);
         let (p0, p1, p2) = (ps[0], ps[1], ps[2]);
-        spair_wf(g, dl, s, s2);
+        spair_wf(sig, g, dl, s, s2);
         assert(crate::conv_cr::lev_eq(lp, lp));
         mem_sort(lp, rho, a);
-        sort_rel(n, dl, lp, lp, a);
+        sort_rel(sig, n, dl, lp, lp, a);
         if a is Bot {
-            tm_bot(n, dl, psub(m, s), psub(m2, s2), t, u);
+            tm_bot(sig, n, dl, psub(m, s), psub(m2, s2), t, u);
         } else {
-            tm_sort(n, dl, psub(m, s), psub(m2, s2), t, u);
-            to_sort_sort(dl, lp);
+            tm_sort(sig, n, dl, psub(m, s), psub(m2, s2), t, u);
+            to_sort_sort(sig, dl, lp);
             if a is Prop {
                 prop_is_type(n, u);
             }
-            sound(p0, rho);
-            ty_adeq_of(d, 0, rho, dl, s, s2);
-            binder_facts(p0, p1, g, dl, s, s2);
+            sound(sig, p0, rho);
+            ty_adeq_of(sig, d, 0, rho, dl, s, s2);
+            binder_facts(sig, p0, p1, g, dl, s, s2);
             let x2 = psub(ta2, s2);
-            spair_sym(g, dl, s, s2);
-            spair_left(g, dl, s2, s);
-            d_sub(p0, dl, s, s2);
-            let dr0 = d_right(p0);
-            d_sub(dr0, dl, s2, s2);
-            spair_up(g, dl, s2, s2, ta2, x2, l1);
-            let dr2 = d_right(p2);
-            d_sub(dr2, dl.push(x2), up(s2), up(s2));
-            pi_rel(d, 1, rho, dl, s, s2, g, ta, ta2, tb, tb2, l1, l2, n, u);
+            spair_sym(sig, g, dl, s, s2);
+            spair_left(sig, g, dl, s2, s);
+            d_sub(sig, p0, dl, s, s2);
+            let dr0 = d_right(sig, p0);
+            d_sub(sig, dr0, dl, s2, s2);
+            spair_up(sig, g, dl, s2, s2, ta2, x2, l1);
+            let dr2 = d_right(sig, p2);
+            d_sub(sig, dr2, dl.push(x2), up(s2), up(s2));
+            pi_rel(sig, d, 1, rho, dl, s, s2, g, ta, ta2, tb, tb2, l1, l2, n, u);
         }
     }
 }
@@ -689,14 +691,14 @@ proof fn adeq_pi(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a
 /// The lambda term clause at one argument pair: the beta reducts are
 /// related by the body's adequacy, then expanded.
 #[verifier::spinoff_prover]
-proof fn lam_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
+proof fn lam_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, ta2: ExprSpec, tb: ExprSpec, bd: ExprSpec, bd2: ExprSpec, l1: LevelSpec, l2: LevelSpec,
     n: nat, u: Cpt, a: Cpt, y: ExprSpec, y2: ExprSpec, w: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         d->Node_0 == Rule::LamCong(l1, l2),
         concl(d) == eq(g, lam(ta, bd), lam(ta2, bd2), pi(ta, tb)),
-        related(g, rho, dl, s, s2),
+        related(sig, g, rho, dl, s, s2),
         mem(lam(ta, bd), rho, u),
         u is Lam,
         mem(pi(ta, tb), rho, a),
@@ -706,13 +708,13 @@ proof fn lam_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
         has_type((n - 1) as nat, w, *a->Pi_0),
-        derivable(eq(dl, y, y2, psub(ta, s))),
-        rel_tm((n - 1) as nat, dl, y, y2, psub(ta, s), w, *a->Pi_0),
+        derivable(sig, eq(dl, y, y2, psub(ta, s))),
+        rel_tm(sig, (n - 1) as nat, dl, y, y2, psub(ta, s), w, *a->Pi_0),
     ensures
-        app_at((n - 1) as nat, dl, psub(lam(ta, bd), s), psub(lam(ta2, bd2), s2), psub(tb, up(s)), u, a, y, y2, w),
+        app_at(sig, (n - 1) as nat, dl, psub(lam(ta, bd), s), psub(lam(ta2, bd2), s2), psub(tb, up(s)), u, a, y, y2, w),
     decreases d, 16int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let (p0, p1, p2, p3) = (ps[0], ps[1], ps[2], ps[3]);
     assert(concl(p0) == eq(g, ta, ta2, sort(l1)));
@@ -728,63 +730,63 @@ proof fn lam_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     typed_down(b, Cpt::U, k);
     typed_down(w, b, k);
     typed_wf(w, b);
-    sound(p0, rho);
+    sound(sig, p0, rho);
     assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) && jc(bd, ext(rho, z)) by {
         fits_ext(g, rho, ta, aa, z);
-        sound(p1, ext(rho, z));
-        sound(p2, ext(rho, z));
+        sound(sig, p1, ext(rho, z));
+        sound(sig, p2, ext(rho, z));
     }
     cod_in_body(ta, tb, rho, a, w, b);
     lam_in_body(ta, bd, rho, u, w, b);
     app_typed_at(n, u, a, w);
     let c = cod(a, w);
     let e = capp(u, w);
-    ty_adeq_of(d, 0, rho, dl, s, s2);
-    binder_facts(p0, p1, g, dl, s, s2);
-    arg_adeq(k, dl, y, y2, x, x, w, b, ta, rho);
-    per_diag(k, dl, y, y2, x, w, b);
-    arg_adeq(k, dl, y2, y2, x, x, w, b, ta, rho);
-    arg_adeq(k, dl, y, y, x, x, w, b, ta, rho);
-    ty_adeq_elim(rho, dl, ta, x, xs2, k, b);
-    conv_tm(k, dl, y, y2, x, xs2, w, b);
-    per_diag(k, dl, y, y2, xs2, w, b);
-    arg_adeq(k, dl, y, y2, xs2, xs2, w, b, ta, rho);
-    arg_adeq(k, dl, y, y, xs2, xs2, w, b, ta, rho);
-    dsym(dl, y, y2, x);
-    dconv(dl, y, y2, x, xs2, l1);
-    dsym(dl, y, y2, xs2);
-    related_left(g, rho, dl, s, s2);
-    related_right(g, rho, dl, s, s2);
-    related_cons(g, rho, dl, s, s2, ta, l1, y, y2, w, b);
-    related_cons(g, rho, dl, s, s2, ta, l1, y, y, w, b);
-    related_cons(g, rho, dl, s, s, ta, l1, y, y2, w, b);
-    related_cons(g, rho, dl, s, s, ta, l1, y2, y2, w, b);
-    related_cons(g, rho, dl, s2, s2, ta, l1, y, y2, w, b);
-    related_cons(g, rho, dl, s2, s2, ta, l1, y, y, w, b);
+    ty_adeq_of(sig, d, 0, rho, dl, s, s2);
+    binder_facts(sig, p0, p1, g, dl, s, s2);
+    arg_adeq(sig, k, dl, y, y2, x, x, w, b, ta, rho);
+    per_diag(sig, k, dl, y, y2, x, w, b);
+    arg_adeq(sig, k, dl, y2, y2, x, x, w, b, ta, rho);
+    arg_adeq(sig, k, dl, y, y, x, x, w, b, ta, rho);
+    ty_adeq_elim(sig, rho, dl, ta, x, xs2, k, b);
+    conv_tm(sig, k, dl, y, y2, x, xs2, w, b);
+    per_diag(sig, k, dl, y, y2, xs2, w, b);
+    arg_adeq(sig, k, dl, y, y2, xs2, xs2, w, b, ta, rho);
+    arg_adeq(sig, k, dl, y, y, xs2, xs2, w, b, ta, rho);
+    dsym(sig, dl, y, y2, x);
+    dconv(sig, dl, y, y2, x, xs2, l1);
+    dsym(sig, dl, y, y2, xs2);
+    related_left(sig, g, rho, dl, s, s2);
+    related_right(sig, g, rho, dl, s, s2);
+    related_cons(sig, g, rho, dl, s, s2, ta, l1, y, y2, w, b);
+    related_cons(sig, g, rho, dl, s, s2, ta, l1, y, y, w, b);
+    related_cons(sig, g, rho, dl, s, s, ta, l1, y, y2, w, b);
+    related_cons(sig, g, rho, dl, s, s, ta, l1, y2, y2, w, b);
+    related_cons(sig, g, rho, dl, s2, s2, ta, l1, y, y2, w, b);
+    related_cons(sig, g, rho, dl, s2, s2, ta, l1, y, y, w, b);
     let ew = ext(rho, w);
     let g1 = g.push(ta);
-    related_sym(g1, ew, dl, cons(y, s), cons(y2, s));
-    adeq(p2, ew, dl, cons(y, s), cons(y2, s2), k, e, c);
-    adeq(p2, ew, dl, cons(y, s), cons(y2, s), k, e, c);
-    adeq(p2, ew, dl, cons(y2, s), cons(y2, s), k, e, c);
-    adeq(p2, ew, dl, cons(y, s2), cons(y2, s2), k, e, c);
-    adeq(p2, ew, dl, cons(y, s2), cons(y, s2), k, e, c);
-    adeq_type(p1, ew, dl, cons(y2, s), cons(y, s), k, c);
-    adeq_type(p1, ew, dl, cons(y, s), cons(y, s2), k, c);
+    related_sym(sig, g1, ew, dl, cons(y, s), cons(y2, s));
+    adeq(sig, p2, ew, dl, cons(y, s), cons(y2, s2), k, e, c);
+    adeq(sig, p2, ew, dl, cons(y, s), cons(y2, s), k, e, c);
+    adeq(sig, p2, ew, dl, cons(y2, s), cons(y2, s), k, e, c);
+    adeq(sig, p2, ew, dl, cons(y, s2), cons(y2, s2), k, e, c);
+    adeq(sig, p2, ew, dl, cons(y, s2), cons(y, s2), k, e, c);
+    adeq_type(sig, p1, ew, dl, cons(y2, s), cons(y, s), k, c);
+    adeq_type(sig, p1, ew, dl, cons(y, s), cons(y, s2), k, c);
     let t1 = psub(tb, cons(y, s));
     let t1b = psub(tb, cons(y2, s));
     let t1c = psub(tb, cons(y, s2));
     // the left side at both arguments
-    conv_tm(k, dl, psub(bd, cons(y2, s)), psub(bd2, cons(y2, s)), t1b, t1, e, c);
-    symm_tm(k, dl, psub(bd, cons(y2, s)), psub(bd2, cons(y2, s)), t1, e, c);
-    trans_tm(k, dl, psub(bd, cons(y, s)), psub(bd2, cons(y2, s)), psub(bd, cons(y2, s)), t1, e, c);
+    conv_tm(sig, k, dl, psub(bd, cons(y2, s)), psub(bd2, cons(y2, s)), t1b, t1, e, c);
+    symm_tm(sig, k, dl, psub(bd, cons(y2, s)), psub(bd2, cons(y2, s)), t1, e, c);
+    trans_tm(sig, k, dl, psub(bd, cons(y, s)), psub(bd2, cons(y2, s)), psub(bd, cons(y2, s)), t1, e, c);
     // the right side at both arguments
-    symm_ty(k, dl, t1, t1c, c);
-    symm_tm(k, dl, psub(bd, cons(y, s2)), psub(bd2, cons(y, s2)), t1c, e, c);
-    trans_tm(k, dl, psub(bd2, cons(y, s2)), psub(bd, cons(y, s2)), psub(bd2, cons(y2, s2)), t1c, e, c);
-    conv_tm(k, dl, psub(bd2, cons(y, s2)), psub(bd2, cons(y2, s2)), t1c, t1, e, c);
+    symm_ty(sig, k, dl, t1, t1c, c);
+    symm_tm(sig, k, dl, psub(bd, cons(y, s2)), psub(bd2, cons(y, s2)), t1c, e, c);
+    trans_tm(sig, k, dl, psub(bd2, cons(y, s2)), psub(bd, cons(y, s2)), psub(bd2, cons(y2, s2)), t1c, e, c);
+    conv_tm(sig, k, dl, psub(bd2, cons(y, s2)), psub(bd2, cons(y2, s2)), t1c, t1, e, c);
     // back through the beta steps
-    lam_syn(p0, p1, p2, p3, g, dl, s, s2, ta, ta2, tb, bd, bd2, l1, l2, y, y2);
+    lam_syn(sig, p0, p1, p2, p3, g, dl, s, s2, ta, ta2, tb, bd, bd2, l1, l2, y, y2);
     let lm = lam(x, psub(bd, up(s)));
     let lm2 = lam(psub(ta2, s2), psub(bd2, up(s2)));
     hred_step(sapp(lm, y));
@@ -796,21 +798,21 @@ proof fn lam_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     inst_up(bd2, s2, y);
     inst_up(bd2, s2, y2);
     inst_up(tb, s, y);
-    expand_tm(k, dl, psub(bd, cons(y, s)), psub(bd, cons(y2, s)), sapp(lm, y), sapp(lm, y2), t1, e, c);
-    expand_tm(k, dl, psub(bd2, cons(y, s2)), psub(bd2, cons(y2, s2)), sapp(lm2, y), sapp(lm2, y2), t1, e, c);
-    expand_tm(k, dl, psub(bd, cons(y, s)), psub(bd2, cons(y2, s2)), sapp(lm, y), sapp(lm2, y2), t1, e, c);
+    expand_tm(sig, k, dl, psub(bd, cons(y, s)), psub(bd, cons(y2, s)), sapp(lm, y), sapp(lm, y2), t1, e, c);
+    expand_tm(sig, k, dl, psub(bd2, cons(y, s2)), psub(bd2, cons(y2, s2)), sapp(lm2, y), sapp(lm2, y2), t1, e, c);
+    expand_tm(sig, k, dl, psub(bd, cons(y, s)), psub(bd2, cons(y2, s2)), sapp(lm, y), sapp(lm2, y2), t1, e, c);
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_lam(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_lam(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is LamCong,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::LamCong(l1, l2) = rule {
         let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
@@ -819,19 +821,19 @@ proof fn adeq_lam(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, 
         let tb = *t->Bind_2;
         assert(m == lam(ta, bd) && m2 == lam(ta2, bd2) && t == pi(ta, tb));
         let (p0, p1) = (ps[0], ps[1]);
-        sound(p0, rho);
-        related_left(g, rho, dl, s, s2);
-        ty_adeq_of(d, 0, rho, dl, s, s2);
-        ty_adeq_of(d, 0, rho, dl, s, s);
-        binder_facts(p0, p1, g, dl, s, s2);
-        binder_facts(p0, p1, g, dl, s, s);
-        pi_rel(d, 1, rho, dl, s, s2, g, ta, ta, tb, tb, l1, l2, n, a);
-        pi_rel(d, 1, rho, dl, s, s, g, ta, ta, tb, tb, l1, l2, n, a);
+        sound(sig, p0, rho);
+        related_left(sig, g, rho, dl, s, s2);
+        ty_adeq_of(sig, d, 0, rho, dl, s, s2);
+        ty_adeq_of(sig, d, 0, rho, dl, s, s);
+        binder_facts(sig, p0, p1, g, dl, s, s2);
+        binder_facts(sig, p0, p1, g, dl, s, s);
+        pi_rel(sig, d, 1, rho, dl, s, s2, g, ta, ta, tb, tb, l1, l2, n, a);
+        pi_rel(sig, d, 1, rho, dl, s, s, g, ta, ta, tb, tb, l1, l2, n, a);
         let tt = psub(t, s);
         let lm = psub(m, s);
         let lm2 = psub(m2, s2);
         if u is Bot {
-            bot_tm(n, dl, lm, lm2, tt, a);
+            bot_tm(sig, n, dl, lm, lm2, tt, a);
         } else {
             if a is Bot {
                 ty_of_bot(n, u);
@@ -844,12 +846,12 @@ proof fn adeq_lam(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, 
             rp_pi(x, bx);
             ty_pos(n, u, a);
             assert forall|y: ExprSpec, y2: ExprSpec, w: Cpt|
-                has_type(k, w, *a->Pi_0) && derivable(eq(dl, y, y2, x)) && rel_tm(k, dl, y, y2, x, w, *a->Pi_0)
-                implies #[trigger] app_at(k, dl, lm, lm2, bx, u, a, y, y2, w) by {
-                lam_app(d, rho, dl, s, s2, g, ta, ta2, tb, bd, bd2, l1, l2, n, u, a, y, y2, w);
+                has_type(k, w, *a->Pi_0) && derivable(sig, eq(dl, y, y2, x)) && rel_tm(sig, k, dl, y, y2, x, w, *a->Pi_0)
+                implies #[trigger] app_at(sig, k, dl, lm, lm2, bx, u, a, y, y2, w) by {
+                lam_app(sig, d, rho, dl, s, s2, g, ta, ta2, tb, bd, bd2, l1, l2, n, u, a, y, y2, w);
             }
-            app_tm_intro(k, dl, lm, lm2, x, bx, u, a);
-            tm_pi(n, dl, lm, lm2, tt, u, a);
+            app_tm_intro(sig, k, dl, lm, lm2, x, bx, u, a);
+            tm_pi(sig, n, dl, lm, lm2, tt, u, a);
         }
     }
 }
@@ -857,10 +859,10 @@ proof fn adeq_lam(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, 
 /// An instance type's adequacy: the codomain premise at the argument's
 /// related images.
 #[verifier::spinoff_prover]
-proof fn app_ty(d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
+proof fn app_ty(sig: Sig, d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
     g: Ctx, ta: ExprSpec, tb: ExprSpec, xx: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, a: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         0 <= kx < d->Node_2.len(),
         0 <= kd < d->Node_2.len(),
         0 <= kb < d->Node_2.len(),
@@ -870,25 +872,25 @@ proof fn app_ty(d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx, s: Sub, 
         concl(d->Node_2[kx])->Eq_3 == ta,
         concl(d->Node_2[kd]) == eq(g, ta, ta, sort(l1)),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb, sort(l2)),
-        related(g, rho, dl, s, s2),
+        related(sig, g, rho, dl, s, s2),
         mem(inst(0, xx, tb), rho, a),
         has_type(n, a, Cpt::U),
     ensures
-        rel_ty(n, dl, psub(inst(0, xx, tb), s), psub(inst(0, xx, tb), s2), a),
+        rel_ty(sig, n, dl, psub(inst(0, xx, tb), s), psub(inst(0, xx, tb), s2), a),
     decreases d, 15int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let (px, pd, pb) = (ps[kx], ps[kd], ps[kb]);
-    sound(px, rho);
+    sound(sig, px, rho);
     let (v, ax) = inst_elem(xx, tb, ta, rho, a);
-    tm_adeq_of(d, kx, rho, dl, s, s2, v);
-    ty_adeq_of(d, kd, rho, dl, s, s2);
-    let dxl = d_left(px);
-    d_sub(dxl, dl, s, s2);
-    d_sub(pd, dl, s, s2);
-    related_cons(g, rho, dl, s, s2, ta, l1, psub(xx, s), psub(xx, s2), v, ax);
-    adeq_type(pb, ext(rho, v), dl, cons(psub(xx, s), s), cons(psub(xx, s2), s2), n, a);
+    tm_adeq_of(sig, d, kx, rho, dl, s, s2, v);
+    ty_adeq_of(sig, d, kd, rho, dl, s, s2);
+    let dxl = d_left(sig, px);
+    d_sub(sig, dxl, dl, s, s2);
+    d_sub(sig, pd, dl, s, s2);
+    related_cons(sig, g, rho, dl, s, s2, ta, l1, psub(xx, s), psub(xx, s2), v, ax);
+    adeq_type(sig, pb, ext(rho, v), dl, cons(psub(xx, s), s), cons(psub(xx, s2), s2), n, a);
     psub_inst0(tb, xx, s);
     psub_inst0(tb, xx, s2);
     inst_up(tb, s, psub(xx, s));
@@ -899,21 +901,21 @@ proof fn app_ty(d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx, s: Sub, 
 /// lambda typed by a Pi code, project the argument's element onto both
 /// their inputs, apply the function's relation, then adjust witnesses.
 #[verifier::spinoff_prover]
-proof fn app_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
+proof fn app_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, tb: ExprSpec, f: ExprSpec, x0: ExprSpec, f2: ExprSpec, x2: ExprSpec,
     l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         d->Node_0 == Rule::AppCong(l1, l2),
         concl(d) == eq(g, sapp(f, x0), sapp(f2, x2), inst(0, x0, tb)),
         concl(d->Node_2[0]) == eq(g, f, f2, pi(ta, tb)),
-        adeq_pre(g, rho, dl, s, s2, sapp(f, x0), inst(0, x0, tb), n, u, a),
+        adeq_pre(sig, g, rho, dl, s, s2, sapp(f, x0), inst(0, x0, tb), n, u, a),
         !(u is Bot),
     ensures
-        rel_tm(n, dl, psub(sapp(f, x0), s), psub(sapp(f2, x2), s2), psub(inst(0, x0, tb), s), u, a),
+        rel_tm(sig, n, dl, psub(sapp(f, x0), s), psub(sapp(f2, x2), s2), psub(inst(0, x0, tb), s), u, a),
     decreases d, 16int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let (p0, p1, p2, p3) = (ps[0], ps[1], ps[2], ps[3]);
     assert(concl(p1) == eq(g, x0, x2, ta));
@@ -921,11 +923,11 @@ proof fn app_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     assert(concl(p3) == eq(g.push(ta), tb, tb, sort(l2)));
     let t = inst(0, x0, tb);
     let pt = pi(ta, tb);
-    sound(p0, rho);
-    sound(p1, rho);
+    sound(sig, p0, rho);
+    sound(sig, p1, rho);
     assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) by {
         fits_ext(g, rho, ta, aa, z);
-        sound(p3, ext(rho, z));
+        sound(sig, p3, ext(rho, z));
     }
     let (uf, ux) = app_parts(f, x0, rho, u);
     assert(tyd_w(f, rho, pt, uf));
@@ -951,15 +953,15 @@ proof fn app_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
         let wj = jproj(vf, pp, vx);
         mem_down_e(x0, rho, vx, wj);
         assert(has_type(k, b, Cpt::U));
-        adeq(p1, rho, dl, s, s2, k, wj, b);
-        adeq(p0, rho, dl, s, s2, nn, vf, pp);
+        adeq(sig, p1, rho, dl, s, s2, k, wj, b);
+        adeq(sig, p0, rho, dl, s, s2, nn, vf, pp);
         let xs = psub(ta, s);
         let bs = psub(tb, up(s));
         assert(psub(pt, s) == pi(xs, bs));
         rp_pi(xs, bs);
-        tm_pi(nn, dl, psub(f, s), psub(f2, s2), pi(xs, bs), vf, pp);
-        d_sub(p1, dl, s, s2);
-        app_tm_elim(k, dl, psub(f, s), psub(f2, s2), xs, bs, vf, pp, psub(x0, s), psub(x2, s2), wj);
+        tm_pi(sig, nn, dl, psub(f, s), psub(f2, s2), pi(xs, bs), vf, pp);
+        d_sub(sig, p1, dl, s, s2);
+        app_tm_elim(sig, k, dl, psub(f, s), psub(f2, s2), xs, bs, vf, pp, psub(x0, s), psub(x2, s2), wj);
         psub_inst0(tb, x0, s);
         app_typed_at(nn, vf, pp, wj);
         typed_down(wj, b, k);
@@ -967,29 +969,29 @@ proof fn app_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
         cod_in_inst(ta, tb, x0, rho, pp, wj, b);
         inst_jc(ta, tb, x0, rho);
         assert forall|n2: nat, a2: Cpt| mem(t, rho, a2) && has_type(n2, a2, Cpt::U)
-            implies #[trigger] rel_ty(n2, dl, psub(t, s), psub(t, s2), a2) by {
-            app_ty(d, 1, 2, 3, rho, dl, s, s2, g, ta, tb, x0, l1, l2, n2, a2);
+            implies #[trigger] rel_ty(sig, n2, dl, psub(t, s), psub(t, s2), a2) by {
+            app_ty(sig, d, 1, 2, 3, rho, dl, s, s2, g, ta, tb, x0, l1, l2, n2, a2);
         }
-        ty_adeq_intro(rho, dl, t, psub(t, s), psub(t, s2));
+        ty_adeq_intro(sig, rho, dl, t, psub(t, s), psub(t, s2));
         ty_up(n, k, a, Cpt::U);
         ty_up(n, k, u, a);
         let m1 = psub(sapp(f, x0), s);
         let m2 = psub(sapp(f2, x2), s2);
-        adjust(k, dl, m1, m2, psub(t, s), psub(t, s2), capp(vf, wj), cod(pp, wj), u, a, t, rho);
-        stab_tm_up(n, k, dl, m1, m2, psub(t, s), u, a);
+        adjust(sig, k, dl, m1, m2, psub(t, s), psub(t, s2), capp(vf, wj), cod(pp, wj), u, a, t, rho);
+        stab_tm_up(sig, n, k, dl, m1, m2, psub(t, s), u, a);
     }
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is AppCong,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::AppCong(l1, l2) = rule {
         let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
@@ -999,32 +1001,32 @@ proof fn adeq_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, 
         let (f2, x2) = (*m2->App_0, *m2->App_1);
         assert(pt == pi(ta, tb));
         assert(m == sapp(f, x0) && m2 == sapp(f2, x2));
-        related_left(g, rho, dl, s, s2);
-        app_ty(d, 1, 2, 3, rho, dl, s, s2, g, ta, tb, x0, l1, l2, n, a);
-        app_ty(d, 1, 2, 3, rho, dl, s, s, g, ta, tb, x0, l1, l2, n, a);
+        related_left(sig, g, rho, dl, s, s2);
+        app_ty(sig, d, 1, 2, 3, rho, dl, s, s2, g, ta, tb, x0, l1, l2, n, a);
+        app_ty(sig, d, 1, 2, 3, rho, dl, s, s, g, ta, tb, x0, l1, l2, n, a);
         if u is Bot {
-            bot_tm(n, dl, psub(m, s), psub(m2, s2), psub(t, s), a);
+            bot_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(t, s), a);
         } else {
-            app_main(d, rho, dl, s, s2, g, ta, tb, f, x0, f2, x2, l1, l2, n, u, a);
+            app_main(sig, d, rho, dl, s, s2, g, ta, tb, f, x0, f2, x2, l1, l2, n, u, a);
         }
     }
 }
 
 /// Beta's term clause: the redex head-expands the body's instance.
 #[verifier::spinoff_prover]
-proof fn beta_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
+proof fn beta_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, bd: ExprSpec, tb: ExprSpec, xx: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         d->Node_0 == Rule::Beta(l1, l2),
         concl(d) == eq(g, sapp(lam(ta, bd), xx), inst(0, xx, bd), inst(0, xx, tb)),
         concl(d->Node_2[1]) == eq(g.push(ta), bd, bd, tb),
-        adeq_pre(g, rho, dl, s, s2, sapp(lam(ta, bd), xx), inst(0, xx, tb), n, u, a),
+        adeq_pre(sig, g, rho, dl, s, s2, sapp(lam(ta, bd), xx), inst(0, xx, tb), n, u, a),
     ensures
-        rel_tm(n, dl, psub(sapp(lam(ta, bd), xx), s), psub(inst(0, xx, bd), s2), psub(inst(0, xx, tb), s), u, a),
+        rel_tm(sig, n, dl, psub(sapp(lam(ta, bd), xx), s), psub(inst(0, xx, bd), s2), psub(inst(0, xx, tb), s), u, a),
     decreases d, 16int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let (p0, p1, p2, p3) = (ps[0], ps[1], ps[2], ps[3]);
     assert(concl(p0) == eq(g, ta, ta, sort(l1)));
@@ -1032,19 +1034,19 @@ proof fn beta_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     let m = sapp(lam(ta, bd), xx);
     let m2 = inst(0, xx, bd);
     let t = inst(0, xx, tb);
-    sound(d, rho);
+    sound(sig, d, rho);
     assert(mem(m2, rho, u));
-    sound(p0, rho);
-    sound(p2, rho);
+    sound(sig, p0, rho);
+    sound(sig, p2, rho);
     let (v, ax) = inst_elem2(xx, bd, tb, ta, rho, u, a);
-    tm_adeq_of(d, 2, rho, dl, s, s2, v);
-    ty_adeq_of(d, 0, rho, dl, s, s2);
-    d_sub(p2, dl, s, s2);
-    d_sub(p0, dl, s, s2);
+    tm_adeq_of(sig, d, 2, rho, dl, s, s2, v);
+    ty_adeq_of(sig, d, 0, rho, dl, s, s2);
+    d_sub(sig, p2, dl, s, s2);
+    d_sub(sig, p0, dl, s, s2);
     let xs = psub(xx, s);
     let xs2 = psub(xx, s2);
-    related_cons(g, rho, dl, s, s2, ta, l1, xs, xs2, v, ax);
-    adeq(p1, ext(rho, v), dl, cons(xs, s), cons(xs2, s2), n, u, a);
+    related_cons(sig, g, rho, dl, s, s2, ta, l1, xs, xs2, v, ax);
+    adeq(sig, p1, ext(rho, v), dl, cons(xs, s), cons(xs2, s2), n, u, a);
     psub_inst0(tb, xx, s);
     inst_up(tb, s, xs);
     psub_inst0(bd, xx, s2);
@@ -1057,23 +1059,23 @@ proof fn beta_main(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     }
     hred_step(sapp(lm, xs));
     hred_refl(psub(m2, s2));
-    related_left(g, rho, dl, s, s2);
-    d_sub(d, dl, s, s);
-    d_sub(d, dl, s, s2);
-    dsym(dl, psub(m, s), psub(m2, s2), psub(t, s));
-    expand_tm(n, dl, psub(bd, cons(xs, s)), psub(bd, cons(xs2, s2)), psub(m, s), psub(m2, s2), psub(t, s), u, a);
+    related_left(sig, g, rho, dl, s, s2);
+    d_sub(sig, d, dl, s, s);
+    d_sub(sig, d, dl, s, s2);
+    dsym(sig, dl, psub(m, s), psub(m2, s2), psub(t, s));
+    expand_tm(sig, n, dl, psub(bd, cons(xs, s)), psub(bd, cons(xs2, s2)), psub(m, s), psub(m2, s2), psub(t, s), u, a);
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_beta(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_beta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Beta,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::Beta(l1, l2) = rule {
         let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
@@ -1081,21 +1083,21 @@ proof fn adeq_beta(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt,
         let (ta, bd) = (*fl->Bind_1, *fl->Bind_2);
         let tb = concl(ps[1])->Eq_3;
         assert(m == sapp(lam(ta, bd), xx));
-        app_ty(d, 2, 0, 3, rho, dl, s, s2, g, ta, tb, xx, l1, l2, n, a);
-        beta_main(d, rho, dl, s, s2, g, ta, bd, tb, xx, l1, l2, n, u, a);
+        app_ty(sig, d, 2, 0, 3, rho, dl, s, s2, g, ta, tb, xx, l1, l2, n, a);
+        beta_main(sig, d, rho, dl, s, s2, g, ta, bd, tb, xx, l1, l2, n, u, a);
     }
 }
 
 /// Eta's term clause at one argument pair: the premise on the expanded
 /// sides, at the application of the function's element.
 #[verifier::spinoff_prover]
-proof fn eta_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSpec, m2: ExprSpec,
+proof fn eta_app_rel(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSpec, m2: ExprSpec,
     ta: ExprSpec, tb: ExprSpec, l: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt, y: ExprSpec, y2: ExprSpec, w: Cpt)
     requires
-        valid(d),
+        valid(sig, d),
         d->Node_0 == Rule::Eta(l, l2),
         concl(d) == eq(g, m, m2, pi(ta, tb)),
-        related(g, rho, dl, s, s2),
+        related(sig, g, rho, dl, s, s2),
         mem(m, rho, u),
         mem(pi(ta, tb), rho, a),
         a is Pi,
@@ -1104,14 +1106,14 @@ proof fn eta_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSp
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
         has_type((n - 1) as nat, w, *a->Pi_0),
-        derivable(eq(dl, y, y2, psub(ta, s))),
-        rel_tm((n - 1) as nat, dl, y, y2, psub(ta, s), w, *a->Pi_0),
+        derivable(sig, eq(dl, y, y2, psub(ta, s))),
+        rel_tm(sig, (n - 1) as nat, dl, y, y2, psub(ta, s), w, *a->Pi_0),
     ensures
-        rel_tm((n - 1) as nat, dl, sapp(psub(m, s), y), sapp(psub(m2, s2), y2), inst(0, y, psub(tb, up(s))),
+        rel_tm(sig, (n - 1) as nat, dl, sapp(psub(m, s), y), sapp(psub(m2, s2), y2), inst(0, y, psub(tb, up(s))),
             capp(u, w), cod(a, w)),
     decreases d, 16int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(_, _, ps) = d;
     let (p0, p3, p4) = (ps[0], ps[3], ps[4]);
     let v0 = ExprSpec::Var(0);
@@ -1126,10 +1128,10 @@ proof fn eta_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSp
     typed_down(b, Cpt::U, k);
     typed_down(w, b, k);
     typed_wf(w, b);
-    sound(p0, rho);
+    sound(sig, p0, rho);
     assert forall|z: Cpt, aa: Cpt| #[trigger] dfit(ta, rho, aa, z) implies jc(tb, ext(rho, z)) by {
         fits_ext(g, rho, ta, aa, z);
-        sound(p4, ext(rho, z));
+        sound(sig, p4, ext(rho, z));
     }
     cod_in_body(ta, tb, rho, a, w, b);
     app_typed_at(n, u, a, w);
@@ -1140,11 +1142,11 @@ proof fn eta_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSp
     le_refl(w);
     mem_var(0, ew, w);
     mem_app_intro(lift(1, 0, m), v0, ew, u, w);
-    ty_adeq_of(d, 0, rho, dl, s, s2);
-    arg_adeq(k, dl, y, y2, x, x, w, b, ta, rho);
-    d_sub(p0, dl, s, s2);
-    related_cons(g, rho, dl, s, s2, ta, l, y, y2, w, b);
-    adeq(p3, ew, dl, cons(y, s), cons(y2, s2), k, e, c);
+    ty_adeq_of(sig, d, 0, rho, dl, s, s2);
+    arg_adeq(sig, k, dl, y, y2, x, x, w, b, ta, rho);
+    d_sub(sig, p0, dl, s, s2);
+    related_cons(sig, g, rho, dl, s, s2, ta, l, y, y2, w, b);
+    adeq(sig, p3, ew, dl, cons(y, s), cons(y2, s2), k, e, c);
     psub_lift_cons(m, y, s);
     psub_lift_cons(m2, y2, s2);
     inst_up(tb, s, y);
@@ -1159,57 +1161,57 @@ proof fn eta_app(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSp
 }
 
 #[verifier::spinoff_prover]
-proof fn adeq_eta(d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+proof fn adeq_eta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
-        adeq_req(d, rho, dl, s, s2, n, u, a),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Eta,
     ensures
-        adeq_ens(d, dl, s, s2, n, u, a),
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
 {
-    valid_prems(d);
+    valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     if let Rule::Eta(l, l2) = rule {
         let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
         let (ta, tb) = (*t->Bind_1, *t->Bind_2);
         assert(t == pi(ta, tb));
         let (p1, p2) = (ps[1], ps[2]);
-        adeq(p1, rho, dl, s, s2, n, u, a);
-        related_left(g, rho, dl, s, s2);
-        related_right(g, rho, dl, s, s2);
-        adeq(p1, rho, dl, s, s, n, u, a);
+        adeq(sig, p1, rho, dl, s, s2, n, u, a);
+        related_left(sig, g, rho, dl, s, s2);
+        related_right(sig, g, rho, dl, s, s2);
+        adeq(sig, p1, rho, dl, s, s, n, u, a);
         let tt = psub(t, s);
         let ms = psub(m, s);
         let ms2 = psub(m2, s2);
         if u is Bot {
-            bot_tm(n, dl, ms, ms2, tt, a);
+            bot_tm(sig, n, dl, ms, ms2, tt, a);
         } else {
             if a is Bot {
                 ty_of_bot(n, u);
             }
             pi_elem(ta, tb, rho, a);
             ty_inv(n, u, a);
-            sound(d, rho);
+            sound(sig, d, rho);
             assert(mem(m2, rho, u));
-            adeq(p2, rho, dl, s2, s2, n, u, a);
-            symm_ty(n, dl, tt, psub(t, s2), a);
-            conv_tm(n, dl, ms2, ms2, psub(t, s2), tt, u, a);
+            adeq(sig, p2, rho, dl, s2, s2, n, u, a);
+            symm_ty(sig, n, dl, tt, psub(t, s2), a);
+            conv_tm(sig, n, dl, ms2, ms2, psub(t, s2), tt, u, a);
             let x = psub(ta, s);
             let bx = psub(tb, up(s));
             rp_pi(x, bx);
-            tm_pi(n, dl, ms, ms, tt, u, a);
-            tm_pi(n, dl, ms2, ms2, tt, u, a);
+            tm_pi(sig, n, dl, ms, ms, tt, u, a);
+            tm_pi(sig, n, dl, ms2, ms2, tt, u, a);
             let k = (n - 1) as nat;
             ty_pos(n, u, a);
             assert forall|y: ExprSpec, y2: ExprSpec, w: Cpt|
-                has_type(k, w, *a->Pi_0) && derivable(eq(dl, y, y2, x)) && rel_tm(k, dl, y, y2, x, w, *a->Pi_0)
-                implies #[trigger] app_at(k, dl, ms, ms2, bx, u, a, y, y2, w) by {
-                app_tm_elim(k, dl, ms, ms, x, bx, u, a, y, y2, w);
-                app_tm_elim(k, dl, ms2, ms2, x, bx, u, a, y, y2, w);
-                eta_app(d, rho, dl, s, s2, g, m, m2, ta, tb, l, l2, n, u, a, y, y2, w);
+                has_type(k, w, *a->Pi_0) && derivable(sig, eq(dl, y, y2, x)) && rel_tm(sig, k, dl, y, y2, x, w, *a->Pi_0)
+                implies #[trigger] app_at(sig, k, dl, ms, ms2, bx, u, a, y, y2, w) by {
+                app_tm_elim(sig, k, dl, ms, ms, x, bx, u, a, y, y2, w);
+                app_tm_elim(sig, k, dl, ms2, ms2, x, bx, u, a, y, y2, w);
+                eta_app_rel(sig, d, rho, dl, s, s2, g, m, m2, ta, tb, l, l2, n, u, a, y, y2, w);
             }
-            app_tm_intro(k, dl, ms, ms2, x, bx, u, a);
-            tm_pi(n, dl, ms, ms2, tt, u, a);
+            app_tm_intro(sig, k, dl, ms, ms2, x, bx, u, a);
+            tm_pi(sig, n, dl, ms, ms2, tt, u, a);
         }
     }
 }
