@@ -20,6 +20,7 @@ pub mod dom_rel;
 pub mod dom_rel_hexp;
 pub mod dom_rel_mono;
 pub mod dom_rel_per;
+pub mod dom_rel_stab;
 pub mod dom_sound;
 pub mod dom_typing;
 pub mod e2_cert;

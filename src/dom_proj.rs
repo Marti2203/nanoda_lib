@@ -208,4 +208,112 @@ pub proof fn app_typed_at(n: nat, u: Cpt, a: Cpt, w: Cpt)
     }
 }
 
+/// A Pi code's codomain is its step list's selection joined.
+pub proof fn cod_as_sel(a: Cpt, x: Cpt)
+    requires
+        a is Pi,
+    ensures
+        cod(a, x) == jall(sel_f(a->Pi_1, x, a->Pi_1.len() as int)),
+{
+    let t = seq![a];
+    assert(t[0] == a);
+    reveal_with_fuel(sel_pi, 2);
+    assert(sel_pi(t, x, ht(a), 0) == Seq::<Cpt>::empty());
+    assert(sel_pi(t, x, ht(a), 1) =~= sel_f(a->Pi_1, x, a->Pi_1.len() as int));
+}
+
+/// The lambda's step list (empty for a non-lambda).
+pub open spec fn lsteps(u: Cpt) -> Seq<(Cpt, Cpt)> {
+    match u {
+        Cpt::Lam(f) => f,
+        _ => Seq::empty(),
+    }
+}
+
+/// THE JOINT PROJECTION of `x` onto a lambda's and a Pi code's inputs.
+pub open spec fn jproj(u: Cpt, a: Cpt, x: Cpt) -> Cpt {
+    jall(ins_sel(lsteps(u), x, lsteps(u).len() as int) + ins_sel(a->Pi_1, x, a->Pi_1.len() as int))
+}
+
+#[verifier::spinoff_prover]
+pub proof fn jproj_props(n: nat, u: Cpt, a: Cpt, x: Cpt)
+    requires
+        has_type(n, u, a),
+        has_type(n, a, Cpt::U),
+        a is Pi,
+        wf(x),
+    ensures
+        n >= 1,
+        wf(jproj(u, a, x)),
+        le(jproj(u, a, x), x),
+        has_type((n - 1) as nat, jproj(u, a, x), *a->Pi_0),
+        app(u, jproj(u, a, x)) == app(u, x),
+        cod(a, jproj(u, a, x)) == cod(a, x),
+{
+    let f = lsteps(u);
+    let g = a->Pi_1;
+    let b = *a->Pi_0;
+    let s1 = ins_sel(f, x, f.len() as int);
+    let s2 = ins_sel(g, x, g.len() as int);
+    let s = s1 + s2;
+    let k = (n - 1) as nat;
+    ty_inv(n, u, a);
+    parts_lower(u);
+    parts_lower(a);
+    assert(n >= 1);
+    assert forall|y: Cpt| #[trigger] s.contains(y) implies wf(y) && le(y, x) && has_type(k, y, b) && ht(y) <= ht(a) + ht(u) by {
+        seq_concat_contains(s1, s2, y);
+        if s1.contains(y) {
+            ins_sel_mem(f, x, f.len() as int, y);
+            let i = choose|i: int| 0 <= i < f.len() && #[trigger] f[i].0 == y && le(f[i].0, x);
+            assert(u is Lam);
+        } else {
+            ins_sel_mem(g, x, g.len() as int, y);
+            let i = choose|i: int| 0 <= i < g.len() && #[trigger] g[i].0 == y && le(g[i].0, x);
+        }
+    }
+    assert forall|y: Cpt, z: Cpt| #[trigger] s.contains(y) && #[trigger] s.contains(z) implies compat(y, z) by {
+        ub_compat(y, z, x);
+    }
+    let bnd = ht(a) + ht(u);
+    assert forall|i: int| 0 <= i < s.len() implies ht(#[trigger] s[i]) <= bnd by {
+        assert(s.contains(s[i]));
+    }
+    assert(pw(s));
+    pw_coh(s, bnd);
+    jall_pw(s, s.len() as int);
+    jall_lub(s, bnd, x);
+    let w = jall(s);
+    ty_jall(k, s, s.len() as int, b);
+    // the selections are the same at the projection
+    assert forall|i: int| 0 <= i < f.len() implies le(#[trigger] f[i].0, x) == le(f[i].0, w) by {
+        if le(f[i].0, x) {
+            ins_sel_mem(f, x, f.len() as int, f[i].0);
+            seq_concat_contains(s1, s2, f[i].0);
+            jall_ub(s, bnd, f[i].0);
+        }
+        if le(f[i].0, w) {
+            le_trans(f[i].0, w, x);
+        }
+    }
+    assert forall|i: int| 0 <= i < g.len() implies le(#[trigger] g[i].0, x) == le(g[i].0, w) by {
+        if le(g[i].0, x) {
+            ins_sel_mem(g, x, g.len() as int, g[i].0);
+            seq_concat_contains(s1, s2, g[i].0);
+            jall_ub(s, bnd, g[i].0);
+        }
+        if le(g[i].0, w) {
+            le_trans(g[i].0, w, x);
+        }
+    }
+    sel_f_same(g, w, x, g.len() as int);
+    cod_as_sel(a, w);
+    cod_as_sel(a, x);
+    if u is Lam {
+        sel_f_same(f, w, x, f.len() as int);
+        app_as_sel(u, w);
+        app_as_sel(u, x);
+    }
+}
+
 } // verus!
