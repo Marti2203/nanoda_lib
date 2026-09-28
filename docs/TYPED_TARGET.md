@@ -278,16 +278,33 @@ output is not typed at `motive idx major`. This already happens for
 `Nat.succ` (the value carries `Nat`'s code or bottom for its field); it
 is not about indices.
 
-Candidate fix (a redesign of S6.2/S6.4b): values carry only their field
-values; a type code carries, per constructor, its field types as codes
-(lambda codes from the earlier fields to the next field's type code,
-recursive occurrences as lower approximations of the type itself, so
-codes stay finite). Typing a value then reads its fields' types off the
-type code, values of one constructor at the same fields are equal
-whatever element typed them, and the minor's `(c_j params fields)` is
-the major's value. Constructor membership then approximates the value
-function and the type former's code function builds the table from the
-constructor types' denotations (lower rank).
+Redesign (agreed 2026-09-28), for canonical inductives (fields are
+direct occurrences `I params idx` or do not mention `I`):
+
+- Values are bare data: `Con(I, c)` with the field values only.
+- A type code is `Ty(I, prop)` over the arguments and a table, one entry
+  per constructor (in declaration order): code functions from the earlier
+  fields to the next non-recursive field's type code, to a recursive
+  field's index codes, and to the constructor's result index codes.
+  The table depends on the parameters only, so a recursive field's type
+  is the enclosing code with the field's indices and the same table: no
+  nested copy, codes stay finite.
+- Typing `Con(I, c) fields` at `Ty(I) args table`: each non-recursive
+  field typed at its entry's code, each recursive field typed at the
+  enclosing code re-indexed, and the result indices below the code's
+  indices. Still signature-free.
+- The type former's code function builds the table from the
+  constructors' field types, recursive index terms and result index
+  terms. None mentions `I` (canonicity), so they rank below `I` and
+  `mem_w`'s measure still decreases; non-canonical axioms keep empty
+  tables (only bottom inhabits them).
+- The constructor's code function is the bare value; its type element
+  supplies nothing to the value any more.
+- The relation's constructor clause relates fields at the table's codes.
+
+This replaces S6.2's typing clause and S6.4b's constructor code function
+and adds tables to S6.4a's type former; S6.1 (compacts) and S6.3
+(syntax) stay.
 
 ### Open: large elimination out of Prop
 
