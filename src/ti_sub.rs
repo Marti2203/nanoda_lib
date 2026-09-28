@@ -892,13 +892,16 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     reveal(spair);
     let w = get(sig, Jd::Wf(dl));
     d_sub(sig, ps[1], dl, s, s);
-    let q1 = get(sig, eq(dl, a, a, sort(rule_level(rule))));
+    let t2 = concl(ps[1])->Eq_2;
+    psub_closed(t2, s);
+    let q1 = get(sig, eq(dl, a, t2, sort(rule_level(rule))));
+    let q1l = d_left(sig, q1);
     let j2 = eq(dl, m, n, a);
     match rule {
         Rule::ConstAx(l) => {
             psub_closed(n, s2);
             let ip = seq![w, q1];
-            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
+            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, t2, sort(l))]));
             valid_node(sig, rule, j2, ip);
             mk_d(sig, node(rule, j2, ip));
         },
@@ -918,7 +921,7 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             d_sub(sig, ps[2], dl, s, s);
             let q2 = get(sig, eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a));
             let ip = seq![w, q1, q2];
-            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l)), eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a)]));
+            assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, t2, sort(l)), eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a)]));
             valid_node(sig, rule, j2, ip);
             mk_d(sig, node(rule, j2, ip));
         },
@@ -934,7 +937,7 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         },
         _ => {},
     }
-    mk_t(sig, q1, rule_level(rule));
+    mk_t(sig, q1l, rule_level(rule));
 }
 
 /// The sort level a signature rule carries.

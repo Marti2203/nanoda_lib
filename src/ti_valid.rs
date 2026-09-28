@@ -58,7 +58,8 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
             mk_t(sig, ps[0], l);
         },
         Rule::ConstAx(l) | Rule::ConstDef(l) | Rule::Local(l) | Rule::Delta(l) => {
-            mk_t(sig, ps[1], l);
+            let r = d_left(sig, ps[1]);
+            mk_t(sig, r, l);
         },
         Rule::LamCong(l1, l2) => {
             let a = *t->Bind_1;

@@ -1248,6 +1248,10 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
         },
     }
     adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    let t2 = concl(ps[1])->Eq_2;
+    psub_closed(t2, s2);
+    symm_ty(sig, n, dl, t, t2, a);
+    trans_ty(sig, n, dl, t, t2, t, a);
     bot_tm(sig, n, dl, m, m2, t, a);
 }
 
@@ -1291,7 +1295,8 @@ proof fn adeq_def(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     related_left(sig, g, rho, dl, s, s2);
     reveal(spair);
     let w = crate::ti_sub::get(sig, Jd::Wf(dl));
-    d_sub(sig, ps[1], dl, s, s);
+    let p1l = d_left(sig, ps[1]);
+    d_sub(sig, p1l, dl, s, s);
     let q1 = crate::ti_sub::get(sig, eq(dl, t, t, sort(l)));
     let p2l = d_left(sig, ps[2]);
     d_sub(sig, p2l, dl, s, s);

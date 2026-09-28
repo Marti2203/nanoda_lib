@@ -668,8 +668,10 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
     match rule {
         Rule::ConstAx(l) => {
             psub_closed(n, q);
+            let t2 = dty_at(sig, n->Const_0, n->Const_1);
+            psub_closed(t2, q);
             let ps2 = seq![w, d1];
-            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
+            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, t2, sort(l))]));
             valid_node(sig, rule, j2, ps2);
             node(rule, j2, ps2)
         },
@@ -685,9 +687,10 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             let ls2 = n->Const_1;
             psub_closed(dval(sig, c, ls), q);
             psub_closed(dval(sig, c, ls2), q);
+            psub_closed(dty_at(sig, c, ls2), q);
             let d2 = d_ren(sig, ps[2], w, dl, r);
             let ps2 = seq![w, d1, d2];
-            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l)), eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a)]));
+            assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, dty_at(sig, c, ls2), sort(l)), eq(dl, dval(sig, c, ls), dval(sig, c, ls2), a)]));
             valid_node(sig, rule, j2, ps2);
             node(rule, j2, ps2)
         },

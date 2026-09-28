@@ -60,8 +60,7 @@ pub open spec fn gen_let(sig: Sig, g: Ctx, a: ExprSpec, v: ExprSpec, body: ExprS
 }
 
 pub open spec fn gen_const(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, t: ExprSpec) -> bool {
-    exists|ls2: Seq<LevelSpec>| #[trigger] cmark(ls2) && crate::conv_cr::levs_eq(ls, ls2)
-        && sig.consts.contains_key(c) && ls2.len() == sig.consts[c].lps.len() && tchain(sig, g, t, dty_at(sig, c, ls2))
+    sig.consts.contains_key(c) && ls.len() == sig.consts[c].lps.len() && tchain(sig, g, t, dty_at(sig, c, ls))
 }
 
 /// GENERATION: what a typing of `m` at `t` says about `m`'s parts.
@@ -97,10 +96,7 @@ pub proof fn gen_conv(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, t: ExprSpec)
             tchain_trans(sig, g, t, a, sig.locals[k]);
         },
         ExprSpec::Const(c, ls) => {
-            let ls2 = choose|ls2: Seq<LevelSpec>| #[trigger] cmark(ls2) && crate::conv_cr::levs_eq(ls, ls2)
-                && sig.consts.contains_key(c) && ls2.len() == sig.consts[c].lps.len() && tchain(sig, g, a, dty_at(sig, c, ls2));
-            tchain_trans(sig, g, t, a, dty_at(sig, c, ls2));
-            assert(cmark(ls2));
+            tchain_trans(sig, g, t, a, dty_at(sig, c, ls));
         },
         ExprSpec::Bind(bk, ta, b) => {
             if bk == BinderKind::Pi {
@@ -202,17 +198,10 @@ pub proof fn gen(sig: Sig, d: Deriv)
         },
         Rule::ConstAx(l) | Rule::ConstDef(l) => {
             tchain_refl(sig, g, t);
-            let (c, ls) = (m->Const_0, m->Const_1);
-            let ls2 = n->Const_1;
-            assert(crate::conv_cr::levs_eq(ls, ls));
-            assert(cmark(ls));
-            assert(crate::conv_cr::levs_eq(ls2, ls));
+            link(sig, ps[1], l);
         },
         Rule::Delta(l) => {
             tchain_refl(sig, g, t);
-            let ls = m->Const_1;
-            assert(crate::conv_cr::levs_eq(ls, ls));
-            assert(cmark(ls));
             gen(sig, ps[2]);
         },
         Rule::PiCong(l1, l2) => {

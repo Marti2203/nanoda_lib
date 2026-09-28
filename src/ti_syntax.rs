@@ -315,8 +315,8 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                 (ExprSpec::Const(c, ls), ExprSpec::Const(c2, ls2)) => c == c2 && sig.consts.contains_key(c)
                     && sig.consts[c].val is None && ls.len() == sig.consts[c].lps.len()
                     && crate::conv_cr::levs_eq(ls, ls2) && t == dty_at(sig, c, ls)
-                    && crate::expr_model::nlbv(t) == 0
-                    && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l))]),
+                    && crate::expr_model::nlbv(t) == 0 && crate::expr_model::nlbv(dty_at(sig, c, ls2)) == 0
+                    && prems(ps, seq![Jd::Wf(g), eq(g, t, dty_at(sig, c, ls2), sort(l))]),
                 _ => false,
             },
             _ => false,
@@ -325,8 +325,9 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             Jd::Eq(g, m, n, t) => match (m, n) {
                 (ExprSpec::Const(c, ls), ExprSpec::Const(c2, ls2)) => c == c2 && is_def(sig, c, ls)
                     && crate::conv_cr::levs_eq(ls, ls2) && t == dty_at(sig, c, ls)
-                    && crate::expr_model::nlbv(t) == 0 && def_ok(sig, c, ls) && def_ok(sig, c, ls2)
-                    && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l)), eq(g, dval(sig, c, ls), dval(sig, c, ls2), t)]),
+                    && crate::expr_model::nlbv(t) == 0 && crate::expr_model::nlbv(dty_at(sig, c, ls2)) == 0
+                    && def_ok(sig, c, ls) && def_ok(sig, c, ls2)
+                    && prems(ps, seq![Jd::Wf(g), eq(g, t, dty_at(sig, c, ls2), sort(l)), eq(g, dval(sig, c, ls), dval(sig, c, ls2), t)]),
                 _ => false,
             },
             _ => false,
