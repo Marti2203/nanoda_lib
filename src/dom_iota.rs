@@ -514,4 +514,760 @@ pub proof fn rule_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     assert(crate::expr_model::subst_expr_levels(ExprSpec::Var((nmin - 1 - p + nf) as nat), ks, vs) == ExprSpec::Var((nmin - 1 - p + nf) as nat));
 }
 
+/// The body after all of a telescope's binders.
+pub proof fn tbody_binds(ds: Seq<ExprSpec>, b: ExprSpec)
+    ensures
+        crate::rec_canon::tbody(crate::rec_canon::binds(BinderKind::Pi, ds, b), ds.len()) == b,
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        tbody_binds(ds.drop_first(), b);
+    }
+}
+
+/// The recursor's major domain at the instance: the inductive at the
+/// parameters.
+pub proof fn major_form(sig: Sig, rid: u64, lv: Seq<LevelSpec>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = sh.np + 1 + sh.nmin();
+        &&& crate::dom_rec_ty::rtds(sig, rid, lv).len() == pre + 1
+        &&& crate::dom_rec_ty::rtds(sig, rid, lv)[pre as int] == spine_app(ExprSpec::Const(sh.ind,
+            crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv)), crate::rec_canon::vars(1 + sh.nmin(), sh.np))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    let lm = crate::rec_canon::elim_level(sig, rid, ind);
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + sh.nmin(), sh.np));
+    assert(sh.pdoms.len() == sh.np);
+    assert((sh.head_doms(lm) + seq![major])[(sh.np + 1 + sh.nmin()) as int] == major);
+    crate::dom_rec_shape::sl_spine(ExprSpec::Const(sh.ind, sh.us()), crate::rec_canon::vars(1 + sh.nmin(), sh.np), rd.uparams, lv);
+    crate::dom_rec_shape::sl_vars(1 + sh.nmin(), sh.np, rd.uparams, lv);
+}
+
+/// A MEMBER OF THE MAJOR'S DOMAIN lies below the inductive's canonical
+/// code at witnesses of the parameters (or is bottom).
+pub proof fn major_code(sig: Sig, rid: u64, lv: Seq<LevelSpec>, env: Env, d: Cpt) -> (ws: Seq<Cpt>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        mem(sig, spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, rid).ind,
+            crate::level_model::subst_levels_spec(crate::dom_rec_ty::rshape(sig, rid).us(), sig.ienv.recs[rid].uparams, lv)),
+            crate::rec_canon::vars(1 + crate::dom_rec_ty::rshape(sig, rid).nmin(), crate::dom_rec_ty::rshape(sig, rid).np)), env, d),
+        forall|i: nat| #[trigger] wf(env(i)),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
+        d is Bot || (crate::dom_code::tabled(sig, sh.ind, us2, ws) && le(d, crate::dom_code::canon_code(sig, sh.ind, us2, ws)))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let ind = sh.ind;
+    let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
+    let args = crate::rec_canon::vars(1 + sh.nmin(), sh.np);
+    if !crate::dom_model::sem_const(sig, ind, us2) {
+        assert(sig.consts.contains_key(ind) && sig.consts[ind].val is None);
+        crate::dom_bound::nonsem_bot(sig, ind, us2, env);
+        crate::dom_bound::spine_bot(sig, ExprSpec::Const(ind, us2), args, env, d);
+        return Seq::empty();
+    }
+    // the inductive's type: parameters, then a sort
+    let ti = sig.consts[ind].ty;
+    let lps = sig.consts[ind].lps;
+    assert(sh.idoms.len() == 0);
+    assert(sh.pdoms + sh.idoms =~= sh.pdoms);
+    let b = crate::rec_canon::tbody(ti, sh.np + sh.ni);
+    assert(ti == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms, b));
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms, b, lps, us2);
+    let pd2 = crate::dom_rec_shape::sls(sh.pdoms, lps, us2);
+    let b2 = crate::expr_model::subst_expr_levels(b, lps, us2);
+    crate::dom_rec_shape::tarity_binds(pd2, b2);
+    tbody_binds(pd2, b2);
+    let ws = crate::dom_bound::tf_spine(sig, ind, us2, args, env, d);
+    assert(b2 is Sort);
+    ws
+}
+
+/// ALONG A TYPED CHAIN, the major value's recursive fields are typed at the
+/// major's domain code (or bottom).
+pub proof fn rec_field_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs),
+        0 <= k < xs.last()->Nd_1.len(),
+        crate::rec_canon::direct_occ(crate::dom_rec_ty::rshape(sig, rid).fields[xs.last()->Nd_0->Con_1 as int][k],
+            crate::dom_rec_ty::rshape(sig, rid).ind, crate::dom_rec_ty::rshape(sig, rid).us(),
+            crate::dom_rec_ty::rshape(sig, rid).np, crate::dom_rec_ty::rshape(sig, rid).ni, k as nat),
+    ensures
+        xs.last()->Nd_1[k] is Bot || typed(xs.last()->Nd_1[k], ds[xs.len() - 1]),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let pre = sh.np + 1 + sh.nmin();
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    major_form(sig, rid, lv);
+    let x = xs.last();
+    let p = x->Nd_0->Con_1 as int;
+    let dm = ds[pre as int];
+    let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int));
+    assert(crate::dom_sound::dfit(sig, tds[pre as int], env, dm, xs[pre as int]));
+    assert(xs.len() == pre + 1);
+    assert(xs[pre as int] == x);
+    assert forall|i: nat| #[trigger] wf(env(i)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre as int), i);
+        if i < pre {
+            let j = pre - 1 - i;
+            assert(crate::dom_sound::dfit(sig, tds[j as int], crate::dom_tele::exts(bot_env(), xs.subrange(0, j as int)), ds[j as int], xs[j as int]));
+            typed_wf(xs[j as int], ds[j as int]);
+        }
+    }
+    let ws = major_code(sig, rid, lv, env, dm);
+    typed_wf(x, dm);
+    let n = cstage(x, dm);
+    typed_up(x, dm, n);
+    if dm is Bot {
+        ty_of_bot(n, x);
+    }
+    let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
+    let c0 = crate::dom_code::canon_code(sig, sh.ind, us2, ws);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == sig.ienv.recs[rid].rules[p].nfields);
+    crate::dom_code::canon_rmark(sig, sh.ind, us2, ws, p as nat, k as nat);
+    rec_field_typed(n, x, dm, c0, k);
+    if !(x->Nd_1[k] is Bot) {
+        typed_down(x->Nd_1[k], dm, n);
+    }
+}
+
+/// Variables as a sequence of indices.
+pub open spec fn vidx(from: nat, n: nat) -> Seq<nat> {
+    Seq::new(n, |q: int| (from + n - 1 - q) as nat)
+}
+
+pub proof fn vars_vidx(from: nat, n: nat)
+    ensures
+        crate::rec_canon::vars(from, n) == Seq::new(n, |q: int| ExprSpec::Var(vidx(from, n)[q])),
+{
+    assert(crate::rec_canon::vars(from, n) =~= Seq::new(n, |q: int| ExprSpec::Var(vidx(from, n)[q])));
+}
+
+/// THE MAJOR'S DOMAIN, MOVED to where the parameters sit at `from`.
+pub proof fn maj_transfer(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<Cpt>, env: Env, from: nat, d: Cpt)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        xs.len() >= crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin(),
+        mem(sig, crate::dom_rec_ty::rtds(sig, rid, lv)[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int],
+            crate::dom_tele::exts(bot_env(), xs.subrange(0, (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int)), d),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, rid).np ==>
+            #[trigger] env((from + crate::dom_rec_ty::rshape(sig, rid).np - 1 - q) as nat) == xs[q],
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        mem(sig, spine_app(ExprSpec::Const(sh.ind, crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv)),
+            crate::rec_canon::vars(from, sh.np)), env, d)
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = np + 1 + nmin;
+    major_form(sig, rid, lv);
+    let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
+    let h = ExprSpec::Const(sh.ind, us2);
+    let e1 = crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int));
+    let (v1, v2) = (vidx(1 + nmin, np), vidx(from, np));
+    vars_vidx(1 + nmin, np);
+    vars_vidx(from, np);
+    assert forall|q: int| 0 <= q < v1.len() implies #[trigger] e1(v1[q]) == env(v2[q]) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre as int), v1[q]);
+        assert(env((from + np - 1 - q) as nat) == xs[q]);
+    }
+    var_spine_transfer(sig, h, v1, v2, e1, env, d);
+}
+
+/// Recursor membership as the model will have it once the recursor is
+/// interpreted: bottom, or below a typed approximation of its code
+/// function.
+pub open spec fn rsem(sig: Sig, rid: u64, ls: Seq<LevelSpec>, u: Cpt, a: Cpt, v: Cpt) -> bool {
+    &&& wf(u)
+    &&& le(u, v)
+    &&& typed(a, Cpt::U)
+    &&& typed(v, a)
+    &&& rf_fun(sig, rid, crate::ti_syntax::dty_at(sig, rid, ls), Seq::empty(), v)
+    &&& mem(sig, crate::ti_syntax::dty_at(sig, rid, ls), bot_env(), a)
+}
+
+pub open spec fn rec_wired(sig: Sig) -> bool {
+    forall|rid: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt|
+        crate::dom_rec_ty::rec_scope(sig, rid) && crate::dom_model::sem_const(sig, rid, ls) ==>
+        (#[trigger] mem(sig, ExprSpec::Const(rid, ls), rho, u) == (u is Bot || exists|a: Cpt, v: Cpt| #[trigger] rsem(sig, rid, ls, u, a, v)))
+}
+
+/// Variable members: a value is a member of a variable holding it.
+pub proof fn var_mem(sig: Sig, i: nat, env: Env)
+    requires
+        wf(env(i)),
+    ensures
+        mem(sig, ExprSpec::Var(i), env, env(i)),
+{
+    reveal(mem);
+    le_refl(env(i));
+    assert(mem_w(sig, ExprSpec::Var(i), env, env(i), Wit::Nil));
+}
+
+/// THE RECURSIVE CALL at a recursive field, under the rule's lambda
+/// environment, holds the recursor's value there.
+#[verifier::spinoff_prover]
+pub proof fn ih_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, r: int)
+    requires
+        rec_wired(sig),
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_model::sem_const(sig, rid, lv),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+            crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs),
+        xf.len() == xs.last()->Nd_1.len(),
+        crate::dom_code::aw(xf),
+        0 <= r < crate::dom_rec_ty::rshape(sig, rid).rposj(xs.last()->Nd_0->Con_1 as int).len(),
+        xf[crate::dom_rec_ty::rshape(sig, rid).rposj(xs.last()->Nd_0->Con_1 as int)[r] as int]
+            == xs.last()->Nd_1[crate::dom_rec_ty::rshape(sig, rid).rposj(xs.last()->Nd_0->Con_1 as int)[r] as int],
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = sh.np + 1 + sh.nmin();
+        let p = xs.last()->Nd_0->Con_1 as int;
+        let k = sh.rposj(p)[r];
+        mem(sig, ihterm(sig, rid, lv, p, r), crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int) + xf),
+            crate::dom_rec::recval(sig, rid, crate::dom_rec::ih_in(sig.ienv.recs[rid], xs, xs.last()->Nd_1[k as int])))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = np + 1 + nmin;
+    let x = xs.last();
+    let p = x->Nd_0->Con_1 as int;
+    let nf = x->Nd_1.len();
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    let rp = sh.rposj(p);
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[p], sh.ind, sh.us(), np, sh.ni, sh.fields[p].len());
+    let k = rp[r];
+    let f = x->Nd_1[k as int];
+    let ih = crate::dom_rec::ih_in(rd, xs, f);
+    let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int) + xf);
+    let rv = crate::dom_rec::recval(sig, rid, ih);
+    assert(ih =~= xs.subrange(0, pre as int).push(f));
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
+        assert(crate::dom_sound::dfit(sig, crate::dom_rec_ty::rtds(sig, rid, lv)[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+        typed_wf(xs[i], ds[i]);
+    }
+    assert(xs.len() == pre + 1);
+    assert(wf(xs[pre as int]));
+    assert forall|i: int| 0 <= i < ih.len() implies #[trigger] wf(ih[i]) by {
+        if i < pre { assert(ih[i] == xs[i]); } else { assert(ih[i] == f); }
+    }
+    crate::dom_rec::recval_wf(sig, rid, ih);
+    if !crate::dom_rec::rec_ok(sig, rid, ih) {
+        mem_bot(sig, ihterm(sig, rid, lv, p, r), env);
+        reveal(mem);
+        return;
+    }
+    // the chain with the field as the major
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    major_form(sig, rid, lv);
+    rec_field_ok(sig, rid, lv, ds, xs, k as int);
+    assert(!(f is Bot));
+    let ds2 = ds.subrange(0, pre as int).push(ds[pre as int]);
+    assert forall|i: int| 0 <= i < tds.len() implies #[trigger] crate::dom_sound::dfit(sig, tds[i],
+        crate::dom_tele::exts(bot_env(), ih.subrange(0, i)), ds2[i], ih[i]) by {
+        assert(crate::dom_sound::dfit(sig, tds[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+        assert(ih.subrange(0, i) =~= xs.subrange(0, i));
+        if i < pre { assert(ih[i] == xs[i] && ds2[i] == ds[i]); } else { assert(ih[i] == f && ds2[i] == ds[i]); }
+    }
+    let (a, sa) = crate::dom_rec_ty::rec_step(sig, rid, lv, l, bot_env(), ds2, ih);
+    typed_wf(sa, a);
+    le_refl(sa);
+    assert(rsem(sig, rid, lv, sa, a, sa));
+    assert(mem(sig, ExprSpec::Const(rid, lv), env, sa));
+    // the call's arguments are the chain's values
+    let args = crate::rec_canon::vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)]
+        + crate::rec_canon::vars(nf, nmin) + seq![ExprSpec::Var((nf - 1 - k) as nat)];
+    let xl = xs.subrange(0, pre as int) + xf;
+    assert forall|j: nat| #[trigger] wf(env(j)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xl, j);
+        if j < xl.len() {
+            let t = xl.len() - 1 - j;
+            if t < pre { assert(xl[t] == xs[t]); } else { assert(xl[t] == xf[t - pre]); }
+        }
+    }
+    assert forall|i: int| 0 <= i < args.len() implies #[trigger] mem(sig, args[i], env, ih[i]) && wf(ih[i]) by {
+        if i < np {
+            let v = (1 + nmin + nf + np - 1 - i) as nat;
+            assert(args[i] == ExprSpec::Var(v));
+            crate::dom_rec_ty::exts_at(bot_env(), xl, v);
+            assert(xl[i] == xs[i]);
+        } else if i == np {
+            let v = (nmin + nf) as nat;
+            assert(args[i] == ExprSpec::Var(v));
+            crate::dom_rec_ty::exts_at(bot_env(), xl, v);
+            assert(xl[np as int] == xs[np as int]);
+        } else if i < pre {
+            let v = (nf + nmin - 1 - (i - np - 1)) as nat;
+            assert(args[i] == ExprSpec::Var(v));
+            crate::dom_rec_ty::exts_at(bot_env(), xl, v);
+            assert(xl[i] == xs[i]);
+        } else {
+            let v = (nf - 1 - k) as nat;
+            assert(args[i] == ExprSpec::Var(v));
+            crate::dom_rec_ty::exts_at(bot_env(), xl, v);
+            assert(xl[(pre + k) as int] == xf[k as int]);
+        }
+        var_mem(sig, match args[i] { ExprSpec::Var(v) => v, _ => 0 }, env);
+    }
+    assert(ihterm(sig, rid, lv, p, r) == spine_app(ExprSpec::Const(rid, lv), args));
+    crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(rid, lv), args, env, sa, ih, rv);
+}
+
+/// The minor's field binders at the instance.
+pub open spec fn mfds(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> Seq<ExprSpec> {
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    crate::dom_rec_shape::sls(Seq::new(sh.fields[p].len(), |i: int| sh.field_at(p, i, (1 + p) as nat)),
+        sig.ienv.recs[rid].uparams, lv)
+}
+
+/// Field `k` of rule `p` is recursive.
+pub open spec fn isrec(sig: Sig, rid: u64, p: int, k: int) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    crate::rec_canon::direct_occ(sh.fields[p][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat)
+}
+
+/// THE MINOR'S FIELDS: recursive ones pass, typed at the major's code;
+/// the others are projected onto the minor's inputs.
+#[verifier::spinoff_prover]
+pub proof fn minor_mix(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Seq<Cpt>, Seq<Cpt>))
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+            crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let p = xs.last()->Nd_0->Con_1 as int;
+        let fs = xs.last()->Nd_1;
+        let mi = sh.np + 1 + p;
+        &&& r.0.len() == fs.len()
+        &&& crate::dom_code::aw(r.0)
+        &&& crate::dom_sem::pre_le(r.0, fs)
+        &&& forall|k: int| 0 <= k < fs.len() && isrec(sig, rid, p, k) ==> #[trigger] r.0[k] == fs[k]
+        &&& crate::dom_rec::apps(xs[mi as int], fs) == crate::dom_rec::apps(xs[mi as int], r.0)
+        &&& crate::dom_tele::chain_ok(sig, mfds(sig, rid, lv, p), crate::dom_tele::exts(bot_env(), xs.subrange(0, mi as int)), r.1, r.0)
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = np + 1 + nmin;
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
+    major_form(sig, rid, lv);
+    let x = xs.last();
+    let p = x->Nd_0->Con_1 as int;
+    let fs = x->Nd_1;
+    let nf = fs.len();
+    let mi = np + 1 + p;
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    let lm = crate::rec_canon::elim_level(sig, rid, ind);
+    assert(sh.head_doms(lm)[mi as int] == sh.minor_ty(p));
+    assert(tds[mi as int] == crate::expr_model::subst_expr_levels(sh.minor_ty(p), rd.uparams, lv));
+    let (f2, i2) = crate::dom_rec_shape::minor_shape(sh, p, rd.uparams, lv);
+    let nr = i2.len();
+    let us2 = crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv);
+    let body = crate::dom_rec_ty::minor_body((p + nf + nr) as nat, sh.ctors[p], us2,
+        crate::rec_canon::vars((1 + p + nf + nr) as nat, np), nf, nr);
+    crate::dom_rec_shape::binds_concat(BinderKind::Pi, f2, i2, body);
+    let li = crate::dom_tele::tele_prefix(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), ds, xs, mi as int);
+    let g = Seq::<ExprSpec>::empty() + tds.subrange(0, mi as int);
+    let rho = crate::dom_tele::exts(bot_env(), xs.subrange(0, mi as int));
+    assert(crate::dom_sound::dfit(sig, tds[mi as int], rho, ds[mi as int], xs[mi as int]));
+    // the major's code, and the fields that pass
+    let dm = ds[pre as int];
+    assert(xs.len() == pre + 1);
+    assert(crate::dom_sound::dfit(sig, tds[pre as int], crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int)), dm, xs[pre as int]));
+    let fit = Seq::new(nf, |k: int| isrec(sig, rid, p, k));
+    let axs = Seq::new(nf, |k: int| dm);
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] wf(fs[i]) by {
+        typed_wf(xs[pre as int], dm);
+    }
+    assert forall|k: int, vals: Seq<Cpt>| 0 <= k < f2.len() && fit[k] && vals.len() == k
+        implies #[trigger] crate::dom_sound::dfit(sig, f2[k], crate::dom_tele::exts(rho, vals), axs[k], fs[k]) by {
+        crate::dom_rec_shape::occ_form(sh, p, k, (1 + p) as nat, rd.uparams, lv);
+        assert(f2[k] == crate::expr_model::subst_expr_levels(sh.field_at(p, k, (1 + p) as nat), rd.uparams, lv));
+        let env = crate::dom_tele::exts(rho, vals);
+        let from = (k + 1 + p) as nat;
+        assert forall|q: int| 0 <= q < np implies #[trigger] env((from + np - 1 - q) as nat) == xs[q] by {
+            let j = (from + np - 1 - q) as nat;
+            crate::dom_rec_ty::exts_at(rho, vals, j);
+            crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, mi as int), (j - k) as nat);
+        }
+        maj_transfer(sig, rid, lv, xs, env, from, dm);
+        assert((k + 1 + p) as nat == k as nat + (1 + p) as nat);
+        rec_field_ok(sig, rid, lv, ds, xs, k);
+        if fs[k] is Bot {
+            crate::dom_tele::bot_typed(dm);
+        }
+    }
+    let (xf, dsf) = crate::dom_tele::tele_mix(sig, g, f2, crate::rec_canon::binds(BinderKind::Pi, i2, body), li, rho,
+        ds[mi as int], xs[mi as int], fs, fit, axs);
+    assert forall|k: int| 0 <= k < fs.len() && isrec(sig, rid, p, k) implies #[trigger] xf[k] == fs[k] by {
+        assert(fit[k]);
+    }
+    assert(f2 == mfds(sig, rid, lv, p));
+    (xf, dsf)
+}
+
+/// THE RULE'S BODY holds the recursor's value, under the lambda
+/// environment of the head inputs and the minor's field inputs.
+#[verifier::spinoff_prover]
+pub proof fn rhs_body_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>)
+    requires
+        rec_wired(sig),
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_model::sem_const(sig, rid, lv),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+            crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs),
+        xf.len() == xs.last()->Nd_1.len(),
+        crate::dom_code::aw(xf),
+        forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, xs.last()->Nd_0->Con_1 as int, k) ==> #[trigger] xf[k] == xs.last()->Nd_1[k],
+        crate::dom_rec::apps(xs[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + xs.last()->Nd_0->Con_1) as int], xs.last()->Nd_1)
+            == crate::dom_rec::apps(xs[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + xs.last()->Nd_0->Con_1) as int], xf),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = sh.np + 1 + sh.nmin();
+        mem(sig, rule_body(sig, rid, lv, xs.last()->Nd_0->Con_1 as int), crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int) + xf),
+            crate::dom_rec::recval(sig, rid, xs))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = np + 1 + nmin;
+    let x = xs.last();
+    let p = x->Nd_0->Con_1 as int;
+    let fs = x->Nd_1;
+    let nf = fs.len();
+    let mi = np + 1 + p;
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    let minor = xs[mi as int];
+    let hs = crate::dom_rec::rec_ihs(sig, rid, xs, nf);
+    crate::dom_rec_ty::rec_ihs_at(sig, rid, xs, nf);
+    let rp = sh.rposj(p);
+    let nr = rp.len();
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[p], sh.ind, sh.us(), np, sh.ni, nf);
+    let rv = crate::dom_rec::recval(sig, rid, xs);
+    assert(rv == crate::dom_rec::apps(crate::dom_rec::apps(minor, fs), hs));
+    crate::dom_rec_ty::apps_concat(minor, xf, hs);
+    let xl = xs.subrange(0, pre as int) + xf;
+    let env = crate::dom_tele::exts(bot_env(), xl);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
+        assert(crate::dom_sound::dfit(sig, crate::dom_rec_ty::rtds(sig, rid, lv)[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+        typed_wf(xs[i], ds[i]);
+    }
+    assert forall|j: nat| #[trigger] wf(env(j)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xl, j);
+        if j < xl.len() {
+            let t = xl.len() - 1 - j;
+            if t < pre { assert(xl[t] == xs[t]); } else { assert(xl[t] == xf[t - pre]); }
+        }
+    }
+    // the head: the minor
+    let v0 = (nmin - 1 - p + nf) as nat;
+    crate::dom_rec_ty::exts_at(bot_env(), xl, v0);
+    assert(xl[mi as int] == minor);
+    var_mem(sig, v0, env);
+    // the arguments: the field inputs, then the recursive calls
+    let args = crate::rec_canon::vars(0, nf) + Seq::new(nr, |r: int| ihterm(sig, rid, lv, p, r));
+    let wsx = xf + hs;
+    assert forall|i: int| 0 <= i < args.len() implies #[trigger] mem(sig, args[i], env, wsx[i]) && wf(wsx[i]) by {
+        if i < nf {
+            let v = (nf - 1 - i) as nat;
+            assert(args[i] == ExprSpec::Var(v));
+            crate::dom_rec_ty::exts_at(bot_env(), xl, v);
+            assert(xl[pre + i] == xf[i] && wsx[i] == xf[i]);
+            var_mem(sig, v, env);
+        } else {
+            let r = i - nf;
+            let k = rp[r];
+            assert(args[i] == ihterm(sig, rid, lv, p, r));
+            assert(isrec(sig, rid, p, k as int));
+            assert(xf[k as int] == fs[k as int]);
+            ih_mem(sig, rid, lv, l, ds, xs, xf, r);
+            assert(wsx[i] == hs[r]);
+            crate::dom_rec::rec_ihs_wf(sig, rid, xs, nf);
+        }
+    }
+    crate::dom_rec::recval_wf(sig, rid, xs);
+    le_refl(rv);
+    assert(rule_body(sig, rid, lv, p) == spine_app(ExprSpec::Var(v0), args));
+    crate::dom_bound::spine_mem_intro(sig, ExprSpec::Var(v0), args, env, minor, wsx, rv);
+}
+
+/// THE RULE'S LAMBDA CHAIN: the recursor's head chain, then the minor's
+/// field chain moved under the rule's binders.
+#[verifier::spinoff_prover]
+pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, dsf: Seq<Cpt>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs),
+        crate::dom_tele::chain_ok(sig, mfds(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
+            crate::dom_tele::exts(bot_env(), xs.subrange(0, (crate::dom_rec_ty::rshape(sig, rid).np + 1 + xs.last()->Nd_0->Con_1) as int)), dsf, xf),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = (sh.np + 1 + sh.nmin()) as int;
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
+            bot_env(), ds.subrange(0, pre) + dsf, xs.subrange(0, pre) + xf)
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let x = xs.last();
+    let p = x->Nd_0->Con_1 as int;
+    let nf = x->Nd_1.len();
+    let mi = (np + 1 + p) as int;
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
+    major_form(sig, rid, lv);
+    let tl = tds.subrange(0, pre) + ftds(sig, rid, lv, p);
+    let dl = ds.subrange(0, pre) + dsf;
+    let xl = xs.subrange(0, pre) + xf;
+    let rho = crate::dom_tele::exts(bot_env(), xs.subrange(0, mi));
+    let mf = mfds(sig, rid, lv, p);
+    let ff = ftds(sig, rid, lv, p);
+    assert forall|i: int| 0 <= i < tl.len() implies #[trigger] crate::dom_sound::dfit(sig, tl[i],
+        crate::dom_tele::exts(bot_env(), xl.subrange(0, i)), dl[i], xl[i]) by {
+        if i < pre {
+            assert(crate::dom_sound::dfit(sig, tds[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+            assert(xl.subrange(0, i) =~= xs.subrange(0, i));
+            assert(tl[i] == tds[i] && dl[i] == ds[i] && xl[i] == xs[i]);
+        } else {
+            let k = i - pre;
+            assert(crate::dom_sound::dfit(sig, mf[k], crate::dom_tele::exts(rho, xf.subrange(0, k)), dsf[k], xf[k]));
+            assert(tl[i] == ff[k] && dl[i] == dsf[k] && xl[i] == xf[k]);
+            let e1 = crate::dom_tele::exts(rho, xf.subrange(0, k));
+            let e2 = crate::dom_tele::exts(bot_env(), xl.subrange(0, i));
+            let us2 = crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv);
+            if isrec(sig, rid, p, k) {
+                crate::dom_rec_shape::occ_form(sh, p, k, (1 + p) as nat, rd.uparams, lv);
+                crate::dom_rec_shape::occ_form(sh, p, k, (1 + nmin) as nat, rd.uparams, lv);
+                let (a1, a2) = ((k + 1 + p) as nat, (k + 1 + nmin) as nat);
+                let (v1, v2) = (vidx(a1, np), vidx(a2, np));
+                vars_vidx(a1, np);
+                vars_vidx(a2, np);
+                assert forall|q: int| 0 <= q < v1.len() implies #[trigger] e1(v1[q]) == e2(v2[q]) by {
+                    crate::dom_rec_ty::exts_at(rho, xf.subrange(0, k), v1[q]);
+                    crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, mi), (v1[q] - k) as nat);
+                    crate::dom_rec_ty::exts_at(bot_env(), xl.subrange(0, i), v2[q]);
+                    assert(xl[q] == xs[q]);
+                }
+                var_spine_transfer(sig, ExprSpec::Const(sh.ind, us2), v1, v2, e1, e2, dsf[k]);
+            } else {
+                assert(crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]));
+                simple_closed(sig, sh.ind, sh.fields[p][k]);
+                crate::subst_algebra::lift_closed((1 + p) as nat, k as nat, sh.fields[p][k]);
+                crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, sh.fields[p][k]);
+                assert(mf[k] == ff[k]);
+                crate::dom_rec_shape::nlbv_sl(sh.fields[p][k], rd.uparams, lv);
+                crate::dom_model::mem_closed_env(sig, mf[k], e1, dsf[k]);
+                crate::dom_model::mem_closed_env(sig, mf[k], e2, dsf[k]);
+            }
+        }
+    }
+}
+
+/// THE RULE'S RIGHT-HAND SIDE, at the instance, has a member which applied
+/// to the head inputs and field inputs below the major's fields gives at
+/// least the recursor's value.
+#[verifier::spinoff_prover]
+pub proof fn iota_rhs_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Cpt, Seq<Cpt>))
+    requires
+        rec_wired(sig),
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_model::sem_const(sig, rid, lv),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+            crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = (sh.np + 1 + sh.nmin()) as int;
+        let p = xs.last()->Nd_0->Con_1 as int;
+        let fs = xs.last()->Nd_1;
+        &&& mem(sig, crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[p].rhs, sig.ienv.recs[rid].uparams, lv), bot_env(), r.0)
+        &&& r.1.len() == pre + fs.len()
+        &&& crate::dom_code::aw(r.1)
+        &&& forall|i: int| 0 <= i < pre ==> #[trigger] r.1[i] == xs[i]
+        &&& forall|k: int| 0 <= k < fs.len() ==> le(#[trigger] r.1[pre + k], fs[k])
+        &&& le(crate::dom_rec::recval(sig, rid, xs), crate::dom_rec::apps(r.0, r.1))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let x = xs.last();
+    let p = x->Nd_0->Con_1 as int;
+    let fs = x->Nd_1;
+    let (xf, dsf) = minor_mix(sig, rid, lv, l, ds, xs);
+    rhs_body_mem(sig, rid, lv, l, ds, xs, xf);
+    rule_chain(sig, rid, lv, ds, xs, xf, dsf);
+    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
+    let dl = ds.subrange(0, pre) + dsf;
+    let xl = xs.subrange(0, pre) + xf;
+    let rv = crate::dom_rec::recval(sig, rid, xs);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
+        assert(crate::dom_sound::dfit(sig, crate::dom_rec_ty::rtds(sig, rid, lv)[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+        typed_wf(xs[i], ds[i]);
+    }
+    crate::dom_rec::recval_wf(sig, rid, xs);
+    crate::dom_tele::lamchain_mem(sig, tl, rule_body(sig, rid, lv, p), bot_env(), dl, xl, rv);
+    let lc = crate::dom_tele::lamchain(xl, rv);
+    assert forall|i: int| 0 <= i < xl.len() implies #[trigger] wf(xl[i]) by {
+        assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xl.subrange(0, i)), dl[i], xl[i]));
+        typed_wf(xl[i], dl[i]);
+    }
+    crate::dom_tele::lamchain_apps(xl, rv);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    rule_split(sig, rid, lv, p);
+    assert forall|k: int| 0 <= k < fs.len() implies le(#[trigger] xl[pre + k], fs[k]) by {
+        assert(xl[pre + k] == xf[k]);
+    }
+    (lc, xl)
+}
+
+/// IOTA, LEFT IN RIGHT, without extra arguments: a member of the recursor
+/// applied up to its major, a constructor application, is a member of the
+/// rule applied to the head arguments and the fields.
+#[verifier::spinoff_prover]
+pub proof fn iota_core_l2r(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ri: int, clv: Seq<LevelSpec>, lc: LevelSpec,
+    a0: Seq<ExprSpec>, cargs: Seq<ExprSpec>, rho: Env, u0: Cpt)
+    requires
+        rec_wired(sig),
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_model::sem_const(sig, rid, lv),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+            crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
+        0 <= ri < sig.ienv.recs[rid].rules.len(),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(),
+            crate::ti_syntax::dty_at(sig, sig.ienv.recs[rid].rules[ri].ctor_id, clv),
+            crate::ti_syntax::dty_at(sig, sig.ienv.recs[rid].rules[ri].ctor_id, clv), crate::ti_syntax::sort(lc))),
+        crate::expr_model::nlbv(sig.ienv.recs[rid].rules[ri].rhs) == 0,
+        forall|i: nat| #[trigger] wf(rho(i)),
+        a0.len() == crate::dom_rec_ty::rshape(sig, rid).np + 2 + crate::dom_rec_ty::rshape(sig, rid).nmin(),
+        a0.last() == spine_app(ExprSpec::Const(sig.ienv.recs[rid].rules[ri].ctor_id, clv), cargs),
+        sig.ienv.recs[rid].rules[ri].nfields <= cargs.len(),
+        mem(sig, spine_app(ExprSpec::Const(rid, lv), a0), rho, u0),
+    ensures ({
+        let pre = (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int;
+        let nf = sig.ienv.recs[rid].rules[ri].nfields;
+        mem(sig, spine_app(spine_app(crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[ri].rhs, sig.ienv.recs[rid].uparams, lv),
+            a0.subrange(0, pre)), cargs.subrange(cargs.len() - nf, cargs.len() as int)), rho, u0)
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let nf = rd.rules[ri].nfields;
+    let body = crate::expr_model::subst_expr_levels(rd.rules[ri].rhs, rd.uparams, lv);
+    let fargs = cargs.subrange(cargs.len() - nf, cargs.len() as int);
+    let core = spine_app(spine_app(body, a0.subrange(0, pre)), fargs);
+    crate::dom_rec_shape::nlbv_sl(rd.rules[ri].rhs, rd.uparams, lv);
+    let (hw, ws) = spine_mem(sig, ExprSpec::Const(rid, lv), a0, rho, u0);
+    if u0 is Bot {
+        mem_bot(sig, core, rho);
+        reveal(mem);
+        return;
+    }
+    if hw is Bot {
+        apps_bot(ws);
+        head_le(u0, Cpt::Bot);
+    }
+    assert(mem(sig, ExprSpec::Const(rid, lv), rho, hw));
+    let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] rsem(sig, rid, lv, hw, a, v);
+    typed_wf(v, a);
+    // along the recursor's type: typed projections, and below recval
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
+    major_form(sig, rid, lv);
+    assert forall|i: int| 0 <= i < ws.len() implies #[trigger] wf(ws[i]) by {
+        assert(mem(sig, a0[i], rho, ws[i]));
+    }
+    assert(crate::dom_sound::fits_env(sig, Seq::empty(), bot_env()));
+    let (ws2, _e, _l2, dcs) = crate::dom_tele::tele_apps(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), a, v, ws);
+    assert(crate::dom_tele::chain_ok(sig, tds, bot_env(), dcs, ws2));
+    crate::dom_rec_ty::rf_apps(sig, rid, tds, crate::dom_rec_ty::rbody(sig, rid), Seq::empty(), v, ws2);
+    assert(Seq::<Cpt>::empty() + ws2 =~= ws2);
+    let rv = crate::dom_rec::recval(sig, rid, ws2);
+    assert forall|i: int| 0 <= i < ws.len() implies le(#[trigger] ws[i], ws[i]) by {
+        le_refl(ws[i]);
+    }
+    crate::dom_rec::apps_mono(hw, v, ws, ws);
+    le_trans(u0, crate::dom_rec::apps(hw, ws), crate::dom_rec::apps(v, ws));
+    le_trans(u0, crate::dom_rec::apps(v, ws2), rv);
+    if !crate::dom_rec::rec_ok(sig, rid, ws2) {
+        head_le(u0, rv);
+        assert(false);
+    }
+    // the major
+    let x = ws2.last();
+    crate::beta_model::find_rule_spec(rd.rules, rd.rules[ri].ctor_id);
+    assert(sh.ctors[ri] == rd.rules[ri].ctor_id);
+    assert(ri < sh.nmin());
+    assert(mem(sig, a0[pre], rho, ws[pre]));
+    assert(le(ws2[pre], ws[pre]));
+    assert(ws2[pre] == x);
+    assert(crate::dom_sound::dfit(sig, tds[pre], crate::dom_tele::exts(bot_env(), ws2.subrange(0, pre)), dcs[pre], ws2[pre]));
+    typed_wf(x, dcs[pre]);
+    let (cws2, _cds) = iota_major(sig, rid, ri, clv, lc, cargs, rho, ws[pre], x);
+    let p = x->Nd_0->Con_1 as int;
+    assert(p == ri);
+    assert(fargs =~= cargs.subrange(np as int, cargs.len() as int));
+    // the rule's member
+    let (lc2, xl) = iota_rhs_mem(sig, rid, lv, l, dcs, ws2);
+    crate::dom_model::mem_closed_env(sig, body, rho, lc2);
+    let fl = a0.subrange(0, pre) + fargs;
+    assert forall|i: int| 0 <= i < fl.len() implies #[trigger] mem(sig, fl[i], rho, xl[i]) && wf(xl[i]) by {
+        if i < pre {
+            assert(fl[i] == a0[i] && xl[i] == ws2[i]);
+            assert(mem(sig, a0[i], rho, ws[i]));
+            mem_down_e(sig, a0[i], rho, ws[i], ws2[i]);
+        } else {
+            let k = i - pre;
+            assert(fl[i] == cargs[np + k]);
+            assert(le(xl[pre + k], x->Nd_1[k]));
+            assert(le(x->Nd_1[k], cws2[np + k]));
+            le_trans(xl[i], x->Nd_1[k], cws2[np + k]);
+            mem_down_e(sig, cargs[np + k], rho, cws2[np + k], xl[i]);
+        }
+    }
+    spine_concat(body, a0.subrange(0, pre), fargs);
+    assert forall|i: int| 0 <= i < ws2.len() implies #[trigger] wf(ws2[i]) by {}
+    crate::dom_rec::recval_wf(sig, rid, ws2);
+    crate::dom_bound::spine_mem_intro(sig, body, fl, rho, lc2, xl, rv);
+    mem_down_e(sig, core, rho, rv, u0);
+}
+
 } // verus!

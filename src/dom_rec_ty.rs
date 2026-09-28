@@ -271,6 +271,10 @@ pub open spec fn rec_scope(sig: Sig, rid: u64) -> bool {
         0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] ==> j1 == j2
     &&& forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == crate::rec_canon::rec_ind(sig, rid)
         ==> r2 == rid
+    &&& !sig.ienv.ctor_ind.contains_key(sh.ind) && !sig.ienv.recs.contains_key(sh.ind)
+    &&& forall|i: int, j: int| #![trigger sig.ienv.recs[rid].uparams[i], sig.ienv.recs[rid].uparams[j]]
+        0 <= i < sig.ienv.recs[rid].uparams.len() && 0 <= j < sig.ienv.recs[rid].uparams.len()
+        && sig.ienv.recs[rid].uparams[i] == sig.ienv.recs[rid].uparams[j] ==> i == j
 }
 
 /// The recursor's shape.
@@ -572,6 +576,30 @@ pub proof fn rec_ihs_at(sig: Sig, rid: u64, ins: Seq<Cpt>, k: nat)
             && hs[r] == crate::dom_rec::recval(sig, rid, crate::dom_rec::ih_in(sig.ienv.recs[rid], ins, ins.last()->Nd_1[rp[r] as int])) by {
             if r < rp0.len() {
                 assert(rp[r] == rp0[r] && hs[r] == hs0[r]);
+            }
+        }
+    }
+}
+
+/// The recursive positions are positions of direct occurrences.
+pub proof fn rec_pos_facts(fs: Seq<ExprSpec>, ind: u64, us: Seq<LevelSpec>, np: nat, ni: nat, n: nat)
+    requires
+        n <= fs.len(),
+    ensures
+        forall|r: int| 0 <= r < crate::rec_canon::rec_pos(fs, ind, us, np, ni, n).len() ==>
+            #[trigger] crate::rec_canon::rec_pos(fs, ind, us, np, ni, n)[r] < n
+            && crate::rec_canon::direct_occ(fs[crate::rec_canon::rec_pos(fs, ind, us, np, ni, n)[r] as int], ind, us, np, ni,
+                crate::rec_canon::rec_pos(fs, ind, us, np, ni, n)[r]),
+    decreases n,
+{
+    if n > 0 {
+        rec_pos_facts(fs, ind, us, np, ni, (n - 1) as nat);
+        let prev = crate::rec_canon::rec_pos(fs, ind, us, np, ni, (n - 1) as nat);
+        let cur = crate::rec_canon::rec_pos(fs, ind, us, np, ni, n);
+        assert forall|r: int| 0 <= r < cur.len() implies #[trigger] cur[r] < n
+            && crate::rec_canon::direct_occ(fs[cur[r] as int], ind, us, np, ni, cur[r]) by {
+            if r < prev.len() {
+                assert(cur[r] == prev[r]);
             }
         }
     }

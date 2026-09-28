@@ -110,6 +110,7 @@ pub proof fn minor_shape(sh: IndShape, j: int, ks: Seq<u64>, vs: Seq<LevelSpec>)
     ensures
         r.0.len() == sh.fields[j].len(),
         r.1.len() == sh.rposj(j).len(),
+        r.0 == sls(Seq::new(sh.fields[j].len(), |i: int| sh.field_at(j, i, (1 + j) as nat)), ks, vs),
         subst_expr_levels(sh.minor_ty(j), ks, vs) == binds(BinderKind::Pi, r.0 + r.1,
             crate::dom_rec_ty::minor_body((j + sh.fields[j].len() + sh.rposj(j).len()) as nat, sh.ctors[j],
                 crate::level_model::subst_levels_spec(sh.us(), ks, vs),
@@ -153,6 +154,62 @@ pub proof fn minor_shape(sh: IndShape, j: int, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(body == ab);
     assert((s + nf + nr) as nat == (1 + j + nf + nr) as nat);
     (f2, i2)
+}
+
+/// Level substitution keeps the loose variables.
+pub proof fn nlbv_sl(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        crate::expr_model::nlbv(subst_expr_levels(e, ks, vs)) == crate::expr_model::nlbv(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => {
+            nlbv_sl(*f, ks, vs);
+            nlbv_sl(*a, ks, vs);
+        },
+        ExprSpec::Bind(_, t, b) => {
+            nlbv_sl(*t, ks, vs);
+            nlbv_sl(*b, ks, vs);
+        },
+        ExprSpec::Let(t, v, b) => {
+            nlbv_sl(*t, ks, vs);
+            nlbv_sl(*v, ks, vs);
+            nlbv_sl(*b, ks, vs);
+        },
+        ExprSpec::Proj(_, st) => {
+            nlbv_sl(*st, ks, vs);
+        },
+        _ => {},
+    }
+}
+
+/// Lifting variables that are all past the cutoff.
+pub proof fn slift_vars(n: nat, from: nat, k: nat)
+    ensures
+        crate::subst_algebra::slift(n, from, vars(from, k)) == vars(from + n, k),
+{
+    assert(crate::subst_algebra::slift(n, from, vars(from, k)) =~= vars(from + n, k));
+}
+
+/// A DIRECT OCCURRENCE FIELD (without indices), moved past `s` binders and
+/// at a level instance: the inductive at the parameters.
+pub proof fn occ_form(sh: IndShape, p: int, k: int, s: nat, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sh.ni == 0,
+        0 <= p < sh.fields.len(),
+        0 <= k < sh.fields[p].len(),
+        crate::rec_canon::direct_occ(sh.fields[p][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat),
+    ensures
+        subst_expr_levels(sh.field_at(p, k, s), ks, vs)
+            == spine_app(ExprSpec::Const(sh.ind, crate::level_model::subst_levels_spec(sh.us(), ks, vs)), vars(k as nat + s, sh.np)),
+{
+    let f = sh.fields[p][k];
+    crate::beta_model::spine_recompose(f);
+    assert(crate::beta_model::spine_args(f) =~= vars(k as nat, sh.np));
+    crate::subst_algebra::lift_spine_app(s, k as nat, ExprSpec::Const(sh.ind, sh.us()), vars(k as nat, sh.np));
+    slift_vars(s, k as nat, sh.np);
+    sl_spine(ExprSpec::Const(sh.ind, sh.us()), vars(k as nat + s, sh.np), ks, vs);
+    sl_vars(k as nat + s, sh.np, ks, vs);
 }
 
 } // verus!
