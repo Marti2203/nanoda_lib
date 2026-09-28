@@ -370,4 +370,18 @@ pub proof fn retype_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: Expr
     conv_chain(sig, g, spine_app(h2, xs), spine_app(h2, xs), inst(0, x, b), t);
 }
 
+/// Closed terms are left alone.
+pub proof fn vsub_closed(e: ExprSpec, xs: Seq<ExprSpec>)
+    requires
+        crate::expr_model::nlbv(e) == 0,
+    ensures
+        vsub(e, xs) == e,
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        crate::subst_algebra::inst_closed((xs.len() - 1) as nat, xs[0], e);
+        vsub_closed(e, xs.drop_first());
+    }
+}
+
 } // verus!
