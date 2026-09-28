@@ -48,6 +48,7 @@ pub mod expr_model;
 pub mod injectivity;
 pub mod inductive;
 pub mod jkernel;
+pub mod rec_canon;
 pub mod ti_locals;
 pub mod kbind;
 pub mod ti_zsize;
