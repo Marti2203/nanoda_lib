@@ -160,12 +160,42 @@ definitions would be mutually recursive with no decreasing measure.
   recursor application on a constructor application with the rule's
   instance, carrying both sides' typings (as `Beta`/`Zeta` do).
 
+### Codes as built (S6.1-S6.2)
+
+One compact serves both: `Nd(key, comps)`, never bottom, ordered and
+joined pointwise. `key` is `Ty(i, prop)` for the code of inductive `i`
+(`prop` when it lives in Prop) or `Con(i, c)` for a value built by
+constructor `c`. Typing (`dom_typing::has_type`):
+
+- `Nd(Ty(i, _), as) : U`, and `: Prop` when `prop`;
+- `Nd(Con(i, c), cs) : Nd(Ty(i, false), ts)` when `cs` starts with
+  `ts.len()` components each below the matching one of `ts` (parameters
+  and indices), and the rest are pairs `(t, v)` with `t : U` and `v : t`
+  one stage down (the fields, each with its own type code);
+- nothing inhabits a Prop inductive but bottom, as for every
+  proposition (`prop_inhabitant_bot` is unchanged).
+
+Stability, typed joins and raising the type (Props 2.16-2.18) extend
+with these clauses.
+
+### Open: large elimination out of Prop
+
+`Eq.rec` (and every subsingleton eliminator into Type) has no
+interpretation in this model yet. Proofs denote bottom and bottom
+inhabits every type, so a context with `e : 0 = 1` has a model, and
+transport along `e` would have to turn an element of `P 0` into one of
+`P 1`. The paper's identity type avoids this because it is
+proof-relevant (`ref w` with `w` below both endpoints). Small
+elimination is fine: both sides of its `Iota` are proofs, both bottom.
+Until this is settled, the S6 signature condition excludes large
+eliminators of Prop inductives; S6.7 is where it returns.
+
 ### Sub-stages
 
 | | content |
 |---|---|
 | S6.1 | compacts: one data node `Nd(key, comps)` for type codes and constructor values, compared pointwise; order, join, compatibility, coherence, well-formedness (done) |
-| S6.2 | semantic typing for them; the stage and join properties (Props 2.16-2.18) |
+| S6.2 | semantic typing for them; the stage and join properties (Props 2.16-2.18) (done) |
 | S6.3 | syntax: inductive declarations in the signature, the `Iota` rule; syntactic metatheory (renaming, substitution, validity, generation, uniqueness, SR) |
 | S6.4 | interpretation of inductive constants, constructors, recursor applications; ideal properties; soundness incl. `Iota` |
 | S6.5 | logical relation clauses; their properties; adequacy incl. `Iota`; injectivity re-proven |

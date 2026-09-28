@@ -46,6 +46,10 @@ pub proof fn stab_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
             ty_sort(sig, n + 1, g, t, t2);
         },
         Cpt::Pi(_, _) => stab_ty_pi(sig, n, g, t, t2, a),
+        Cpt::Nd(..) => {
+            ty_other(sig, n, g, t, t2, a);
+            ty_other(sig, n + 1, g, t, t2, a);
+        },
         _ => {},
     }
 }
@@ -127,6 +131,10 @@ pub proof fn stab_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
             stab_ty(sig, n, g, m, m2, u);
         },
         Cpt::Pi(_, _) => stab_tm_pi(sig, n, g, m, m2, t, u, a),
+        Cpt::Nd(..) => {
+            tm_other(sig, n, g, m, m2, t, u, a);
+            tm_other(sig, n + 1, g, m, m2, t, u, a);
+        },
         _ => {},
     }
 }

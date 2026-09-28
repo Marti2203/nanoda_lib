@@ -63,6 +63,7 @@ pub proof fn decr_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
         ty_inv(n, a, Cpt::U);
         match a {
             Cpt::Pi(_, _) => decr_ty_pi(sig, n, g, t, t2, a, a2),
+            Cpt::Nd(..) => ty_other(sig, n, g, t, t2, a2),
             _ => {},
         }
     }
@@ -137,7 +138,7 @@ pub proof fn mono_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         },
         Cpt::Pi(_, _) => mono_tm_pi(sig, n, g, m, m2, t, u, u2, a),
         Cpt::Lam(_) => ty_inv(n, a, Cpt::U),
-        Cpt::Nd(..) => {},
+        Cpt::Nd(..) => tm_other(sig, n, g, m, m2, t, u2, a),
     }
 }
 
@@ -197,6 +198,7 @@ pub proof fn incr(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSp
         ty_inv(n, a, Cpt::U);
         match a {
             Cpt::Pi(_, _) => incr_pi(sig, n, g, m, m2, t, u, a, a2),
+            Cpt::Nd(..) => tm_other(sig, n, g, m, m2, t, u, a),
             _ => {},
         }
     }
@@ -279,6 +281,7 @@ pub proof fn decr(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSp
         ty_inv(n, a, Cpt::U);
         match a {
             Cpt::Pi(_, _) => decr_pi(sig, n, g, m, m2, t, u, a, a2),
+            Cpt::Nd(..) => tm_other(sig, n, g, m, m2, t, u, a2),
             _ => {},
         }
     }

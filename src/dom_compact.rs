@@ -20,7 +20,14 @@ pub enum Cpt {
     /// A data node: an inductive type's code or a constructor's value,
     /// named by `key`, with its components compared pointwise. Never
     /// bottom: seeing the node is an observation.
-    Nd(nat, Seq<Cpt>),
+    Nd(NdKey, Seq<Cpt>),
+}
+
+/// What a data node is: the code of inductive `ind` (a proposition when
+/// `prop`), or a value built by constructor `ctor` of inductive `ind`.
+pub enum NdKey {
+    Ty(nat, bool),
+    Con(nat, nat),
 }
 
 pub open spec fn ht(c: Cpt) -> nat
@@ -1050,13 +1057,13 @@ pub open spec fn jall(s: Seq<Cpt>) -> Cpt {
 }
 
 /// The head constructor (a node's with its key and arity).
-pub open spec fn hd(c: Cpt) -> (nat, nat, nat) {
+pub open spec fn hd(c: Cpt) -> (nat, NdKey, nat) {
     match c {
-        Cpt::Bot => (0, 0, 0),
-        Cpt::U => (1, 0, 0),
-        Cpt::Prop => (2, 0, 0),
-        Cpt::Lam(_) => (3, 0, 0),
-        Cpt::Pi(_, _) => (4, 0, 0),
+        Cpt::Bot => (0, NdKey::Ty(0, false), 0),
+        Cpt::U => (1, NdKey::Ty(0, false), 0),
+        Cpt::Prop => (2, NdKey::Ty(0, false), 0),
+        Cpt::Lam(_) => (3, NdKey::Ty(0, false), 0),
+        Cpt::Pi(_, _) => (4, NdKey::Ty(0, false), 0),
         Cpt::Nd(key, cs) => (5, key, cs.len()),
     }
 }
@@ -2877,5 +2884,39 @@ proof fn order_examples() {
     }
 }
 
+
+/// A binary join is least.
+pub proof fn join_lub(u: Cpt, v: Cpt, w: Cpt)
+    requires
+        wf(u),
+        wf(v),
+        compat(u, v),
+        le(u, w),
+        le(v, w),
+    ensures
+        le(join(u, v), w),
+{
+    let t = seq![u, v];
+    compat_refl(u);
+    compat_refl(v);
+    compat_symm(u, v);
+    assert forall|y: Cpt, z: Cpt| #[trigger] t.contains(y) && #[trigger] t.contains(z) implies compat(y, z) by {
+        let i = choose|i: int| 0 <= i < 2 && t[i] == y;
+        let j = choose|j: int| 0 <= j < 2 && t[j] == z;
+    }
+    assert forall|y: Cpt| #[trigger] t.contains(y) implies wf(y) by {
+        let i = choose|i: int| 0 <= i < 2 && t[i] == y;
+    }
+    let b = vstd::math::max(ht(u) as int, ht(v) as int) as nat;
+    assert(fits(t, b));
+    pw_coh(t, b);
+    assert forall|y: Cpt| #[trigger] t.contains(y) implies le(y, w) by {
+        let i = choose|i: int| 0 <= i < 2 && t[i] == y;
+    }
+    jall_lub(t, b, w);
+    assert(joinall(t, 0) == Cpt::Bot);
+    assert(joinall(t, 1) == u);
+    assert(jall(t) == join(u, v));
+}
 
 } // verus!

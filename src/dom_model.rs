@@ -592,43 +592,6 @@ pub proof fn typed_wf(u: Cpt, a: Cpt)
     reveal(jc);
 }
 
-/// A binary join is least.
-pub proof fn join_lub(u: Cpt, v: Cpt, w: Cpt)
-    requires
-        wf(u),
-        wf(v),
-        compat(u, v),
-        le(u, w),
-        le(v, w),
-    ensures
-        le(join(u, v), w),
-{
-    reveal(mem);
-    reveal(typed);
-    reveal(jc);
-    let t = seq![u, v];
-    compat_refl(u);
-    compat_refl(v);
-    compat_symm(u, v);
-    assert forall|y: Cpt, z: Cpt| #[trigger] t.contains(y) && #[trigger] t.contains(z) implies compat(y, z) by {
-        let i = choose|i: int| 0 <= i < 2 && t[i] == y;
-        let j = choose|j: int| 0 <= j < 2 && t[j] == z;
-    }
-    assert forall|y: Cpt| #[trigger] t.contains(y) implies wf(y) by {
-        let i = choose|i: int| 0 <= i < 2 && t[i] == y;
-    }
-    let b = vstd::math::max(ht(u) as int, ht(v) as int) as nat;
-    assert(fits(t, b));
-    pw_coh(t, b);
-    assert forall|y: Cpt| #[trigger] t.contains(y) implies le(y, w) by {
-        let i = choose|i: int| 0 <= i < 2 && t[i] == y;
-    }
-    jall_lub(t, b, w);
-    assert(joinall(t, 0) == Cpt::Bot);
-    assert(joinall(t, 1) == u);
-    assert(jall(t) == join(u, v));
-}
-
 /// Two elements below a well-formed bound are compatible, and their join
 /// is below it.
 pub proof fn below_pair(u1: Cpt, u2: Cpt, w: Cpt)

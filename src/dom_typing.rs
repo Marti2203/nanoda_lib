@@ -37,6 +37,13 @@ pub open spec fn has_type(n: nat, u: Cpt, a: Cpt) -> bool
         (Cpt::Lam(f), Cpt::Pi(b, g)) => n >= 1 && has_type((n - 1) as nat, *b, Cpt::U)
             && forall|k: int| 0 <= k < f.len() ==> has_type((n - 1) as nat, #[trigger] f[k].0, *b)
                 && has_type((n - 1) as nat, f[k].1, cod(a, f[k].0)),
+        (Cpt::Nd(NdKey::Ty(_, _), _), Cpt::U) => true,
+        (Cpt::Nd(NdKey::Ty(_, true), _), Cpt::Prop) => true,
+        (Cpt::Nd(NdKey::Con(i, _), cs), Cpt::Nd(NdKey::Ty(i2, false), ts)) => n >= 1 && i == i2
+            && ts.len() <= cs.len() && (cs.len() - ts.len()) % 2 == 0
+            && (forall|k: int| 0 <= k < ts.len() ==> le(#[trigger] cs[k], ts[k]))
+            && forall|k: int| ts.len() <= k && k + 1 < cs.len() && (k - ts.len()) % 2 == 0 ==>
+                has_type((n - 1) as nat, #[trigger] cs[k], Cpt::U) && has_type((n - 1) as nat, cs[k + 1], cs[k]),
         _ => false,
     }
 }
@@ -72,6 +79,7 @@ pub proof fn ty_inv(n: nat, u: Cpt, a: Cpt)
         u is Prop ==> a is U,
         u is Pi ==> (a is U || a is Prop),
         u is Lam ==> a is Pi,
+        u is Nd ==> (a is U || a is Prop || a is Nd),
         u is Bot ==> has_type(n, a, Cpt::U),
 {
 }
@@ -145,6 +153,22 @@ pub proof fn ty_stable(n: nat, u: Cpt, a: Cpt)
                 assert(ht(u) >= 1);
             }
         },
+        (Cpt::Nd(NdKey::Con(_, _), cs), Cpt::Nd(NdKey::Ty(_, false), ts)) => {
+            if n >= 2 {
+                let m = ts.len() as int;
+                assert(stg((n - 1) as nat, Cpt::U));
+                assert forall|k: int| m <= k && k + 1 < cs.len() && (k - m) % 2 == 0 implies
+                    (has_type((n - 1) as nat, #[trigger] cs[k], Cpt::U) && has_type((n - 1) as nat, cs[k + 1], cs[k]))
+                    == (has_type(n, cs[k], Cpt::U) && has_type(n, cs[k + 1], cs[k])) by {
+                    assert(wf(cs[k]) && wf(cs[k + 1]));
+                    assert(stg((n - 1) as nat, cs[k]) && stg((n - 1) as nat, cs[k + 1]));
+                    ty_stable((n - 1) as nat, cs[k], Cpt::U);
+                    ty_stable((n - 1) as nat, cs[k + 1], cs[k]);
+                }
+            } else {
+                assert(ht(u) >= 1);
+            }
+        },
         _ => {},
     }
 }
@@ -208,6 +232,29 @@ pub proof fn ty_join(n: nat, u: Cpt, v: Cpt, a: Cpt)
                 } else {
                     assert(l[k] == f2[k - f.len()]);
                 }
+            }
+        },
+        (Cpt::Nd(NdKey::Con(_, _), c1), Cpt::Nd(_, c2)) => {
+            parts_lower(u);
+            let ts = a->Nd_1;
+            let m = ts.len() as int;
+            let jc = joinc(c1, c2, c1.len() as int);
+            joinc_at(c1, c2, c1.len() as int);
+            assert forall|k: int| 0 <= k < m implies le(#[trigger] jc[k], ts[k]) by {
+                assert(compat(c1[k], c2[k]));
+                assert(wf(c1[k]) && wf(c2[k]));
+                join_lub(c1[k], c2[k], ts[k]);
+            }
+            assert forall|k: int| m <= k && k + 1 < jc.len() && (k - m) % 2 == 0 implies
+                has_type((n - 1) as nat, #[trigger] jc[k], Cpt::U) && has_type((n - 1) as nat, jc[k + 1], jc[k]) by {
+                assert(compat(c1[k], c2[k]));
+                assert(compat(c1[k + 1], c2[k + 1]));
+                assert(wf(c1[k]) && wf(c2[k]));
+                ty_join((n - 1) as nat, c1[k], c2[k], Cpt::U);
+                join_ub(c1[k], c2[k]);
+                ty_weak((n - 1) as nat, c1[k + 1], c1[k], jc[k]);
+                ty_weak((n - 1) as nat, c2[k + 1], c2[k], jc[k]);
+                ty_join((n - 1) as nat, c1[k + 1], c2[k + 1], jc[k]);
             }
         },
         _ => {},
@@ -281,6 +328,20 @@ pub proof fn ty_weak(n: nat, u: Cpt, a: Cpt, a2: Cpt)
                 assert(has_type((n - 1) as nat, Cpt::U, Cpt::U));
                 ty_jall((n - 1) as nat, sm, sm.len() as int, Cpt::U);
                 ty_weak((n - 1) as nat, f[k].1, cod(a, x), cod(a2, x));
+            }
+        },
+        (Cpt::Nd(NdKey::Con(_, _), cs), Cpt::Nd(_, ts), Cpt::Nd(_, ts2)) => {
+            parts_lower(a2);
+            let t = seq![a2];
+            assert(t[0] == a2);
+            assert forall|k: int| 0 <= k < ts.len() implies le(#[trigger] cs[k], ts2[k]) by {
+                nd_args_one(a2, k, ht(a2));
+                let d = ts2[k];
+                assert(seq![d][0] == d);
+                assert(fits(seq![d], dec(ht(a2))));
+                assert(fits(seq![d], ht(d)));
+                le_set_budget(ts[k], seq![d], dec(ht(a2)), ht(d));
+                le_trans(cs[k], ts[k], d);
             }
         },
         _ => {},
