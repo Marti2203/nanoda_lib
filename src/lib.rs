@@ -83,6 +83,7 @@ pub mod ti_meta;
 pub mod ti_sub;
 pub mod ti_subst;
 pub mod ti_syntax;
+pub mod ti_valid;
 pub mod telescope;
 #[cfg(test)]
 mod tests;

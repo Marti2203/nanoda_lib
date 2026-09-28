@@ -357,4 +357,140 @@ pub proof fn sort_inj(sig: Sig, d: Deriv, l1: LevelSpec, l2: LevelSpec)
     }
 }
 
+/// THE FUNDAMENTAL LEMMA, type statement: types convertible at a sort are
+/// related at every U-typed element of the left one's bottom denotation.
+pub proof fn fundamental_type(sig: Sig, d: Deriv, n: nat, a: Cpt)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        concl(d)->Eq_3 is Sort,
+        mem(sig, concl(d)->Eq_1, bot_env(), a),
+        has_type(n, a, Cpt::U),
+    ensures
+        rel_ty(sig, n, concl(d)->Eq_0, concl(d)->Eq_1, concl(d)->Eq_2, a),
+{
+    let g = concl(d)->Eq_0;
+    let w = d_wf(sig, d);
+    assert(g.subrange(0, g.len() as int) =~= g);
+    wk_related(sig, g, g, 0, w);
+    adeq_type(sig, d, bot_env(), g, wk(0), wk(0), n, a);
+    wk_zero(concl(d)->Eq_1);
+    wk_zero(concl(d)->Eq_2);
+}
+
+/// Along a chain of type conversions, a U-typed element of the first
+/// type's bottom denotation stays in each type's, and relates the first
+/// type to each.
+proof fn chain_rel(sig: Sig, g: Ctx, ch: Seq<ExprSpec>, k: int, n: nat, v: Cpt)
+    requires
+        crate::ti_chain::chain_ok(sig, g, ch),
+        1 <= k < ch.len(),
+        mem(sig, ch[0], bot_env(), v),
+        has_type(n, v, Cpt::U),
+    ensures
+        rel_ty(sig, n, g, ch[0], ch[k], v),
+        mem(sig, ch[k], bot_env(), v),
+    decreases k,
+{
+    let i = k - 1;
+    if k > 1 {
+        chain_rel(sig, g, ch, k - 1, n, v);
+    }
+    assert(tconvd(sig, g, ch[i], ch[i + 1]));
+    let (l, dk) = crate::ti_sub::get_t(sig, g, ch[i], ch[i + 1]);
+    fits_bot(sig, g);
+    sound(sig, dk, bot_env());
+    assert(mem(sig, ch[i], bot_env(), v));
+    assert(mem(sig, ch[k], bot_env(), v));
+    fundamental_type(sig, dk, n, v);
+    if k > 1 {
+        crate::dom_rel_per::trans_ty(sig, n, g, ch[0], ch[i], ch[k], v);
+    }
+}
+
+/// The one-point Pi code is a universe element.
+proof fn pi0_type()
+    ensures
+        has_type(2, pi0(), Cpt::U),
+{
+    assert(wf(pi0())) by {
+        reveal_with_fuel(wf, 2);
+    }
+    assert(crate::dom_compact::ht(pi0()) == 1) by {
+        reveal_with_fuel(crate::dom_compact::ht, 2);
+    }
+    assert(has_type(1, Cpt::U, Cpt::U));
+    assert(has_type(1, Cpt::Bot, Cpt::U));
+    assert(has_type(2, pi0(), Cpt::U));
+}
+
+/// PI INJECTIVITY, for chains of type conversions.
+pub proof fn pi_inj_chain(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, ta2: ExprSpec, tb2: ExprSpec)
+    requires
+        tchain(sig, g, pi(ta, tb), pi(ta2, tb2)),
+    ensures
+        tchain(sig, g, ta, ta2),
+        tchain(sig, g.push(ta), tb, tb2),
+{
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == pi(ta, tb) && #[trigger] ch[ch.len() - 1] == pi(ta2, tb2)
+        && crate::ti_chain::chain_ok(sig, g, ch);
+    if ch.len() == 1 {
+        crate::ti_chain::tchain_refl(sig, g, ta);
+        crate::ti_chain::tchain_refl(sig, g.push(ta), tb);
+    } else {
+        mem_pi0(sig, ta, tb);
+        pi0_type();
+        chain_rel(sig, g, ch, ch.len() - 1, 2, pi0());
+        ty_pi(sig, 2, g, pi(ta, tb), pi(ta2, tb2), pi0());
+        rp_pi(sig, ta, tb);
+        rp_pi(sig, ta2, tb2);
+    }
+}
+
+/// A Pi never chains to a sort.
+pub proof fn pi_not_sort_chain(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec)
+    requires
+        tchain(sig, g, pi(ta, tb), sort(l)),
+    ensures
+        false,
+{
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == pi(ta, tb) && #[trigger] ch[ch.len() - 1] == sort(l)
+        && crate::ti_chain::chain_ok(sig, g, ch);
+    mem_pi0(sig, ta, tb);
+    pi0_type();
+    chain_rel(sig, g, ch, ch.len() - 1, 2, pi0());
+    ty_pi(sig, 2, g, pi(ta, tb), sort(l), pi0());
+    let p = rp(sig, sort(l));
+    crate::ti_hred::stuck_shapes(sig, sort(l));
+    crate::ti_hred::hred_stuck_self(sig, sort(l), pi(p.0, p.1));
+}
+
+/// SORT INJECTIVITY, for chains of type conversions.
+pub proof fn sort_inj_chain(sig: Sig, g: Ctx, l1: LevelSpec, l2: LevelSpec)
+    requires
+        tchain(sig, g, sort(l1), sort(l2)),
+    ensures
+        crate::conv_cr::lev_eq(l1, l2),
+{
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == sort(l1) && #[trigger] ch[ch.len() - 1] == sort(l2)
+        && crate::ti_chain::chain_ok(sig, g, ch);
+    if ch.len() == 1 {
+        assert(crate::conv_cr::lev_eq(l1, l2));
+    } else {
+        let c = crate::dom_model::sortc(l1);
+        mem_sort(sig, l1, bot_env(), c);
+        assert(has_type(1, c, Cpt::U));
+        chain_rel(sig, g, ch, ch.len() - 1, 1, c);
+        ty_sort(sig, 1, g, sort(l1), sort(l2));
+        rs_sort(sig, l1);
+        rs_sort(sig, l2);
+        if crate::ti_syntax::is_zero(l1) {
+            assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r) by {
+                assert(crate::level_model::interp(l1, r) == 0);
+                assert(crate::level_model::interp(l2, r) == 0);
+            }
+        }
+    }
+}
+
 } // verus!
