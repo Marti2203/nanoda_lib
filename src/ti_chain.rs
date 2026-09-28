@@ -384,4 +384,68 @@ pub proof fn inst_conv(sig: Sig, g: Ctx, a: ExprSpec, b: ExprSpec, l: LevelSpec,
     psub_ext(b, isub(0, x2), s2);
 }
 
+/// A typed argument substituted into any judgment under a binder.
+pub proof fn inst_tm(sig: Sig, g: Ctx, a: ExprSpec, m: ExprSpec, m2: ExprSpec, t: ExprSpec, x: ExprSpec)
+    requires
+        derivable(sig, eq(g.push(a), m, m2, t)),
+        derivable(sig, eq(g, x, x, a)),
+    ensures
+        derivable(sig, eq(g, crate::subst_algebra::inst(0, x, m), crate::subst_algebra::inst(0, x, m2), crate::subst_algebra::inst(0, x, t))),
+{
+    let db = get(sig, eq(g.push(a), m, m2, t));
+    let dx = get(sig, eq(g, x, x, a));
+    let w = d_wf(sig, dx);
+    let wa = d_wf(sig, db);
+    let (la, da) = d_wf_last(sig, wa);
+    assert(g.push(a).drop_last() =~= g);
+    assert(g.push(a).last() == a);
+    wf_vars(sig, w);
+    let g1 = g.push(a);
+    let s = cons(x, ids());
+    let s2 = cons(x, ids());
+    reveal(spair);
+    mk_d(sig, w);
+    assert forall|i: nat| i < g1.len() implies #[trigger] derivable(sig, eq(g, s(i), s2(i), psub(var_ty(g1, i), s))) by {
+        var_ty_push(g, a, i);
+        if i == 0 {
+            psub_lift_cons(a, x, ids());
+            psub_id(a);
+        } else {
+            let k = (i - 1) as nat;
+            psub_lift_cons(var_ty(g, k), x, ids());
+            psub_id(var_ty(g, k));
+            let v = crate::ti_sub::d_var(sig, w, k);
+            mk_d(sig, v);
+        }
+    }
+    assert forall|i: nat| i < g1.len() implies #[trigger] tconvd(sig, g, psub(var_ty(g1, i), s), psub(var_ty(g1, i), s2)) by {
+        var_ty_push(g, a, i);
+        if i == 0 {
+            psub_lift_cons(a, x, ids());
+            psub_lift_cons(a, x, ids());
+            psub_id(a);
+            mk_t(sig, da, la);
+        } else {
+            let k = (i - 1) as nat;
+            psub_lift_cons(var_ty(g, k), x, ids());
+            psub_lift_cons(var_ty(g, k), x, ids());
+            psub_id(var_ty(g, k));
+            assert(tconvd(sig, g, var_ty(g, k), var_ty(g, k)));
+        }
+    }
+    assert(spair(sig, g1, g, s, s2));
+    d_sub(sig, db, g, s, s2);
+    crate::ti_subst::inst_is_psub(0, x, m);
+    crate::ti_subst::inst_is_psub(0, x, m2);
+    crate::ti_subst::inst_is_psub(0, x, t);
+    assert forall|i: nat| #[trigger] isub(0, x)(i) == s(i) by {
+        if i == 0 {
+            crate::subst_algebra::lift_zero(0, x);
+        }
+    }
+    psub_ext(m, isub(0, x), s);
+    psub_ext(m2, isub(0, x), s);
+    psub_ext(t, isub(0, x), s);
+}
+
 } // verus!

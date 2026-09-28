@@ -269,7 +269,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         Rule::Beta(l1, l2) => match j {
             Jd::Eq(g, m, n, t) => m is App && {
                 let (f, x) = (*m->App_0, *m->App_1);
-                f is Bind && f->Bind_0 == BinderKind::Lam && ps.len() == 4 && concl(ps[1]) is Eq && {
+                f is Bind && f->Bind_0 == BinderKind::Lam && ps.len() == 5 && concl(ps[1]) is Eq && {
                     let (a, body) = (*f->Bind_1, *f->Bind_2);
                     let b = concl(ps[1])->Eq_3;
                     n == inst(0, x, body) && t == inst(0, x, b) && prems(ps, seq![
@@ -277,13 +277,14 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                         eq(g.push(a), body, body, b),
                         eq(g, x, x, a),
                         eq(g.push(a), b, b, sort(l2)),
+                        eq(g, n, n, t),
                     ])
                 }
             },
             _ => false,
         },
         Rule::Zeta(l1, l2) => match j {
-            Jd::Eq(g, m, n, t) => m is Let && ps.len() == 4 && concl(ps[1]) is Eq && {
+            Jd::Eq(g, m, n, t) => m is Let && ps.len() == 5 && concl(ps[1]) is Eq && {
                 let (a, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
                 let b = concl(ps[1])->Eq_3;
                 n == inst(0, x, body) && t == inst(0, x, b) && prems(ps, seq![
@@ -291,6 +292,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                     eq(g.push(a), body, body, b),
                     eq(g, x, x, a),
                     eq(g.push(a), b, b, sort(l2)),
+                    eq(g, n, n, t),
                 ])
             },
             _ => false,

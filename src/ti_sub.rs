@@ -722,15 +722,20 @@ proof fn d_sub_beta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let q1 = get(sig, eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))));
         let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(aa, s)));
         let q3 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        d_sub(sig, ps[4], dl, s, s);
+        psub_inst0(body, x, s);
+        psub_inst0(b, x, s);
+        let q4 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
         let xs = psub(x, s);
         let lm = lam(psub(aa, s), psub(body, up(s)));
         let bj = eq(dl, app(lm, xs), inst(0, xs, psub(body, up(s))), inst(0, xs, psub(b, up(s))));
-        let bp = seq![q0, q1, q2, q3];
+        let bp = seq![q0, q1, q2, q3, q4];
         assert(prems(bp, seq![
             eq(dl, psub(aa, s), psub(aa, s), sort(l1)),
             eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))),
             eq(dl, xs, xs, psub(aa, s)),
             eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
+            eq(dl, psub(n, s), psub(n, s), psub(a, s)),
         ]));
         valid_node(sig, Rule::Beta(l1, l2), bj, bp);
         let bd = node(Rule::Beta(l1, l2), bj, bp);
@@ -978,15 +983,20 @@ proof fn d_sub_zeta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let q1 = get(sig, eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))));
         let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(aa, s)));
         let q3 = get(sig, eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)));
+        d_sub(sig, ps[4], dl, s, s);
+        psub_inst0(body, x, s);
+        psub_inst0(b, x, s);
+        let q4 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
         let xs = psub(x, s);
         let lm = ExprSpec::Let(Box::new(psub(aa, s)), Box::new(xs), Box::new(psub(body, up(s))));
         let bj = eq(dl, lm, inst(0, xs, psub(body, up(s))), inst(0, xs, psub(b, up(s))));
-        let bp = seq![q0, q1, q2, q3];
+        let bp = seq![q0, q1, q2, q3, q4];
         assert(prems(bp, seq![
             eq(dl, psub(aa, s), psub(aa, s), sort(l1)),
             eq(sa, psub(body, up(s)), psub(body, up(s)), psub(b, up(s))),
             eq(dl, xs, xs, psub(aa, s)),
             eq(sa, psub(b, up(s)), psub(b, up(s)), sort(l2)),
+            eq(dl, psub(n, s), psub(n, s), psub(a, s)),
         ]));
         valid_node(sig, Rule::Zeta(l1, l2), bj, bp);
         let bd = node(Rule::Zeta(l1, l2), bj, bp);

@@ -78,6 +78,7 @@ pub mod swap_typed;
 pub mod tc;
 pub mod tc_model;
 pub mod ti_chain;
+pub mod ti_gen;
 pub mod ti_hred;
 pub mod ti_meta;
 pub mod ti_sub;

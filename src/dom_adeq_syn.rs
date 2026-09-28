@@ -132,13 +132,16 @@ pub proof fn beta_d(sig: Sig, dl: Ctx, a: ExprSpec, body: ExprSpec, bt: ExprSpec
     let d1 = get(sig, eq(dl.push(a), body, body, bt));
     let d2 = get(sig, eq(dl, x, x, a));
     let d3 = get(sig, eq(dl.push(a), bt, bt, sort(l2)));
+    crate::ti_chain::inst_tm(sig, dl, a, body, body, bt, x);
+    let d4 = get(sig, eq(dl, inst(0, x, body), inst(0, x, body), inst(0, x, bt)));
     let j = eq(dl, app(lam(a, body), x), inst(0, x, body), inst(0, x, bt));
-    let ps = seq![d0, d1, d2, d3];
+    let ps = seq![d0, d1, d2, d3, d4];
     assert(prems(ps, seq![
         eq(dl, a, a, sort(l1)),
         eq(dl.push(a), body, body, bt),
         eq(dl, x, x, a),
         eq(dl.push(a), bt, bt, sort(l2)),
+        eq(dl, inst(0, x, body), inst(0, x, body), inst(0, x, bt)),
     ]));
     valid_node(sig, Rule::Beta(l1, l2), j, ps);
     let r = node(Rule::Beta(l1, l2), j, ps);
