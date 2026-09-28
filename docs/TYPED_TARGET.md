@@ -347,14 +347,57 @@ immediate, and constructor adequacy needs no bound on the type
 element's domains: a field above bottom is a value, so its domain is an
 inductive's code, where the relation already is the clause.
 
-### Open: parameters of any type
+### Open: parameters of any type (analysis 2026-09-28)
 
-Inductives with parameter-typed fields need the relation at a field's
-type code to follow the parameter's code, which the value no longer
-carries. Two routes to study: prove the type relation at inductive codes
-closed under conversion (the relation is closed under head expansion
-only), or let codes carry their parameters' relations the way the
-paper's Σ codes carry their components.
+What failed: the constructor clause related a field at its table code
+and at the field's *declared* type, read off the value's own constructor
+application `c P^x fs`. Raising the type's code to a larger one raises a
+parameter's code `A` to `A2`, and the field then needs the type relation
+of `P^x_j` at `A2`. The hypothesis only relates the *term's type*, and
+that type is `I Q idx` with `Q` merely convertible to `P^x`. The
+relation is closed under head expansion, not conversion, so the gap does
+not close.
+
+The route that avoids conversion is the paper's treatment of Σ:
+components ride in the type relation, and values are related at the
+type's components.
+
+- **Type relation at `Ty(I)`.** Both types head-reduce to applications
+  of `I` (the reduct chosen, as for Pi and sorts), with
+  `tchain(t, t2)`, and each *type* parameter pair related at the code's
+  parameter code: `rel_ty(Q_j, Q2_j, A_j)`. Parameters that are not
+  types are left unconstrained, and fields may not be typed by them.
+- **Tables at the code's parameters.** A table entry is the field type
+  evaluated at the code's parameter codes (`ceval` with the parameter
+  values, as first written). The entries are components of the code, so
+  the relation's height measure still decreases through them.
+- **Fields at the type's parameters.** The constructor clause relates
+  field `i` at its table code and at the field type instantiated with
+  the *relation's* type's parameters `Q` (the `I`-reduct of `t`), not
+  the value's `P^x`. Raising `a` to `a2` then finds `rel_ty(Q_j, Q_j,
+  A2_j)` in `rel_ty(t, t, a2)`, and a lemma lifts it to the field's
+  simple type by induction (a parameter: given; a former applied to
+  simple types: its canonical code's clause, the arguments by
+  induction). Conversion to another type `s` (`conv_tm`) goes through
+  `rel_ty(t, s, a)`, whose parameter clause relates `Q` and `Q'`.
+- **Adequacy needs no injectivity.** At a constructor, the end of the
+  telescope *is* `I P^x idx` syntactically, so `Q = P^x`. At the
+  recursor, the major's type is `I params idx` for the recursor's own
+  parameter arguments, so the fields arrive at `field[params]`, exactly
+  the minor premise's domains. With the declared-type clause, this step
+  would need `P^x ≡ params`, which is injectivity of `I` under
+  conversion. So this route helps the recursor too.
+- **Type formers.** `tf_rel` must now also show the parameter clause.
+  The Pi clause hands it related arguments at a sort-typed domain, and
+  at `U` the term relation is the type relation, which is the clause.
+
+Scope of that route: fields typed by type parameters, or by formers
+applied to such simple types. Function-typed fields and fields
+depending on earlier fields stay out; they need Pi codes built from the
+table, a separate step. Cost: roughly today's redesign again (relation
+clauses, the PER, monotonicity, stability and head-expansion lemmas,
+the lifting lemma, `tf_rel`, `cf_end`). It is independent of the
+recursor stage, which can proceed on the closed fragment first.
 
 ### Open: large elimination out of Prop
 
