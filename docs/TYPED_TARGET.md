@@ -86,13 +86,23 @@ What changed in their statements:
 ### The export theorem
 
 `export_sound::export_kh` gives `kh` at every cutoff of a fully
-certified export from `kh_hyp`, which now names: the fragment
-(`frag_env`, and every declared type and value a fragment term),
-`cr_env`, and the signature's well-formedness at every level instance
-(`sig_wf`, `lev_ok`). The certificates give the rest (closedness, own
-universe levels, declared types that are types, values typed at them).
-Discharging `sig_wf`/`lev_ok` needs level instantiation for derivations
-and ranks from declaration order; `cr_env` is about the export's names.
+certified export from `kh_hyp`, which names only what is about the
+export itself rather than the checker: the fragment (`frag_env`, and
+every declared type and value a fragment term) and the distinctness of
+the export's built-in names (`names_ok`). Everything else is proved by
+induction over cutoffs from the certificates:
+
+- declared types are types, values typed at them, all closed and with
+  their own universe levels (as before);
+- a definition's value mentions only earlier declarations
+  (`ti_level::d_consts`), so ranks by position are valid (`ranked_at`);
+- every level instance of a declaration is typed (`ti_level::d_ls`,
+  level instantiation of derivations), so the signature is well formed
+  (`wf_at`);
+- level-equivalent instances convert (`levok_at`, via `lveq_conv` in the
+  certificate's environment, where the induction already has it);
+- Church-Rosser's environment facts follow from the fragment and
+  `names_ok` (`cr_env_of`).
 
 ## The open fork before S4
 

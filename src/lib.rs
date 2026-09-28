@@ -47,6 +47,7 @@ pub mod jkernel;
 pub mod ti_locals;
 pub mod kbind;
 pub mod ti_zsize;
+pub mod ti_level;
 pub mod kclaims;
 pub mod inductive_model;
 pub mod indexmap_model;

@@ -28,13 +28,18 @@ pub open spec fn defs_stable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
     forall|k: u64| #[trigger] dty.contains_key(k) && denv2.defs.contains_key(k) ==> denv.defs.contains_key(k)
 }
 
+/// Every definition is well ranked, at every level instance.
+pub open spec fn defs_ranked(sig: crate::ti_syntax::Sig) -> bool {
+    forall|c: u64, ls: Seq<LevelSpec>| #[trigger] crate::ti_syntax::is_def(sig, c, ls) ==> crate::ti_syntax::def_ok(sig, c, ls)
+}
+
 /// The larger environment's signature extends the smaller one's, for any
 /// locals.
 pub proof fn ew_sig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec, g: Map<nat, ExprSpec>)
     requires
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
-        crate::ti_sr::sig_wf(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
     ensures
         crate::ti_valid::sig_ext(crate::metatheory::jsig(dty, denv, g), crate::metatheory::jsig(dty2, denv2, g)),
 {
@@ -57,7 +62,7 @@ pub proof fn ew_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: 
     requires
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
-        crate::ti_sr::sig_wf(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
         crate::metatheory::typed(dty, denv, g, e, t),
     ensures
         crate::metatheory::typed(dty2, denv2, g, e, t),
@@ -71,7 +76,7 @@ pub proof fn ew_tconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: 
     requires
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
-        crate::ti_sr::sig_wf(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
         crate::metatheory::tconv(dty, denv, g, x, y),
     ensures
         crate::metatheory::tconv(dty2, denv2, g, x, y),
@@ -94,7 +99,7 @@ pub proof fn ew_is_type(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
     requires
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
-        crate::ti_sr::sig_wf(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
         crate::metatheory::is_type(dty, denv, g, e),
     ensures
         crate::metatheory::is_type(dty2, denv2, g, e),
