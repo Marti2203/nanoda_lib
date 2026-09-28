@@ -1,5 +1,15 @@
 # Metatheory: from the kernel's conversion to real conversion
 
+> **Superseded (2026-09-28).** This document records the first target: the
+> kernel model's own "real" conversion (`deq_p` in `Real` mode) and the
+> conditional theorem `kconv ⟹ tconv` under named hypotheses. That target
+> is degenerate (below), so the kernel claims now target the typed judgment
+> (`docs/TYPED_TARGET.md`). The code this document describes -- the
+> conditional theorem in `metatheory.rs`, `frag_hyps.rs`, `replace.rs`,
+> `e2_cert.rs` and the old-model proofs of `ctor_typing.rs`, `proj_reg.rs`,
+> `e2_lift.rs` and `env_weaken.rs` -- was removed in the port; the
+> refutation stays, restated over that relation (`hyps_refuted::rconv`).
+
 ## Where we are
 
 `whnf` and `def_eq` are proven against `kconv` (`src/tc.rs`): typed

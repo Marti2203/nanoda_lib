@@ -123,8 +123,11 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
         derivable(sig, eq(g, m, m, tb)),
     ensures
         tchain(sig, g, ta, tb),
-    decreases m,
+    decreases crate::ti_zsize::zsize(m),
 {
+    if let ExprSpec::Bind(bk, a, b) = m {
+        crate::ti_zsize::zsize_bind(bk, *a, *b);
+    }
     let da = get(sig, eq(g, m, m, ta));
     let db = get(sig, eq(g, m, m, tb));
     gen(sig, da);
@@ -189,16 +192,16 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
             tchain_meet(sig, g, ta, tb, inst(0, *x, b2));
         },
         ExprSpec::Let(a, v, body) => {
-            let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, *v, l1, l2)
-                && typ(sig, g, *a, l1) && derivable(sig, eq(g, *v, *v, *a)) && derivable(sig, eq(g.push(*a), *body, *body, bt))
-                && typ(sig, g.push(*a), bt, l2) && tchain(sig, g, ta, inst(0, *v, bt));
-            let (bt2, k1, k2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, *v, l1, l2)
-                && typ(sig, g, *a, l1) && derivable(sig, eq(g, *v, *v, *a)) && derivable(sig, eq(g.push(*a), *body, *body, bt))
-                && typ(sig, g.push(*a), bt, l2) && tchain(sig, g, tb, inst(0, *v, bt));
-            uniq(sig, g.push(*a), *body, bt, bt2);
-            chain_inst(sig, g, *a, bt, bt2, *v);
-            tchain_trans(sig, g, ta, inst(0, *v, bt), inst(0, *v, bt2));
-            tchain_meet(sig, g, ta, tb, inst(0, *v, bt2));
+            let (t1, l1) = choose|tt: ExprSpec, l1: LevelSpec| #[trigger] gmark(tt, *v, l1, l1)
+                && typ(sig, g, *a, l1) && derivable(sig, eq(g, *v, *v, *a))
+                && derivable(sig, eq(g, inst(0, *v, *body), inst(0, *v, *body), tt)) && tchain(sig, g, ta, tt);
+            let (t2, k1) = choose|tt: ExprSpec, l1: LevelSpec| #[trigger] gmark(tt, *v, l1, l1)
+                && typ(sig, g, *a, l1) && derivable(sig, eq(g, *v, *v, *a))
+                && derivable(sig, eq(g, inst(0, *v, *body), inst(0, *v, *body), tt)) && tchain(sig, g, tb, tt);
+            crate::ti_zsize::zsize_let(*a, *v, *body);
+            uniq(sig, g, inst(0, *v, *body), t1, t2);
+            tchain_trans(sig, g, ta, t1, t2);
+            tchain_meet(sig, g, ta, tb, t2);
         },
         _ => {},
     }
@@ -308,31 +311,35 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
             conv_chain(sig, g, m, dval(sig, c, ls), tc, t);
         },
         ExprSpec::Let(a, v, body) => {
-            let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, *v, l1, l2)
-                && typ(sig, g, *a, l1) && derivable(sig, eq(g, *v, *v, *a)) && derivable(sig, eq(g.push(*a), *body, *body, bt))
-                && typ(sig, g.push(*a), bt, l2) && tchain(sig, g, t, inst(0, *v, bt));
-            inst_tm(sig, g, *a, *body, *body, bt, *v);
-            let q0 = get(sig, eq(g, *a, *a, sort(l1)));
-            let q1 = get(sig, eq(g.push(*a), *body, *body, bt));
-            let q2 = get(sig, eq(g, *v, *v, *a));
-            let q3 = get(sig, eq(g.push(*a), bt, bt, sort(l2)));
-            let q4 = get(sig, eq(g, inst(0, *v, *body), inst(0, *v, *body), inst(0, *v, bt)));
-            let zj = eq(g, m, inst(0, *v, *body), inst(0, *v, bt));
-            let zp = seq![q0, q1, q2, q3, q4];
-            assert(prems(zp, seq![
-                eq(g, *a, *a, sort(l1)),
-                eq(g.push(*a), *body, *body, bt),
-                eq(g, *v, *v, *a),
-                eq(g.push(*a), bt, bt, sort(l2)),
-                eq(g, inst(0, *v, *body), inst(0, *v, *body), inst(0, *v, bt)),
-            ]));
-            valid_node(sig, Rule::Zeta(l1, l2), zj, zp);
-            mk_d(sig, node(Rule::Zeta(l1, l2), zj, zp));
-            tchain_sym(sig, g, t, inst(0, *v, bt));
-            conv_chain(sig, g, m, inst(0, *v, *body), inst(0, *v, bt), t);
+            let (tt, l1) = choose|tt: ExprSpec, l1: LevelSpec| #[trigger] gmark(tt, *v, l1, l1)
+                && typ(sig, g, *a, l1) && derivable(sig, eq(g, *v, *v, *a))
+                && derivable(sig, eq(g, inst(0, *v, *body), inst(0, *v, *body), tt)) && tchain(sig, g, t, tt);
+            zeta_node(sig, g, *a, *v, *body, tt, l1);
+            tchain_sym(sig, g, t, tt);
+            conv_chain(sig, g, m, inst(0, *v, *body), tt, t);
         },
         _ => {},
     }
+}
+
+/// A `let` converts with its body's instance.
+pub proof fn zeta_node(sig: Sig, g: Ctx, a: ExprSpec, v: ExprSpec, body: ExprSpec, tt: ExprSpec, l1: LevelSpec)
+    requires
+        derivable(sig, eq(g, a, a, sort(l1))),
+        derivable(sig, eq(g, v, v, a)),
+        derivable(sig, eq(g, inst(0, v, body), inst(0, v, body), tt)),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(body)), inst(0, v, body), tt)),
+{
+    let q0 = get(sig, eq(g, a, a, sort(l1)));
+    let q1 = get(sig, eq(g, v, v, a));
+    let q2 = get(sig, eq(g, inst(0, v, body), inst(0, v, body), tt));
+    let m = ExprSpec::Let(Box::new(a), Box::new(v), Box::new(body));
+    let zj = eq(g, m, inst(0, v, body), tt);
+    let zp = seq![q0, q1, q2];
+    assert(prems(zp, seq![eq(g, a, a, sort(l1)), eq(g, v, v, a), eq(g, inst(0, v, body), inst(0, v, body), tt)]));
+    valid_node(sig, Rule::Zeta(l1), zj, zp);
+    mk_d(sig, node(Rule::Zeta(l1), zj, zp));
 }
 
 } // verus!

@@ -1,10 +1,10 @@
-//! THE DOMAIN MODEL IS NOT INVARIANT UNDER UNTYPED CONVERSION. `tconv`'s
-//! untyped steps (reduction joinability `defeq`, untyped eta) also relate
+//! THE DOMAIN MODEL IS NOT INVARIANT UNDER UNTYPED CONVERSION. The kernel
+//! model's real conversion (`hyps_refuted::rconv`) has untyped steps (reduction joinability `defeq`, untyped eta) also relate
 //! ill-typed terms, and the typed model does not respect them there:
 //! `(λx:Prop. x) (Sort 1)` beta-reduces to `Sort 1`, which denotes `U`,
 //! while the redex does not -- a lambda's elements only act on inputs
 //! typed by its domain, and `U` is not a proposition. So a semantic proof
-//! of injectivity for `tconv` itself (option B) cannot be invariant under
+//! of injectivity for that conversion itself (option B) cannot be invariant under
 //! every chain step; it has to confine the chains to typed terms.
 #[allow(unused_imports)]
 use crate::expr_model::{BinderKind, ExprSpec};
@@ -110,11 +110,11 @@ pub proof fn beta_breaks_model(sig: Sig, )
     }
 }
 
-/// ... and `tconv` relates them, in any environment and context: one
-/// untyped beta step.
-pub proof fn bad_redex_tconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>)
+/// ... and the kernel model's real conversion relates them, in any
+/// environment and context: one untyped beta step.
+pub proof fn bad_redex_rconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>)
     ensures
-        crate::metatheory::tconv(dty, env, lctx, bad_redex(), sort(one())),
+        crate::hyps_refuted::rconv(dty, env, lctx, bad_redex(), sort(one())),
 {
     let v0 = ExprSpec::Var(0);
     let s1 = sort(one());

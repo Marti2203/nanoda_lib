@@ -84,7 +84,10 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
             let r = get(sig, eq(g, t, t, sort(l2)));
             mk_t(sig, r, l2);
         },
-        Rule::Beta(l1, l2) | Rule::Zeta(l1, l2) => {
+        Rule::Zeta(_) => {
+            d_ty(sig, ps[2]);
+        },
+        Rule::Beta(l1, l2) => {
             let a = concl(ps[0])->Eq_1;
             let b = concl(ps[1])->Eq_3;
             let x = concl(ps[2])->Eq_1;
@@ -96,6 +99,76 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         },
         _ => {},
     }
+}
+
+/// `sig2` extends `sig`: more constants and more locals, the old ones
+/// unchanged, and every definition of `sig2` well ranked in it.
+pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
+    &&& forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> sig2.consts.contains_key(c) && sig2.consts[c] == sig.consts[c]
+    &&& forall|k: nat| #[trigger] sig.locals.contains_key(k) ==> sig2.locals.contains_key(k) && sig2.locals[k] == sig.locals[k]
+    &&& forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls)
+}
+
+/// One rule instance stays correct in an extended signature.
+proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        step_ok(sig, r, j, ps),
+        sig_ext(sig, sig2),
+    ensures
+        step_ok(sig2, r, j, ps),
+{
+    match r {
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Delta(_) => {
+            let c = j->Eq_1->Const_0;
+            assert(sig.consts.contains_key(c));
+            assert(sig2.consts[c] == sig.consts[c]);
+            if !(r is ConstAx) {
+                let ls = j->Eq_1->Const_1;
+                assert(is_def(sig2, c, ls));
+                assert(def_ok(sig2, c, ls));
+                if r is ConstDef {
+                    let ls2 = j->Eq_2->Const_1;
+                    assert(is_def(sig2, c, ls2));
+                    assert(def_ok(sig2, c, ls2));
+                }
+            }
+        },
+        Rule::Local(_) => {
+            let k = j->Eq_1->Free_0;
+            assert(sig.locals.contains_key(k));
+        },
+        _ => {},
+    }
+}
+
+/// DERIVATIONS SURVIVE SIGNATURE EXTENSION.
+pub proof fn d_ext(sig: Sig, sig2: Sig, d: Deriv)
+    requires
+        valid(sig, d),
+        sig_ext(sig, sig2),
+    ensures
+        valid(sig2, d),
+    decreases d,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(r, j, ps) = d;
+    assert forall|k: int| 0 <= k < ps.len() implies valid(sig2, #[trigger] ps[k]) by {
+        d_ext(sig, sig2, ps[k]);
+    }
+    step_ext(sig, sig2, r, j, ps);
+    valid_node(sig2, r, j, ps);
+}
+
+pub proof fn derivable_ext(sig: Sig, sig2: Sig, j: Jd)
+    requires
+        derivable(sig, j),
+        sig_ext(sig, sig2),
+    ensures
+        derivable(sig2, j),
+{
+    let d = get(sig, j);
+    d_ext(sig, sig2, d);
+    mk_d(sig2, d);
 }
 
 } // verus!

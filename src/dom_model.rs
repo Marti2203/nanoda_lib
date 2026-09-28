@@ -62,7 +62,7 @@ pub open spec fn gsteps(gen: Cpt) -> Seq<(Cpt, Cpt)> {
 /// The entries of a generator: typed at the domain, outputs in the body's
 /// denotation at the input.
 pub open spec fn entries_ok(sig: Sig, body: ExprSpec, rho: Env, a: Cpt, gen: Cpt, ws: Seq<Wit>) -> bool
-    decreases crank(sig, body), crate::ti_syntax::esize(body), 2int,
+    decreases crank(sig, body), crate::ti_zsize::zsize(body), 2int,
 {
     ws.len() == gsteps(gen).len() && forall|i: int| 0 <= i < ws.len() ==>
         typed(#[trigger] gsteps(gen)[i].0, a) && mem_w(sig, body, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i])
@@ -79,7 +79,7 @@ pub open spec fn unfolds(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
 /// MEMBERSHIP, as witnessed. A definition denotes its value (closed, so in
 /// the empty environment); axioms and locals denote only bottom.
 pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
-    decreases crank(sig, m), crate::ti_syntax::esize(m), 1int,
+    decreases crank(sig, m), crate::ti_zsize::zsize(m), 1int,
     via mem_w_decreases
 {
     match m {
@@ -97,7 +97,7 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
             _ => false,
         },
         ExprSpec::Const(c, ls) => u is Bot || (unfolds(sig, c, ls) && wf(u) && mem_w(sig, dval(sig, c, ls), bot_env(), u, w)),
-        ExprSpec::Let(t, v, b) => mem_w(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, u, w),
+        ExprSpec::Let(t, v, b) => mem_w(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, w),
         _ => u is Bot,
     }
 }
@@ -106,27 +106,30 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
 proof fn mem_w_decreases(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) {
     if let ExprSpec::Let(t, v, b) = m {
         let_measure(sig, *t, *v, *b);
+    } else if let ExprSpec::Bind(bk, t, b) = m {
+        crate::ti_zsize::zsize_bind(bk, *t, *b);
     }
 }
 
-/// A `let` weighs more than its redex, with the same constants and loose
+/// A `let` weighs more than its instance, with no more constants or loose
 /// variables, and substitutes like it.
 pub proof fn let_measure(sig: Sig, t: ExprSpec, v: ExprSpec, b: ExprSpec)
     ensures
-        crank(sig, crate::ti_syntax::let_redex(t, v, b)) == crank(sig, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
-        crate::ti_syntax::esize(crate::ti_syntax::let_redex(t, v, b)) < crate::ti_syntax::esize(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
-        crate::expr_model::nlbv(crate::ti_syntax::let_redex(t, v, b)) == crate::expr_model::nlbv(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
-        forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(crate::ti_syntax::let_redex(t, v, b), s)
-            == crate::ti_syntax::let_redex(crate::ti_subst::psub(t, s), crate::ti_subst::psub(v, s), crate::ti_subst::psub(b, crate::ti_subst::up(s))),
+        crank(sig, crate::subst_algebra::inst(0, v, b)) <= crank(sig, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
+        crate::ti_zsize::zsize(crate::subst_algebra::inst(0, v, b)) < crate::ti_zsize::zsize(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
+        crate::expr_model::nlbv(crate::subst_algebra::inst(0, v, b)) <= crate::expr_model::nlbv(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b))),
+        forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(crate::subst_algebra::inst(0, v, b), s)
+            == crate::subst_algebra::inst(0, crate::ti_subst::psub(v, s), crate::ti_subst::psub(b, crate::ti_subst::up(s))),
         forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)), s)
             == ExprSpec::Let(Box::new(crate::ti_subst::psub(t, s)), Box::new(crate::ti_subst::psub(v, s)), Box::new(crate::ti_subst::psub(b, crate::ti_subst::up(s)))),
 {
-    reveal_with_fuel(crank, 3);
-    reveal_with_fuel(crate::ti_syntax::esize, 3);
-    reveal_with_fuel(crate::expr_model::nlbv, 3);
-    assert forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(crate::ti_syntax::let_redex(t, v, b), s)
-        == crate::ti_syntax::let_redex(crate::ti_subst::psub(t, s), crate::ti_subst::psub(v, s), crate::ti_subst::psub(b, crate::ti_subst::up(s))) by {
-        reveal_with_fuel(crate::ti_subst::psub, 3);
+    let m = ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b));
+    crate::ti_zsize::crank_inst(sig, 0, v, b);
+    crate::ti_zsize::zsize_let(t, v, b);
+    crate::ti_scope::inst_scope(0, v, b, crate::expr_model::nlbv(m));
+    assert forall|s: crate::ti_subst::Sub| #[trigger] crate::ti_subst::psub(crate::subst_algebra::inst(0, v, b), s)
+        == crate::subst_algebra::inst(0, crate::ti_subst::psub(v, s), crate::ti_subst::psub(b, crate::ti_subst::up(s))) by {
+        crate::ti_subst::psub_inst0(b, v, s);
     }
 }
 
@@ -138,13 +141,13 @@ pub open spec fn mem(sig: Sig, m: ExprSpec, rho: Env, u: Cpt) -> bool {
 
 /// A witness for bottom.
 pub open spec fn bot_w(m: ExprSpec) -> Wit
-    decreases crate::ti_syntax::esize(m),
+    decreases crate::ti_zsize::zsize(m),
 {
     match m {
         ExprSpec::App(f, x) => Wit::Ap(Cpt::Bot, Cpt::Bot, Box::new(bot_w(*f)), Box::new(bot_w(*x))),
         ExprSpec::Let(t, v, b) => {
-            let r = crate::ti_syntax::let_redex(*t, *v, *b);
-            if crate::ti_syntax::esize(r) < crate::ti_syntax::esize(m) { bot_w(r) } else { Wit::Nil }
+            let r = crate::subst_algebra::inst(0, *v, *b);
+            if crate::ti_zsize::zsize(r) < crate::ti_zsize::zsize(m) { bot_w(r) } else { Wit::Nil }
         },
         _ => Wit::Nil,
     }
@@ -154,7 +157,7 @@ pub open spec fn bot_w(m: ExprSpec) -> Wit
 pub proof fn mem_bot(sig: Sig, m: ExprSpec, rho: Env)
     ensures
         mem_w(sig, m, rho, Cpt::Bot, bot_w(m)),
-    decreases crate::ti_syntax::esize(m),
+    decreases crate::ti_zsize::zsize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -164,7 +167,7 @@ pub proof fn mem_bot(sig: Sig, m: ExprSpec, rho: Env)
         mem_bot(sig, *x, rho);
     } else if let ExprSpec::Let(t, v, b) = m {
         let_measure(sig, *t, *v, *b);
-        mem_bot(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho);
+        mem_bot(sig, crate::subst_algebra::inst(0, *v, *b), rho);
     }
 }
 
@@ -177,7 +180,7 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
         wf(u2),
     ensures
         mem_w(sig, m, rho, u2, w),
-    decreases crank(sig, m), crate::ti_syntax::esize(m),
+    decreases crank(sig, m), crate::ti_zsize::zsize(m),
 {
     reveal(mem);
     reveal(typed);
@@ -207,7 +210,7 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
-            mem_down(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, u, u2, w);
+            mem_down(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, u2, w);
         },
         ExprSpec::Const(c, ls) => {
             if !(u2 is Bot) {
@@ -235,8 +238,11 @@ pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w:
         env_le(rho, rho2),
     ensures
         mem_w(sig, m, rho2, u, w),
-    decreases crank(sig, m), crate::ti_syntax::esize(m),
+    decreases crank(sig, m), crate::ti_zsize::zsize(m),
 {
+    if let ExprSpec::Bind(bk0, ta0, b0) = m {
+        crate::ti_zsize::zsize_bind(bk0, *ta0, *b0);
+    }
     reveal(mem);
     reveal(typed);
     reveal(jc);
@@ -271,7 +277,7 @@ pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w:
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
-            mem_env_mono(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, rho2, u, w);
+            mem_env_mono(sig, crate::subst_algebra::inst(0, *v, *b), rho, rho2, u, w);
         },
         _ => {},
     }
@@ -304,8 +310,11 @@ pub open spec fn env_rn(rho: Env, r: spec_fn(nat) -> nat) -> Env {
 pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: Cpt, w: Wit)
     ensures
         mem_w(sig, crate::ti_subst::psub(m, crate::ti_subst::rn(r)), rho, u, w) == mem_w(sig, m, env_rn(rho, r), u, w),
-    decreases crank(sig, m), crate::ti_syntax::esize(m),
+    decreases crank(sig, m), crate::ti_zsize::zsize(m),
 {
+    if let ExprSpec::Bind(bk0, ta0, b0) = m {
+        crate::ti_zsize::zsize_bind(bk0, *ta0, *b0);
+    }
     reveal(mem);
     reveal(typed);
     reveal(jc);
@@ -341,7 +350,7 @@ pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: 
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
-            mem_rn(sig, crate::ti_syntax::let_redex(*t, *v, *b), r, rho, u, w);
+            mem_rn(sig, crate::subst_algebra::inst(0, *v, *b), r, rho, u, w);
         },
         _ => {},
     }
@@ -369,14 +378,14 @@ pub proof fn mem_wf(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit)
         mem_w(sig, m, rho, u, w),
     ensures
         wf(u),
-    decreases crank(sig, m), crate::ti_syntax::esize(m),
+    decreases crank(sig, m), crate::ti_zsize::zsize(m),
 {
     reveal(mem);
     reveal(typed);
     reveal(jc);
     if let ExprSpec::Let(t, v, b) = m {
         let_measure(sig, *t, *v, *b);
-        mem_wf(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, u, w);
+        mem_wf(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, w);
     }
 }
 
@@ -424,8 +433,11 @@ pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: 
         covers(sig, s, rho, rho2),
     ensures
         mem(sig, crate::ti_subst::psub(m, s), rho, u),
-    decreases crank(sig, m), crate::ti_syntax::esize(m),
+    decreases crank(sig, m), crate::ti_zsize::zsize(m),
 {
+    if let ExprSpec::Bind(bk0, ta0, b0) = m {
+        crate::ti_zsize::zsize_bind(bk0, *ta0, *b0);
+    }
     reveal(mem);
     reveal(typed);
     reveal(jc);
@@ -475,7 +487,7 @@ pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: 
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
-            let r = crate::ti_syntax::let_redex(*t, *v, *b);
+            let r = crate::subst_algebra::inst(0, *v, *b);
             mem_psub_back(sig, r, s, rho, rho2, u, w);
             let w2 = choose|v2: Wit| #[trigger] mem_w(sig, psub(r, s), rho, u, v2);
             assert(mem_w(sig, psub(m, s), rho, u, w2));
@@ -817,7 +829,7 @@ proof fn entries_fwd(sig: Sig, b: ExprSpec, s: crate::ti_subst::Sub, rho: Env, g
     ensures
         covers(sig, s, rho, acc),
         forall|i: int| 0 <= i < k ==> #[trigger] mem(sig, b, ext(acc, gsteps(gen)[i].0), gsteps(gen)[i].1),
-    decreases crank(sig, b), crate::ti_syntax::esize(b), k + 1,
+    decreases crank(sig, b), crate::ti_zsize::zsize(b), k + 1,
 {
     reveal(mem);
     reveal(typed);
@@ -868,8 +880,11 @@ pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: E
     ensures
         covers(sig, s, rho, rho2),
         mem(sig, m, rho2, u),
-    decreases crank(sig, m), crate::ti_syntax::esize(m), 0int,
+    decreases crank(sig, m), crate::ti_zsize::zsize(m), 0int,
 {
+    if let ExprSpec::Bind(bk0, ta0, b0) = m {
+        crate::ti_zsize::zsize_bind(bk0, *ta0, *b0);
+    }
     reveal(mem);
     reveal(typed);
     reveal(jc);
@@ -946,7 +961,7 @@ pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: E
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
-            let r = crate::ti_syntax::let_redex(*t, *v, *b);
+            let r = crate::subst_algebra::inst(0, *v, *b);
             assert(mem_w(sig, psub(r, s), rho, u, w));
             let r2 = mem_psub_fwd(sig, r, s, rho, u, w);
             let w2 = choose|v2: Wit| #[trigger] mem_w(sig, r, r2, u, v2);
@@ -1006,8 +1021,11 @@ pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: C
         forall|i: nat| i < k ==> #[trigger] rho(i) == rho2(i),
     ensures
         mem_w(sig, e, rho, u, w) == mem_w(sig, e, rho2, u, w),
-    decreases crank(sig, e), crate::ti_syntax::esize(e),
+    decreases crank(sig, e), crate::ti_zsize::zsize(e),
 {
+    if let ExprSpec::Bind(bk0, ta0, b0) = e {
+        crate::ti_zsize::zsize_bind(bk0, *ta0, *b0);
+    }
     match e {
         ExprSpec::Bind(bk, ta, b) => {
             if let Wit::Gen(a, gen, wa, ws) = w {
@@ -1045,7 +1063,7 @@ pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: C
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
-            mem_closed(sig, crate::ti_syntax::let_redex(*t, *v, *b), rho, rho2, k, u, w);
+            mem_closed(sig, crate::subst_algebra::inst(0, *v, *b), rho, rho2, k, u, w);
         },
         _ => {},
     }
@@ -1092,15 +1110,15 @@ pub proof fn mem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt)
     }
 }
 
-/// A `let` denotes its redex.
+/// A `let` denotes its body's instance.
 pub proof fn mem_let(sig: Sig, t: ExprSpec, v: ExprSpec, b: ExprSpec, rho: Env)
     ensures
         forall|u: Cpt| #[trigger] mem(sig, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)), rho, u)
-            == mem(sig, crate::ti_syntax::let_redex(t, v, b), rho, u),
+            == mem(sig, crate::subst_algebra::inst(0, v, b), rho, u),
 {
     reveal(mem);
     let m = ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b));
-    let r = crate::ti_syntax::let_redex(t, v, b);
+    let r = crate::subst_algebra::inst(0, v, b);
     assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, r, rho, u) by {
         if mem(sig, m, rho, u) {
             let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);

@@ -922,6 +922,21 @@ pub proof fn env_model_at<'x, 'a>(env: Env<'x, 'a>)
 }
 
 /// A later cutoff extends an earlier one.
+/// A declaration visible at an earlier cutoff is a definition there exactly
+/// when it is one at a later cutoff.
+pub proof fn defs_stable_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
+    requires
+        c1 <= c2,
+        keys_ids_inj(keys),
+    ensures
+        crate::env_weaken::defs_stable(dty_at(view, keys, c1), denv_at(export, view, keys, c1), denv_at(export, view, keys, c2)),
+{
+    assert forall|k: u64| #[trigger] dty_at(view, keys, c1).contains_key(k) && denv_at(export, view, keys, c2).defs.contains_key(k)
+        implies denv_at(export, view, keys, c1).defs.contains_key(k) by {
+        find_at_mono(view, keys, c1, c2, k);
+    }
+}
+
 pub proof fn env_le_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
     requires
         c1 <= c2,

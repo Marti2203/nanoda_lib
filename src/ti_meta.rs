@@ -142,7 +142,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::LamCong(_, _) => d_wf(sig, ps[0]),
         Rule::AppCong(_, _) => d_wf(sig, ps[0]),
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
-        Rule::Zeta(_, _) => d_wf(sig, ps[0]),
+        Rule::Zeta(_) => d_wf(sig, ps[0]),
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
@@ -732,32 +732,22 @@ proof fn d_ren_zeta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let q = rn(r);
     let ru = upr(r);
     let l1 = rule->Zeta_0;
-    let l2 = rule->Zeta_1;
-            let (aa, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
-            let b = concl(ps[1])->Eq_3;
-            let d0 = d_ren(sig, ps[0], w, dl, r);
-            let w1 = d_cons(sig, w, l1, d0);
-            ren_ok_up(g, dl, r, aa);
-            let d1 = d_ren(sig, ps[1], w1, dl.push(psub(aa, q)), ru);
-            let d2 = d_ren(sig, ps[2], w, dl, r);
-            let d3 = d_ren(sig, ps[3], w1, dl.push(psub(aa, q)), ru);
-            let d4 = d_ren(sig, ps[4], w, dl, r);
-            ren_up(b, r);
-            ren_up(body, r);
-            psub_inst0(body, x, q);
-            psub_inst0(b, x, q);
-            assert(psub(m, q) == ExprSpec::Let(Box::new(psub(aa, q)), Box::new(psub(x, q)), Box::new(psub(body, up(q)))));
-            let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
-            let ps2 = seq![d0, d1, d2, d3, d4];
-            assert(prems(ps2, seq![
-                eq(dl, psub(aa, q), psub(aa, q), sort(l1)),
-                eq(dl.push(psub(aa, q)), psub(body, up(q)), psub(body, up(q)), psub(b, up(q))),
-                eq(dl, psub(x, q), psub(x, q), psub(aa, q)),
-                eq(dl.push(psub(aa, q)), psub(b, up(q)), psub(b, up(q)), sort(l2)),
-                eq(dl, psub(n, q), psub(n, q), psub(a, q)),
-            ]));
-            valid_node(sig, Rule::Zeta(l1, l2), j2, ps2);
-            node(Rule::Zeta(l1, l2), j2, ps2)
+    let (aa, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    let d2 = d_ren(sig, ps[2], w, dl, r);
+    ren_up(body, r);
+    psub_inst0(body, x, q);
+    assert(psub(m, q) == ExprSpec::Let(Box::new(psub(aa, q)), Box::new(psub(x, q)), Box::new(psub(body, up(q)))));
+    let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    let ps2 = seq![d0, d1, d2];
+    assert(prems(ps2, seq![
+        eq(dl, psub(aa, q), psub(aa, q), sort(l1)),
+        eq(dl, psub(x, q), psub(x, q), psub(aa, q)),
+        eq(dl, psub(n, q), psub(n, q), psub(a, q)),
+    ]));
+    valid_node(sig, Rule::Zeta(l1), j2, ps2);
+    node(Rule::Zeta(l1), j2, ps2)
 }
 
 } // verus!

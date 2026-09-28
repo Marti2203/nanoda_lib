@@ -54,9 +54,9 @@ pub open spec fn gen_app(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec
 }
 
 pub open spec fn gen_let(sig: Sig, g: Ctx, a: ExprSpec, v: ExprSpec, body: ExprSpec, t: ExprSpec) -> bool {
-    exists|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, v, l1, l2)
-        && typ(sig, g, a, l1) && derivable(sig, eq(g, v, v, a)) && derivable(sig, eq(g.push(a), body, body, bt))
-        && typ(sig, g.push(a), bt, l2) && tchain(sig, g, t, inst(0, v, bt))
+    exists|tt: ExprSpec, l1: LevelSpec| #[trigger] gmark(tt, v, l1, l1)
+        && typ(sig, g, a, l1) && derivable(sig, eq(g, v, v, a))
+        && derivable(sig, eq(g, inst(0, v, body), inst(0, v, body), tt)) && tchain(sig, g, t, tt)
 }
 
 pub open spec fn gen_const(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, t: ExprSpec) -> bool {
@@ -120,11 +120,11 @@ pub proof fn gen_conv(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, t: ExprSpec)
             assert(gmark(aa, b, l2, l2));
         },
         ExprSpec::Let(ta, v, b) => {
-            let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, *v, l1, l2)
-                && typ(sig, g, *ta, l1) && derivable(sig, eq(g, *v, *v, *ta)) && derivable(sig, eq(g.push(*ta), *b, *b, bt))
-                && typ(sig, g.push(*ta), bt, l2) && tchain(sig, g, a, inst(0, *v, bt));
-            tchain_trans(sig, g, t, a, inst(0, *v, bt));
-            assert(gmark(bt, *v, l1, l2));
+            let (tt, l1) = choose|tt: ExprSpec, l1: LevelSpec| #[trigger] gmark(tt, *v, l1, l1)
+                && typ(sig, g, *ta, l1) && derivable(sig, eq(g, *v, *v, *ta))
+                && derivable(sig, eq(g, inst(0, *v, *b), inst(0, *v, *b), tt)) && tchain(sig, g, a, tt);
+            tchain_trans(sig, g, t, a, tt);
+            assert(gmark(tt, *v, l1, l1));
         },
         _ => {},
     }
@@ -283,16 +283,14 @@ pub proof fn gen(sig: Sig, d: Deriv)
             assert(gmark(a, b, l2, l2));
             gen(sig, ps[4]);
         },
-        Rule::Zeta(l1, l2) => {
+        Rule::Zeta(l1) => {
             let (a, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
-            let b = concl(ps[1])->Eq_3;
             tchain_refl(sig, g, t);
             mk_d(sig, ps[0]);
             mk_d(sig, ps[1]);
             mk_d(sig, ps[2]);
-            mk_d(sig, ps[3]);
-            assert(gmark(b, x, l1, l2));
-            gen(sig, ps[4]);
+            assert(gmark(t, x, l1, l1));
+            gen(sig, ps[2]);
         },
         _ => {},
     }

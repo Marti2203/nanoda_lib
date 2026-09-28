@@ -164,8 +164,9 @@ pub enum Rule {
     Local(LevelSpec),
     /// A definition unfolds to its value.
     Delta(LevelSpec),
-    /// A `let` unfolds to its body at the value.
-    Zeta(LevelSpec, LevelSpec),
+    /// A `let` unfolds to its body at the value, which the kernel types
+    /// instead of the body under a binder.
+    Zeta(LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -283,15 +284,12 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             },
             _ => false,
         },
-        Rule::Zeta(l1, l2) => match j {
-            Jd::Eq(g, m, n, t) => m is Let && ps.len() == 5 && concl(ps[1]) is Eq && {
+        Rule::Zeta(l1) => match j {
+            Jd::Eq(g, m, n, t) => m is Let && {
                 let (a, x, body) = (*m->Let_0, *m->Let_1, *m->Let_2);
-                let b = concl(ps[1])->Eq_3;
-                n == inst(0, x, body) && t == inst(0, x, b) && prems(ps, seq![
+                n == inst(0, x, body) && prems(ps, seq![
                     eq(g, a, a, sort(l1)),
-                    eq(g.push(a), body, body, b),
                     eq(g, x, x, a),
-                    eq(g.push(a), b, b, sort(l2)),
                     eq(g, n, n, t),
                 ])
             },

@@ -1034,6 +1034,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::tc_model::deq_any_of_defeq(fm, sl, to_model_expr(c));
                     // the unfolding is an untyped step; `whnf`'s is typed
                     kconv_of_deq(*old(self).env, sl, to_model_expr(c));
+                    kcw_of_untypable(*old(self).env, sl, to_model_expr(c));
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // M7: the unfolding's reduction claim, then whnf's
                     scope_pres_of_closed(crate::env_model::env_arena_ids(*self.env), sl, to_model_expr(c));
@@ -1597,6 +1598,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::beta_model::defeq_of_pstep_star(fm, pm, to_model_expr(a));
             crate::tc_model::deq_any_of_defeq(fm, pm, to_model_expr(a));
             kconv_of_deq(env, pm, to_model_expr(a));
+            kcw_of_untypable(env, pm, to_model_expr(a));
             if crate::expr_model::nlbv(s0) <= 0 {
                 // the structure, whnf'd, is convertible with what it
                 // was, and projection is a congruence
@@ -3766,6 +3768,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::tc_model::deq_any_symm(fm, to_model_expr(y), z);
                 crate::tc_model::deq_any_trans(fm, to_model_expr(x), z, to_model_expr(y));
                 kconv_of_deq(*old(self).env, to_model_expr(x), to_model_expr(y));
+                crate::jkernel::natish_of_nat_value(fm.export, to_model_expr(x));
+                kcw_of_untypable(*old(self).env, to_model_expr(x), to_model_expr(y));
             }
             return Some(true)
         }
@@ -5077,6 +5081,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         to_model_expr(y),
                     );
                     kconv_of_deq(*old(self).env, to_model_expr(x), to_model_expr(y));
+                    kcw_of_step(*old(self).env, to_model_expr(x), to_model_expr(y));
                 }
             }
             return Some(r)
@@ -5168,6 +5173,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                     to_model_expr(r_fun),
                                 );
                                 kconv_of_deq(env, to_model_expr(l_fun), to_model_expr(r_fun));
+                                kcw_of_step(env, to_model_expr(l_fun), to_model_expr(r_fun));
                                 assert(def_eq_claim(env, to_model_expr(l_fun), to_model_expr(r_fun)));
                                 assert forall|j: int| 0 <= j < a1.len() implies def_eq_claim(env, #[trigger] a1[j], a2[j]) by {
                                     assert(a1[j] == to_model_expr(l_args@[j]));
@@ -6101,10 +6107,10 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
     &&& crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))
     &&& crate::level_inst::elp_in(ty, crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
     &&& (d matches crate::env::Declar::Inductive(i) ==> (is_structure(i) ==> struct_shape_cert(ef, i)))
-    &&& crate::kclaims::kh(dty, denv) ==> crate::metatheory::is_type(dty, denv, Map::empty(), ty)
+    &&& crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(ty) ==> crate::metatheory::is_type(dty, denv, Map::empty(), ty)
     &&& (declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))
         && crate::level_inst::elp_in(to_model_expr(v), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
-        && (crate::kclaims::kh(dty, denv) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), to_model_expr(v), t2)
+        && (crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(to_model_expr(v)) && crate::kclaims::frag_term(ty) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), to_model_expr(v), t2)
             && crate::metatheory::tconv(dty, denv, Map::empty(), t2, ty)))
     &&& (d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
         ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] r.rec_rules@[j].val))
@@ -6120,8 +6126,8 @@ pub open spec fn ctor_e2_cert<'p>(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: cra
     let ind = crate::level_arena_bridge::name_id(c.inductive_name);
     &&& dty.contains_key(ind)
     &&& dty[ind].0 == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
-    &&& (crate::kclaims::kh(dty, denv) ==> crate::kclaims::rtyped(dty, denv, Map::empty(),
-        crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
+    &&& (crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
+        ==> crate::kclaims::rtyped(dty, denv, Map::empty(), crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
 }
 
 /// A STRUCTURE'S CONSTRUCTOR SHAPE, over the export: the structure's one
@@ -6216,7 +6222,7 @@ pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::Constru
     let (dty, denv) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env));
     let ind = crate::level_arena_bridge::name_id(c.inductive_name);
     crate::env_model::to_model_of_declar_ty_at(env, ind);
-    if crate::kclaims::kh(dty, denv) {
+    if crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(l) {
         crate::kclaims::cc_closed_typed(dty, denv, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), l, inf);
         let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), l, t2)
             && crate::metatheory::tconv(dty, denv, Map::empty(), t2, inf);
@@ -6225,16 +6231,18 @@ pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::Constru
 }
 
 /// DECLARATION CERTIFICATE, type: under the environment's hypotheses the
-/// declared type is a type in the empty context.
+/// declared type, a term of the fragment, is a type in the empty context.
 pub open spec fn ktype_cert<'x, 't>(env: Env<'x, 't>, ty: ExprSpec) -> bool {
-    crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) ==> crate::metatheory::is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), ty)
+    crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::frag_term(ty)
+        ==> crate::metatheory::is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), ty)
 }
 
 /// DECLARATION CERTIFICATE, value: under the environment's hypotheses the
-/// value is really typed in the empty context, at a type convertible to the
-/// declared one.
+/// value, a term of the fragment, is typed in the empty context, at a type
+/// convertible to the declared one.
 pub open spec fn kval_cert<'x, 't>(env: Env<'x, 't>, val: ExprSpec, ty: ExprSpec) -> bool {
-    crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), val, t2)
+    crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::frag_term(val)
+        && crate::kclaims::frag_term(ty) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), val, t2)
         && crate::metatheory::tconv(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), t2, ty)
 }
 
@@ -6245,7 +6253,7 @@ pub proof fn ktype_cert_intro<'x, 't>(env: Env<'x, 't>, ty: ExprSpec, l: crate::
     ensures
         ktype_cert(env, ty),
 {
-    if crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) {
+    if crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::frag_term(ty) {
         crate::kclaims::cc_closed_is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), ty, l);
     }
 }
@@ -6264,21 +6272,18 @@ pub proof fn kval_cert_intro<'x, 't>(env: Env<'x, 't>, val: ExprSpec, inf: ExprS
     let (dty, denv) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env));
     let g = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let em = Map::<nat, ExprSpec>::empty();
-    if crate::kclaims::kh(dty, denv) {
+    if crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(val) && crate::kclaims::frag_term(ty) {
         crate::kclaims::rctx_no_fv(g, val);
         crate::kclaims::rctx_no_fv(g, ty);
         crate::metatheory::lctx_wf_empty(dty, denv);
         let t2 = crate::kclaims::cc_use(dty, denv, g, em, val, inf);
         crate::kclaims::rtyped_closed(dty, denv, em, val);
-        let _ = crate::kclaims::ci_use(dty, denv, g, em, val, inf);
-        let (s0, l0) = choose|s: ExprSpec, l: crate::level_model::LevelSpec| #![trigger crate::metatheory::typed(dty, denv, em, ty, s), crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l))]
-            crate::metatheory::typed(dty, denv, em, ty, s) && crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l));
-        let (s1, l1) = choose|s: ExprSpec, l: crate::level_model::LevelSpec| #![trigger crate::metatheory::typed(dty, denv, em, inf, s), crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l))]
-            crate::metatheory::typed(dty, denv, em, inf, s) && crate::metatheory::tconv(dty, denv, em, s, ExprSpec::Sort(l));
+        crate::kclaims::ci_use(dty, denv, g, em, val, inf);
         assert(crate::kclaims::rtyped(dty, denv, em, inf));
+        let l = crate::kclaims::type_sort(dty, denv, em, ty);
         assert(crate::kclaims::rtyped(dty, denv, em, ty));
-        assert(crate::tc_model::deq_p_any(dty, denv, em, crate::tc_model::IoMode::InferWt, inf, ty));
-        crate::metatheory::kconv_wt_implies_tconv(dty, denv, em, inf, ty);
+        assert(crate::kclaims::jconv(dty, denv, em, inf, ty));
+        crate::kclaims::typed_move(dty, denv, em, val, inf, ty);
         crate::metatheory::tconv_trans(dty, denv, em, t2, inf, ty);
     }
 }
@@ -6351,21 +6356,38 @@ pub proof fn kconv_trans<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, z: 
     );
 }
 
+/// One step of eta-free conversion gives the conversion claim.
+pub proof fn kcw_of_step<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::beta_model::defeq(crate::env_model::to_model_of_env(env), x, y) || crate::tc_model::deq_leaf(x, y)
+            || crate::tc_model::deq_quot(crate::env_model::to_model_of_env(env).export, x, y)
+            || crate::tc_model::deq_rec(crate::env_model::to_model_of_env(env), x, y),
+    ensures
+        kcw(env, x, y),
+{
+    crate::kclaims::cw_of_step(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
+}
+
+/// A conversion with a side the fragment cannot type holds as a claim.
+pub proof fn kcw_of_untypable<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::kclaims::untypable(crate::env_model::to_model_of_env(env).export, x)
+            || crate::kclaims::untypable(crate::env_model::to_model_of_env(env).export, y),
+    ensures
+        kcw(env, x, y),
+{
+    crate::kclaims::cw_of_untypable(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
+}
+
 /// Every untyped step is a typed one (`deq_c` is `deq_p_c`'s first disjunct).
 pub proof fn kconv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
         crate::tc_model::deq_any(crate::env_model::to_model_of_env(env), x, y),
     ensures
         kconv(env, x, y),
-        kcw(env, x, y),
 {
-    crate::kclaims::cw_of_deq_any(
-        crate::env_model::to_model_of_declar_ty(env),
-        crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        x,
-        y,
-    );
     crate::tc_model::deq_p_any_of_deq_any(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
@@ -6584,6 +6606,7 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
         _ => {},
     }
     kconv_of_deq(env, v, lit);
+    kcw_of_untypable(env, v, lit);
 }
 
 
@@ -6808,6 +6831,7 @@ pub proof fn nat_bin_whnf_claim<'x, 't>(env: Env<'x, 't>, h: ExprSpec, xm: ExprS
         crate::beta_model::defeq_of_pstep_star(fm, sp, rm);
         crate::tc_model::deq_any_of_defeq(fm, sp, rm);
         kconv_of_deq(env, sp, rm);
+        kcw_of_step(env, sp, rm);
         kconv_trans(env, s0, sp, rm);
     }
     crate::kclaims::cwh_replace(kd, fm, kg, h, args0, 0, xwm);
@@ -7513,6 +7537,7 @@ pub proof fn whnf_claim_of_pstep_star<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: 
         crate::beta_model::defeq_of_pstep_star(ke, e, r);
         crate::tc_model::deq_any_of_defeq(ke, e, r);
         kconv_of_deq(env, e, r);
+        kcw_of_step(env, e, r);
         crate::kclaims::cwh_of_pstep_star(kd, ke, kg, e, r);
     } else {
         crate::kclaims::cwh_open(kd, ke, kg, e, r);
@@ -7554,6 +7579,7 @@ pub proof fn whnf_claim_sort<'x, 't>(env: Env<'x, 't>, l1: crate::level_model::L
     let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
     crate::tc_model::deq_any_of_leaf(ke, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
     kconv_of_deq(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
+    kcw_of_step(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
     crate::kclaims::cwh_sort(kd, ke, kg, l1, l2);
 }
 
@@ -8881,6 +8907,7 @@ pub proof fn kconv_of_empty_pstep<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: Expr
     crate::beta_model::defeq_of_pstep_star(fm, x, y);
     crate::tc_model::deq_any_of_defeq(fm, x, y);
     kconv_of_deq(env, x, y);
+    kcw_of_step(env, x, y);
     if crate::expr_model::nlbv(y) <= 0 {
         crate::kclaims::cwh_of_pstep_star(crate::env_model::to_model_of_declar_ty(env), fm, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
     }
@@ -8904,6 +8931,7 @@ pub proof fn eta_exp_kcw<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, a: 
     assert(crate::tc_model::deq_eta(lam, y));
     crate::tc_model::deq_of_eta(ke, lam, y, 0);
     kconv_of_deq(env, lam, y);
+    crate::kclaims::cw_eta_lam(kd, ke, kg, y, a, b);
     crate::kclaims::tt_eta_lam(kd, ke, kg, y, a, b);
     crate::kclaims::cw_trans_r(kd, ke, kg, x, lam, y);
 }
@@ -9300,6 +9328,7 @@ pub proof fn rec_step_claim<'x, 't>(
         assert(crate::tc_model::deq_rec(crate::env_model::to_model_of_env(env), x2, r));
         crate::tc_model::deq_of_rec(crate::env_model::to_model_of_env(env), x2, r, 0);
         kconv_of_deq(env, x2, r);
+        kcw_of_step(env, x2, r);
         kconv_trans(env, x, x2, r);
     }
     // M7: the major replaced by its reduct, then the uncapped recursor step
@@ -9572,6 +9601,7 @@ pub proof fn quot_step_lemma<'x, 't>(
             crate::tc_model::deq_quot_intro(crate::env_model::to_model_of_env(env).export, head, args2, q as nat, mk_head, mk_args, r);
             crate::tc_model::deq_any_of_quot(fm, crate::beta_model::spine_app(head, args2), r);
             kconv_of_deq(env, crate::beta_model::spine_app(head, args2), r);
+            kcw_of_step(env, crate::beta_model::spine_app(head, args2), r);
             kconv_trans(env, s0, crate::beta_model::spine_app(head, args2), r);
             // closed
             crate::beta_model::spine_app_nlbv_decompose(mk_head, mk_args);
@@ -11174,6 +11204,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                             to_model_expr(y),
                         );
                         kconv_of_deq(*old(self).env, to_model_expr(x), to_model_expr(y));
+                        kcw_of_step(*old(self).env, to_model_expr(x), to_model_expr(y));
                     }
                 }
                 res

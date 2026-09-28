@@ -205,7 +205,7 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::LamCong(_, _) => adeq_lam(sig, d, rho, dl, s, s2, n, u, a),
         Rule::AppCong(_, _) => adeq_app(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Beta(_, _) => adeq_beta(sig, d, rho, dl, s, s2, n, u, a),
-        Rule::Zeta(_, _) => adeq_zeta(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Zeta(_) => adeq_zeta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstAx(_) | Rule::Local(_) => adeq_leaf(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstDef(_) | Rule::Delta(_) => adeq_def(sig, d, rho, dl, s, s2, n, u, a),
@@ -1325,58 +1325,8 @@ proof fn adeq_def(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     }
 }
 
-/// Zeta's term clause: the `let` head-expands the body's instance.
-#[verifier::spinoff_prover]
-proof fn zeta_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
-    ta: ExprSpec, bd: ExprSpec, tb: ExprSpec, xx: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt)
-    requires
-        valid(sig, d),
-        d->Node_0 == Rule::Zeta(l1, l2),
-        concl(d) == eq(g, ExprSpec::Let(Box::new(ta), Box::new(xx), Box::new(bd)), inst(0, xx, bd), inst(0, xx, tb)),
-        concl(d->Node_2[1]) == eq(g.push(ta), bd, bd, tb),
-        adeq_pre(sig, g, rho, dl, s, s2, ExprSpec::Let(Box::new(ta), Box::new(xx), Box::new(bd)), inst(0, xx, tb), n, u, a),
-    ensures
-        rel_tm(sig, n, dl, psub(ExprSpec::Let(Box::new(ta), Box::new(xx), Box::new(bd)), s), psub(inst(0, xx, bd), s2), psub(inst(0, xx, tb), s), u, a),
-    decreases d, 16int,
-{
-    valid_prems(sig, d);
-    let Deriv::Node(_, _, ps) = d;
-    let (p0, p1, p2, p3) = (ps[0], ps[1], ps[2], ps[3]);
-    assert(concl(p0) == eq(g, ta, ta, sort(l1)));
-    assert(concl(p2) == eq(g, xx, xx, ta));
-    let m = ExprSpec::Let(Box::new(ta), Box::new(xx), Box::new(bd));
-    let m2 = inst(0, xx, bd);
-    let t = inst(0, xx, tb);
-    sound(sig, d, rho);
-    assert(mem(sig, m2, rho, u));
-    sound(sig, p0, rho);
-    sound(sig, p2, rho);
-    let (v, ax) = inst_elem2(sig, xx, bd, tb, ta, rho, u, a);
-    tm_adeq_of(sig, d, 2, rho, dl, s, s2, v);
-    ty_adeq_of(sig, d, 0, rho, dl, s, s2);
-    d_sub(sig, p2, dl, s, s2);
-    d_sub(sig, p0, dl, s, s2);
-    let xs = psub(xx, s);
-    let xs2 = psub(xx, s2);
-    related_cons(sig, g, rho, dl, s, s2, ta, l1, xs, xs2, v, ax);
-    adeq(sig, p1, ext(rho, v), dl, cons(xs, s), cons(xs2, s2), n, u, a);
-    psub_inst0(tb, xx, s);
-    inst_up(tb, s, xs);
-    psub_inst0(bd, xx, s2);
-    inst_up(bd, s2, xs2);
-    psub_inst0(bd, xx, s);
-    inst_up(bd, s, xs);
-    let lm = ExprSpec::Let(Box::new(psub(ta, s)), Box::new(xs), Box::new(psub(bd, up(s))));
-    assert(psub(m, s) == lm);
-    hred_step(sig, lm);
-    hred_refl(sig, psub(m2, s2));
-    related_left(sig, g, rho, dl, s, s2);
-    d_sub(sig, d, dl, s, s);
-    d_sub(sig, d, dl, s, s2);
-    dsym(sig, dl, psub(m, s), psub(m2, s2), psub(t, s));
-    expand_tm(sig, n, dl, psub(bd, cons(xs, s)), psub(bd, cons(xs2, s2)), psub(m, s), psub(m2, s2), psub(t, s), u, a);
-}
-
+/// ZETA: the `let` head-reduces to its body's instance, which the premise
+/// relates.
 #[verifier::spinoff_prover]
 proof fn adeq_zeta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
@@ -1388,14 +1338,22 @@ proof fn adeq_zeta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if let Rule::Zeta(l1, l2) = rule {
-        let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
-        let (ta, xx, bd) = (*m->Let_0, *m->Let_1, *m->Let_2);
-        let tb = concl(ps[1])->Eq_3;
-        assert(m == ExprSpec::Let(Box::new(ta), Box::new(xx), Box::new(bd)));
-        app_ty(sig, d, 2, 0, 3, rho, dl, s, s2, g, ta, tb, xx, l1, l2, n, a);
-        zeta_main(sig, d, rho, dl, s, s2, g, ta, bd, tb, xx, l1, l2, n, u, a);
-    }
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let (ta, xx, bd) = (*m->Let_0, *m->Let_1, *m->Let_2);
+    assert(concl(ps[2]) == eq(g, m2, m2, t));
+    crate::dom_model::mem_let(sig, ta, xx, bd, rho);
+    adeq(sig, ps[2], rho, dl, s, s2, n, u, a);
+    crate::dom_model::let_measure(sig, ta, xx, bd);
+    let lm = psub(m, s);
+    assert(lm == ExprSpec::Let(Box::new(psub(ta, s)), Box::new(psub(xx, s)), Box::new(psub(bd, up(s)))));
+    assert(psub(m2, s) == inst(0, psub(xx, s), psub(bd, up(s))));
+    hred_step(sig, lm);
+    hred_refl(sig, psub(m2, s2));
+    related_left(sig, g, rho, dl, s, s2);
+    d_sub(sig, d, dl, s, s);
+    d_sub(sig, ps[2], dl, s, s2);
+    dsym(sig, dl, psub(m2, s), psub(m2, s2), psub(t, s));
+    expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
 }
 
 } // verus!

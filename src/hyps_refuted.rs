@@ -1,11 +1,12 @@
-//! THE INJECTIVITY HYPOTHESES ARE FALSE AS STATED. `tconv` relates any two
-//! terms once the context has a proof: with `P : Prop` and `h : P`, the
-//! lambdas `λz:P. z` and `λz:P. h` are both proofs of `P → P`, so proof
-//! irrelevance relates them; congruence (which checks no typing) then
-//! relates their applications to ANY term `X`, and beta reduces those to
-//! `X` and to `h`. So `X` converts with `h` for every `X`, and `Sort 0`
-//! converts with `Sort 1`. `hyps_all` quantifies over every local context,
-//! so it -- and `kh_hyp` -- fails in every environment.
+//! WHY THE TARGET IS A TYPED JUDGMENT: the kernel model's own "real"
+//! conversion (`deq_p` in `Real` mode, an untyped congruence closure with
+//! typed leaves) relates any two terms once the context has a proof: with
+//! `P : Prop` and `h : P`, the lambdas `λz:P. z` and `λz:P. h` are both
+//! proofs of `P → P`, so proof irrelevance relates them; congruence (which
+//! checks no typing) then relates their applications to ANY term `X`, and
+//! beta reduces those to `X` and to `h`. So `X` converts with `h` for every
+//! `X`, and `Sort 0` converts with `Sort 1`: no injectivity can hold for
+//! it (`docs/TYPED_TARGET.md`).
 #[allow(unused_imports)]
 use crate::expr_model::{BinderKind, ExprSpec};
 #[allow(unused_imports)]
@@ -20,6 +21,11 @@ use crate::tc_model::*;
 use vstd::prelude::*;
 
 verus! {
+
+/// The kernel model's real conversion.
+pub open spec fn rconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, lctx: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec) -> bool {
+    deq_p_any(dty, env, lctx, IoMode::Real, x, y)
+}
 
 /// `P` (local 0) is a proposition and `h` (local 1) a proof of it.
 pub open spec fn rc_lctx() -> Map<nat, ExprSpec> {
@@ -196,7 +202,7 @@ pub proof fn rc_all_conv_h(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, x:
     requires
         x is Sort,
     ensures
-        crate::metatheory::tconv(dty, env, rc_lctx(), x, rc_h()),
+        rconv(dty, env, rc_lctx(), x, rc_h()),
 {
     let (lctx, io) = (rc_lctx(), IoMode::Real);
     let a1 = rc_app(rc_lam(ExprSpec::Var(0)), x);
@@ -208,13 +214,11 @@ pub proof fn rc_all_conv_h(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec, x:
     deq_p_any_trans(dty, env, lctx, io, x, a2, rc_h());
 }
 
-/// SORT INJECTIVITY FAILS in this context, in every environment; so do
-/// `hyps_all` and the export theorem's hypothesis `kh_hyp`.
+/// SORT INJECTIVITY FAILS for it, in this context, in every environment:
+/// `Sort 0` and `Sort 1` convert.
 pub proof fn hyps_refuted(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec)
     ensures
-        !crate::metatheory::h_sort_inj(dty, env, rc_lctx()),
-        !crate::metatheory::hyps_all(dty, env),
-        !crate::export_sound::kh_hyp(dty, env),
+        rconv(dty, env, rc_lctx(), ExprSpec::Sort(LevelSpec::Zero), ExprSpec::Sort(LevelSpec::Succ(Box::new(LevelSpec::Zero)))),
 {
     let (lctx, io) = (rc_lctx(), IoMode::Real);
     let s0 = ExprSpec::Sort(LevelSpec::Zero);
@@ -223,16 +227,6 @@ pub proof fn hyps_refuted(dty: Map<u64, (Seq<u64>, ExprSpec)>, env: EnvSpec)
     rc_all_conv_h(dty, env, s1);
     deq_p_any_symm(dty, env, lctx, io, s1, rc_h());
     deq_p_any_trans(dty, env, lctx, io, s0, rc_h(), s1);
-    assert(crate::metatheory::tconv(dty, env, lctx, s0, s1));
-    let r = Map::<nat, nat>::empty();
-    assert(crate::level_model::interp(LevelSpec::Zero, r) == 0);
-    assert(crate::level_model::interp(LevelSpec::Succ(Box::new(LevelSpec::Zero)), r) == 1);
-    if crate::metatheory::h_sort_inj(dty, env, lctx) {
-        assert(crate::level_model::interp(LevelSpec::Zero, r) == crate::level_model::interp(LevelSpec::Succ(Box::new(LevelSpec::Zero)), r));
-    }
-    if crate::metatheory::hyps_all(dty, env) {
-        assert(crate::metatheory::hyps(dty, env, lctx));
-    }
 }
 
 } // verus!
