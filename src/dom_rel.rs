@@ -176,7 +176,7 @@ pub proof fn ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
 
 pub proof fn ty_other(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     requires
-        a is Lam,
+        a is Lam || a is Nd,
     ensures
         !rel_ty(sig, n, g, t, t2, a),
 {
@@ -222,7 +222,7 @@ pub proof fn tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
 
 pub proof fn tm_other(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
     requires
-        a is Lam,
+        a is Lam || a is Nd,
     ensures
         !rel_tm(sig, n, g, m, m2, t, u, a),
 {

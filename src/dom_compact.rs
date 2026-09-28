@@ -17,6 +17,10 @@ pub enum Cpt {
     Prop,
     Lam(Seq<(Cpt, Cpt)>),
     Pi(Box<Cpt>, Seq<(Cpt, Cpt)>),
+    /// A data node: an inductive type's code or a constructor's value,
+    /// named by `key`, with its components compared pointwise. Never
+    /// bottom: seeing the node is an observation.
+    Nd(nat, Seq<Cpt>),
 }
 
 pub open spec fn ht(c: Cpt) -> nat
@@ -25,7 +29,35 @@ pub open spec fn ht(c: Cpt) -> nat
     match c {
         Cpt::Lam(s) => 1 + hts(s, s.len() as int),
         Cpt::Pi(a, s) => 1 + vstd::math::max(ht(*a) as int, hts(s, s.len() as int) as int) as nat,
+        Cpt::Nd(_, cs) => 1 + htc(cs, cs.len() as int),
         _ => 0,
+    }
+}
+
+/// Max height over the first `k` components.
+pub open spec fn htc(cs: Seq<Cpt>, k: int) -> nat
+    decreases cs, k,
+{
+    if k <= 0 || k > cs.len() {
+        0
+    } else {
+        vstd::math::max(ht(cs[k - 1]) as int, htc(cs, k - 1) as int) as nat
+    }
+}
+
+/// The `k`-th components of the nodes in `s` (first `j` elements, height
+/// at most `b`).
+pub open spec fn nd_args(s: Seq<Cpt>, k: int, b: nat, j: int) -> Seq<Cpt>
+    decreases j + 1,
+{
+    if j <= 0 || j > s.len() {
+        Seq::empty()
+    } else {
+        let rest = nd_args(s, k, b, j - 1);
+        match s[j - 1] {
+            Cpt::Nd(_, cs) => if ht(s[j - 1]) <= b && 0 <= k < cs.len() { rest.push(cs[k]) } else { rest },
+            _ => rest,
+        }
     }
 }
 
@@ -119,6 +151,9 @@ pub open spec fn le_set(v: Cpt, s: Seq<Cpt>, b: nat) -> bool
             && le_set(*a, pi_doms(s, b, s.len() as int), dec(b))
             && forall|k: int| 0 <= k < g.len() ==>
                 le_set(g[k].1, sel_pi(s, g[k].0, b, s.len() as int), dec(b)),
+        Cpt::Nd(key, cs) => (exists|i: int| 0 <= i < s.len() && s[i] is Nd && s[i]->Nd_0 == key && s[i]->Nd_1.len() == cs.len())
+            && forall|k: int| 0 <= k < cs.len() ==>
+                le_set(#[trigger] cs[k], nd_args(s, k, b, s.len() as int), dec(b)),
     }
 }
 
@@ -136,16 +171,48 @@ pub proof fn hts_bound(s: Seq<(Cpt, Cpt)>, k: int, i: int)
     }
 }
 
-/// The parts of a Lam or Pi are lower than it.
+pub proof fn htc_bound(cs: Seq<Cpt>, k: int, i: int)
+    requires
+        0 <= i < k <= cs.len(),
+    ensures
+        ht(cs[i]) <= htc(cs, k),
+    decreases k,
+{
+    if i < k - 1 {
+        htc_bound(cs, k - 1, i);
+    }
+}
+
+/// A component list is no taller than a bound on its components.
+pub proof fn htc_le(cs: Seq<Cpt>, k: int, m: nat)
+    requires
+        0 <= k <= cs.len(),
+        forall|i: int| 0 <= i < k ==> ht(#[trigger] cs[i]) <= m,
+    ensures
+        htc(cs, k) <= m,
+    decreases k,
+{
+    if k > 0 {
+        htc_le(cs, k - 1, m);
+    }
+}
+
+/// The parts of a Lam, Pi or node are lower than it.
 pub proof fn parts_lower(v: Cpt)
     ensures
         match v {
             Cpt::Lam(g) => forall|k: int| 0 <= k < g.len() ==> ht(#[trigger] g[k].0) < ht(v) && ht(g[k].1) < ht(v),
             Cpt::Pi(a, g) => ht(*a) < ht(v) && forall|k: int| 0 <= k < g.len() ==> ht(#[trigger] g[k].0) < ht(v) && ht(g[k].1) < ht(v),
+            Cpt::Nd(_, cs) => forall|k: int| 0 <= k < cs.len() ==> ht(#[trigger] cs[k]) < ht(v),
             _ => true,
         },
 {
     match v {
+        Cpt::Nd(_, cs) => {
+            assert forall|k: int| 0 <= k < cs.len() implies ht(#[trigger] cs[k]) < ht(v) by {
+                htc_bound(cs, cs.len() as int, k);
+            }
+        },
         Cpt::Lam(g) => {
             assert forall|k: int| 0 <= k < g.len() implies ht(#[trigger] g[k].0) < ht(v) && ht(g[k].1) < ht(v) by {
                 hts_bound(g, g.len() as int, k);
@@ -316,6 +383,16 @@ pub proof fn le_set_budget(v: Cpt, s: Seq<Cpt>, b1: nat, b2: nat)
                 sel_pi_fits(s, g[k].0, b1, s.len() as int);
                 sel_pi_fits(s, g[k].0, b2, s.len() as int);
                 le_set_budget(g[k].1, sel_pi(s, g[k].0, b1, s.len() as int), dec(b1), dec(b2));
+            }
+        },
+        Cpt::Nd(_, cs) => {
+            let n = s.len() as int;
+            assert forall|k: int| 0 <= k < cs.len() implies
+                le_set(#[trigger] cs[k], nd_args(s, k, b1, n), dec(b1)) == le_set(cs[k], nd_args(s, k, b2, n), dec(b2)) by {
+                nd_budget(s, k, b1, b2, n);
+                nd_args_fits(s, k, b1, n);
+                nd_args_fits(s, k, b2, n);
+                le_set_budget(cs[k], nd_args(s, k, b1, n), dec(b1), dec(b2));
             }
         },
         _ => {},
@@ -582,7 +659,117 @@ pub proof fn le_set_sub(v: Cpt, s1: Seq<Cpt>, s2: Seq<Cpt>, b1: nat, b2: nat)
                 le_set_sub(g[k].1, sel_pi(s1, g[k].0, b1, s1.len() as int), sel_pi(s2, g[k].0, b2, s2.len() as int), dec(b1), dec(b2));
             }
         },
+        Cpt::Nd(key, cs) => {
+            let i = choose|i: int| 0 <= i < s1.len() && s1[i] is Nd && s1[i]->Nd_0 == key && s1[i]->Nd_1.len() == cs.len();
+            assert(s1.contains(s1[i]));
+            let j = choose|j: int| 0 <= j < s2.len() && s2[j] == s1[i];
+            assert(s2[j] is Nd && s2[j]->Nd_0 == key && s2[j]->Nd_1.len() == cs.len());
+            assert forall|k: int| 0 <= k < cs.len() implies
+                le_set(#[trigger] cs[k], nd_args(s2, k, b2, s2.len() as int), dec(b2)) by {
+                nd_sub(s1, s2, k, b1, b2);
+                nd_args_fits(s1, k, b1, s1.len() as int);
+                nd_args_fits(s2, k, b2, s2.len() as int);
+                le_set_sub(cs[k], nd_args(s1, k, b1, s1.len() as int), nd_args(s2, k, b2, s2.len() as int), dec(b1), dec(b2));
+            }
+        },
         _ => {},
+    }
+}
+
+pub proof fn nd_args_fits(s: Seq<Cpt>, k: int, b: nat, j: int)
+    requires
+        0 <= j <= s.len(),
+    ensures
+        fits(nd_args(s, k, b, j), dec(b)),
+    decreases j,
+{
+    if j > 0 {
+        nd_args_fits(s, k, b, j - 1);
+        parts_lower(s[j - 1]);
+    }
+}
+
+pub proof fn nd_budget(s: Seq<Cpt>, k: int, b1: nat, b2: nat, j: int)
+    requires
+        0 <= j <= s.len(),
+        fits(s, b1),
+        fits(s, b2),
+    ensures
+        nd_args(s, k, b1, j) == nd_args(s, k, b2, j),
+    decreases j,
+{
+    if j > 0 {
+        nd_budget(s, k, b1, b2, j - 1);
+        assert(ht(s[j - 1]) <= b1 && ht(s[j - 1]) <= b2);
+    }
+}
+
+/// `y` is the `k`-th component of a node among the first `j`.
+pub open spec fn in_nd(s: Seq<Cpt>, k: int, b: nat, j: int, y: Cpt) -> bool {
+    exists|i: int| 0 <= i < j && #[trigger] s[i] is Nd && ht(s[i]) <= b && 0 <= k < s[i]->Nd_1.len() && s[i]->Nd_1[k] == y
+}
+
+pub proof fn nd_args_mem(s: Seq<Cpt>, k: int, b: nat, j: int, y: Cpt)
+    requires
+        0 <= j <= s.len(),
+    ensures
+        nd_args(s, k, b, j).contains(y) <==> in_nd(s, k, b, j, y),
+    decreases j,
+{
+    if j > 0 {
+        nd_args_mem(s, k, b, j - 1, y);
+        let r = nd_args(s, k, b, j - 1);
+        if let Cpt::Nd(_, cs) = s[j - 1] {
+            if ht(s[j - 1]) <= b && 0 <= k < cs.len() {
+                assert(nd_args(s, k, b, j) == r.push(cs[k]));
+                assert(r.push(cs[k]) == r + seq![cs[k]]);
+                concat_mem(r, seq![cs[k]], y);
+                if y == cs[k] {
+                    assert(seq![cs[k]][0] == y);
+                    assert(s[j - 1] is Nd && ht(s[j - 1]) <= b && 0 <= k < s[j - 1]->Nd_1.len() && s[j - 1]->Nd_1[k] == y);
+                }
+            }
+        }
+        if in_nd(s, k, b, j, y) {
+            let i = choose|i: int| 0 <= i < j && #[trigger] s[i] is Nd && ht(s[i]) <= b && 0 <= k < s[i]->Nd_1.len() && s[i]->Nd_1[k] == y;
+            if i < j - 1 {
+                assert(in_nd(s, k, b, j - 1, y));
+            }
+        }
+    }
+}
+
+pub proof fn nd_sub(s1: Seq<Cpt>, s2: Seq<Cpt>, k: int, b1: nat, b2: nat)
+    requires
+        fits(s1, b1),
+        fits(s2, b2),
+        sub(s1, s2),
+    ensures
+        sub(nd_args(s1, k, b1, s1.len() as int), nd_args(s2, k, b2, s2.len() as int)),
+{
+    assert forall|y: Cpt| #[trigger] nd_args(s1, k, b1, s1.len() as int).contains(y)
+        implies nd_args(s2, k, b2, s2.len() as int).contains(y) by {
+        nd_args_mem(s1, k, b1, s1.len() as int, y);
+        nd_args_mem(s2, k, b2, s2.len() as int, y);
+        let i = choose|i: int| 0 <= i < s1.len() && #[trigger] s1[i] is Nd && ht(s1[i]) <= b1 && 0 <= k < s1[i]->Nd_1.len() && s1[i]->Nd_1[k] == y;
+        assert(s1.contains(s1[i]));
+        let j = choose|j: int| 0 <= j < s2.len() && s2[j] == s1[i];
+        assert(ht(s2[j]) <= b2);
+        assert(s2[j] is Nd && ht(s2[j]) <= b2 && 0 <= k < s2[j]->Nd_1.len() && s2[j]->Nd_1[k] == y);
+    }
+}
+
+/// The components of a joined node, pointwise.
+pub proof fn joinc_at(c1: Seq<Cpt>, c2: Seq<Cpt>, k: int)
+    requires
+        0 <= k <= c1.len(),
+    ensures
+        joinc(c1, c2, k).len() == k,
+        forall|i: int| 0 <= i < k ==> #[trigger] joinc(c1, c2, k)[i] == (if i < c2.len() { join(c1[i], c2[i]) } else { c1[i] }),
+    decreases k,
+{
+    if k > 0 {
+        joinc_at(c1, c2, k - 1);
     }
 }
 
@@ -622,6 +809,18 @@ pub proof fn le_set_mem(v: Cpt, s: Seq<Cpt>, b: nat)
                 sel_pi_mem(s, g[k].0, b, s.len() as int, g[k].1);
                 sel_pi_fits(s, g[k].0, b, s.len() as int);
                 le_set_mem(g[k].1, sel_pi(s, g[k].0, b, s.len() as int), dec(b));
+            }
+        },
+        Cpt::Nd(key, cs) => {
+            let n = s.len() as int;
+            assert(s[i] is Nd && s[i]->Nd_0 == key && s[i]->Nd_1.len() == cs.len());
+            assert forall|k: int| 0 <= k < cs.len() implies
+                le_set(#[trigger] cs[k], nd_args(s, k, b, n), dec(b)) by {
+                assert(s[i] is Nd && ht(s[i]) <= b && 0 <= k < s[i]->Nd_1.len() && s[i]->Nd_1[k] == cs[k]);
+                assert(in_nd(s, k, b, n, cs[k]));
+                nd_args_mem(s, k, b, n, cs[k]);
+                nd_args_fits(s, k, b, n);
+                le_set_mem(cs[k], nd_args(s, k, b, n), dec(b));
             }
         },
         _ => {},
@@ -767,6 +966,27 @@ pub proof fn le_set_trans(u: Cpt, s: Seq<Cpt>, t: Seq<Cpt>, b: nat, c: nat)
                 le_set_trans(g[k].1, s2, t2, dec(b), dec(c));
             }
         },
+        Cpt::Nd(key, cs) => {
+            let i0 = choose|i: int| 0 <= i < s.len() && s[i] is Nd && s[i]->Nd_0 == key && s[i]->Nd_1.len() == cs.len();
+            assert(s.contains(s[i0]));
+            assert(le_set(s[i0], t, c));
+            assert forall|k: int| 0 <= k < cs.len() implies
+                le_set(#[trigger] cs[k], nd_args(t, k, c, t.len() as int), dec(c)) by {
+                let d1 = nd_args(s, k, b, s.len() as int);
+                let d2 = nd_args(t, k, c, t.len() as int);
+                nd_args_fits(s, k, b, s.len() as int);
+                nd_args_fits(t, k, c, t.len() as int);
+                assert forall|y: Cpt| #[trigger] d1.contains(y) implies le_set(y, d2, dec(c)) by {
+                    nd_args_mem(s, k, b, s.len() as int, y);
+                    let i = choose|i: int| 0 <= i < s.len() && #[trigger] s[i] is Nd && ht(s[i]) <= b && 0 <= k < s[i]->Nd_1.len() && s[i]->Nd_1[k] == y;
+                    assert(s.contains(s[i]));
+                    assert(le_set(s[i], t, c));
+                    let ci = s[i]->Nd_1;
+                    assert(le_set(ci[k], d2, dec(c)));
+                }
+                le_set_trans(cs[k], d1, d2, dec(b), dec(c));
+            }
+        },
         _ => {},
     }
 }
@@ -798,7 +1018,19 @@ pub open spec fn join(u: Cpt, v: Cpt) -> Cpt
         (_, Cpt::Bot) => u,
         (Cpt::Lam(f), Cpt::Lam(f2)) => Cpt::Lam(f + f2),
         (Cpt::Pi(a, g), Cpt::Pi(a2, g2)) => Cpt::Pi(Box::new(join(*a, *a2)), g + g2),
+        (Cpt::Nd(k1, c1), Cpt::Nd(_, c2)) => Cpt::Nd(k1, joinc(c1, c2, c1.len() as int)),
         _ => u,
+    }
+}
+
+/// Components joined pointwise (the first `k`).
+pub open spec fn joinc(c1: Seq<Cpt>, c2: Seq<Cpt>, k: int) -> Seq<Cpt>
+    decreases c1, k,
+{
+    if k <= 0 || k > c1.len() {
+        Seq::empty()
+    } else {
+        joinc(c1, c2, k - 1).push(if k - 1 < c2.len() { join(c1[k - 1], c2[k - 1]) } else { c1[k - 1] })
     }
 }
 
@@ -817,14 +1049,15 @@ pub open spec fn jall(s: Seq<Cpt>) -> Cpt {
     joinall(s, s.len() as int)
 }
 
-/// The head constructor.
-pub open spec fn hd(c: Cpt) -> nat {
+/// The head constructor (a node's with its key and arity).
+pub open spec fn hd(c: Cpt) -> (nat, nat, nat) {
     match c {
-        Cpt::Bot => 0,
-        Cpt::U => 1,
-        Cpt::Prop => 2,
-        Cpt::Lam(_) => 3,
-        Cpt::Pi(_, _) => 4,
+        Cpt::Bot => (0, 0, 0),
+        Cpt::U => (1, 0, 0),
+        Cpt::Prop => (2, 0, 0),
+        Cpt::Lam(_) => (3, 0, 0),
+        Cpt::Pi(_, _) => (4, 0, 0),
+        Cpt::Nd(key, cs) => (5, key, cs.len()),
     }
 }
 
@@ -835,6 +1068,7 @@ pub open spec fn coh(s: Seq<Cpt>, b: nat) -> bool
 {
     &&& top_coh(s)
     &&& (b > 0 ==> coh(pi_doms(s, b, s.len() as int), (b - 1) as nat))
+    &&& (b > 0 ==> forall|k: int| 0 <= k ==> coh(#[trigger] nd_args(s, k, b, s.len() as int), (b - 1) as nat))
 }
 
 /// The non-bottom elements share a head.
@@ -866,6 +1100,9 @@ pub proof fn jall_shape(s: Seq<Cpt>, k: int)
             let i0 = choose|i: int| 0 <= i < k - 1 && !(#[trigger] s[i] is Bot);
             assert(hd(p) == hd(s[i0]));
             assert(hd(s[i0]) == hd(s[k - 1]));
+            if p is Nd && x is Nd {
+                joinc_at(p->Nd_1, x->Nd_1, p->Nd_1.len() as int);
+            }
         }
         if p is Bot && !(x is Bot) {
             assert forall|i: int| 0 <= i < k - 1 implies #[trigger] s[i] is Bot by {
@@ -1021,6 +1258,86 @@ pub proof fn jall_dom(s: Seq<Cpt>, b: nat, k: int)
     }
 }
 
+/// A singleton node's `k`-th components.
+pub proof fn nd_args_one(w: Cpt, k: int, b: nat)
+    requires
+        w is Nd,
+        ht(w) <= b,
+        0 <= k < w->Nd_1.len(),
+    ensures
+        nd_args(seq![w], k, b, 1) == seq![w->Nd_1[k]],
+{
+    let t = seq![w];
+    assert(t[0] == w);
+    assert(nd_args(t, k, b, 0) == Seq::<Cpt>::empty());
+    assert(Seq::<Cpt>::empty().push(w->Nd_1[k]) =~= seq![w->Nd_1[k]]);
+}
+
+/// A set with no node has no components.
+pub proof fn nd_none(s: Seq<Cpt>, c: int, b: nat, k: int)
+    requires
+        0 <= k <= s.len(),
+        forall|i: int| 0 <= i < k ==> !(#[trigger] s[i] is Nd),
+    ensures
+        nd_args(s, c, b, k).len() == 0,
+    decreases k,
+{
+    if k > 0 {
+        nd_none(s, c, b, k - 1);
+    }
+}
+
+/// A component of a joined node is the join of the components.
+pub proof fn jall_comp(s: Seq<Cpt>, b: nat, k: int, c: int)
+    requires
+        fits(s, b),
+        top_coh(s),
+        0 <= k <= s.len(),
+        joinall(s, k) is Nd,
+        0 <= c < joinall(s, k)->Nd_1.len(),
+    ensures
+        joinall(s, k)->Nd_1[c] == jall(nd_args(s, c, b, k)),
+    decreases k,
+{
+    jall_shape(s, k);
+    let p = joinall(s, k - 1);
+    let x = s[k - 1];
+    jall_shape(s, k - 1);
+    assert(ht(x) <= b);
+    if x is Bot {
+        assert(joinall(s, k) == p);
+        jall_comp(s, b, k - 1, c);
+    } else if x is Nd {
+        let d1 = nd_args(s, c, b, k - 1);
+        let xc = x->Nd_1;
+        assert(hd(joinall(s, k)) == hd(x));
+        assert(nd_args(s, c, b, k) == d1.push(xc[c]));
+        joinall_prefix(d1.push(xc[c]), d1, d1.len() as int);
+        if p is Bot {
+            assert forall|i: int| 0 <= i < k - 1 implies !(#[trigger] s[i] is Nd) by {
+                if !(s[i] is Bot) {
+                    assert(hd(p) == hd(s[i]));
+                }
+            }
+            nd_none(s, c, b, k - 1);
+            assert(jall(d1) == Cpt::Bot);
+            assert(joinall(s, k) == x);
+        } else {
+            assert(hd(p) == hd(x)) by {
+                let i0 = choose|i: int| 0 <= i < k - 1 && !(#[trigger] s[i] is Bot);
+                assert(hd(p) == hd(s[i0]));
+            }
+            joinc_at(p->Nd_1, xc, p->Nd_1.len() as int);
+            jall_comp(s, b, k - 1, c);
+        }
+    } else {
+        if !(p is Bot) {
+            let i0 = choose|i: int| 0 <= i < k - 1 && !(#[trigger] s[i] is Bot);
+            assert(hd(p) == hd(s[i0]));
+        }
+    }
+}
+
 /// A step list is no taller than a bound on its entries.
 pub proof fn hts_le(f: Seq<(Cpt, Cpt)>, k: int, m: nat)
     requires
@@ -1054,9 +1371,23 @@ pub proof fn hts_concat(f: Seq<(Cpt, Cpt)>, g: Seq<(Cpt, Cpt)>)
 pub proof fn ht_join(u: Cpt, v: Cpt)
     ensures
         ht(join(u, v)) <= vstd::math::max(ht(u) as int, ht(v) as int),
-    decreases u,
+    decreases ht(u),
 {
+    parts_lower(u);
+    parts_lower(v);
     match (u, v) {
+        (Cpt::Nd(_, c1), Cpt::Nd(_, c2)) => {
+            let m = vstd::math::max(ht(u) as int, ht(v) as int) as nat;
+            let n = c1.len() as int;
+            let jc = joinc(c1, c2, n);
+            joinc_at(c1, c2, n);
+            assert forall|i: int| 0 <= i < n implies ht(#[trigger] jc[i]) <= (m - 1) as nat by {
+                if i < c2.len() {
+                    ht_join(c1[i], c2[i]);
+                }
+            }
+            htc_le(jc, n, (m - 1) as nat);
+        },
         (Cpt::Lam(f), Cpt::Lam(g)) => {
             hts_concat(f, g);
         },
@@ -1106,7 +1437,7 @@ pub proof fn sel_jall(s: Seq<Cpt>, x: Cpt, b: nat)
         let f = s[i]->Lam_0;
         let m = choose|m: int| 0 <= m < f.len() && #[trigger] f[m].1 == y && le(f[m].0, x);
         assert(f.contains(f[m]));
-        assert(hd(j) == 3);
+        assert(hd(j).0 == 3);
         assert(j->Lam_0.contains(f[m]));
         let q = choose|q: int| 0 <= q < j->Lam_0.len() && j->Lam_0[q] == f[m];
         assert(in_sel(j->Lam_0, x, y));
@@ -1132,7 +1463,7 @@ pub proof fn sel_jall(s: Seq<Cpt>, x: Cpt, b: nat)
         let f = s[i]->Pi_1;
         let m = choose|m: int| 0 <= m < f.len() && #[trigger] f[m].1 == y && le(f[m].0, x);
         assert(f.contains(f[m]));
-        assert(hd(j) == 4);
+        assert(hd(j).0 == 4);
         assert(j->Pi_1.contains(f[m]));
         let q = choose|q: int| 0 <= q < j->Pi_1.len() && j->Pi_1[q] == f[m];
         assert(in_sel(j->Pi_1, x, y));
@@ -1240,6 +1571,29 @@ pub proof fn le_set_jall(v: Cpt, s: Seq<Cpt>, b: nat)
                 }
             }
         },
+        Cpt::Nd(key, cs) => {
+            let has = exists|i: int| 0 <= i < n && s[i] is Nd && s[i]->Nd_0 == key && s[i]->Nd_1.len() == cs.len();
+            if j is Nd && j->Nd_0 == key && j->Nd_1.len() == cs.len() {
+                let i = choose|i: int| 0 <= i < n && !(#[trigger] s[i] is Bot);
+                assert(hd(s[i]) == hd(j));
+                assert(has);
+            }
+            if has {
+                let i = choose|i: int| 0 <= i < n && s[i] is Nd && s[i]->Nd_0 == key && s[i]->Nd_1.len() == cs.len();
+                assert(hd(j) == hd(s[i]));
+                assert(ht(s[i]) <= b);
+                assert(t[0] is Nd && t[0]->Nd_0 == key && t[0]->Nd_1.len() == cs.len());
+                assert forall|k: int| 0 <= k < cs.len() implies
+                    le_set(#[trigger] cs[k], nd_args(s, k, b, n), dec(b)) == le_set(cs[k], nd_args(t, k, b, 1), dec(b)) by {
+                    let d = nd_args(s, k, b, n);
+                    jall_comp(s, b, n, k);
+                    nd_args_one(j, k, b);
+                    nd_args_fits(s, k, b, n);
+                    assert(coh(d, (b - 1) as nat));
+                    le_set_jall(cs[k], d, dec(b));
+                }
+            }
+        },
         _ => {},
     }
 }
@@ -1296,6 +1650,8 @@ pub open spec fn compat(u: Cpt, v: Cpt) -> bool
             && compat((f + g)[i].0, (f + g)[j].0) ==> compat(#[trigger] (f + g)[i].1, #[trigger] (f + g)[j].1),
         (Cpt::Pi(a, f), Cpt::Pi(a2, g)) => compat(*a, *a2) && forall|i: int, j: int| 0 <= i < (f + g).len() && 0 <= j < (f + g).len()
             && compat((f + g)[i].0, (f + g)[j].0) ==> compat(#[trigger] (f + g)[i].1, #[trigger] (f + g)[j].1),
+        (Cpt::Nd(k1, c1), Cpt::Nd(k2, c2)) => k1 == k2 && c1.len() == c2.len()
+            && forall|i: int| 0 <= i < c1.len() ==> compat(#[trigger] c1[i], c2[i]),
         _ => false,
     }
 }
@@ -1359,6 +1715,7 @@ pub open spec fn wf(c: Cpt) -> bool
             && fun_ok(f) && exists|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot),
         Cpt::Pi(a, g) => wf(*a) && (forall|k: int| 0 <= k < g.len() ==> wf(#[trigger] g[k].0) && wf(g[k].1))
             && fun_ok(g),
+        Cpt::Nd(_, cs) => forall|k: int| 0 <= k < cs.len() ==> wf(#[trigger] cs[k]),
         _ => true,
     }
 }
@@ -1432,6 +1789,13 @@ pub proof fn compat_symm(u: Cpt, v: Cpt)
                 seq_concat_contains(f, g, e2);
             }
         },
+        (Cpt::Nd(_, c1), Cpt::Nd(_, c2)) => {
+            parts_lower(u);
+            assert forall|i: int| 0 <= i < c2.len() implies compat(#[trigger] c2[i], c1[i]) by {
+                assert(compat(c1[i], c2[i]));
+                compat_symm(c1[i], c2[i]);
+            }
+        },
         _ => {},
     }
 }
@@ -1464,6 +1828,12 @@ pub proof fn compat_refl(u: Cpt)
                 implies compat(e1.1, e2.1) by {
                 seq_concat_contains(f, f, e1);
                 seq_concat_contains(f, f, e2);
+            }
+        },
+        Cpt::Nd(_, cs) => {
+            parts_lower(u);
+            assert forall|i: int| 0 <= i < cs.len() implies compat(#[trigger] cs[i], cs[i]) by {
+                compat_refl(cs[i]);
             }
         },
         _ => {},
@@ -1520,6 +1890,17 @@ pub proof fn compat_join3(u: Cpt, v: Cpt, w: Cpt)
                 seq_concat_contains(f, h, e2);
                 seq_concat_contains(g, h, e1);
                 seq_concat_contains(g, h, e2);
+            }
+        },
+        (Cpt::Nd(_, c1), Cpt::Nd(_, c2), Cpt::Nd(_, c3)) => {
+            parts_lower(u);
+            let jc = joinc(c1, c2, c1.len() as int);
+            joinc_at(c1, c2, c1.len() as int);
+            assert forall|i: int| 0 <= i < jc.len() implies compat(#[trigger] jc[i], c3[i]) by {
+                assert(compat(c1[i], c2[i]));
+                assert(compat(c1[i], c3[i]));
+                assert(compat(c2[i], c3[i]));
+                compat_join3(c1[i], c2[i], c3[i]);
             }
         },
         _ => {},
@@ -1658,6 +2039,34 @@ pub proof fn join_ub(u: Cpt, v: Cpt)
             le_set_budget(*a2, seq![m], ht(m), dec(ht(j)));
             assert(t[0] is Pi);
         },
+        (Cpt::Nd(key, c1), Cpt::Nd(_, c2)) => {
+            parts_lower(u);
+            let n = c1.len() as int;
+            let jc = joinc(c1, c2, n);
+            joinc_at(c1, c2, n);
+            assert(j == Cpt::Nd(key, jc));
+            parts_lower(j);
+            let t = seq![j];
+            assert(t[0] == j);
+            assert forall|i: int| 0 <= i < n implies wf(#[trigger] jc[i])
+                && le_set(c1[i], nd_args(t, i, ht(j), 1), dec(ht(j)))
+                && le_set(c2[i], nd_args(t, i, ht(j), 1), dec(ht(j))) by {
+                assert(compat(c1[i], c2[i]));
+                join_ub(c1[i], c2[i]);
+                nd_args_one(j, i, ht(j));
+                let m = jc[i];
+                assert(seq![m][0] == m);
+                assert(fits(seq![m], dec(ht(j))));
+                assert(fits(seq![m], ht(m)));
+                le_set_budget(c1[i], seq![m], ht(m), dec(ht(j)));
+                le_set_budget(c2[i], seq![m], ht(m), dec(ht(j)));
+            }
+            assert forall|i: int| 0 <= i < c1.len() implies
+                le_set(#[trigger] c1[i], nd_args(t, i, ht(j), 1), dec(ht(j))) by {}
+            assert forall|i: int| 0 <= i < c2.len() implies
+                le_set(#[trigger] c2[i], nd_args(t, i, ht(j), 1), dec(ht(j))) by {}
+            assert forall|i: int| 0 <= i < jc.len() implies wf(#[trigger] jc[i]) by {}
+        },
         _ => {
             le_refl(u);
         },
@@ -1737,6 +2146,28 @@ pub proof fn pw_coh(s: Seq<Cpt>, b: nat)
             compat_unfold(s[i], s[j]);
         }
         pw_coh(d, (b - 1) as nat);
+        assert forall|k: int| 0 <= k implies coh(#[trigger] nd_args(s, k, b, s.len() as int), (b - 1) as nat) by {
+            let e = nd_args(s, k, b, s.len() as int);
+            assert forall|y: Cpt| #[trigger] e.contains(y) implies wf(y) by {
+                nd_args_mem(s, k, b, s.len() as int, y);
+                let i = choose|i: int| 0 <= i < s.len() && #[trigger] s[i] is Nd && ht(s[i]) <= b && 0 <= k < s[i]->Nd_1.len() && s[i]->Nd_1[k] == y;
+                assert(s.contains(s[i]));
+                let ci = s[i]->Nd_1;
+                assert(wf(ci[k]));
+            }
+            assert forall|y: Cpt, z: Cpt| #[trigger] e.contains(y) && #[trigger] e.contains(z) implies compat(y, z) by {
+                nd_args_mem(s, k, b, s.len() as int, y);
+                nd_args_mem(s, k, b, s.len() as int, z);
+                let i = choose|i: int| 0 <= i < s.len() && #[trigger] s[i] is Nd && ht(s[i]) <= b && 0 <= k < s[i]->Nd_1.len() && s[i]->Nd_1[k] == y;
+                let j = choose|j: int| 0 <= j < s.len() && #[trigger] s[j] is Nd && ht(s[j]) <= b && 0 <= k < s[j]->Nd_1.len() && s[j]->Nd_1[k] == z;
+                assert(s.contains(s[i]));
+                assert(s.contains(s[j]));
+                assert(compat(s[i], s[j]));
+                let ci = s[i]->Nd_1;
+                assert(compat(ci[k], s[j]->Nd_1[k]));
+            }
+            pw_coh(e, (b - 1) as nat);
+        }
     }
 }
 
@@ -2018,6 +2449,25 @@ pub proof fn ub_compat(u: Cpt, v: Cpt, w: Cpt)
             le_set_budget(*a2, seq![d], dec(ht(w)), ht(d));
             ub_compat(*a, *a2, d);
             steps_compat(u, v, w, false, max3(ht(u), ht(v), ht(w)));
+        },
+        (Cpt::Nd(_, c1), Cpt::Nd(_, c2)) => {
+            let t = seq![w];
+            assert(t[0] == w);
+            parts_lower(u);
+            parts_lower(v);
+            parts_lower(w);
+            assert forall|i: int| 0 <= i < c1.len() implies compat(#[trigger] c1[i], c2[i]) by {
+                let d = w->Nd_1[i];
+                nd_args_one(w, i, ht(w));
+                assert(le_set(c1[i], seq![d], dec(ht(w))));
+                assert(le_set(c2[i], seq![d], dec(ht(w))));
+                assert(seq![d][0] == d);
+                assert(fits(seq![d], dec(ht(w))));
+                assert(fits(seq![d], ht(d)));
+                le_set_budget(c1[i], seq![d], dec(ht(w)), ht(d));
+                le_set_budget(c2[i], seq![d], dec(ht(w)), ht(d));
+                ub_compat(c1[i], c2[i], d);
+            }
         },
         _ => {},
     }
@@ -2426,5 +2876,6 @@ proof fn order_examples() {
         assert(sel_f(seq![(Cpt::U, Cpt::U)], Cpt::Bot, 1) =~= Seq::<Cpt>::empty());
     }
 }
+
 
 } // verus!

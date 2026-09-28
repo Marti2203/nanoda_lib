@@ -629,6 +629,25 @@ pub proof fn join_lub(u: Cpt, v: Cpt, w: Cpt)
     assert(jall(t) == join(u, v));
 }
 
+/// Two elements below a well-formed bound are compatible, and their join
+/// is below it.
+pub proof fn below_pair(u1: Cpt, u2: Cpt, w: Cpt)
+    requires
+        wf(u1),
+        wf(u2),
+        wf(w),
+        le(u1, w),
+        le(u2, w),
+    ensures
+        compat(u1, u2),
+        wf(join(u1, u2)),
+        le(join(u1, u2), w),
+{
+    ub_compat(u1, u2, w);
+    join_ub(u1, u2);
+    join_lub(u1, u2, w);
+}
+
 /// A denotation is closed under compatible joins.
 #[verifier::opaque]
 pub open spec fn jc(sig: Sig, m: ExprSpec, rho: Env) -> bool {
@@ -642,18 +661,16 @@ pub proof fn jc_var(sig: Sig, i: nat, rho: Env)
     ensures
         jc(sig, ExprSpec::Var(i), rho),
 {
-    reveal(mem);
-    reveal(typed);
-    reveal(jc);
-    assert forall|u1: Cpt, u2: Cpt| #[trigger] mem(sig, ExprSpec::Var(i), rho, u1) && #[trigger] mem(sig, ExprSpec::Var(i), rho, u2)
-        implies compat(u1, u2) && mem(sig, ExprSpec::Var(i), rho, join(u1, u2)) by {
-        let w1 = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Var(i), rho, u1, w);
-        let w2 = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Var(i), rho, u2, w);
-        ub_compat(u1, u2, rho(i));
-        join_ub(u1, u2);
-        join_lub(u1, u2, rho(i));
-        assert(mem_w(sig, ExprSpec::Var(i), rho, join(u1, u2), Wit::Nil));
+    let m = ExprSpec::Var(i);
+    assert forall|u1: Cpt, u2: Cpt| mem(sig, m, rho, u1) && mem(sig, m, rho, u2)
+        implies #[trigger] jc_pair(sig, m, rho, u1, u2) by {
+        reveal(mem);
+        let w1 = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u1, w);
+        let w2 = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u2, w);
+        below_pair(u1, u2, rho(i));
+        assert(mem_w(sig, m, rho, join(u1, u2), Wit::Nil));
     }
+    jc_intro(sig, m, rho);
 }
 
 /// A lifted term under an extended environment denotes what the term
@@ -710,13 +727,12 @@ pub proof fn jall_mem(sig: Sig, m: ExprSpec, rho: Env, t: Seq<Cpt>, k: int)
     decreases k,
 {
     reveal(mem);
-    reveal(typed);
-    reveal(jc);
     if k == 0 {
         mem_bot(sig, m, rho);
     } else {
         jall_mem(sig, m, rho, t, k - 1);
         assert(mem(sig, m, rho, t[k - 1]));
+        jc_elim(sig, m, rho, joinall(t, k - 1), t[k - 1]);
     }
 }
 
@@ -758,10 +774,9 @@ pub proof fn covers_join2(sig: Sig, s: crate::ti_subst::Sub, rho: Env, r1: Env, 
 {
     reveal(mem);
     reveal(typed);
-    reveal(jc);
     assert forall|i: nat| #[trigger] mem(sig, s(i), rho, env_join2(r1, r2)(i)) && le(r1(i), env_join2(r1, r2)(i)) && le(r2(i), env_join2(r1, r2)(i)) by {
         assert(mem(sig, s(i), rho, r1(i)) && mem(sig, s(i), rho, r2(i)));
-        assert(jc(sig, s(i), rho));
+        jc_elim(sig, s(i), rho, r1(i), r2(i));
         let w1 = choose|w: Wit| #[trigger] mem_w(sig, s(i), rho, r1(i), w);
         let w2 = choose|w: Wit| #[trigger] mem_w(sig, s(i), rho, r2(i), w);
         mem_wf(sig, s(i), rho, r1(i), w1);

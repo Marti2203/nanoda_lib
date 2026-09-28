@@ -104,6 +104,74 @@ induction over cutoffs from the certificates:
 - Church-Rosser's environment facts follow from the fragment and
   `names_ok` (`cr_env_of`).
 
+## S6: inductive types (started 2026-09-28)
+
+### What the paper gives
+
+Section 3.4 of the paper adds `ℕ` with pattern matching, 3.5 the identity
+type, 3.1-3.2 Σ and unit with η, 3.3 general recursion (`Y`, interpreted
+as the supremum of its approximations). The recipe per type former:
+
+- a code for the type (`N : U`) and value codes for the constructors
+  (`0`, `S u`, with `S ⊥ ≠ ⊥`: seeing a constructor is an observation);
+- semantic typing clauses for the values (`S u :_{n+1} N` when `u :_n N`;
+  Id's `ref w` carries `w` below both endpoints);
+- the logical relation at a value code reads the constructor off head
+  reduction (`M ⇝* S M'` with `M'` related at `u`);
+- the eliminator's adequacy by induction on the value code.
+
+It claims the technique "should extend to general indexed inductive
+types" but does not do it.
+
+### The obstacle for Lean's inductives
+
+Semantic typing (`dom_typing::has_type`) is on compacts only, with no
+signature. A general constructor's field types are terms of the
+signature (`cons (a : α) (l : List α)`); typing a value `cons(u, v)` at
+`List(a)` needs `u : a`, i.e. the denotation of a signature term, and
+`mem_w` in turn uses typing (a lambda's entries are typed), so the two
+definitions would be mutually recursive with no decreasing measure.
+
+### The design
+
+- **Values carry their field codes.** A constructor value is
+  `Con(c, ps, fs)`: the constructor, its parameter codes, and per field a
+  pair (field type code, field value). `Con(c, ps, fs) :_{n+1} Ind(i, as)`
+  when each field value is typed at its field code at stage `n`, the
+  parameters are below the type's, and the field codes are types. This is
+  signature-free. That the field codes are the RIGHT ones (denotations of
+  the constructor's field types) is the interpretation's business:
+  `⟦c⟧` only produces values whose field codes come from the field types'
+  denotations. The eliminator recovers field typing from the value.
+- **Type codes by name.** `Ind(i, as)`: the inductive's id and its
+  argument codes (parameters, indices), atomic otherwise, so recursive
+  occurrences need no infinite unfolding.
+- **Indices.** A value's result indices sit below the type's (as Id's
+  `ref w ≤ u`).
+- **The recursor** is interpreted on saturated applications, by recursion
+  on the major's value code (finite, so recursive calls on fields go
+  down); its bare constant by its eta expansion. The rules' right-hand
+  sides must be typed at their minor-premise types: a signature
+  condition like `sig_wf` for definitions, which the kernel's inductive
+  checker must establish at the export.
+- **The judgment** gains, per inductive declaration in the signature
+  (parameters, indices, constructors, recursor, rules): the constants are
+  typed by `ConstAx` as now; a new `Iota` rule relates a saturated
+  recursor application on a constructor application with the rule's
+  instance, carrying both sides' typings (as `Beta`/`Zeta` do).
+
+### Sub-stages
+
+| | content |
+|---|---|
+| S6.1 | compacts: one data node `Nd(key, comps)` for type codes and constructor values, compared pointwise; order, join, compatibility, coherence, well-formedness (done) |
+| S6.2 | semantic typing for them; the stage and join properties (Props 2.16-2.18) |
+| S6.3 | syntax: inductive declarations in the signature, the `Iota` rule; syntactic metatheory (renaming, substitution, validity, generation, uniqueness, SR) |
+| S6.4 | interpretation of inductive constants, constructors, recursor applications; ideal properties; soundness incl. `Iota` |
+| S6.5 | logical relation clauses; their properties; adequacy incl. `Iota`; injectivity re-proven |
+| S6.6 | kernel side: `jsig` from the environment's inductive tables, SR for the kernel's recursor iota, `frag_env` relaxed; literals through `Nat` |
+| S6.7 | projections, structure and unit eta, K-like reduction |
+
 ## The open fork before S4
 
 The kernel reduces with iota, projections, literals, quotients, structure
