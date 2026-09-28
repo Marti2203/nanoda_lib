@@ -361,7 +361,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
         Rule::Iota => match j {
-            Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::beta_model::rec_ready(sig.ienv, m)
+            Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::ti_hred::rec_fire(sig, m)
                 && n == crate::beta_model::rec_result(sig.ienv, m)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t)]),
             _ => false,

@@ -20,6 +20,25 @@ pub open spec fn rec_major(sig: Sig, t: ExprSpec) -> bool {
     &&& crate::beta_model::spine_args(t).len() == sig.ienv.recs[h->Const_0].major_idx + 1
 }
 
+/// The major premise of a recursor redex has its constructor's exact
+/// arity: parameters and fields. The kernel does not check it; a typed
+/// major has it (docs/TYPED_TARGET.md, S6.4c/d plan).
+pub open spec fn rec_arity(sig: Sig, t: ExprSpec) -> bool {
+    let rd = sig.ienv.recs[crate::beta_model::spine_head(t)->Const_0];
+    let major = crate::beta_model::spine_args(t)[rd.major_idx as int];
+    let cid = crate::beta_model::spine_head(major)->Const_0;
+    match crate::beta_model::find_rule(rd.rules, cid) {
+        Some(ri) => sig.ienv.ctor_np.contains_key(cid)
+            && crate::beta_model::spine_args(major).len() == sig.ienv.ctor_np[cid] as nat + rd.rules[ri].nfields,
+        None => false,
+    }
+}
+
+/// A recursor redex the typed judgment reduces.
+pub open spec fn rec_fire(sig: Sig, t: ExprSpec) -> bool {
+    crate::beta_model::rec_ready(sig.ienv, t) && rec_arity(sig, t)
+}
+
 /// One head step, if any: beta, delta, zeta, reduction in function
 /// position, then iota at a recursor whose major premise is a constructor
 /// application, or reduction of that major premise.
@@ -31,7 +50,7 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
             ExprSpec::Bind(BinderKind::Lam, _, body) => Some(inst(0, *x, *body)),
             _ => match hstep(sig, *f) {
                 Some(f2) => Some(ExprSpec::App(Box::new(f2), x)),
-                None => if crate::beta_model::rec_ready(sig.ienv, t) {
+                None => if rec_fire(sig, t) {
                     Some(crate::beta_model::rec_result(sig.ienv, t))
                 } else if rec_major(sig, t) {
                     match hstep(sig, *x) {
