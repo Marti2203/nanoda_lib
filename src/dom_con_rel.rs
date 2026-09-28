@@ -541,7 +541,7 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     let (m, m2) = (spine_app(ExprSpec::Const(c, ls), xs), spine_app(ExprSpec::Const(c, ls2), xs2));
     let k = xs.len() as nat;
     let ts = a->Nd_1;
-    let key = NdKey::Con(ind as nat, c as nat);
+    let key = NdKey::Con(ind, c);
     let node = Cpt::Nd(key, ts + pre);
     assert(wf(u)) by {
         typed_facts_wf(n, u, a);

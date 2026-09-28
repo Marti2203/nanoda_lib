@@ -108,9 +108,9 @@ proof fn tcode_compat(c: u64, p: bool, p1: Seq<Cpt>, p2: Seq<Cpt>)
     requires
         pre_ok(p1, p2),
     ensures
-        compat(Cpt::Nd(NdKey::Ty(c as nat, p), p1), Cpt::Nd(NdKey::Ty(c as nat, p), p2)),
-        wf(Cpt::Nd(NdKey::Ty(c as nat, p), p1)),
-        wf(Cpt::Nd(NdKey::Ty(c as nat, p), p2)),
+        compat(Cpt::Nd(NdKey::Ty(c, p), p1), Cpt::Nd(NdKey::Ty(c, p), p2)),
+        wf(Cpt::Nd(NdKey::Ty(c, p), p1)),
+        wf(Cpt::Nd(NdKey::Ty(c, p), p2)),
 {
     assert forall|i: int| 0 <= i < p1.len() implies compat(#[trigger] p1[i], p2[i]) by {}
     assert forall|k: int| 0 <= k < p1.len() implies wf(#[trigger] p1[k]) by {}
@@ -166,8 +166,8 @@ pub proof fn tf_compat(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y1: Cpt,
             }
         },
         ExprSpec::Sort(lv) => {
-            let n1 = Cpt::Nd(NdKey::Ty(c as nat, is_zero(lv)), p1);
-            let n2 = Cpt::Nd(NdKey::Ty(c as nat, is_zero(lv)), p2);
+            let n1 = Cpt::Nd(NdKey::Ty(c, is_zero(lv)), p1);
+            let n2 = Cpt::Nd(NdKey::Ty(c, is_zero(lv)), p2);
             tcode_compat(c, is_zero(lv), p1, p2);
             join_ub(n1, n2);
             let j = join(n1, n2);
@@ -209,7 +209,7 @@ pub proof fn tf_join(c: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
             }
         },
         ExprSpec::Sort(lv) => {
-            join_lub(y1, y2, Cpt::Nd(NdKey::Ty(c as nat, is_zero(lv)), p));
+            join_lub(y1, y2, Cpt::Nd(NdKey::Ty(c, is_zero(lv)), p));
         },
         _ => {},
     }
@@ -418,7 +418,7 @@ pub proof fn cf_mono(c: u64, ind: u64, np: nat, t: ExprSpec, a1: Cpt, a2: Cpt, p
             let ts2 = a2->Nd_1;
             assert(pre_le(ts1, ts2));
             pre_le_concat(ts1, ts2, p1, p2);
-            let key = NdKey::Con(ind as nat, c as nat);
+            let key = NdKey::Con(ind, c);
             nd_le(key, ts1 + p1, ts2 + p2);
             le_trans(v, Cpt::Nd(key, ts1 + p1), Cpt::Nd(key, ts2 + p2));
         },
@@ -506,7 +506,7 @@ pub proof fn cf_compat(c: u64, ind: u64, np: nat, t: ExprSpec, a1: Cpt, a2: Cpt,
         _ => {
             let (ts1, ts2) = (a1->Nd_1, a2->Nd_1);
             compat_unfold(a1, a2);
-            let key = NdKey::Con(ind as nat, c as nat);
+            let key = NdKey::Con(ind, c);
             let (q1, q2) = (ts1 + p1, ts2 + p2);
             let (n1, n2) = (Cpt::Nd(key, q1), Cpt::Nd(key, q2));
             assert forall|i: int| 0 <= i < q1.len() implies compat(#[trigger] q1[i], q2[i]) && wf(q1[i]) && wf(q2[i]) by {
@@ -563,7 +563,7 @@ pub proof fn cf_join(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, p: Seq<Cpt>
             }
         },
         _ => {
-            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind as nat, c as nat), a->Nd_1 + p));
+            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, c), a->Nd_1 + p));
         },
     }
 }

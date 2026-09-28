@@ -21,6 +21,7 @@ pub mod dom_con_rel;
 pub mod dom_fund;
 pub mod dom_model;
 pub mod dom_proj;
+pub mod dom_rec;
 pub mod dom_rel;
 pub mod dom_rel_hexp;
 pub mod dom_rel_mono;

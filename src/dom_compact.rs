@@ -26,8 +26,8 @@ pub enum Cpt {
 /// What a data node is: the code of inductive `ind` (a proposition when
 /// `prop`), or a value built by constructor `ctor` of inductive `ind`.
 pub enum NdKey {
-    Ty(nat, bool),
-    Con(nat, nat),
+    Ty(u64, bool),
+    Con(u64, u64),
 }
 
 pub open spec fn ht(c: Cpt) -> nat

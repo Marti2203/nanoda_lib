@@ -102,7 +102,7 @@ pub open spec fn tf_fun(c: u64, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) -> bool
             Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==> tf_fun(c, *b, pre.push(f[i].0), #[trigger] f[i].1),
             _ => false,
         },
-        ExprSpec::Sort(l) => le(v, Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), pre)),
+        ExprSpec::Sort(l) => le(v, Cpt::Nd(NdKey::Ty(c, is_zero(l)), pre)),
         _ => false,
     }
 }
@@ -125,7 +125,7 @@ pub open spec fn cf_fun(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, pre: Seq
         },
         _ => k >= np && crate::beta_model::spine_head(t) is Const && crate::beta_model::spine_head(t)->Const_0 == ind
             && match a {
-                Cpt::Nd(NdKey::Ty(i, false), ts) => i == ind as nat && le(v, Cpt::Nd(NdKey::Con(ind as nat, c as nat), ts + pre)),
+                Cpt::Nd(NdKey::Ty(i, false), ts) => i == ind && le(v, Cpt::Nd(NdKey::Con(ind, c), ts + pre)),
                 _ => false,
             },
     }

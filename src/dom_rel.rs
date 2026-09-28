@@ -190,7 +190,7 @@ pub open spec fn con_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: 
         let np = sig.ienv.ctor_np[c] as nat;
         let nf = nfields(cs, lead);
         let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
-        &&& c as nat == u->Nd_0->Con_1
+        &&& c == u->Nd_0->Con_1
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
         &&& lead <= cs.len()
         &&& (cs.len() - lead) % 2 == 0
@@ -279,7 +279,7 @@ pub open spec fn con_body(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u
         let c = crate::beta_model::spine_head(x)->Const_0;
         let np = sig.ienv.ctor_np[c] as nat;
         let nf = nfields(cs, lead);
-        &&& c as nat == u->Nd_0->Con_1
+        &&& c == u->Nd_0->Con_1
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
         &&& lead <= cs.len()
         &&& (cs.len() - lead) % 2 == 0

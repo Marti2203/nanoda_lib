@@ -64,8 +64,8 @@ pub proof fn tf_mono_pre(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y: Cpt
             }
         },
         ExprSpec::Sort(l) => {
-            nd_le(NdKey::Ty(c as nat, is_zero(l)), p1, p2);
-            le_trans(y, Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p1), Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p2));
+            nd_le(NdKey::Ty(c, is_zero(l)), p1, p2);
+            le_trans(y, Cpt::Nd(NdKey::Ty(c, is_zero(l)), p1), Cpt::Nd(NdKey::Ty(c, is_zero(l)), p2));
         },
         _ => {},
     }
@@ -154,7 +154,7 @@ pub proof fn tf_down(c: u64, t: ExprSpec, p: Seq<Cpt>, u: Cpt, v: Cpt)
             }
         },
         ExprSpec::Sort(l) => {
-            le_trans(u, v, Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p));
+            le_trans(u, v, Cpt::Nd(NdKey::Ty(c, is_zero(l)), p));
         },
         _ => {},
     }
@@ -227,7 +227,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, tel: ExprSpec, p: Seq<Cpt>
             tm_pi(sig, n, g, m, m2, t, u, a);
         },
         ExprSpec::Sort(l) => {
-            let code = Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p);
+            let code = Cpt::Nd(NdKey::Ty(c, is_zero(l)), p);
             head_le(u, code);
             ty_sort(sig, n, g, t, t);
             tm_sort(sig, n, g, m, m2, t, u);
