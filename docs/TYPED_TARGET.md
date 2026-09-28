@@ -254,6 +254,15 @@ reduction) land together: the recursor's adequacy needs `Iota`
 derivations, which need the real `iota_ok`, whose soundness needs the
 typing.
 
+Status 2026-09-28: iota in head reduction (f668f26) and `recval` with
+its well-formedness and monotonicity (e7a0430) are in. The typing of
+`recval` needs each minor premise's type to end in the motive at its
+constructor's indices and value, so `iota_ok` has to state the canonical
+recursor type (motive and minor premise types derived from the
+constructors' telescopes, rule right-hand sides of the kernel's shape),
+and S6.6 has to show the kernel's inductive module builds exactly that.
+That specification is the next piece of work.
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no
