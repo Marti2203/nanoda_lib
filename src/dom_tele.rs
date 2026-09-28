@@ -16,7 +16,7 @@ use crate::dom_model::*;
 #[cfg(verus_only)]
 use crate::dom_typing::*;
 #[cfg(verus_only)]
-use crate::dom_sound::{fits_env, fits_ext, dfit, body_jc, cod_in_body, sound, sound_ok, typed_basic};
+use crate::dom_sound::{fits_env, fits_ext, dfit, body_jc, cod_in_body, sound, sound_ok, typed_basic, sel_below_gen};
 #[cfg(verus_only)]
 use crate::ti_syntax::{Sig, Ctx, derivable, eq, sort, pi};
 #[cfg(verus_only)]
@@ -696,6 +696,208 @@ pub proof fn tele_mix(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: Le
         }
     }
     (xs2, dcs)
+}
+
+/// ONE LAMBDA STEP: a member of a derivable lambda's denotation applied to
+/// any argument lies below a member of the body's denotation at the join
+/// of the generator's inputs below the argument, which is typed at the
+/// domain member.
+#[verifier::spinoff_prover]
+pub proof fn lam_step(sig: Sig, g: Ctx, ta: ExprSpec, b: ExprSpec, t: ExprSpec, rho: Env, lu: Cpt, w: Cpt)
+    -> (r: (Cpt, Cpt, Cpt, ExprSpec))
+    requires
+        derivable(sig, eq(g, ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), t)),
+        fits_env(sig, g, rho),
+        mem(sig, ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), rho, lu),
+        wf(w),
+    ensures
+        wf(r.0),
+        le(r.0, w),
+        dfit(sig, ta, rho, r.2, r.0),
+        le(app(lu, w), r.1),
+        mem(sig, b, ext(rho, r.0), r.1),
+        fits_env(sig, g.push(ta), ext(rho, r.0)),
+        derivable(sig, eq(g.push(ta), b, b, r.3)),
+{
+    let lm = ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b));
+    let dd = crate::ti_sub::get(sig, eq(g, lm, lm, t));
+    gen(sig, dd);
+    let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, b, l1, l2)
+        && typ(sig, g, ta, l1) && derivable(sig, eq(g.push(ta), b, b, bt)) && typ(sig, g.push(ta), bt, l2)
+        && crate::ti_chain::tchain(sig, g, t, pi(ta, bt));
+    let db = crate::ti_sub::get(sig, eq(g.push(ta), b, b, bt));
+    assert forall|x: Cpt, a: Cpt| #[trigger] dfit(sig, ta, rho, a, x) implies jc(sig, b, ext(rho, x)) by {
+        fits_ext(sig, g, rho, ta, a, x);
+        sound(sig, db, ext(rho, x));
+    }
+    typed_basic();
+    reveal(mem);
+    let wl = choose|wt: Wit| #[trigger] mem_w(sig, lm, rho, lu, wt);
+    mem_wf(sig, lm, rho, lu, wl);
+    if lu is Bot {
+        mem_bot(sig, ta, rho);
+        mem_bot(sig, b, ext(rho, Cpt::Bot));
+        fits_ext(sig, g, rho, ta, Cpt::Bot, Cpt::Bot);
+        le_refl(Cpt::Bot);
+        assert(app(lu, w) == Cpt::Bot);
+        return (Cpt::Bot, Cpt::Bot, Cpt::Bot, bt);
+    }
+    let (a, gen_, ws) = match wl {
+        Wit::Gen(a, gen_, wa, ws) => {
+            assert(mem_w(sig, ta, rho, a, *wa));
+            (a, gen_, ws)
+        },
+        _ => {
+            assert(false);
+            (Cpt::Bot, Cpt::Bot, Seq::empty())
+        },
+    };
+    assert(le(lu, gen_) && gen_ is Lam && typed(a, Cpt::U) && mem(sig, ta, rho, a) && entries_ok(sig, b, rho, a, gen_, ws));
+    let f = gen_->Lam_0;
+    parts_lower(gen_);
+    // the inputs below the argument, joined: typed at the domain member
+    let s = crate::dom_proj::ins_sel(f, w, f.len() as int);
+    let hb = ht(gen_);
+    assert forall|y: Cpt| #[trigger] s.contains(y) implies wf(y) && typed(y, a) && le(y, w) && ht(y) <= hb by {
+        crate::dom_proj::ins_sel_mem(f, w, f.len() as int, y);
+        let i = choose|i: int| 0 <= i < f.len() && #[trigger] f[i].0 == y && le(f[i].0, w);
+        assert(gsteps(gen_)[i] == f[i]);
+        assert(typed(f[i].0, a));
+        typed_wf(y, a);
+    }
+    assert forall|y: Cpt, z: Cpt| #[trigger] s.contains(y) && #[trigger] s.contains(z) implies compat(y, z) by {
+        ub_compat(y, z, w);
+    }
+    assert(pw(s));
+    pw_coh(s, hb);
+    assert(fits(s, hb)) by {
+        assert forall|i: int| 0 <= i < s.len() implies ht(#[trigger] s[i]) <= hb by {
+            assert(s.contains(s[i]));
+        }
+    }
+    let x = jall(s);
+    jall_lub(s, hb, w);
+    typed_wf(a, Cpt::U);
+    let n = hb + ht(a) + cstage(a, Cpt::U) + 2;
+    typed_up(a, Cpt::U, n);
+    assert forall|y: Cpt| #[trigger] s.contains(y) implies has_type(n, y, a) by {
+        typed_up(y, a, n);
+    }
+    ty_jall(n, s, s.len() as int, a);
+    typed_down(x, a, n);
+    typed_wf(x, a);
+    // the selected outputs, in the body at the joined input
+    let ev = ext(rho, x);
+    assert(dfit(sig, ta, rho, a, x));
+    assert(jc(sig, b, ev));
+    let tg = seq![gen_];
+    assert(tg[0] == gen_);
+    let sm = selk(tg, w, ht(gen_), true);
+    assert forall|y: Cpt| #[trigger] sm.contains(y) implies mem(sig, b, ev, y) by {
+        sel_lam_mem(tg, w, ht(gen_), 1, y);
+        let k = choose|k: int| 0 <= k < f.len() && #[trigger] f[k].1 == y && le(f[k].0, w);
+        assert(gsteps(gen_)[k] == f[k]);
+        assert(mem_w(sig, b, ext(rho, f[k].0), y, ws[k]));
+        crate::dom_proj::ins_sel_mem(f, w, f.len() as int, f[k].0);
+        assert(s.contains(f[k].0));
+        jall_ub(s, hb, f[k].0);
+        assert forall|q: nat| #[trigger] le(ext(rho, f[k].0)(q), ev(q)) by {
+            if q > 0 {
+                le_refl(rho((q - 1) as nat));
+            }
+        }
+        mem_env_mono(sig, b, ext(rho, f[k].0), ev, y, ws[k]);
+    }
+    assert forall|y: Cpt| #[trigger] sm.contains(y) implies wf(y) by {
+        let wy = choose|w3: Wit| #[trigger] mem_w(sig, b, ev, y, w3);
+        mem_wf(sig, b, ev, y, wy);
+    }
+    assert forall|y: Cpt, z: Cpt| #[trigger] sm.contains(y) && #[trigger] sm.contains(z) implies compat(y, z) by {
+        jc_elim(sig, b, ev, y, z);
+    }
+    assert forall|i: int| 0 <= i < sm.len() implies #[trigger] mem(sig, b, ev, sm[i]) by {
+        assert(sm.contains(sm[i]));
+    }
+    jall_mem(sig, b, ev, sm, sm.len() as int);
+    head_le(lu, gen_);
+    sel_below_gen(lu, gen_, w, true);
+    fits_ext(sig, g, rho, ta, a, x);
+    (x, jall(sm), a, bt)
+}
+
+/// THROUGH A LAMBDA TELESCOPE: a member applied to any arguments lies below
+/// a member of the body under the environment of typed inputs below them.
+pub proof fn lam_apps(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, t: ExprSpec, rho: Env, lu: Cpt, ws: Seq<Cpt>)
+    -> (r: (Seq<Cpt>, Seq<Cpt>, Cpt))
+    requires
+        ws.len() == tds.len(),
+        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Lam, tds, body), crate::rec_canon::binds(BinderKind::Lam, tds, body), t)),
+        fits_env(sig, g, rho),
+        mem(sig, crate::rec_canon::binds(BinderKind::Lam, tds, body), rho, lu),
+        crate::dom_code::aw(ws),
+    ensures
+        r.0.len() == ws.len(),
+        crate::dom_sem::pre_le(r.0, ws),
+        crate::dom_code::aw(r.0),
+        chain_ok(sig, tds, rho, r.1, r.0),
+        le(crate::dom_rec::apps(lu, ws), r.2),
+        mem(sig, body, exts(rho, r.0), r.2),
+    decreases tds.len(),
+{
+    reveal(mem);
+    let lb = crate::rec_canon::binds(BinderKind::Lam, tds, body);
+    let wl = choose|wt: Wit| #[trigger] mem_w(sig, lb, rho, lu, wt);
+    mem_wf(sig, lb, rho, lu, wl);
+    if tds.len() == 0 {
+        assert(crate::dom_rec::apps(lu, ws) == lu);
+        le_refl(lu);
+        assert(chain_ok(sig, tds, rho, Seq::empty(), Seq::empty()));
+        return (Seq::empty(), Seq::empty(), lu);
+    }
+    let (ta, rest) = (tds[0], tds.drop_first());
+    let tb = crate::rec_canon::binds(BinderKind::Lam, rest, body);
+    assert(lb == ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(tb)));
+    let w0 = ws[0];
+    assert(wf(w0));
+    let (x0, y0, a0, bt) = lam_step(sig, g, ta, tb, t, rho, lu, w0);
+    let wr = ws.drop_first();
+    assert forall|i: int| 0 <= i < wr.len() implies #[trigger] wf(wr[i]) by {
+        assert(wr[i] == ws[i + 1]);
+    }
+    let (xr, dr, y) = lam_apps(sig, g.push(ta), rest, body, bt, ext(rho, x0), y0, wr);
+    let xs = seq![x0] + xr;
+    let dcs = seq![a0] + dr;
+    assert(xs[0] == x0 && xs.drop_first() =~= xr);
+    apps_front(lu, ws);
+    let wy = choose|w3: Wit| #[trigger] mem_w(sig, tb, ext(rho, x0), y0, w3);
+    mem_wf(sig, tb, ext(rho, x0), y0, wy);
+    if lu is Lam {
+        appk_wf(lu, w0, true);
+    }
+    assert forall|i: int| 0 <= i < wr.len() implies le(#[trigger] wr[i], wr[i]) by {
+        le_refl(wr[i]);
+    }
+    crate::dom_rec::apps_mono(app(lu, w0), y0, wr, wr);
+    le_trans(crate::dom_rec::apps(lu, ws), crate::dom_rec::apps(y0, wr), y);
+    assert forall|i: int| 0 <= i < xs.len() implies le(#[trigger] xs[i], ws[i]) && wf(xs[i]) by {
+        if i > 0 {
+            assert(xs[i] == xr[i - 1] && ws[i] == wr[i - 1]);
+        }
+    }
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
+        assert(le(xs[i], ws[i]) && wf(xs[i]));
+    }
+    assert forall|i: int| 0 <= i < tds.len() implies #[trigger] dfit(sig, tds[i], exts(rho, xs.subrange(0, i)), dcs[i], xs[i]) by {
+        if i == 0 {
+            assert(xs.subrange(0, 0) =~= Seq::<Cpt>::empty());
+        } else {
+            assert(dfit(sig, rest[i - 1], exts(ext(rho, x0), xr.subrange(0, i - 1)), dr[i - 1], xr[i - 1]));
+            let pre = xs.subrange(0, i);
+            assert(pre[0] == x0 && pre.drop_first() =~= xr.subrange(0, i - 1));
+            assert(rest[i - 1] == tds[i] && dcs[i] == dr[i - 1] && xs[i] == xr[i - 1]);
+        }
+    }
+    (xs, dcs, y)
 }
 
 } // verus!
