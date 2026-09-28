@@ -473,4 +473,83 @@ pub proof fn psub_closed(e: ExprSpec, s: Sub)
     psub_fix(e, s, 0);
 }
 
+/// Substitution on each element of a spine.
+pub open spec fn spsub(s: Seq<ExprSpec>, t: Sub) -> Seq<ExprSpec> {
+    Seq::new(s.len(), |i: int| psub(s[i], t))
+}
+
+pub proof fn spsub_subrange(s: Seq<ExprSpec>, t: Sub, lo: int, hi: int)
+    requires
+        0 <= lo <= hi <= s.len(),
+    ensures
+        spsub(s, t).subrange(lo, hi) == spsub(s.subrange(lo, hi), t),
+{
+    assert(spsub(s, t).subrange(lo, hi) =~= spsub(s.subrange(lo, hi), t));
+}
+
+pub proof fn psub_spine_app(t: Sub, h: ExprSpec, args: Seq<ExprSpec>)
+    ensures
+        psub(crate::beta_model::spine_app(h, args), t) == crate::beta_model::spine_app(psub(h, t), spsub(args, t)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let m = args.len() - 1;
+        assert(spsub(args, t).subrange(0, m) =~= spsub(args.subrange(0, m), t));
+        psub_spine_app(t, h, args.subrange(0, m));
+    }
+}
+
+pub proof fn psub_spine_const(t: Sub, e: ExprSpec)
+    requires
+        crate::beta_model::spine_head(e) is Const,
+    ensures
+        crate::beta_model::spine_head(psub(e, t)) == crate::beta_model::spine_head(e),
+        crate::beta_model::spine_args(psub(e, t)) == spsub(crate::beta_model::spine_args(e), t),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        psub_spine_const(t, *f);
+        assert(spsub(crate::beta_model::spine_args(e), t) =~= spsub(crate::beta_model::spine_args(*f), t).push(psub(*x, t)));
+    }
+}
+
+/// A recursor redex stays one under substitution, and its rule instance
+/// commutes with it.
+pub proof fn psub_rec(t: Sub, env: crate::expr_arena_bridge::EnvSpec, sp: ExprSpec)
+    requires
+        crate::beta_model::rec_ready(env, sp),
+    ensures
+        crate::beta_model::rec_ready(env, psub(sp, t)),
+        psub(crate::beta_model::rec_result(env, sp), t) == crate::beta_model::rec_result(env, psub(sp, t)),
+{
+    use crate::beta_model::{spine_app, spine_head, spine_args, find_rule, find_rule_spec, rec_prefix};
+    psub_spine_const(t, sp);
+    let args = spine_args(sp);
+    if let ExprSpec::Const(rid, lv) = spine_head(sp) {
+        if let Some(rd) = env.rec_data(rid) {
+            let major = args[rd.major_idx as int];
+            psub_spine_const(t, major);
+            if let ExprSpec::Const(cid, clv) = spine_head(major) {
+                find_rule_spec(rd.rules, cid);
+                if let Some(ri) = find_rule(rd.rules, cid) {
+                    let rule = rd.rules[ri];
+                    let cargs = spine_args(major);
+                    let body = crate::expr_model::subst_expr_levels(rule.rhs, rd.uparams, lv);
+                    crate::tc::subst_levels_nlbv(rule.rhs, rd.uparams, lv);
+                    psub_closed(body, t);
+                    spsub_subrange(args, t, 0, rec_prefix(rd) as int);
+                    spsub_subrange(cargs, t, (cargs.len() - rule.nfields) as int, cargs.len() as int);
+                    spsub_subrange(args, t, (rd.major_idx + 1) as int, args.len() as int);
+                    let a1 = spine_app(body, args.subrange(0, rec_prefix(rd) as int));
+                    let a2 = spine_app(a1, cargs.subrange((cargs.len() - rule.nfields) as int, cargs.len() as int));
+                    psub_spine_app(t, body, args.subrange(0, rec_prefix(rd) as int));
+                    psub_spine_app(t, a1, cargs.subrange((cargs.len() - rule.nfields) as int, cargs.len() as int));
+                    psub_spine_app(t, a2, args.subrange((rd.major_idx + 1) as int, args.len() as int));
+                    assert(spsub(args, t)[rd.major_idx as int] == psub(major, t));
+                }
+            }
+        }
+    }
+}
+
 } // verus!

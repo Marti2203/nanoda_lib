@@ -39,8 +39,9 @@ pub proof fn pick_ok(sig: Sig, j: Jd)
 
 /// Declared constants mention no local.
 pub open spec fn sig_fv_free(sig: Sig) -> bool {
-    forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> !has_fv(sig.consts[c].ty)
+    &&& forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> !has_fv(sig.consts[c].ty)
         && (sig.consts[c].val is Some ==> !has_fv(sig.consts[c].val->Some_0))
+    &&& crate::swap_model::env_fv_free(sig.ienv)
 }
 
 pub open spec fn sig_swap(sig: Sig, x: nat, y: nat) -> Sig {
@@ -319,6 +320,12 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             }
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
+        Rule::Iota => {
+            crate::swap_model::fswap_rec(sig.ienv, j->Eq_1, x, y);
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
         Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;
             let ls = j->Eq_1->Const_1;
@@ -470,6 +477,11 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
         step_close_ctx(sig, k, a, r, j, ps);
     } else if r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta {
         step_close_bind(sig, k, a, r, j, ps);
+    } else if r is Iota {
+        let qs = pclose(sig, k, a, ps);
+        crate::fclose::fclose_rec(k, j->Eq_0.len(), sig.ienv, j->Eq_1);
+        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
     } else {
         step_close_cst(sig, k, a, r, j, ps);
     }

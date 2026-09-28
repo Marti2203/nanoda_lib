@@ -209,6 +209,10 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstAx(_) | Rule::Local(_) => adeq_leaf(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstDef(_) | Rule::Delta(_) => adeq_def(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Iota => {
+            valid_prems(sig, d);
+            crate::ti_valid::iota_dead(sig, concl(d)->Eq_1);
+        },
         _ => {},
     }
 }

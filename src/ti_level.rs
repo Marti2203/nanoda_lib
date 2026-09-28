@@ -71,6 +71,7 @@ pub open spec fn sig_lp_ok(sig: Sig, ks: Seq<u64>, vs: Seq<LevelSpec>) -> bool {
     &&& forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> crate::level_inst::elp_in(sig.consts[c].ty, sig.consts[c].lps)
         && (sig.consts[c].val is Some ==> crate::level_inst::elp_in(sig.consts[c].val->Some_0, sig.consts[c].lps))
     &&& forall|k: nat| #[trigger] sig.locals.contains_key(k) ==> subst_expr_levels(sig.locals[k], ks, vs) == sig.locals[k]
+    &&& crate::level_inst::env_lp_ok(sig.ienv)
 }
 
 pub proof fn ls_lift(n: nat, c: nat, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
@@ -398,6 +399,23 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
     }
 }
 
+#[verifier::spinoff_prover]
+proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        step_ok(sig, r, j, ps),
+        pls_ok(sig, ps, ks, vs),
+        r is Iota,
+    ensures
+        step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
+{
+    let qs = pls(sig, ps, ks, vs);
+    assert(qs.len() == ps.len());
+    crate::level_inst::li_rec(sig.ienv, j->Eq_1, ks, vs);
+    assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+    assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+}
+
 /// DERIVATIONS SURVIVE LEVEL INSTANTIATION.
 pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
@@ -418,6 +436,8 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
         step_ls_ctx(sig, r, j, ps, ks, vs);
     } else if r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta {
         step_ls_bind(sig, r, j, ps, ks, vs);
+    } else if r is Iota {
+        step_ls_iota(sig, r, j, ps, ks, vs);
     } else {
         step_ls_cst(sig, r, j, ps, ks, vs);
     }

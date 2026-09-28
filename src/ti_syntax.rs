@@ -53,6 +53,13 @@ pub open spec fn is_zero(l: LevelSpec) -> bool {
 /// A context: its entries, the last one innermost (`Var 0`).
 pub type Ctx = Seq<ExprSpec>;
 
+/// What the model needs of the signature's recursors to interpret them.
+/// For now that there are none: interpreting recursors is stage S6.4 of
+/// docs/TYPED_TARGET.md.
+pub open spec fn iota_ok(sig: Sig) -> bool {
+    sig.ienv.recs == Map::<u64, crate::expr_arena_bridge::RecDataSpec>::empty()
+}
+
 /// A declared constant: its universe parameters, its type, and its value
 /// when it is a definition.
 pub ghost struct ConstDecl {
@@ -68,6 +75,8 @@ pub ghost struct Sig {
     pub locals: Map<nat, ExprSpec>,
     /// A constant's rank: a definition's value mentions only lower ranks.
     pub rank: Map<u64, nat>,
+    /// The recursor and constructor tables the iota rule reads.
+    pub ienv: crate::expr_arena_bridge::EnvSpec,
 }
 
 /// The highest rank of a constant `e` mentions, plus one (0 for none).
@@ -167,6 +176,9 @@ pub enum Rule {
     /// A `let` unfolds to its body at the value, which the kernel types
     /// instead of the body under a binder.
     Zeta(LevelSpec),
+    /// A recursor applied to a constructor application unfolds to its
+    /// rule's instance, where both sides are typed.
+    Iota,
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -346,6 +358,12 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                     && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l)), eq(g, n, n, t)]),
                 _ => false,
             },
+            _ => false,
+        },
+        Rule::Iota => match j {
+            Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::beta_model::rec_ready(sig.ienv, m)
+                && n == crate::beta_model::rec_result(sig.ienv, m)
+                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t)]),
             _ => false,
         },
         Rule::Irr(l) => match j {

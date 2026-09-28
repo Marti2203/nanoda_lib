@@ -61,6 +61,7 @@ pub proof fn jsig_with(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
 pub proof fn jsig_sub_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, d2: Map<nat, ExprSpec>)
     requires
         crate::ti_sr::sig_wf(jsig(dty, denv, Map::empty())),
+        crate::ti_syntax::iota_ok(jsig(dty, denv, Map::empty())),
         crate::weaken::sub(d, d2),
     ensures
         crate::ti_valid::sig_ext(jsig(dty, denv, d), jsig(dty, denv, d2)),

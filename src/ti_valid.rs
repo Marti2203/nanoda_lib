@@ -87,6 +87,9 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Zeta(_) => {
             d_ty(sig, ps[2]);
         },
+        Rule::Iota => {
+            d_ty(sig, ps[0]);
+        },
         Rule::Beta(l1, l2) => {
             let a = concl(ps[0])->Eq_1;
             let b = concl(ps[1])->Eq_3;
@@ -107,6 +110,44 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> sig2.consts.contains_key(c) && sig2.consts[c] == sig.consts[c]
     &&& forall|k: nat| #[trigger] sig.locals.contains_key(k) ==> sig2.locals.contains_key(k) && sig2.locals[k] == sig.locals[k]
     &&& forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls)
+    &&& sig.ienv.sub(sig2.ienv)
+    &&& iota_ok(sig2)
+}
+
+/// Without recursors nothing is a recursor redex.
+pub proof fn iota_dead(sig: Sig, m: ExprSpec)
+    requires
+        iota_ok(sig),
+    ensures
+        !crate::beta_model::rec_ready(sig.ienv, m),
+{
+    if let ExprSpec::Const(rid, _) = crate::beta_model::spine_head(m) {
+        assert(!sig.ienv.recs.contains_key(rid));
+    }
+}
+
+/// A recursor redex of a smaller environment is one of a larger, with the
+/// same rule instance.
+pub proof fn rec_sub(env: crate::expr_arena_bridge::EnvSpec, env2: crate::expr_arena_bridge::EnvSpec, m: ExprSpec)
+    requires
+        env.sub(env2),
+        crate::beta_model::rec_ready(env, m),
+    ensures
+        crate::beta_model::rec_ready(env2, m),
+        crate::beta_model::rec_result(env2, m) == crate::beta_model::rec_result(env, m),
+{
+    use crate::beta_model::{spine_head, spine_args, find_rule, find_rule_spec};
+    if let ExprSpec::Const(rid, lv) = spine_head(m) {
+        assert(env.recs.contains_key(rid));
+        let rd = env.recs[rid];
+        let major = spine_args(m)[rd.major_idx as int];
+        if let ExprSpec::Const(cid, clv) = spine_head(major) {
+            find_rule_spec(rd.rules, cid);
+            if let Some(ri) = find_rule(rd.rules, cid) {
+                assert(env.ctor_np.contains_key(rd.rules[ri].ctor_id));
+            }
+        }
+    }
 }
 
 /// One rule instance stays correct in an extended signature.
@@ -136,6 +177,9 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
         Rule::Local(_) => {
             let k = j->Eq_1->Free_0;
             assert(sig.locals.contains_key(k));
+        },
+        Rule::Iota => {
+            rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
         },
         _ => {},
     }

@@ -275,6 +275,18 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     (c, crate::ti_level::ll_(l, lps, ls))
 }
 
+/// No recursor is interpreted yet: every cutoff is recursor-free.
+proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
+    requires
+        crate::inductive::export_ok(ef),
+        forall|c2: int| 0 <= c2 <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c2), m_denv(ef, c2)),
+        0 <= c <= ef.declars_keys().len(),
+    ensures
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
+{
+    assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
+}
+
 /// THE SIGNATURE IS WELL FORMED at every cutoff.
 #[verifier::spinoff_prover]
 proof fn wf_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
@@ -286,6 +298,7 @@ proof fn wf_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let s = crate::metatheory::jsig(dty, denv, Map::empty());
     ranked_at(ef, cc);
+    iota_at(ef, cc);
     assert forall|cid: u64, ls: Seq<crate::level_model::LevelSpec>| #[trigger] crate::ti_syntax::is_def(s, cid, ls) implies
         crate::ti_syntax::def_ok(s, cid, ls)
         && crate::expr_model::nlbv(crate::ti_syntax::dty_at(s, cid, ls)) == 0
@@ -313,6 +326,7 @@ proof fn levok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let s = crate::metatheory::jsig(dty, denv, Map::empty());
     ranked_at(ef, cc);
+    iota_at(ef, cc);
     assert forall|cid: u64, ls: Seq<crate::level_model::LevelSpec>, ls2: Seq<crate::level_model::LevelSpec>|
         s.consts.contains_key(cid) && ls.len() == s.consts[cid].lps.len() && crate::conv_cr::levs_eq(ls, ls2)
         implies #[trigger] crate::jkernel::lev_inst_ok(s, cid, ls, ls2) by {
@@ -364,6 +378,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
     assert(below_ok(ef, cc));
     ranked_at(ef, cc);
+    iota_at(ef, cc);
     wf_at(ef, cc);
     levok_at(ef, cc);
     // the declarations' types: closed, own levels, and types

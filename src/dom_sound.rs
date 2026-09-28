@@ -1973,6 +1973,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
+        Rule::Iota => crate::ti_valid::iota_dead(sig, m),
         _ => {},
     }
 }

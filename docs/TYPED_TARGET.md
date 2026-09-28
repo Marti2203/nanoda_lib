@@ -196,7 +196,7 @@ eliminators of Prop inductives; S6.7 is where it returns.
 |---|---|
 | S6.1 | compacts: one data node `Nd(key, comps)` for type codes and constructor values, compared pointwise; order, join, compatibility, coherence, well-formedness (done) |
 | S6.2 | semantic typing for them; the stage and join properties (Props 2.16-2.18) (done) |
-| S6.3 | syntax: inductive declarations in the signature, the `Iota` rule; syntactic metatheory (renaming, substitution, validity, generation, uniqueness, SR) |
+| S6.3 | syntax: the signature carries the kernel's recursor tables (`Sig.ienv`); rule `Iota` relates a ready recursor application (`rec_ready`) to its rule instance (`rec_result`) where both sides are typed; renaming, substitution, local swap/close, level instantiation, validity, generation and signature extension cover it (done). `Iota` also asks `iota_ok(sig)`, the signature condition the model will need: for now "no recursors", so the rule is dead in the model until S6.4 states the real condition |
 | S6.4 | interpretation of inductive constants, constructors, recursor applications; ideal properties; soundness incl. `Iota` |
 | S6.5 | logical relation clauses; their properties; adequacy incl. `Iota`; injectivity re-proven |
 | S6.6 | kernel side: `jsig` from the environment's inductive tables, SR for the kernel's recursor iota, `frag_env` relaxed; literals through `Nat` |
