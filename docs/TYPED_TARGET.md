@@ -395,6 +395,39 @@ wired into `code_ok` only when the last one closes, because a nonempty
    and its type is derivable (for the body join-closure `cod_in_body`
    needs).
 
+### Recursor stage status (2026-09-28)
+
+Done: the typing theorem (`dom_rec_ty::rec_step`), and both directions
+of Iota soundness for the redex without extra arguments
+(`dom_iota::iota_core_l2r`, `iota_core_r2l`). They are stated under
+`rec_wired`, which is recursor membership as it will be once `code_ok`
+interprets recursors, and under the fragment facts (`rec_scope`,
+`r2l_ok`). Right in left needed two more facts:
+
+- **Exact arity.** The Iota rule and typed head reduction fire only at a
+  major of its constructor's exact arity (`ti_hred::rec_fire`). An over-
+  or under-applied major denotes bottom, while the rule's right side
+  need not. The kernel does not check arity; the kernel port derives it
+  from the major's typing.
+- **Levels.** The major's constructor levels are independent of the
+  recursor's in the rule. This first stage takes universe-monomorphic
+  inductives only, where they cannot matter.
+
+Next, in order:
+1. **Subject reduction for iota**, needed as soon as `iota_ok` admits
+   recursors. The reduct `rhs[params, motive, minors, fields]` must be
+   typed at the redex's type. With parameters this needs `I P ≡ I P'`
+   to give `P ≡ P'`, which is injectivity the current relation does not
+   give (the parametric route would). So the first real `iota_ok` takes
+   inductives without parameters: `Nat`, `Bool`, enumerations, trees
+   with closed labels.
+2. **One landing:** interpret recursors in `code_ok` (then `rec_wired`
+   is `mem_sem`), Iota soundness in `sound` (the cores with extra
+   arguments), and the recursor's adequacy (telescope induction, then
+   induction on the major through iota head expansion). They depend on
+   each other: a nonempty recursor denotation owes adequacy, and
+   adequacy needs Iota derivations.
+
 ### Open: parameters of any type (analysis 2026-09-28)
 
 What failed: the constructor clause related a field at its table code
