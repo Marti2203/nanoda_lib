@@ -504,4 +504,198 @@ pub proof fn lamchain_apps(xs: Seq<Cpt>, out: Cpt)
     le_trans(out, crate::dom_rec::apps(l2, x2), crate::dom_rec::apps(app(lc, x0), x2));
 }
 
+/// A CHAIN'S LAMBDA is a member of a lambda telescope whose body holds its
+/// output.
+pub proof fn lamchain_mem(sig: Sig, tds: Seq<ExprSpec>, body: ExprSpec, rho: Env, ds: Seq<Cpt>, xs: Seq<Cpt>, out: Cpt)
+    requires
+        chain_ok(sig, tds, rho, ds, xs),
+        mem(sig, body, exts(rho, xs), out),
+        wf(out),
+    ensures
+        mem(sig, crate::rec_canon::binds(BinderKind::Lam, tds, body), rho, lamchain(xs, out)),
+        wf(lamchain(xs, out)),
+        (lamchain(xs, out) is Bot) == (out is Bot),
+    decreases tds.len(),
+{
+    reveal(mem);
+    if tds.len() == 0 {
+        assert(xs =~= Seq::<Cpt>::empty());
+        return;
+    }
+    let t = crate::rec_canon::binds(BinderKind::Lam, tds, body);
+    if out is Bot {
+        mem_bot(sig, t, rho);
+        return;
+    }
+    chain_ok_rest(sig, tds, rho, ds, xs);
+    let (t2, d2, x2) = (tds.drop_first(), ds.drop_first(), xs.drop_first());
+    let rho2 = ext(rho, xs[0]);
+    lamchain_mem(sig, t2, body, rho2, d2, x2, out);
+    let inner = lamchain(x2, out);
+    let (d0, x0) = (ds[0], xs[0]);
+    let lc = Cpt::Lam(seq![(x0, inner)]);
+    assert(lamchain(xs, out) == lc);
+    typed_wf(x0, d0);
+    compat_refl(inner);
+    let f0 = seq![(x0, inner)];
+    assert(f0[0] == (x0, inner));
+    assert(fun_ok(f0));
+    assert(!(f0[0].1 is Bot));
+    assert(wf(lc));
+    let wa = choose|w: Wit| #[trigger] mem_w(sig, tds[0], rho, d0, w);
+    let wi = choose|w: Wit| #[trigger] mem_w(sig, crate::rec_canon::binds(BinderKind::Lam, t2, body), rho2, inner, w);
+    le_refl(lc);
+    let ws = seq![wi];
+    assert(gsteps(lc)[0] == (x0, inner) && ws[0] == wi);
+    assert(entries_ok(sig, crate::rec_canon::binds(BinderKind::Lam, t2, body), rho, d0, lc, ws));
+    assert(t == ExprSpec::Bind(BinderKind::Lam, Box::new(tds[0]), Box::new(crate::rec_canon::binds(BinderKind::Lam, t2, body))));
+    assert(mem_w(sig, t, rho, lc, Wit::Gen(d0, lc, Box::new(wa), ws)));
+}
+
+/// ONE STEP AT A FITTING ARGUMENT: no projection needed.
+pub proof fn tele_step_fit(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, w: Cpt, ax: Cpt)
+    -> (l2: LevelSpec)
+    requires
+        derivable(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l))),
+        fits_env(sig, g, rho),
+        mem(sig, pi(ta, tb), rho, d),
+        typed(d, Cpt::U),
+        typed(u, d),
+        dfit(sig, ta, rho, ax, w),
+    ensures
+        typed(app(u, w), cod(d, w)),
+        typed(cod(d, w), Cpt::U),
+        mem(sig, tb, ext(rho, w), cod(d, w)),
+        fits_env(sig, g.push(ta), ext(rho, w)),
+        typ(sig, g.push(ta), tb, l2),
+{
+    let dd = crate::ti_sub::get(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
+    gen(sig, dd);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(ta, tb, l1, l2)
+        && typ(sig, g, ta, l1) && typ(sig, g.push(ta), tb, l2) && crate::ti_chain::tchain(sig, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
+    typed_wf(u, d);
+    typed_wf(d, Cpt::U);
+    typed_wf(w, ax);
+    typed_basic();
+    fits_ext(sig, g, rho, ta, ax, w);
+    reveal(mem);
+    if d is Bot {
+        typed_up(u, d, cstage(u, d));
+        ty_of_bot(cstage(u, d), u);
+        assert(cod(d, w) == Cpt::Bot);
+        assert(app(u, w) == Cpt::Bot);
+        mem_bot(sig, tb, ext(rho, w));
+        return l2;
+    }
+    let wit = choose|wit: Wit| #[trigger] mem_w(sig, pi(ta, tb), rho, d, wit);
+    assert(pi(ta, tb) == ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(tb)));
+    let gen_ = match wit {
+        Wit::Gen(_, gen_, _, _) => gen_,
+        _ => {
+            assert(false);
+            Cpt::Bot
+        },
+    };
+    head_le(d, gen_);
+    pi_body_jc(sig, g, ta, tb, l2, rho);
+    cod_in_body(sig, ta, tb, rho, d, w, ax);
+    let n = cstage(u, d) + cstage(d, Cpt::U) + 2;
+    typed_up(u, d, n);
+    typed_up(d, Cpt::U, n);
+    crate::dom_proj::app_typed_at(n, u, d, w);
+    typed_down(app(u, w), cod(d, w), (n - 1) as nat);
+    typed_down(cod(d, w), Cpt::U, (n - 1) as nat);
+    l2
+}
+
+/// THROUGH A TELESCOPE, MIXED: arguments marked `fit` are typed at the
+/// given domain members whatever the earlier values, and pass unchanged;
+/// the others are projected.
+pub proof fn tele_mix(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt,
+    ws: Seq<Cpt>, fit: Seq<bool>, axs: Seq<Cpt>) -> (r: (Seq<Cpt>, Seq<Cpt>))
+    requires
+        ws.len() == ds.len(),
+        fit.len() == ds.len(),
+        axs.len() == ds.len(),
+        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, body), crate::rec_canon::binds(BinderKind::Pi, ds, body), sort(l))),
+        fits_env(sig, g, rho),
+        mem(sig, crate::rec_canon::binds(BinderKind::Pi, ds, body), rho, d),
+        typed(d, Cpt::U),
+        typed(u, d),
+        crate::dom_code::aw(ws),
+        forall|i: int, vals: Seq<Cpt>| 0 <= i < ds.len() && fit[i] && vals.len() == i
+            ==> #[trigger] dfit(sig, ds[i], exts(rho, vals), axs[i], ws[i]),
+    ensures
+        r.0.len() == ws.len(),
+        crate::dom_sem::pre_le(r.0, ws),
+        crate::dom_code::aw(r.0),
+        crate::dom_rec::apps(u, ws) == crate::dom_rec::apps(u, r.0),
+        chain_ok(sig, ds, rho, r.1, r.0),
+        forall|i: int| 0 <= i < ds.len() && fit[i] ==> #[trigger] r.0[i] == ws[i],
+    decreases ds.len(),
+{
+    if ds.len() == 0 {
+        assert(chain_ok(sig, ds, rho, Seq::empty(), Seq::empty()));
+        return (Seq::empty(), Seq::empty());
+    }
+    let (ta, rest) = (ds[0], ds.drop_first());
+    let tb = crate::rec_canon::binds(BinderKind::Pi, rest, body);
+    assert(crate::rec_canon::binds(BinderKind::Pi, ds, body) == pi(ta, tb));
+    let w0 = ws[0];
+    assert(wf(w0));
+    let (x0, d2, l2, a0) = if fit[0] {
+        assert(dfit(sig, ds[0], exts(rho, Seq::<Cpt>::empty()), axs[0], ws[0]));
+        let l2 = tele_step_fit(sig, g, ta, tb, l, rho, d, u, w0, axs[0]);
+        le_refl(w0);
+        (w0, cod(d, w0), l2, axs[0])
+    } else {
+        let (w2, dd, l2, a0) = tele_step(sig, g, ta, tb, l, rho, d, u, w0);
+        (w2, dd, l2, a0)
+    };
+    let u2 = app(u, w0);
+    let wr = ws.drop_first();
+    assert forall|i: int| 0 <= i < wr.len() implies #[trigger] wf(wr[i]) by {
+        assert(wr[i] == ws[i + 1]);
+    }
+    let (fr, ar) = (fit.drop_first(), axs.drop_first());
+    let rho2 = ext(rho, x0);
+    assert forall|i: int, vals: Seq<Cpt>| 0 <= i < rest.len() && fr[i] && vals.len() == i
+        implies #[trigger] dfit(sig, rest[i], exts(rho2, vals), ar[i], wr[i]) by {
+        let v2 = seq![x0] + vals;
+        assert(v2[0] == x0 && v2.drop_first() =~= vals);
+        assert(dfit(sig, ds[i + 1], exts(rho, v2), axs[i + 1], ws[i + 1]));
+    }
+    let (xr, dr) = tele_mix(sig, g.push(ta), rest, body, l2, rho2, d2, u2, wr, fr, ar);
+    let xs2 = seq![x0] + xr;
+    let dcs = seq![a0] + dr;
+    assert(xs2[0] == x0 && xs2.drop_first() =~= xr);
+    apps_front(u, ws);
+    apps_front(u, xs2);
+    assert forall|i: int| 0 <= i < xs2.len() implies le(#[trigger] xs2[i], ws[i]) && wf(xs2[i]) by {
+        if i > 0 {
+            assert(xs2[i] == xr[i - 1] && ws[i] == wr[i - 1]);
+        }
+    }
+    assert forall|i: int| 0 <= i < xs2.len() implies #[trigger] wf(xs2[i]) by {
+        assert(le(xs2[i], ws[i]) && wf(xs2[i]));
+    }
+    assert forall|i: int| 0 <= i < ds.len() implies #[trigger] dfit(sig, ds[i], exts(rho, xs2.subrange(0, i)), dcs[i], xs2[i]) by {
+        if i == 0 {
+            assert(xs2.subrange(0, 0) =~= Seq::<Cpt>::empty());
+        } else {
+            assert(dfit(sig, rest[i - 1], exts(rho2, xr.subrange(0, i - 1)), dr[i - 1], xr[i - 1]));
+            let pre = xs2.subrange(0, i);
+            assert(pre[0] == x0 && pre.drop_first() =~= xr.subrange(0, i - 1));
+            assert(rest[i - 1] == ds[i] && dcs[i] == dr[i - 1] && xs2[i] == xr[i - 1]);
+        }
+    }
+    assert forall|i: int| 0 <= i < ds.len() && fit[i] implies #[trigger] xs2[i] == ws[i] by {
+        if i > 0 {
+            assert(fr[i - 1] == fit[i]);
+            assert(xr[i - 1] == wr[i - 1]);
+        }
+    }
+    (xs2, dcs)
+}
+
 } // verus!

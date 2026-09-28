@@ -21,6 +21,7 @@ pub mod dom_code;
 pub mod dom_compact;
 pub mod dom_con_rel;
 pub mod dom_fund;
+pub mod dom_iota;
 pub mod dom_model;
 pub mod dom_proj;
 pub mod dom_rec;

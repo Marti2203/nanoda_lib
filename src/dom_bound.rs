@@ -399,4 +399,45 @@ pub proof fn spine_mem(sig: Sig, h: ExprSpec, args: Seq<ExprSpec>, rho: Env, u: 
     (hw, ws)
 }
 
+/// A MEMBER OF A SPINE: anything below a head member applied to witnesses
+/// of the arguments.
+pub proof fn spine_mem_intro(sig: Sig, h: ExprSpec, args: Seq<ExprSpec>, rho: Env, hw: Cpt, ws: Seq<Cpt>, u: Cpt)
+    requires
+        mem(sig, h, rho, hw),
+        args_w(sig, args, rho, ws),
+        wf(u),
+        le(u, crate::dom_rec::apps(hw, ws)),
+    ensures
+        mem(sig, spine_app(h, args), rho, u),
+    decreases args.len(),
+{
+    reveal(mem);
+    let wh = choose|w: Wit| #[trigger] mem_w(sig, h, rho, hw, w);
+    mem_wf(sig, h, rho, hw, wh);
+    if args.len() == 0 {
+        assert(crate::dom_rec::apps(hw, ws) == hw);
+        mem_down_e(sig, h, rho, hw, u);
+        return;
+    }
+    let k = args.len();
+    let init = args.subrange(0, k - 1);
+    let wi = ws.drop_last();
+    assert forall|i: int| 0 <= i < init.len() implies #[trigger] mem(sig, init[i], rho, wi[i]) && wf(wi[i]) by {
+        assert(mem(sig, args[i], rho, ws[i]));
+    }
+    assert forall|i: int| 0 <= i < wi.len() implies #[trigger] wf(wi[i]) by {
+        assert(mem(sig, init[i], rho, wi[i]));
+    }
+    crate::dom_rec::apps_wf(hw, wi);
+    let v = crate::dom_rec::apps(hw, wi);
+    le_refl(v);
+    spine_mem_intro(sig, h, init, rho, hw, wi, v);
+    spine_push(h, args);
+    assert(mem(sig, args[k - 1], rho, ws[k - 1]));
+    let wv = choose|w: Wit| #[trigger] mem_w(sig, spine_app(h, init), rho, v, w);
+    let wx = choose|w: Wit| #[trigger] mem_w(sig, args.last(), rho, ws.last(), w);
+    assert(crate::dom_rec::apps(hw, ws) == app(v, ws.last()));
+    assert(mem_w(sig, spine_app(h, args), rho, u, Wit::Ap(v, ws.last(), Box::new(wv), Box::new(wx))));
+}
+
 } // verus!

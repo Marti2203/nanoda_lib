@@ -542,4 +542,39 @@ pub proof fn rec_step(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0
     (a, sa)
 }
 
+/// The recursive results, one by one: the code function at each recursive
+/// field, in the rule's order.
+pub proof fn rec_ihs_at(sig: Sig, rid: u64, ins: Seq<Cpt>, k: nat)
+    requires
+        crate::dom_rec::rec_ok(sig, rid, ins),
+        k <= ins.last()->Nd_1.len(),
+        rshape(sig, rid).fields[ins.last()->Nd_0->Con_1 as int].len() == ins.last()->Nd_1.len(),
+    ensures ({
+        let sh = rshape(sig, rid);
+        let p = ins.last()->Nd_0->Con_1 as int;
+        let rp = crate::rec_canon::rec_pos(sh.fields[p], sh.ind, sh.us(), sh.np, sh.ni, k);
+        let hs = crate::dom_rec::rec_ihs(sig, rid, ins, k);
+        &&& hs.len() == rp.len()
+        &&& forall|r: int| 0 <= r < rp.len() ==> #[trigger] rp[r] < k
+            && hs[r] == crate::dom_rec::recval(sig, rid, crate::dom_rec::ih_in(sig.ienv.recs[rid], ins, ins.last()->Nd_1[rp[r] as int]))
+    }),
+    decreases k,
+{
+    if k > 0 {
+        rec_ihs_at(sig, rid, ins, (k - 1) as nat);
+        let sh = rshape(sig, rid);
+        let p = ins.last()->Nd_0->Con_1 as int;
+        let rp0 = crate::rec_canon::rec_pos(sh.fields[p], sh.ind, sh.us(), sh.np, sh.ni, (k - 1) as nat);
+        let rp = crate::rec_canon::rec_pos(sh.fields[p], sh.ind, sh.us(), sh.np, sh.ni, k);
+        let hs0 = crate::dom_rec::rec_ihs(sig, rid, ins, (k - 1) as nat);
+        let hs = crate::dom_rec::rec_ihs(sig, rid, ins, k);
+        assert forall|r: int| 0 <= r < rp.len() implies #[trigger] rp[r] < k
+            && hs[r] == crate::dom_rec::recval(sig, rid, crate::dom_rec::ih_in(sig.ienv.recs[rid], ins, ins.last()->Nd_1[rp[r] as int])) by {
+            if r < rp0.len() {
+                assert(rp[r] == rp0[r] && hs[r] == hs0[r]);
+            }
+        }
+    }
+}
+
 } // verus!

@@ -511,4 +511,92 @@ proof fn cargs_decreases(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: Ex
     }
 }
 
+/// A table entry: the recursive marker at a direct occurrence, else the
+/// field type's code.
+pub open spec fn centry_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>, j: nat, i: nat) -> Cpt {
+    let sh = canon_shape(sig, ind);
+    let e = sh.fields[j as int][i as int];
+    if direct_occ(e, ind, sh.us(), sh.np, sh.ni, i) {
+        Cpt::Nd(NdKey::Tag(1), Seq::empty())
+    } else {
+        Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+    }
+}
+
+/// The entries, one by one.
+pub proof fn centries_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat, k: nat)
+    requires
+        rk(sig, ind) >= 0,
+        j < canon_shape(sig, ind).nmin(),
+        k <= canon_shape(sig, ind).fields[j as int].len(),
+        args.len() >= canon_shape(sig, ind).np,
+    ensures
+        centries(sig, ind, ls, args, j, k).len() == k,
+        forall|i: int| 0 <= i < k ==> #[trigger] centries(sig, ind, ls, args, j, k)[i] == centry_at(sig, ind, ls, j, i as nat),
+    decreases k,
+{
+    if k > 0 {
+        centries_at(sig, ind, ls, args, j, (k - 1) as nat);
+        let prev = centries(sig, ind, ls, args, j, (k - 1) as nat);
+        let cur = centries(sig, ind, ls, args, j, k);
+        assert(cur == prev.push(centry_at(sig, ind, ls, j, (k - 1) as nat)));
+        assert forall|i: int| 0 <= i < k implies #[trigger] cur[i] == centry_at(sig, ind, ls, j, i as nat) by {
+            if i < k - 1 {
+                assert(cur[i] == prev[i]);
+            }
+        }
+    }
+}
+
+/// The blocks, one by one.
+pub proof fn cblocks_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat)
+    requires
+        rk(sig, ind) >= 0,
+        j <= canon_shape(sig, ind).nmin(),
+    ensures
+        cblocks(sig, ind, ls, args, j).len() == j,
+        forall|p: int| 0 <= p < j ==> #[trigger] cblocks(sig, ind, ls, args, j)[p]
+            == Cpt::Nd(NdKey::Tag(3), centries(sig, ind, ls, args, p as nat, canon_shape(sig, ind).fields[p].len())),
+    decreases j,
+{
+    if j > 0 {
+        cblocks_at(sig, ind, ls, args, (j - 1) as nat);
+        let prev = cblocks(sig, ind, ls, args, (j - 1) as nat);
+        let cur = cblocks(sig, ind, ls, args, j);
+        assert forall|p: int| 0 <= p < j implies #[trigger] cur[p]
+            == Cpt::Nd(NdKey::Tag(3), centries(sig, ind, ls, args, p as nat, canon_shape(sig, ind).fields[p].len())) by {
+            if p < j - 1 {
+                assert(cur[p] == prev[p]);
+            }
+        }
+    }
+}
+
+/// THE CANONICAL TABLE MARKS A DIRECT OCCURRENCE as recursive.
+pub proof fn canon_rmark(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, p: nat, k: nat)
+    requires
+        tabled(sig, ind, ls, args),
+        p < canon_shape(sig, ind).nmin(),
+        k < canon_shape(sig, ind).fields[p as int].len(),
+        direct_occ(canon_shape(sig, ind).fields[p as int][k as int], ind, canon_shape(sig, ind).us(),
+            canon_shape(sig, ind).np, canon_shape(sig, ind).ni, k),
+    ensures ({
+        let t = crate::dom_typing::tbl(canon_code(sig, ind, ls, args)->Nd_1);
+        &&& (p as int) < t.len()
+        &&& t[p as int] is Nd
+        &&& t[p as int]->Nd_1.len() == canon_shape(sig, ind).fields[p as int].len()
+        &&& t[p as int]->Nd_1[k as int] == crate::dom_typing::rmark()
+    }),
+{
+    let sh = canon_shape(sig, ind);
+    let blocks = cblocks(sig, ind, ls, args, sh.nmin());
+    let ts = code_args(sig, ind, args) + seq![Cpt::Nd(NdKey::Tag(2), blocks)];
+    assert(canon_code(sig, ind, ls, args)->Nd_1 == ts);
+    assert(ts.last() == Cpt::Nd(NdKey::Tag(2), blocks));
+    assert(crate::dom_typing::tbl(ts) == blocks);
+    cblocks_at(sig, ind, ls, args, sh.nmin());
+    centries_at(sig, ind, ls, args, p, sh.fields[p as int].len());
+    assert(centries(sig, ind, ls, args, p, sh.fields[p as int].len())[k as int] == centry_at(sig, ind, ls, p, k));
+}
+
 } // verus!
