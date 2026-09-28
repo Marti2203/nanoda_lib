@@ -347,6 +347,54 @@ immediate, and constructor adequacy needs no bound on the type
 element's domains: a field above bottom is a value, so its domain is an
 inductive's code, where the relation already is the clause.
 
+### S6.4c/d plan after the redesign (2026-09-28)
+
+Scope for the first recursor stage, beyond the closed-field fragment:
+**no indices** (`ni == 0`: `Nat`, `Bool`, enumerations, trees), and a
+Prop inductive eliminates only into Prop. Codes dropped indices, so for
+an indexed family the minor premise's output type (the motive at the
+constructor's index terms) cannot be compared with the motive at the
+major's own indices. A Prop inductive's values are bottom, so its large
+eliminator could not choose a minor.
+
+The chain, bottom-up (each step a verified checkpoint; the recursor is
+wired into `code_ok` only when the last one closes, because a nonempty
+`⟦rec⟧` immediately owes the constant case of adequacy):
+
+1. `rf_fun`: approximations of `recval` down the recursor's telescope,
+   with level invariance, compatibility and joins (as `tf_fun`).
+2. Membership bounds: a member of `⟦I P⟧` lies below
+   `canon_code(I, ls, ⟦P⟧)`, and a member of `⟦c P fs⟧` below
+   `Con(I, p)` over the fields' values.
+3. The typing theorem: along the entry chain of a typed approximation,
+   `recval` at typed inputs is typed at `T = app(motive, major)`. The
+   minor's codomain chain `E` is typed by `app_typed_at`, which needs no
+   domain match. By `cod_in_body` and bound 2, `E` lies in
+   `⟦motive (c P fields)⟧` and below `T`, so `ty_weak` moves the typing
+   up. A step approximation (a single entry chain ending at `recval`)
+   is then typed at the type element that follows the chain's domains
+   and ends at `T`, and `T` is in the motive's denotation.
+4. Iota soundness, left in right: the member lies below a join of
+   `recval` at typed entry chains. Each unfolds to the minor applied to
+   fields and to step approximations at the recursive fields, which are
+   members of `⟦rec ... field⟧` by 3. The right side's join closure then
+   gives the member.
+5. Iota soundness, right in left: typed witnesses come from the
+   function's typing and projection (`proj`: typed, same application).
+   The major's witness is typed at the canonical code, whose membership
+   in `⟦I P⟧` is bound 2's other half.
+6. Adequacy at the recursor: telescope induction as for constructors,
+   then induction on the major's height. The major's clause gives a
+   constructor application, head reduction takes iota and beta, and the
+   minor's application clause takes the fields (projected onto the
+   minor's inputs, so typed; a field above bottom is a value, so its
+   domain is an inductive's code) and the recursive results (by
+   induction). The output's type moves from `E` to the type element's
+   codomain through `T`.
+7. `iota_ok` becomes: every recursor is canonical within this scope,
+   and its type is derivable (for the body join-closure `cod_in_body`
+   needs).
+
 ### Open: parameters of any type (analysis 2026-09-28)
 
 What failed: the constructor clause related a field at its table code

@@ -16,7 +16,9 @@ use crate::ti_syntax::Sig;
 #[cfg(verus_only)]
 use crate::rec_canon::{shape_of, rec_ind, direct_occ};
 #[cfg(verus_only)]
-use crate::dom_sem::{pre_le, nd_le_inv};
+use crate::dom_sem::{pre_le, nd_le_inv, pre_ok, pre_ok_refl, pre_ok_symm, pre_ok_push, pjoin, pjoin_ub};
+#[cfg(verus_only)]
+use crate::dom_model::rf_fun;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -347,6 +349,131 @@ pub proof fn rec_ihs_mono(sig: Sig, rid: u64, ins1: Seq<Cpt>, ins2: Seq<Cpt>, k:
                 }
             }
         }
+    }
+}
+
+/// A recursor's code function sees its type only through its Pis.
+pub proof fn rf_lveq(sig: Sig, rid: u64, t1: ExprSpec, t2: ExprSpec, pre: Seq<Cpt>, v: Cpt)
+    requires
+        crate::conv_cr::lveq(t1, t2),
+    ensures
+        rf_fun(sig, rid, t1, pre, v) == rf_fun(sig, rid, t2, pre, v),
+    decreases t1,
+{
+    match (t1, t2) {
+        (ExprSpec::Bind(k1, _, b1), ExprSpec::Bind(k2, _, b2)) => {
+            if let Cpt::Lam(f) = v {
+                assert forall|i: int| 0 <= i < f.len() implies
+                    rf_fun(sig, rid, *b1, pre.push(f[i].0), #[trigger] f[i].1) == rf_fun(sig, rid, *b2, pre.push(f[i].0), f[i].1) by {
+                    rf_lveq(sig, rid, *b1, *b2, pre.push(f[i].0), f[i].1);
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+/// APPROXIMATIONS AT COMPATIBLE INPUTS ARE COMPATIBLE.
+pub proof fn rf_compat(sig: Sig, rid: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y1: Cpt, y2: Cpt)
+    requires
+        rf_fun(sig, rid, t, p1, y1),
+        rf_fun(sig, rid, t, p2, y2),
+        wf(y1),
+        wf(y2),
+        pre_ok(p1, p2),
+    ensures
+        compat(y1, y2),
+    decreases t,
+{
+    if y1 is Bot || y2 is Bot {
+        return;
+    }
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => {
+            let f1 = y1->Lam_0;
+            let f2 = y2->Lam_0;
+            let l = f1 + f2;
+            pre_ok_symm(p1, p2);
+            assert forall|i: int, j: int| 0 <= i < l.len() && 0 <= j < l.len() && compat(l[i].0, l[j].0)
+                implies compat(#[trigger] l[i].1, #[trigger] l[j].1) by {
+                let pi = if i < f1.len() { p1 } else { p2 };
+                let pj = if j < f1.len() { p1 } else { p2 };
+                if i < f1.len() {
+                    assert(l[i] == f1[i]);
+                    assert(rf_fun(sig, rid, *b, p1.push(f1[i].0), f1[i].1));
+                } else {
+                    assert(l[i] == f2[i - f1.len()]);
+                    assert(rf_fun(sig, rid, *b, p2.push(f2[i - f1.len()].0), f2[i - f1.len()].1));
+                }
+                if j < f1.len() {
+                    assert(l[j] == f1[j]);
+                    assert(rf_fun(sig, rid, *b, p1.push(f1[j].0), f1[j].1));
+                } else {
+                    assert(l[j] == f2[j - f1.len()]);
+                    assert(rf_fun(sig, rid, *b, p2.push(f2[j - f1.len()].0), f2[j - f1.len()].1));
+                }
+                if i < f1.len() && j < f1.len() {
+                    assert forall|k: int| 0 <= k < p1.len() implies wf(#[trigger] p1[k]) by {}
+                    pre_ok_refl(p1);
+                } else if i >= f1.len() && j >= f1.len() {
+                    assert forall|k: int| 0 <= k < p2.len() implies wf(#[trigger] p2[k]) by {}
+                    pre_ok_refl(p2);
+                }
+                assert(pre_ok(pi, pj));
+                assert(wf(l[i].0) && wf(l[j].0) && wf(l[i].1) && wf(l[j].1));
+                pre_ok_push(pi, pj, l[i].0, l[j].0);
+                rf_compat(sig, rid, *b, pi.push(l[i].0), pj.push(l[j].0), l[i].1, l[j].1);
+            }
+        },
+        _ => {
+            let pj = pjoin(p1, p2);
+            pjoin_ub(p1, p2);
+            assert forall|i: int| 0 <= i < p1.len() implies #[trigger] wf(p1[i]) by {}
+            assert forall|i: int| 0 <= i < p2.len() implies #[trigger] wf(p2[i]) by {}
+            assert forall|i: int| 0 <= i < pj.len() implies #[trigger] wf(pj[i]) by {}
+            recval_mono(sig, rid, p1, pj);
+            recval_mono(sig, rid, p2, pj);
+            recval_wf(sig, rid, pj);
+            let top = recval(sig, rid, pj);
+            le_trans(y1, recval(sig, rid, p1), top);
+            le_trans(y2, recval(sig, rid, p2), top);
+            ub_compat(y1, y2, top);
+        },
+    }
+}
+
+/// APPROXIMATIONS AT THE SAME INPUTS JOIN.
+pub proof fn rf_join(sig: Sig, rid: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
+    requires
+        rf_fun(sig, rid, t, p, y1),
+        rf_fun(sig, rid, t, p, y2),
+        wf(y1),
+        wf(y2),
+        compat(y1, y2),
+    ensures
+        rf_fun(sig, rid, t, p, join(y1, y2)),
+    decreases t,
+{
+    if y1 is Bot || y2 is Bot {
+        return;
+    }
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => {
+            let f1 = y1->Lam_0;
+            let f2 = y2->Lam_0;
+            let l = f1 + f2;
+            assert(join(y1, y2) == Cpt::Lam(l));
+            assert forall|i: int| 0 <= i < l.len() implies rf_fun(sig, rid, *b, p.push(l[i].0), #[trigger] l[i].1) by {
+                if i < f1.len() {
+                    assert(l[i] == f1[i]);
+                } else {
+                    assert(l[i] == f2[i - f1.len()]);
+                }
+            }
+        },
+        _ => {
+            join_lub(y1, y2, recval(sig, rid, p));
+        },
     }
 }
 

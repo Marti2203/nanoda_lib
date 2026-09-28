@@ -128,6 +128,22 @@ pub open spec fn cf_fun(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k
     }
 }
 
+/// `v` approximates recursor `rid`'s code function down its type
+/// telescope `t`, the inputs so far being `pre`: a lambda whose entries'
+/// outputs approximate it at one more input, and past the telescope's
+/// last Pi the code function's value at the inputs.
+pub open spec fn rf_fun(sig: Sig, rid: u64, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) -> bool
+    decreases t,
+{
+    v is Bot || match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => match v {
+            Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==> rf_fun(sig, rid, *b, pre.push(f[i].0), #[trigger] f[i].1),
+            _ => false,
+        },
+        _ => le(v, crate::dom_rec::recval(sig, rid, pre)),
+    }
+}
+
 /// `c` is a constructor of `ind`'s canonical recursor.
 pub open spec fn ctor_of(sig: Sig, ind: u64, c: u64) -> bool {
     crate::dom_code::has_canon(sig, ind)
@@ -140,7 +156,8 @@ pub open spec fn ctor_pos(sig: Sig, ind: u64, c: u64) -> int {
 }
 
 /// The code function a semantic constant approximates: a constructor's, a
-/// recursor's (only bottom, for now), or a type former's.
+/// recursor's (only bottom, until its typing is in: docs/TYPED_TARGET.md,
+/// "S6.4c/d plan"), or a type former's.
 pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -> bool {
     let t = crate::ti_syntax::dty_at(sig, c, ls);
     if sig.ienv.ctor_ind.contains_key(c) {
