@@ -477,4 +477,141 @@ pub proof fn rf_join(sig: Sig, rid: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: 
     }
 }
 
+/// Larger inputs: still an approximation.
+pub proof fn rf_mono_pre(sig: Sig, rid: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y: Cpt)
+    requires
+        rf_fun(sig, rid, t, p1, y),
+        pre_le(p1, p2),
+        all_wf(p1),
+        all_wf(p2),
+        wf(y),
+    ensures
+        rf_fun(sig, rid, t, p2, y),
+    decreases t,
+{
+    if y is Bot {
+        return;
+    }
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => {
+            let f = y->Lam_0;
+            assert forall|i: int| 0 <= i < f.len() implies rf_fun(sig, rid, *b, p2.push(f[i].0), #[trigger] f[i].1) by {
+                let x = f[i].0;
+                assert(wf(x) && wf(f[i].1));
+                {
+                    le_refl(x);
+                    crate::dom_sem::pre_le_push(p1, p2, x, x);
+                    assert forall|j: int| 0 <= j < p1.len() + 1 implies #[trigger] wf(p1.push(x)[j]) by {
+                        if j < p1.len() { assert(p1.push(x)[j] == p1[j]); }
+                    }
+                    assert forall|j: int| 0 <= j < p2.len() + 1 implies #[trigger] wf(p2.push(x)[j]) by {
+                        if j < p2.len() { assert(p2.push(x)[j] == p2[j]); }
+                    }
+                    rf_mono_pre(sig, rid, *b, p1.push(x), p2.push(x), f[i].1);
+                }
+            }
+        },
+        _ => {
+            recval_mono(sig, rid, p1, p2);
+            le_trans(y, recval(sig, rid, p1), recval(sig, rid, p2));
+        },
+    }
+}
+
+pub proof fn rf_jall(sig: Sig, rid: u64, t: ExprSpec, p: Seq<Cpt>, s: Seq<Cpt>, k: int)
+    requires
+        pw(s),
+        0 <= k <= s.len(),
+        forall|y: Cpt| #[trigger] s.contains(y) ==> rf_fun(sig, rid, t, p, y),
+    ensures
+        rf_fun(sig, rid, t, p, joinall(s, k)),
+    decreases k,
+{
+    if k > 0 {
+        rf_jall(sig, rid, t, p, s, k - 1);
+        jall_pw(s, k - 1);
+        let x = s[k - 1];
+        assert(s.contains(x));
+        rf_join(sig, rid, t, p, joinall(s, k - 1), x);
+    }
+}
+
+/// Applying an approximation gives one, at the argument as the next input.
+pub proof fn rf_app(sig: Sig, rid: u64, a: ExprSpec, b: ExprSpec, p: Seq<Cpt>, u: Cpt, w: Cpt)
+    requires
+        rf_fun(sig, rid, ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(b)), p, u),
+        u is Lam,
+        wf(u),
+        wf(w),
+        all_wf(p),
+    ensures
+        rf_fun(sig, rid, b, p.push(w), app(u, w)),
+{
+    let t = seq![u];
+    assert(t[0] == u);
+    let f = u->Lam_0;
+    let sm = selk(t, w, ht(u), true);
+    appk_wf(u, w, true);
+    assert forall|j: int| 0 <= j < p.len() + 1 implies #[trigger] wf(p.push(w)[j]) by {
+        if j < p.len() { assert(p.push(w)[j] == p[j]); }
+    }
+    assert forall|y: Cpt| #[trigger] sm.contains(y) implies rf_fun(sig, rid, b, p.push(w), y) by {
+        sel_lam_mem(t, w, ht(u), 1, y);
+        let q = choose|q: int| 0 <= q < f.len() && #[trigger] f[q].1 == y && le(f[q].0, w);
+        let x = f[q].0;
+        assert(rf_fun(sig, rid, b, p.push(x), y));
+        assert(wf(x) && wf(y));
+        assert forall|j: int| 0 <= j < p.len() implies le(#[trigger] p[j], p[j]) by {
+            le_refl(p[j]);
+        }
+        crate::dom_sem::pre_le_push(p, p, x, w);
+        assert forall|j: int| 0 <= j < p.len() + 1 implies #[trigger] wf(p.push(x)[j]) by {
+            if j < p.len() { assert(p.push(x)[j] == p[j]); }
+        }
+        rf_mono_pre(sig, rid, b, p.push(x), p.push(w), y);
+    }
+    rf_jall(sig, rid, b, p.push(w), sm, sm.len() as int);
+}
+
+/// Approximations are closed downward.
+pub proof fn rf_down(sig: Sig, rid: u64, t: ExprSpec, p: Seq<Cpt>, u: Cpt, v: Cpt)
+    requires
+        rf_fun(sig, rid, t, p, v),
+        le(u, v),
+        wf(u),
+        wf(v),
+        all_wf(p),
+    ensures
+        rf_fun(sig, rid, t, p, u),
+    decreases t,
+{
+    if u is Bot {
+        return;
+    }
+    head_le(u, v);
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            let f = u->Lam_0;
+            assert forall|i: int| 0 <= i < f.len() implies rf_fun(sig, rid, *b, p.push(f[i].0), #[trigger] f[i].1) by {
+                let e = f[i];
+                assert(f.contains(e));
+                assert(steps(u, true) == f);
+                entry_appk(u, e, true);
+                parts_lower(u);
+                appk_mono_fun(u, v, e.0, true);
+                le_trans(e.1, app(u, e.0), app(v, e.0));
+                rf_app(sig, rid, *a, *b, p, v, e.0);
+                appk_wf(v, e.0, true);
+                assert forall|j: int| 0 <= j < p.len() + 1 implies #[trigger] wf(p.push(e.0)[j]) by {
+                    if j < p.len() { assert(p.push(e.0)[j] == p[j]); }
+                }
+                rf_down(sig, rid, *b, p.push(e.0), e.1, app(v, e.0));
+            }
+        },
+        _ => {
+            le_trans(u, v, recval(sig, rid, p));
+        },
+    }
+}
+
 } // verus!

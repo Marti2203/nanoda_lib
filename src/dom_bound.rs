@@ -271,4 +271,132 @@ pub proof fn cf_spine(sig: Sig, c: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>,
     ws
 }
 
+/// Below a head whose members are bottom, a spine's members are bottom.
+pub proof fn spine_bot(sig: Sig, h: ExprSpec, args: Seq<ExprSpec>, rho: Env, u: Cpt)
+    requires
+        forall|x: Cpt| #[trigger] mem(sig, h, rho, x) ==> x is Bot,
+        mem(sig, spine_app(h, args), rho, u),
+    ensures
+        u is Bot,
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        spine_push(h, args);
+        let init = args.subrange(0, args.len() - 1);
+        let (wf_, wx) = mem_app(sig, spine_app(h, init), args.last(), rho, u);
+        spine_bot(sig, h, init, rho, wf_);
+        assert(app(wf_, wx) == Cpt::Bot);
+        if !(u is Bot) {
+            head_le(u, Cpt::Bot);
+        }
+    }
+}
+
+/// The members of an axiom that is not a semantic constant are bottom.
+pub proof fn nonsem_bot(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env)
+    requires
+        sig.consts.contains_key(c),
+        sig.consts[c].val is None,
+        !sem_const(sig, c, ls),
+    ensures
+        forall|x: Cpt| #[trigger] mem(sig, ExprSpec::Const(c, ls), rho, x) ==> x is Bot,
+{
+    reveal(mem);
+    assert forall|x: Cpt| #[trigger] mem(sig, ExprSpec::Const(c, ls), rho, x) implies x is Bot by {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Const(c, ls), rho, x, w);
+        assert(!crate::ti_syntax::is_def(sig, c, ls));
+    }
+}
+
+/// THE MOTIVE AT A CONSTRUCTOR APPLICATION: a member lies below the
+/// motive's value applied to the constructor's value over the witnesses
+/// of the arguments past the parameters.
+pub proof fn motive_bound(sig: Sig, k: nat, c: u64, us: Seq<LevelSpec>, args: Seq<ExprSpec>, rho: Env, e: Cpt) -> (ws: Seq<Cpt>)
+    requires
+        mem(sig, ExprSpec::App(Box::new(ExprSpec::Var(k)), Box::new(spine_app(ExprSpec::Const(c, us), args))), rho, e),
+        forall|i: nat| #[trigger] wf(rho(i)),
+        sig.consts.contains_key(c),
+        sig.consts[c].val is None,
+        sig.ienv.ctor_ind.contains_key(c),
+        ctor_of(sig, sig.ienv.ctor_ind[c], c),
+        args.len() == tarity(dty_at(sig, c, us)),
+    ensures
+        args_w(sig, args, rho, ws),
+        le(e, app(rho(k), Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat),
+            flds(ws, crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[c]).np)))),
+{
+    let ind = sig.ienv.ctor_ind[c];
+    let pc = ctor_pos(sig, ind, c) as nat;
+    let np = crate::dom_code::canon_shape(sig, ind).np;
+    let sp = spine_app(ExprSpec::Const(c, us), args);
+    let (wf_, wx) = mem_app(sig, ExprSpec::Var(k), sp, rho, e);
+    reveal(mem);
+    let wv = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Var(k), rho, wf_, w);
+    assert(le(wf_, rho(k)));
+    let ws = if sem_const(sig, c, us) {
+        cf_spine(sig, c, us, args, rho, wx)
+    } else {
+        Seq::new(args.len(), |i: int| Cpt::Bot)
+    };
+    if !sem_const(sig, c, us) {
+        nonsem_bot(sig, c, us, rho);
+        spine_bot(sig, ExprSpec::Const(c, us), args, rho, wx);
+        assert forall|i: int| 0 <= i < args.len() implies #[trigger] mem(sig, args[i], rho, ws[i]) && wf(ws[i]) by {
+            mem_bot(sig, args[i], rho);
+        }
+    } else {
+        tbody_end(dty_at(sig, c, us));
+    }
+    let fl = flds(ws, np);
+    assert forall|i: int| 0 <= i < fl.len() implies #[trigger] wf(fl[i]) by {
+        assert(fl[i] == ws[np + i]);
+        assert(mem(sig, args[np + i], rho, ws[np + i]));
+    }
+    let node = Cpt::Nd(NdKey::Con(ind, pc), fl);
+    crate::dom_code::wf_nd(NdKey::Con(ind, pc), fl);
+    assert(le(wx, node));
+    crate::dom_sound::app_mono(wf_, rho(k), wx, node);
+    le_trans(e, app(wf_, wx), app(rho(k), node));
+    ws
+}
+
+/// A MEMBER OF A SPINE lies below the application of a member of the head
+/// to witnesses of the arguments.
+pub proof fn spine_mem(sig: Sig, h: ExprSpec, args: Seq<ExprSpec>, rho: Env, u: Cpt) -> (r: (Cpt, Seq<Cpt>))
+    requires
+        mem(sig, spine_app(h, args), rho, u),
+    ensures
+        mem(sig, h, rho, r.0),
+        wf(r.0),
+        args_w(sig, args, rho, r.1),
+        wf(u),
+        le(u, crate::dom_rec::apps(r.0, r.1)),
+    decreases args.len(),
+{
+    if args.len() == 0 {
+        reveal(mem);
+        let w = choose|w: Wit| #[trigger] mem_w(sig, h, rho, u, w);
+        mem_wf(sig, h, rho, u, w);
+        le_refl(u);
+        return (u, Seq::empty());
+    }
+    let k = args.len();
+    let init = args.subrange(0, k - 1);
+    spine_push(h, args);
+    let (wf_, wx) = mem_app(sig, spine_app(h, init), args.last(), rho, u);
+    let (hw, ws0) = spine_mem(sig, h, init, rho, wf_);
+    let ws = ws0.push(wx);
+    args_w_push(sig, init, rho, ws0, args.last(), wx);
+    assert(init.push(args.last()) =~= args);
+    assert(ws.drop_last() =~= ws0 && ws.last() == wx);
+    assert forall|i: int| 0 <= i < ws0.len() implies #[trigger] wf(ws0[i]) by {
+        assert(mem(sig, init[i], rho, ws0[i]));
+    }
+    crate::dom_rec::apps_wf(hw, ws0);
+    le_refl(wx);
+    crate::dom_sound::app_mono(wf_, crate::dom_rec::apps(hw, ws0), wx, wx);
+    le_trans(u, app(wf_, wx), app(crate::dom_rec::apps(hw, ws0), wx));
+    (hw, ws)
+}
+
 } // verus!
