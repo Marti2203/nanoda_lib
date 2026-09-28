@@ -1242,8 +1242,25 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     psub_closed(t, s2);
     psub_closed(m, s);
     psub_closed(m2, s2);
+    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    let t2 = concl(ps[1])->Eq_2;
+    psub_closed(t2, s2);
+    symm_ty(sig, n, dl, t, t2, a);
+    trans_ty(sig, n, dl, t, t2, t, a);
     match m {
         ExprSpec::Const(c, ls) => {
+            if crate::dom_model::sem_const(sig, c, ls) && !(u is Bot) {
+                // a type former's approximation, related down its telescope
+                crate::dom_sem::mem_sem(sig, c, ls, rho, u);
+                let (av, v) = choose|av: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, c, ls, u, av, v);
+                typed_wf(v, av);
+                crate::dom_sem_rel::tf_down(c, t, Seq::empty(), u, v);
+                related_left(sig, j->Eq_0, rho, dl, s, s2);
+                reveal(spair);
+                crate::ti_sub::d_sub(sig, d, dl, s, s2);
+                crate::dom_sem_rel::tf_rel(sig, n, dl, c, t, Seq::empty(), m, m2, t, u, a);
+                return;
+            }
             crate::dom_model::mem_const(sig, c, ls, rho, u);
         },
         _ => {
@@ -1251,11 +1268,6 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
             let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
         },
     }
-    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
-    let t2 = concl(ps[1])->Eq_2;
-    psub_closed(t2, s2);
-    symm_ty(sig, n, dl, t, t2, a);
-    trans_ty(sig, n, dl, t, t2, t, a);
     bot_tm(sig, n, dl, m, m2, t, a);
 }
 

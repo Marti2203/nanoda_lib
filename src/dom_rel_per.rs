@@ -85,7 +85,12 @@ pub proof fn symm_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
             ty_sort(sig, n, g, t2, t);
         },
         Cpt::Pi(_, _) => symm_ty_pi(sig, n, g, t, t2, a),
-        Cpt::Lam(_) | Cpt::Nd(..) => ty_other(sig, n, g, t, t2, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => ty_other(sig, n, g, t, t2, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            ty_ind(sig, n, g, t, t2, a);
+            ty_ind(sig, n, g, t2, t, a);
+            crate::ti_chain::tchain_sym(sig, g, t, t2);
+        },
     }
 }
 
@@ -144,7 +149,13 @@ pub proof fn trans_ty(sig: Sig, n: nat, g: Ctx, t1: ExprSpec, t2: ExprSpec, t3: 
             ty_sort(sig, n, g, t1, t3);
         },
         Cpt::Pi(_, _) => trans_ty_pi(sig, n, g, t1, t2, t3, a),
-        Cpt::Lam(_) | Cpt::Nd(..) => ty_other(sig, n, g, t1, t2, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => ty_other(sig, n, g, t1, t2, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            ty_ind(sig, n, g, t1, t2, a);
+            ty_ind(sig, n, g, t2, t3, a);
+            ty_ind(sig, n, g, t1, t3, a);
+            crate::ti_chain::tchain_trans(sig, g, t1, t2, t3);
+        },
     }
 }
 
@@ -205,7 +216,11 @@ pub proof fn symm_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
             symm_ty(sig, n, g, m, m2, u);
         },
         Cpt::Pi(_, _) => symm_tm_pi(sig, n, g, m, m2, t, u, a),
-        Cpt::Lam(_) | Cpt::Nd(..) => tm_other(sig, n, g, m, m2, t, u, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m, m2, t, u, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            tm_ind(sig, n, g, m, m2, t, u, a);
+            tm_ind(sig, n, g, m2, m, t, u, a);
+        },
     }
 }
 
@@ -255,7 +270,12 @@ pub proof fn trans_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: 
             trans_ty(sig, n, g, m1, m2, m3, u);
         },
         Cpt::Pi(_, _) => trans_tm_pi(sig, n, g, m1, m2, m3, t, u, a),
-        Cpt::Lam(_) | Cpt::Nd(..) => tm_other(sig, n, g, m1, m2, t, u, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m1, m2, t, u, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            tm_ind(sig, n, g, m1, m2, t, u, a);
+            tm_ind(sig, n, g, m2, m3, t, u, a);
+            tm_ind(sig, n, g, m1, m3, t, u, a);
+        },
     }
 }
 
@@ -322,7 +342,14 @@ pub proof fn conv_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
             tm_sort(sig, n, g, m, m2, s, u);
         },
         Cpt::Pi(_, _) => conv_tm_pi(sig, n, g, m, m2, t, s, u, a),
-        Cpt::Lam(_) | Cpt::Nd(..) => tm_other(sig, n, g, m, m2, t, u, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m, m2, t, u, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            ty_ind(sig, n, g, t, s, a);
+            tm_ind(sig, n, g, m, m2, t, u, a);
+            tm_ind(sig, n, g, m, m2, s, u, a);
+            crate::ti_chain::tchain_sym(sig, g, t, s);
+            crate::ti_chain::tchain_trans(sig, g, s, t, s);
+        },
     }
 }
 
@@ -379,7 +406,11 @@ pub proof fn bot_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
             tm_sort(sig, n, g, m, m2, t, Cpt::Bot);
         },
         Cpt::Pi(_, _) => bot_tm_pi(sig, n, g, m, m2, t, a),
-        Cpt::Lam(_) | Cpt::Nd(..) => ty_other(sig, n, g, t, t, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => ty_other(sig, n, g, t, t, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            ty_ind(sig, n, g, t, t, a);
+            tm_ind(sig, n, g, m, m2, t, Cpt::Bot, a);
+        },
     }
 }
 

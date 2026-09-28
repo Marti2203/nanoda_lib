@@ -178,6 +178,44 @@ constructor `c`. Typing (`dom_typing::has_type`):
 Stability, typed joins and raising the type (Props 2.16-2.18) extend
 with these clauses.
 
+### S6.4 design: semantic constants
+
+An inductive's type former, constructors and recursor have no values to
+unfold, so the model gives each a *code function* on compacts and
+interprets the constant as what lies below a compact `v` that is typed
+at a member `A` of the constant's type (`A` and `v` chosen by the
+membership witness) and that approximates the code function: a lambda
+whose entries' outputs approximate it at the inputs so far, down the
+constant's type telescope. Typing is part of membership, so "typed
+within its type" holds by definition; join-closure needs only the
+type's, which the `ConstAx` premise supplies.
+
+- Type former: an axiom whose type is a Pi telescope ending in a sort
+  (no table: any such axiom is an atomic type former). At full arity the
+  output is below `Nd(Ty(I, prop), inputs)`, `prop` when the sort is
+  zero.
+- Constructor `c` of `I` (the kernel's constructor table): at full arity
+  the value node, whose field type codes are the domains of `A` along the
+  way and whose leading components are the arguments of `A`'s final
+  type code (parameters and indices).
+- Recursor: by recursion on the major's code. Bottom goes to bottom; a
+  value of constructor `c_j` goes to the `j`-th minor applied to the
+  fields and, for each recursive field, the recursor at that field's
+  value (a lower code, so the recursion terminates).
+
+`Iota` is then sound when every rule's right-hand side has the shape the
+kernel generates, `λ params motives minors fields. minor_j fields
+(rec ... field)...`: a syntactic condition on the tables, the real
+`iota_ok`, which S6.6 gets from the (verified) inductive module that
+builds the rules. Sub-steps, each ending green:
+
+| | content |
+|---|---|
+| S6.4a | semantic type formers in `mem_w` (`sem_const`, `tf_fun`); soundness of their `ConstAx` (`dom_sem`); the relation at type codes (types: convertible; terms: bottom only, until constructors) and adequacy down the telescope (`dom_sem_rel`) (done) |
+| S6.4b | semantic constructors; typing of their values |
+| S6.4c | the semantic recursor; its typing by induction on the major |
+| S6.4d | the real `iota_ok`; soundness of `Iota` |
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no

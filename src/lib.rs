@@ -25,6 +25,8 @@ pub mod dom_rel_hexp;
 pub mod dom_rel_mono;
 pub mod dom_rel_per;
 pub mod dom_rel_stab;
+pub mod dom_sem;
+pub mod dom_sem_rel;
 pub mod dom_sound;
 pub mod dom_typing;
 pub mod hyps_refuted;

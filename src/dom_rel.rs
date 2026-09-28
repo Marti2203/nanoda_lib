@@ -87,6 +87,7 @@ pub open spec fn rel_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: 
                 && rel_ty(sig, (n - 1) as nat, g, ta, ta2, *b)
                 && cod_ty(sig, (n - 1) as nat, g, a, ta, tb, tb2)
         },
+        Cpt::Nd(NdKey::Ty(_, _), _) => tchain(sig, g, t, t2),
         _ => false,
     }
 }
@@ -115,6 +116,7 @@ pub open spec fn rel_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         Cpt::U => to_sort(sig, g, t, false) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Prop => to_sort(sig, g, t, true) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a),
+        Cpt::Nd(NdKey::Ty(_, _), _) => u is Bot && rel_ty(sig, n, g, t, t, a),
         _ => false,
     }
 }
@@ -174,9 +176,35 @@ pub proof fn ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     reveal_with_fuel(app_tm, 2);
 }
 
+/// At an inductive's code, related types convert.
+pub proof fn ty_ind(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
+    requires
+        a is Nd && a->Nd_0 is Ty,
+    ensures
+        rel_ty(sig, n, g, t, t2, a) == tchain(sig, g, t, t2),
+{
+    reveal_with_fuel(rel_ty, 2);
+    reveal_with_fuel(rel_tm, 2);
+    reveal_with_fuel(cod_ty, 2);
+    reveal_with_fuel(app_tm, 2);
+}
+
+/// At an inductive's code, only bottom relates terms, of a related type.
+pub proof fn tm_ind(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        a is Nd && a->Nd_0 is Ty,
+    ensures
+        rel_tm(sig, n, g, m, m2, t, u, a) == (u is Bot && tchain(sig, g, t, t)),
+{
+    reveal_with_fuel(rel_ty, 2);
+    reveal_with_fuel(rel_tm, 2);
+    reveal_with_fuel(cod_ty, 2);
+    reveal_with_fuel(app_tm, 2);
+}
+
 pub proof fn ty_other(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     requires
-        a is Lam || a is Nd,
+        a is Lam || (a is Nd && a->Nd_0 is Con),
     ensures
         !rel_ty(sig, n, g, t, t2, a),
 {
@@ -222,7 +250,7 @@ pub proof fn tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
 
 pub proof fn tm_other(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
     requires
-        a is Lam || a is Nd,
+        a is Lam || (a is Nd && a->Nd_0 is Con),
     ensures
         !rel_tm(sig, n, g, m, m2, t, u, a),
 {

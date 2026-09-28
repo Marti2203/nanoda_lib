@@ -1,0 +1,267 @@
+//! SEMANTIC CONSTANTS IN THE LOGICAL RELATION (stage S6.4a/S6.5a of
+//! docs/TYPED_TARGET.md): an approximation of a type former's code
+//! function relates any two convertible applications of the constant, by
+//! induction down its type telescope -- at a Pi through the application
+//! clause, at the sort because an inductive's code relates convertible
+//! types.
+#[allow(unused_imports)]
+use crate::expr_model::{BinderKind, ExprSpec};
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+#[allow(unused_imports)]
+use crate::dom_compact::*;
+#[cfg(verus_only)]
+use crate::dom_typing::*;
+#[cfg(verus_only)]
+use crate::dom_model::tf_fun;
+#[cfg(verus_only)]
+use crate::dom_rel::*;
+#[cfg(verus_only)]
+use crate::dom_rel_per::{bot_tm, per_diag};
+#[cfg(verus_only)]
+use crate::dom_sem::tf_join;
+#[cfg(verus_only)]
+use crate::ti_syntax::*;
+#[cfg(verus_only)]
+use crate::ti_chain::*;
+#[cfg(verus_only)]
+use crate::ti_sub::{tconvd, get, get_t, mk_t};
+#[cfg(verus_only)]
+use crate::ti_meta::{mk_d, valid_node, node};
+#[cfg(verus_only)]
+use crate::subst_algebra::inst;
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
+verus! {
+
+/// Codes compare pointwise.
+pub proof fn nd_le(k: NdKey, p1: Seq<Cpt>, p2: Seq<Cpt>)
+    requires
+        p1.len() == p2.len(),
+        forall|i: int| 0 <= i < p1.len() ==> le(#[trigger] p1[i], p2[i]),
+    ensures
+        le(Cpt::Nd(k, p1), Cpt::Nd(k, p2)),
+{
+    let n2 = Cpt::Nd(k, p2);
+    let t = seq![n2];
+    assert(t[0] == n2);
+    parts_lower(n2);
+    assert forall|i: int| 0 <= i < p1.len() implies le_set(#[trigger] p1[i], nd_args(t, i, ht(n2), 1), dec(ht(n2))) by {
+        nd_args_one(n2, i, ht(n2));
+        let d = p2[i];
+        assert(seq![d][0] == d);
+        assert(fits(seq![d], ht(d)));
+        assert(fits(seq![d], dec(ht(n2))));
+        le_set_budget(p1[i], seq![d], ht(d), dec(ht(n2)));
+    }
+    assert(t[0] is Nd && t[0]->Nd_0 == k && t[0]->Nd_1.len() == p1.len());
+}
+
+/// Larger inputs, larger code.
+pub proof fn tf_mono_pre(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y: Cpt)
+    requires
+        tf_fun(c, t, p1, y),
+        p1.len() == p2.len(),
+        forall|i: int| 0 <= i < p1.len() ==> le(#[trigger] p1[i], p2[i]),
+    ensures
+        tf_fun(c, t, p2, y),
+    decreases t,
+{
+    if y is Bot {
+        return;
+    }
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => {
+            let f = y->Lam_0;
+            assert forall|i: int| 0 <= i < f.len() implies tf_fun(c, *b, p2.push(f[i].0), #[trigger] f[i].1) by {
+                let q1 = p1.push(f[i].0);
+                let q2 = p2.push(f[i].0);
+                le_refl(f[i].0);
+                assert forall|j: int| 0 <= j < q1.len() implies le(#[trigger] q1[j], q2[j]) by {
+                    if j < p1.len() {
+                        assert(q1[j] == p1[j] && q2[j] == p2[j]);
+                    }
+                }
+                tf_mono_pre(c, *b, q1, q2, f[i].1);
+            }
+        },
+        ExprSpec::Sort(l) => {
+            nd_le(NdKey::Ty(c as nat, is_zero(l)), p1, p2);
+            le_trans(y, Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p1), Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p2));
+        },
+        _ => {},
+    }
+}
+
+/// A join of approximations at the same inputs is one.
+pub proof fn tf_jall(c: u64, t: ExprSpec, p: Seq<Cpt>, s: Seq<Cpt>, k: int)
+    requires
+        pw(s),
+        0 <= k <= s.len(),
+        forall|y: Cpt| #[trigger] s.contains(y) ==> tf_fun(c, t, p, y),
+    ensures
+        tf_fun(c, t, p, joinall(s, k)),
+    decreases k,
+{
+    if k > 0 {
+        tf_jall(c, t, p, s, k - 1);
+        jall_pw(s, k - 1);
+        let x = s[k - 1];
+        assert(s.contains(x));
+        tf_join(c, t, p, joinall(s, k - 1), x);
+    }
+}
+
+/// Applying an approximation gives one, at the argument as the next input.
+pub proof fn tf_app(c: u64, a: ExprSpec, b: ExprSpec, p: Seq<Cpt>, u: Cpt, w: Cpt)
+    requires
+        tf_fun(c, ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(b)), p, u),
+        u is Lam,
+        wf(u),
+        wf(w),
+    ensures
+        tf_fun(c, b, p.push(w), crate::dom_compact::app(u, w)),
+{
+    let t = seq![u];
+    assert(t[0] == u);
+    let f = u->Lam_0;
+    let sm = selk(t, w, ht(u), true);
+    appk_wf(u, w, true);
+    assert forall|y: Cpt| #[trigger] sm.contains(y) implies tf_fun(c, b, p.push(w), y) by {
+        sel_lam_mem(t, w, ht(u), 1, y);
+        let q = choose|q: int| 0 <= q < f.len() && #[trigger] f[q].1 == y && le(f[q].0, w);
+        assert(tf_fun(c, b, p.push(f[q].0), f[q].1));
+        let q1 = p.push(f[q].0);
+        let q2 = p.push(w);
+        assert forall|j: int| 0 <= j < q1.len() implies le(#[trigger] q1[j], q2[j]) by {
+            if j < p.len() {
+                assert(q1[j] == p[j] && q2[j] == p[j]);
+                le_refl(p[j]);
+            }
+        }
+        tf_mono_pre(c, b, q1, q2, y);
+    }
+    tf_jall(c, b, p.push(w), sm, sm.len() as int);
+}
+
+/// Approximations are closed downward.
+pub proof fn tf_down(c: u64, t: ExprSpec, p: Seq<Cpt>, u: Cpt, v: Cpt)
+    requires
+        tf_fun(c, t, p, v),
+        le(u, v),
+        wf(u),
+        wf(v),
+    ensures
+        tf_fun(c, t, p, u),
+    decreases t,
+{
+    if u is Bot {
+        return;
+    }
+    head_le(u, v);
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            let f = u->Lam_0;
+            assert forall|i: int| 0 <= i < f.len() implies tf_fun(c, *b, p.push(f[i].0), #[trigger] f[i].1) by {
+                let e = f[i];
+                assert(f.contains(e));
+                assert(steps(u, true) == f);
+                entry_appk(u, e, true);
+                parts_lower(u);
+                appk_mono_fun(u, v, e.0, true);
+                le_trans(e.1, crate::dom_compact::app(u, e.0), crate::dom_compact::app(v, e.0));
+                tf_app(c, *a, *b, p, v, e.0);
+                appk_wf(v, e.0, true);
+                tf_down(c, *b, p.push(e.0), e.1, crate::dom_compact::app(v, e.0));
+            }
+        },
+        ExprSpec::Sort(l) => {
+            le_trans(u, v, Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p));
+        },
+        _ => {},
+    }
+}
+
+/// Congruent applications, derivably.
+pub proof fn app_pair(sig: Sig, g: Ctx, f: ExprSpec, f2: ExprSpec, t: ExprSpec, ta: ExprSpec, tb: ExprSpec, x: ExprSpec, x2: ExprSpec)
+    requires
+        derivable(sig, eq(g, f, f2, t)),
+        tchain(sig, g, t, pi(ta, tb)),
+        crate::dom_rel::pi_typed(sig, g, ta, tb),
+        derivable(sig, eq(g, x, x2, ta)),
+    ensures
+        derivable(sig, eq(g, ExprSpec::App(Box::new(f), Box::new(x)), ExprSpec::App(Box::new(f2), Box::new(x2)), inst(0, x, tb))),
+{
+    crate::ti_chain::conv_chain(sig, g, f, f2, t, pi(ta, tb));
+    let df = get(sig, eq(g, f, f2, pi(ta, tb)));
+    let (l1, da) = get_t(sig, g, ta, ta);
+    let (l2, db) = get_t(sig, g.push(ta), tb, tb);
+    let dx = get(sig, eq(g, x, x2, ta));
+    let j = eq(g, ExprSpec::App(Box::new(f), Box::new(x)), ExprSpec::App(Box::new(f2), Box::new(x2)), inst(0, x, tb));
+    let ps = seq![df, dx, da, db];
+    assert(prems(ps, seq![eq(g, f, f2, pi(ta, tb)), eq(g, x, x2, ta), eq(g, ta, ta, sort(l1)), eq(g.push(ta), tb, tb, sort(l2))]));
+    valid_node(sig, Rule::AppCong(l1, l2), j, ps);
+    mk_d(sig, node(Rule::AppCong(l1, l2), j, ps));
+}
+
+/// THE RELATION AT A TYPE FORMER: an approximation of its code function,
+/// down the remaining telescope `tel` with inputs `p`, relates two
+/// convertible terms of a type related to itself.
+pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        tf_fun(c, tel, p, u),
+        has_type(n, u, a),
+        has_type(n, a, Cpt::U),
+        rel_ty(sig, n, g, t, t, a),
+        derivable(sig, eq(g, m, m2, t)),
+    ensures
+        rel_tm(sig, n, g, m, m2, t, u, a),
+    decreases n,
+{
+    if u is Bot {
+        bot_tm(sig, n, g, m, m2, t, a);
+        return;
+    }
+    match tel {
+        ExprSpec::Bind(BinderKind::Pi, ta0, b) => {
+            ty_inv(n, u, a);
+            ty_pi(sig, n, g, t, t, a);
+            let k = (n - 1) as nat;
+            let bd = *a->Pi_0;
+            let (ta, tb) = rp(sig, t);
+            crate::dom_adeq_syn::dsym(sig, g, m, m2, t);
+            assert forall|x: ExprSpec, x2: ExprSpec, w: Cpt|
+                has_type(k, w, bd) && derivable(sig, eq(g, x, x2, ta)) && rel_tm(sig, k, g, x, x2, ta, w, bd)
+                implies #[trigger] app_at(sig, k, g, m, m2, tb, u, a, x, x2, w) by {
+                per_diag(sig, k, g, x, x2, ta, w, bd);
+                crate::dom_adeq_syn::dsym(sig, g, x, x2, ta);
+                cod_ty_elim(sig, k, g, a, ta, tb, tb, x, x, w);
+                crate::dom_proj::app_typed_at(n, u, a, w);
+                tf_app(c, *ta0, *b, p, u, w);
+                app_pair(sig, g, m, m, t, ta, tb, x, x2);
+                app_pair(sig, g, m2, m2, t, ta, tb, x, x2);
+                app_pair(sig, g, m, m2, t, ta, tb, x, x2);
+                tf_rel(sig, k, g, c, *b, p.push(w), sapp(m, x), sapp(m, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
+                tf_rel(sig, k, g, c, *b, p.push(w), sapp(m2, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
+                tf_rel(sig, k, g, c, *b, p.push(w), sapp(m, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
+            }
+            app_tm_intro(sig, k, g, m, m2, ta, tb, u, a);
+            tm_pi(sig, n, g, m, m2, t, u, a);
+        },
+        ExprSpec::Sort(l) => {
+            let code = Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), p);
+            head_le(u, code);
+            ty_sort(sig, n, g, t, t);
+            tm_sort(sig, n, g, m, m2, t, u);
+            ty_ind(sig, n, g, m, m2, u);
+            crate::ti_chain::conv_chain(sig, g, m, m2, t, sort(rs(sig, t)));
+            let d = get(sig, eq(g, m, m2, sort(rs(sig, t))));
+            mk_t(sig, d, rs(sig, t));
+            tchain_one(sig, g, m, m2);
+        },
+        _ => {},
+    }
+}
+
+} // verus!

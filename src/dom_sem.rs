@@ -1,0 +1,358 @@
+//! SEMANTIC CONSTANTS (stage S6.4 of docs/TYPED_TARGET.md): an axiom whose
+//! type is a Pi telescope ending in a sort denotes what lies below an
+//! approximation of its code function typed within its type
+//! (`dom_model::tf_fun`). Level-equivalent instances denote alike, and
+//! approximations at compatible inputs are compatible and join, so the
+//! axiom rule stays sound.
+#[allow(unused_imports)]
+use crate::expr_model::{BinderKind, ExprSpec};
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+#[allow(unused_imports)]
+use crate::dom_compact::*;
+#[cfg(verus_only)]
+use crate::dom_typing::*;
+#[cfg(verus_only)]
+use crate::dom_model::*;
+#[cfg(verus_only)]
+use crate::dom_sound::{sound_ok, tyd_w, tyd_at, tyd_bot};
+#[cfg(verus_only)]
+use crate::ti_syntax::{is_zero, dty_at, sort, Sig};
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
+verus! {
+
+/// The code function sees levels only through whether the final sort is
+/// zero.
+pub proof fn tf_lveq(c: u64, t1: ExprSpec, t2: ExprSpec, pre: Seq<Cpt>, v: Cpt)
+    requires
+        crate::conv_cr::lveq(t1, t2),
+    ensures
+        tf_fun(c, t1, pre, v) == tf_fun(c, t2, pre, v),
+    decreases t1,
+{
+    match (t1, t2) {
+        (ExprSpec::Bind(k1, _, b1), ExprSpec::Bind(k2, _, b2)) => {
+            if let Cpt::Lam(f) = v {
+                assert forall|i: int| 0 <= i < f.len() implies
+                    tf_fun(c, *b1, pre.push(f[i].0), #[trigger] f[i].1) == tf_fun(c, *b2, pre.push(f[i].0), f[i].1) by {
+                    tf_lveq(c, *b1, *b2, pre.push(f[i].0), f[i].1);
+                }
+            }
+        },
+        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) => {
+            if is_zero(l1) {
+                assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, r) == 0 by {
+                    assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+                }
+            }
+            if is_zero(l2) {
+                assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, r) == 0 by {
+                    assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+/// Inputs compatible position by position, each well formed.
+pub open spec fn pre_ok(p1: Seq<Cpt>, p2: Seq<Cpt>) -> bool {
+    &&& p1.len() == p2.len()
+    &&& forall|k: int| 0 <= k < p1.len() ==> wf(#[trigger] p1[k]) && wf(p2[k]) && compat(p1[k], p2[k])
+}
+
+pub proof fn pre_ok_refl(p: Seq<Cpt>)
+    requires
+        forall|k: int| 0 <= k < p.len() ==> wf(#[trigger] p[k]),
+    ensures
+        pre_ok(p, p),
+{
+    assert forall|k: int| 0 <= k < p.len() implies wf(#[trigger] p[k]) && wf(p[k]) && compat(p[k], p[k]) by {
+        compat_refl(p[k]);
+    }
+}
+
+pub proof fn pre_ok_symm(p1: Seq<Cpt>, p2: Seq<Cpt>)
+    requires
+        pre_ok(p1, p2),
+    ensures
+        pre_ok(p2, p1),
+{
+    assert forall|k: int| 0 <= k < p2.len() implies wf(#[trigger] p2[k]) && wf(p1[k]) && compat(p2[k], p1[k]) by {
+        compat_symm(p1[k], p2[k]);
+    }
+}
+
+pub proof fn pre_ok_push(p1: Seq<Cpt>, p2: Seq<Cpt>, x1: Cpt, x2: Cpt)
+    requires
+        pre_ok(p1, p2),
+        wf(x1),
+        wf(x2),
+        compat(x1, x2),
+    ensures
+        pre_ok(p1.push(x1), p2.push(x2)),
+{
+    let q1 = p1.push(x1);
+    let q2 = p2.push(x2);
+    assert forall|k: int| 0 <= k < q1.len() implies wf(#[trigger] q1[k]) && wf(q2[k]) && compat(q1[k], q2[k]) by {
+        if k < p1.len() {
+            assert(q1[k] == p1[k] && q2[k] == p2[k]);
+        }
+    }
+}
+
+/// A code at compatible inputs.
+proof fn code_compat(c: u64, p: bool, p1: Seq<Cpt>, p2: Seq<Cpt>)
+    requires
+        pre_ok(p1, p2),
+    ensures
+        compat(Cpt::Nd(NdKey::Ty(c as nat, p), p1), Cpt::Nd(NdKey::Ty(c as nat, p), p2)),
+        wf(Cpt::Nd(NdKey::Ty(c as nat, p), p1)),
+        wf(Cpt::Nd(NdKey::Ty(c as nat, p), p2)),
+{
+    assert forall|i: int| 0 <= i < p1.len() implies compat(#[trigger] p1[i], p2[i]) by {}
+    assert forall|k: int| 0 <= k < p1.len() implies wf(#[trigger] p1[k]) by {}
+    assert forall|k: int| 0 <= k < p2.len() implies wf(#[trigger] p2[k]) by {
+        assert(wf(p1[k]));
+    }
+}
+
+/// APPROXIMATIONS AT COMPATIBLE INPUTS ARE COMPATIBLE.
+pub proof fn tf_compat(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y1: Cpt, y2: Cpt)
+    requires
+        tf_fun(c, t, p1, y1),
+        tf_fun(c, t, p2, y2),
+        wf(y1),
+        wf(y2),
+        pre_ok(p1, p2),
+    ensures
+        compat(y1, y2),
+    decreases t,
+{
+    if y1 is Bot || y2 is Bot {
+        return;
+    }
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => {
+            let f1 = y1->Lam_0;
+            let f2 = y2->Lam_0;
+            let l = f1 + f2;
+            pre_ok_symm(p1, p2);
+            pre_ok_refl(p1);
+            pre_ok_refl(p2);
+            assert forall|i: int, j: int| 0 <= i < l.len() && 0 <= j < l.len() && compat(l[i].0, l[j].0)
+                implies compat(#[trigger] l[i].1, #[trigger] l[j].1) by {
+                let pi = if i < f1.len() { p1 } else { p2 };
+                let pj = if j < f1.len() { p1 } else { p2 };
+                if i < f1.len() {
+                    assert(l[i] == f1[i]);
+                    assert(tf_fun(c, *b, p1.push(f1[i].0), f1[i].1));
+                } else {
+                    assert(l[i] == f2[i - f1.len()]);
+                    assert(tf_fun(c, *b, p2.push(f2[i - f1.len()].0), f2[i - f1.len()].1));
+                }
+                if j < f1.len() {
+                    assert(l[j] == f1[j]);
+                    assert(tf_fun(c, *b, p1.push(f1[j].0), f1[j].1));
+                } else {
+                    assert(l[j] == f2[j - f1.len()]);
+                    assert(tf_fun(c, *b, p2.push(f2[j - f1.len()].0), f2[j - f1.len()].1));
+                }
+                assert(pre_ok(pi, pj));
+                pre_ok_push(pi, pj, l[i].0, l[j].0);
+                tf_compat(c, *b, pi.push(l[i].0), pj.push(l[j].0), l[i].1, l[j].1);
+            }
+        },
+        ExprSpec::Sort(lv) => {
+            let n1 = Cpt::Nd(NdKey::Ty(c as nat, is_zero(lv)), p1);
+            let n2 = Cpt::Nd(NdKey::Ty(c as nat, is_zero(lv)), p2);
+            code_compat(c, is_zero(lv), p1, p2);
+            join_ub(n1, n2);
+            let j = join(n1, n2);
+            le_trans(y1, n1, j);
+            le_trans(y2, n2, j);
+            ub_compat(y1, y2, j);
+        },
+        _ => {},
+    }
+}
+
+/// APPROXIMATIONS AT THE SAME INPUTS JOIN.
+pub proof fn tf_join(c: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
+    requires
+        tf_fun(c, t, p, y1),
+        tf_fun(c, t, p, y2),
+        wf(y1),
+        wf(y2),
+        compat(y1, y2),
+    ensures
+        tf_fun(c, t, p, join(y1, y2)),
+    decreases t,
+{
+    if y1 is Bot || y2 is Bot {
+        return;
+    }
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => {
+            let f1 = y1->Lam_0;
+            let f2 = y2->Lam_0;
+            let l = f1 + f2;
+            assert(join(y1, y2) == Cpt::Lam(l));
+            assert forall|i: int| 0 <= i < l.len() implies tf_fun(c, *b, p.push(l[i].0), #[trigger] l[i].1) by {
+                if i < f1.len() {
+                    assert(l[i] == f1[i]);
+                } else {
+                    assert(l[i] == f2[i - f1.len()]);
+                }
+            }
+        },
+        ExprSpec::Sort(lv) => {
+            join_lub(y1, y2, Cpt::Nd(NdKey::Ty(c as nat, is_zero(lv)), p));
+        },
+        _ => {},
+    }
+}
+
+
+/// A member of a semantic constant above bottom, spelled out: below `v`,
+/// typed at `a` in the constant's type, approximating its code function.
+pub open spec fn sem_mem(sig: Sig, c: u64, ls: Seq<LevelSpec>, u: Cpt, a: Cpt, v: Cpt) -> bool {
+    &&& wf(u)
+    &&& le(u, v)
+    &&& typed(a, Cpt::U)
+    &&& typed(v, a)
+    &&& tf_fun(c, dty_at(sig, c, ls), Seq::empty(), v)
+    &&& mem(sig, dty_at(sig, c, ls), bot_env(), a)
+}
+
+pub proof fn mem_sem(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt)
+    requires
+        sem_const(sig, c, ls),
+    ensures
+        mem(sig, ExprSpec::Const(c, ls), rho, u) == (u is Bot || exists|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v)),
+{
+    reveal(mem);
+    let m = ExprSpec::Const(c, ls);
+    let t = dty_at(sig, c, ls);
+    assert(!unfolds(sig, c, ls));
+    if u is Bot {
+        assert(mem_w(sig, m, rho, u, Wit::Nil));
+    } else {
+        if mem(sig, m, rho, u) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+            if let Wit::Sem(a, v, wa) = w {
+                assert(mem_w(sig, t, bot_env(), a, *wa));
+                assert(sem_mem(sig, c, ls, u, a, v));
+            }
+        }
+        if exists|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v) {
+            let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v);
+            let wa = choose|w: Wit| #[trigger] mem_w(sig, t, bot_env(), a, w);
+            assert(mem_w(sig, m, rho, u, Wit::Sem(a, v, Box::new(wa))));
+        }
+    }
+}
+
+/// THE AXIOM RULE AT A SEMANTIC CONSTANT: level-equivalent instances
+/// denote alike, every member lies below one typed within the type, and
+/// members join, from the type's own soundness.
+pub proof fn sound_sem(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, l: LevelSpec, rho: Env)
+    requires
+        sem_const(sig, c, ls),
+        crate::conv_cr::levs_eq(ls, ls2),
+        crate::expr_model::nlbv(dty_at(sig, c, ls)) == 0,
+        crate::expr_model::nlbv(dty_at(sig, c, ls2)) == 0,
+        sound_ok(sig, dty_at(sig, c, ls), dty_at(sig, c, ls2), sort(l), rho),
+    ensures
+        sound_ok(sig, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2), dty_at(sig, c, ls), rho),
+{
+    let t1 = dty_at(sig, c, ls);
+    let t2 = dty_at(sig, c, ls2);
+    let m1 = ExprSpec::Const(c, ls);
+    let m2 = ExprSpec::Const(c, ls2);
+    let (lps, ty) = (sig.consts[c].lps, sig.consts[c].ty);
+    crate::ti_level::ls_crank(sig, ty, lps, ls);
+    crate::ti_level::ls_crank(sig, ty, lps, ls2);
+    assert(sem_const(sig, c, ls2));
+    crate::conv_cr::lveq_sel(ty, lps, ls, ls2);
+    tf_lveq(c, t1, t2, Seq::empty(), Cpt::Bot);
+    assert forall|a: Cpt| #[trigger] mem(sig, t1, bot_env(), a) == mem(sig, t2, bot_env(), a) by {
+        mem_closed_env(sig, t1, rho, a);
+        mem_closed_env(sig, t2, rho, a);
+    }
+    // the instances denote alike
+    assert forall|u: Cpt| #[trigger] mem(sig, m1, rho, u) == mem(sig, m2, rho, u) by {
+        mem_sem(sig, c, ls, rho, u);
+        mem_sem(sig, c, ls2, rho, u);
+        if exists|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v) {
+            let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v);
+            tf_lveq(c, t1, t2, Seq::empty(), v);
+            assert(sem_mem(sig, c, ls2, u, a, v));
+        }
+        if exists|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls2, u, a, v) {
+            let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls2, u, a, v);
+            tf_lveq(c, t1, t2, Seq::empty(), v);
+            assert(sem_mem(sig, c, ls, u, a, v));
+        }
+    }
+    // every member lies below a typed one
+    assert forall|u: Cpt| #[trigger] mem(sig, m1, rho, u) implies tyd_w(sig, m1, rho, t1, u) by {
+        mem_sem(sig, c, ls, rho, u);
+        if u is Bot {
+            tyd_bot(sig, m1, rho, t1);
+        } else {
+            let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v);
+            typed_wf(v, a);
+            le_refl(v);
+            assert(sem_mem(sig, c, ls, v, a, v));
+            mem_sem(sig, c, ls, rho, v);
+            mem_closed_env(sig, t1, rho, a);
+            assert(tyd_at(sig, m1, rho, t1, u, v, a));
+            reveal(tyd_w);
+        }
+    }
+    // members join
+    assert forall|u1: Cpt, u2: Cpt| mem(sig, m1, rho, u1) && mem(sig, m1, rho, u2)
+        implies #[trigger] jc_pair(sig, m1, rho, u1, u2) by {
+        mem_sem(sig, c, ls, rho, u1);
+        mem_sem(sig, c, ls, rho, u2);
+        mem_sem(sig, c, ls, rho, join(u1, u2));
+        if u1 is Bot || u2 is Bot {
+            if u1 is Bot {
+                assert(join(u1, u2) == u2);
+            } else {
+                assert(join(u1, u2) == u1);
+            }
+        } else {
+            let (a1, v1) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u1, a, v);
+            let (a2, v2) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u2, a, v);
+            mem_closed_env(sig, t1, rho, a1);
+            mem_closed_env(sig, t1, rho, a2);
+            jc_elim(sig, t1, rho, a1, a2);
+            let a = join(a1, a2);
+            mem_closed_env(sig, t1, rho, a);
+            typed_wf(a1, Cpt::U);
+            typed_wf(a2, Cpt::U);
+            typed_join(a1, a2, Cpt::U);
+            join_ub(a1, a2);
+            typed_weak(v1, a1, a);
+            typed_weak(v2, a2, a);
+            typed_wf(v1, a);
+            typed_wf(v2, a);
+            tf_compat(c, t1, Seq::empty(), Seq::empty(), v1, v2);
+            typed_join(v1, v2, a);
+            tf_join(c, t1, Seq::empty(), v1, v2);
+            let v = join(v1, v2);
+            join_ub(v1, v2);
+            le_trans(u1, v1, v);
+            le_trans(u2, v2, v);
+            below_pair(u1, u2, v);
+            assert(sem_mem(sig, c, ls, join(u1, u2), a, v));
+        }
+    }
+    jc_intro(sig, m1, rho);
+}
+
+} // verus!

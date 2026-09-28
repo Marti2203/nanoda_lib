@@ -48,6 +48,9 @@ pub enum Wit {
     /// At an application: the function and argument elements and their
     /// witnesses.
     Ap(Cpt, Cpt, Box<Wit>, Box<Wit>),
+    /// At a semantic constant: the element of its type, the typed element
+    /// above the member, and the type element's witness.
+    Sem(Cpt, Cpt, Box<Wit>),
 }
 
 /// The generator's step list (Lam or Pi).
@@ -76,8 +79,36 @@ pub open spec fn unfolds(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
     &&& crank(sig, dval(sig, c, ls)) <= sig.rank[c]
 }
 
+/// `c.{ls}` is interpreted semantically: an axiom whose type mentions only
+/// lower-ranked constants.
+pub open spec fn sem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
+    &&& sig.consts.contains_key(c)
+    &&& sig.consts[c].val is None
+    &&& sig.consts[c].lps.len() == ls.len()
+    &&& sig.rank.contains_key(c)
+    &&& crank(sig, crate::ti_syntax::dty_at(sig, c, ls)) <= sig.rank[c]
+}
+
+/// `v` approximates the code function of the type former `c` down its
+/// type telescope `t`, the inputs so far being `pre`: a lambda whose
+/// entries' outputs approximate it at one more input, and at a sort the
+/// code of `c` at the inputs. An axiom of any other type has only bottom.
+pub open spec fn tf_fun(c: u64, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) -> bool
+    decreases t,
+{
+    v is Bot || match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => match v {
+            Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==> tf_fun(c, *b, pre.push(f[i].0), #[trigger] f[i].1),
+            _ => false,
+        },
+        ExprSpec::Sort(l) => le(v, Cpt::Nd(NdKey::Ty(c as nat, is_zero(l)), pre)),
+        _ => false,
+    }
+}
+
 /// MEMBERSHIP, as witnessed. A definition denotes its value (closed, so in
-/// the empty environment); axioms and locals denote only bottom.
+/// the empty environment); an axiom what lies below an approximation of
+/// its code function typed within its type; locals only bottom.
 pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
     decreases crank(sig, m), crate::ti_zsize::zsize(m), 1int,
     via mem_w_decreases
@@ -96,7 +127,13 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
                 && le(u, crate::dom_compact::app(wf_, wx)),
             _ => false,
         },
-        ExprSpec::Const(c, ls) => u is Bot || (unfolds(sig, c, ls) && wf(u) && mem_w(sig, dval(sig, c, ls), bot_env(), u, w)),
+        ExprSpec::Const(c, ls) => u is Bot || (unfolds(sig, c, ls) && wf(u) && mem_w(sig, dval(sig, c, ls), bot_env(), u, w))
+            || (sem_const(sig, c, ls) && match w {
+                Wit::Sem(a, v, wa) => wf(u) && le(u, v) && typed(a, Cpt::U) && typed(v, a)
+                    && tf_fun(c, crate::ti_syntax::dty_at(sig, c, ls), Seq::empty(), v)
+                    && mem_w(sig, crate::ti_syntax::dty_at(sig, c, ls), bot_env(), a, *wa),
+                _ => false,
+            }),
         ExprSpec::Let(t, v, b) => mem_w(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, w),
         _ => u is Bot,
     }
@@ -215,7 +252,11 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
         ExprSpec::Const(c, ls) => {
             if !(u2 is Bot) {
                 head_le(u2, u);
-                mem_down(sig, dval(sig, c, ls), bot_env(), u, u2, w);
+                if unfolds(sig, c, ls) {
+                    mem_down(sig, dval(sig, c, ls), bot_env(), u, u2, w);
+                } else if let Wit::Sem(a, v, wa) = w {
+                    le_trans(u2, u, v);
+                }
             }
         },
         _ => {
@@ -1069,7 +1110,7 @@ pub proof fn mem_closed_env(sig: Sig, e: ExprSpec, rho: Env, u: Cpt)
 pub proof fn mem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt)
     ensures
         crate::ti_syntax::def_ok(sig, c, ls) ==> mem(sig, ExprSpec::Const(c, ls), rho, u) == (u is Bot || mem(sig, dval(sig, c, ls), bot_env(), u)),
-        !crate::ti_syntax::is_def(sig, c, ls) ==> mem(sig, ExprSpec::Const(c, ls), rho, u) == (u is Bot),
+        !crate::ti_syntax::is_def(sig, c, ls) && !sem_const(sig, c, ls) ==> mem(sig, ExprSpec::Const(c, ls), rho, u) == (u is Bot),
 {
     reveal(mem);
     let m = ExprSpec::Const(c, ls);

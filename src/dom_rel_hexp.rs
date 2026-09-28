@@ -89,7 +89,14 @@ pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: E
             tchain_trans(sig, g, s, t, pi(rp(sig, t).0, rp(sig, t).1));
             tchain_trans(sig, g, s2, t2, pi(rp(sig, t2).0, rp(sig, t2).1));
         },
-        Cpt::Lam(_) | Cpt::Nd(..) => ty_other(sig, n, g, t, t2, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => ty_other(sig, n, g, t, t2, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            ty_ind(sig, n, g, t, t2, a);
+            ty_ind(sig, n, g, s, s2, a);
+            tchain_trans(sig, g, s, t, t2);
+            tchain_sym(sig, g, s2, t2);
+            tchain_trans(sig, g, s, t2, s2);
+        },
     }
 }
 
@@ -180,7 +187,11 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
             }
             app_tm_intro(sig, k, g, s1, s2, ta, tb, u, a);
         },
-        Cpt::Lam(_) | Cpt::Nd(..) => tm_other(sig, n, g, m1, m2, t, u, a),
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m1, m2, t, u, a),
+        Cpt::Nd(NdKey::Ty(..), _) => {
+            tm_ind(sig, n, g, m1, m2, t, u, a);
+            tm_ind(sig, n, g, s1, s2, t, u, a);
+        },
     }
 }
 

@@ -2207,6 +2207,15 @@ proof fn sound_leaf_d(sig: Sig, d: Deriv, rho: Env)
     match m {
         ExprSpec::Const(c, ls) => {
             let ls2 = n->Const_1;
+            if sem_const(sig, c, ls) {
+                sound(sig, ps[1], rho);
+                crate::dom_sem::sound_sem(sig, c, ls, ls2, rule->ConstAx_0, rho);
+                return;
+            }
+            let (lps, ty) = (sig.consts[c].lps, sig.consts[c].ty);
+            crate::ti_level::ls_crank(sig, ty, lps, ls);
+            crate::ti_level::ls_crank(sig, ty, lps, ls2);
+            assert(!sem_const(sig, c, ls2));
             assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) implies u is Bot by {
                 mem_const(sig, c, ls, rho, u);
             }
