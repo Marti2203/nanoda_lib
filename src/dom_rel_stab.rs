@@ -139,9 +139,18 @@ pub proof fn stab_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
             tm_other(sig, n, g, m, m2, t, u, a);
             tm_other(sig, n + 1, g, m, m2, t, u, a);
         },
-        Cpt::Nd(NdKey::Ty(..), _) => {
+        Cpt::Nd(NdKey::Ty(..), ts) => {
             tm_ind(sig, n, g, m, m2, t, u, a);
             tm_ind(sig, n + 1, g, m, m2, t, u, a);
+            if !(u is Bot) {
+                assert(n >= 1) by {
+                    ty_pos(n, u, a);
+                }
+                ty_inv(n, u, a);
+                con_tm_unfold(sig, (n - 1) as nat, g, m, m2, u, ts.len());
+                con_tm_unfold(sig, n, g, m, m2, u, ts.len());
+                con_stab(sig, (n - 1) as nat, g, m, m2, u, a);
+            }
         },
         _ => {},
     }
@@ -194,6 +203,35 @@ proof fn stab_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
             stab_tm(sig, k, g, sapp(m, x), sapp(m2, x2), inst(0, x, tb), app(u, v), cod(a, v));
         }
         app_tm_intro(sig, k, g, m, m2, ta, tb, u, a);
+    }
+}
+
+
+/// The constructor clause is stage-independent for a typed value.
+proof fn con_stab(sig: Sig, k: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        a is Nd && a->Nd_0 is Ty,
+        has_type(k + 1, u, a),
+    ensures
+        u is Nd && u->Nd_0 is Con ==> con_body(sig, k, g, m, m2, u, a->Nd_1.len()) == con_body(sig, k + 1, g, m, m2, u, a->Nd_1.len()),
+    decreases k, 5int, 0int,
+{
+    if u is Nd && u->Nd_0 is Con {
+        let lead = a->Nd_1.len();
+        let cs = u->Nd_1;
+        let (x, x2) = (cr(sig, m), cr(sig, m2));
+        let c = crate::beta_model::spine_head(x)->Const_0;
+        let np = sig.ienv.ctor_np[c] as nat;
+        let nf = nfields(cs, lead);
+        let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+        assert forall|i: int| #![trigger fty(cs, lead, i)] 0 <= i < nf implies
+            con_field(sig, k, g, x, x2, cs, lead, np, i) == con_field(sig, k + 1, g, x, x2, cs, lead, np, i) by {
+            let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+            let (ai, ai2) = (args[np + i], args2[np + i]);
+            field_typed(k + 1, u, a, i);
+            stab_ty(sig, k, g, ti, ti2, fty(cs, lead, i));
+            stab_tm(sig, k, g, ai, ai2, ti, fval(cs, lead, i), fty(cs, lead, i));
+        }
     }
 }
 

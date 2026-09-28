@@ -217,9 +217,16 @@ pub proof fn symm_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         },
         Cpt::Pi(_, _) => symm_tm_pi(sig, n, g, m, m2, t, u, a),
         Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m, m2, t, u, a),
-        Cpt::Nd(NdKey::Ty(..), _) => {
+        Cpt::Nd(NdKey::Ty(..), ts) => {
             tm_ind(sig, n, g, m, m2, t, u, a);
             tm_ind(sig, n, g, m2, m, t, u, a);
+            if !(u is Bot) && n >= 1 {
+                con_tm_unfold(sig, (n - 1) as nat, g, m, m2, u, ts.len());
+                con_tm_unfold(sig, (n - 1) as nat, g, m2, m, u, ts.len());
+                if con_body(sig, (n - 1) as nat, g, m, m2, u, ts.len()) {
+                    con_symm(sig, (n - 1) as nat, g, m, m2, u, ts.len());
+                }
+            }
         },
     }
 }
@@ -271,10 +278,18 @@ pub proof fn trans_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: 
         },
         Cpt::Pi(_, _) => trans_tm_pi(sig, n, g, m1, m2, m3, t, u, a),
         Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m1, m2, t, u, a),
-        Cpt::Nd(NdKey::Ty(..), _) => {
+        Cpt::Nd(NdKey::Ty(..), ts) => {
             tm_ind(sig, n, g, m1, m2, t, u, a);
             tm_ind(sig, n, g, m2, m3, t, u, a);
             tm_ind(sig, n, g, m1, m3, t, u, a);
+            if !(u is Bot) && n >= 1 {
+                con_tm_unfold(sig, (n - 1) as nat, g, m1, m2, u, ts.len());
+                con_tm_unfold(sig, (n - 1) as nat, g, m2, m3, u, ts.len());
+                con_tm_unfold(sig, (n - 1) as nat, g, m1, m3, u, ts.len());
+                if con_body(sig, (n - 1) as nat, g, m1, m2, u, ts.len()) && con_body(sig, (n - 1) as nat, g, m2, m3, u, ts.len()) {
+                    con_trans(sig, (n - 1) as nat, g, m1, m2, m3, u, ts.len());
+                }
+            }
         },
     }
 }
@@ -440,6 +455,66 @@ proof fn bot_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
         bot_tm(sig, k, g, sapp(m, x), sapp(m2, x2), inst(0, x, tb), cod(a, w));
     }
     app_tm_intro(sig, k, g, m, m2, ta, tb, Cpt::Bot, a);
+}
+
+
+/// The constructor clause is symmetric.
+proof fn con_symm(sig: Sig, k: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, lead: nat)
+    requires
+        con_body(sig, k, g, m, m2, u, lead),
+    ensures
+        con_body(sig, k, g, m2, m, u, lead),
+    decreases k, 7int, 0int,
+{
+    let (x, x2) = (cr(sig, m), cr(sig, m2));
+    let cs = u->Nd_1;
+    let c = crate::beta_model::spine_head(x)->Const_0;
+    let np = sig.ienv.ctor_np[c] as nat;
+    let nf = nfields(cs, lead);
+    let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    assert forall|i: int| #![trigger fty(cs, lead, i)] 0 <= i < nf implies con_field(sig, k, g, x2, x, cs, lead, np, i) by {
+        assert(con_field(sig, k, g, x, x2, cs, lead, np, i));
+        let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+        let (ai, ai2) = (args[np + i], args2[np + i]);
+        tchain_sym(sig, g, ti, ti2);
+        symm_ty(sig, k, g, ti, ti2, fty(cs, lead, i));
+        symm_tm(sig, k, g, ai, ai2, ti, fval(cs, lead, i), fty(cs, lead, i));
+        conv_tm(sig, k, g, ai2, ai, ti, ti2, fval(cs, lead, i), fty(cs, lead, i));
+        crate::dom_adeq_syn::dsym(sig, g, ai, ai2, ti);
+        conv_chain(sig, g, ai2, ai, ti, ti2);
+    }
+}
+
+/// The constructor clause is transitive.
+proof fn con_trans(sig: Sig, k: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: ExprSpec, u: Cpt, lead: nat)
+    requires
+        con_body(sig, k, g, m1, m2, u, lead),
+        con_body(sig, k, g, m2, m3, u, lead),
+    ensures
+        con_body(sig, k, g, m1, m3, u, lead),
+    decreases k, 7int, 0int,
+{
+    let (x1, x2, x3) = (cr(sig, m1), cr(sig, m2), cr(sig, m3));
+    let cs = u->Nd_1;
+    let c = crate::beta_model::spine_head(x1)->Const_0;
+    let np = sig.ienv.ctor_np[c] as nat;
+    let nf = nfields(cs, lead);
+    let (args1, args2, args3) = (crate::beta_model::spine_args(x1), crate::beta_model::spine_args(x2), crate::beta_model::spine_args(x3));
+    assert forall|i: int| #![trigger fty(cs, lead, i)] 0 <= i < nf implies con_field(sig, k, g, x1, x3, cs, lead, np, i) by {
+        assert(con_field(sig, k, g, x1, x2, cs, lead, np, i));
+        assert(con_field(sig, k, g, x2, x3, cs, lead, np, i));
+        let (t1, t2, t3) = (arg_ty(sig, x1, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat), arg_ty(sig, x3, (np + i) as nat));
+        let (a1, a2, a3) = (args1[np + i], args2[np + i], args3[np + i]);
+        let (e, f) = (fty(cs, lead, i), fval(cs, lead, i));
+        tchain_trans(sig, g, t1, t2, t3);
+        trans_ty(sig, k, g, t1, t2, t3, e);
+        symm_ty(sig, k, g, t1, t2, e);
+        conv_tm(sig, k, g, a2, a3, t2, t1, f, e);
+        trans_tm(sig, k, g, a1, a2, a3, t1, f, e);
+        tchain_sym(sig, g, t1, t2);
+        conv_chain(sig, g, a2, a3, t2, t1);
+        crate::dom_adeq_syn::dtrans(sig, g, a1, a2, a3, t1);
+    }
 }
 
 } // verus!

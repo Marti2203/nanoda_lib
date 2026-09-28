@@ -1250,10 +1250,18 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     match m {
         ExprSpec::Const(c, ls) => {
             if crate::dom_model::sem_const(sig, c, ls) && !(u is Bot) {
-                // a type former's approximation, related down its telescope
                 crate::dom_sem::mem_sem(sig, c, ls, rho, u);
                 let (av, v) = choose|av: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, c, ls, u, av, v);
                 typed_wf(v, av);
+                if sig.ienv.ctor_ind.contains_key(c) {
+                    adeq_ctor(sig, d, rho, dl, s, s2, n, u, a, av, v);
+                    return;
+                }
+                if sig.ienv.recs.contains_key(c) {
+                    head_le(u, v);
+                    return;
+                }
+                // a type former's approximation, related down its telescope
                 crate::dom_sem_rel::tf_down(c, t, Seq::empty(), u, v);
                 related_left(sig, j->Eq_0, rho, dl, s, s2);
                 reveal(spair);
@@ -1370,6 +1378,61 @@ proof fn adeq_zeta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     d_sub(sig, ps[2], dl, s, s2);
     dsym(sig, dl, psub(m2, s), psub(m2, s2), psub(t, s));
     expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
+}
+
+
+/// A CONSTRUCTOR: the recursion relates its type at the joined type element
+/// and at adequacy's; the rest is `ctor_adeq_core`.
+#[verifier::spinoff_prover]
+proof fn adeq_ctor(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt, av: Cpt, v: Cpt)
+    requires
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is ConstAx,
+        concl(d)->Eq_1 is Const,
+        crate::dom_model::sem_const(sig, concl(d)->Eq_1->Const_0, concl(d)->Eq_1->Const_1),
+        sig.ienv.ctor_ind.contains_key(concl(d)->Eq_1->Const_0),
+        !(u is Bot),
+        crate::dom_sem::sem_mem(sig, concl(d)->Eq_1->Const_0, concl(d)->Eq_1->Const_1, u, av, v),
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 17int,
+{
+    use crate::ti_subst::psub_closed;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let (c, ls) = (m->Const_0, m->Const_1);
+    let ls2 = m2->Const_1;
+    let l = rule->ConstAx_0;
+    let t2 = concl(ps[1])->Eq_2;
+    psub_closed(t, s);
+    psub_closed(t, s2);
+    psub_closed(m, s);
+    psub_closed(m2, s2);
+    psub_closed(t2, s2);
+    related_left(sig, g, rho, dl, s, s2);
+    reveal(spair);
+    crate::ti_sub::d_sub(sig, d, dl, s, s2);
+    crate::ti_sub::d_sub(sig, ps[1], dl, s, s2);
+    // the type's denotation is join-closed
+    crate::dom_sound::sound(sig, ps[1], rho);
+    crate::dom_model::mem_closed_env(sig, t, rho, av);
+    jc_elim(sig, t, rho, a, av);
+    let ab = join(a, av);
+    let nn = n + crate::dom_compact::ht(a) + crate::dom_compact::ht(av) + crate::dom_compact::ht(v) + crate::dom_compact::ht(u) + 2;
+    typed_down(a, Cpt::U, n);
+    typed_wf(a, Cpt::U);
+    typed_wf(av, Cpt::U);
+    typed_join(a, av, Cpt::U);
+    crate::dom_compact::ht_join(a, av);
+    typed_up(ab, Cpt::U, nn);
+    typed_up(a, Cpt::U, nn);
+    adeq_type(sig, ps[1], rho, dl, s, s2, nn, ab);
+    adeq_type(sig, ps[1], rho, dl, s, s2, nn, a);
+    crate::dom_con_rel::ctor_adeq_core(sig, nn, n, dl, c, ls, ls2, l, u, a, av, v);
+    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    symm_ty(sig, n, dl, t, t2, a);
+    trans_ty(sig, n, dl, t, t2, t, a);
 }
 
 } // verus!

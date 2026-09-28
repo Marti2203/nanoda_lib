@@ -106,6 +106,43 @@ pub open spec fn tf_fun(c: u64, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) -> bool
     }
 }
 
+/// `v` approximates the code function of constructor `c` of inductive
+/// `ind` (with `np` parameters) down its type telescope `t`, `a` being the
+/// type element at this binder and `k` the binder's position: a lambda
+/// whose entries' outputs approximate it at the codomain, and at the end
+/// (an application of the inductive, past the parameters) the value node
+/// of `a`'s arguments (parameters and indices) followed by the field pairs
+/// so far, each field's type code the domain of its binder.
+pub open spec fn cf_fun(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, pre: Seq<Cpt>, k: nat, v: Cpt) -> bool
+    decreases t,
+{
+    v is Bot || match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => match (v, a) {
+            (Cpt::Lam(f), Cpt::Pi(d, _)) => forall|i: int| 0 <= i < f.len() ==>
+                cf_fun(c, ind, np, *b, cod(a, f[i].0), if k < np { pre } else { pre.push(*d).push(f[i].0) }, k + 1, #[trigger] f[i].1),
+            _ => false,
+        },
+        _ => k >= np && crate::beta_model::spine_head(t) is Const && crate::beta_model::spine_head(t)->Const_0 == ind
+            && match a {
+                Cpt::Nd(NdKey::Ty(i, false), ts) => i == ind as nat && le(v, Cpt::Nd(NdKey::Con(ind as nat, c as nat), ts + pre)),
+                _ => false,
+            },
+    }
+}
+
+/// The code function a semantic constant approximates: a constructor's, a
+/// recursor's (only bottom, for now), or a type former's.
+pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -> bool {
+    let t = crate::ti_syntax::dty_at(sig, c, ls);
+    if sig.ienv.ctor_ind.contains_key(c) {
+        sig.ienv.ctor_np.contains_key(c) && cf_fun(c, sig.ienv.ctor_ind[c], sig.ienv.ctor_np[c] as nat, t, a, Seq::empty(), 0, v)
+    } else if sig.ienv.recs.contains_key(c) {
+        v is Bot
+    } else {
+        tf_fun(c, t, Seq::empty(), v)
+    }
+}
+
 /// MEMBERSHIP, as witnessed. A definition denotes its value (closed, so in
 /// the empty environment); an axiom what lies below an approximation of
 /// its code function typed within its type; locals only bottom.
@@ -130,7 +167,7 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
         ExprSpec::Const(c, ls) => u is Bot || (unfolds(sig, c, ls) && wf(u) && mem_w(sig, dval(sig, c, ls), bot_env(), u, w))
             || (sem_const(sig, c, ls) && match w {
                 Wit::Sem(a, v, wa) => wf(u) && le(u, v) && typed(a, Cpt::U) && typed(v, a)
-                    && tf_fun(c, crate::ti_syntax::dty_at(sig, c, ls), Seq::empty(), v)
+                    && code_ok(sig, c, ls, a, v)
                     && mem_w(sig, crate::ti_syntax::dty_at(sig, c, ls), bot_env(), a, *wa),
                 _ => false,
             }),

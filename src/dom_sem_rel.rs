@@ -19,7 +19,7 @@ use crate::dom_rel::*;
 #[cfg(verus_only)]
 use crate::dom_rel_per::{bot_tm, per_diag};
 #[cfg(verus_only)]
-use crate::dom_sem::tf_join;
+use crate::dom_sem::{tf_join, nd_le};
 #[cfg(verus_only)]
 use crate::ti_syntax::*;
 #[cfg(verus_only)]
@@ -34,29 +34,6 @@ use crate::subst_algebra::inst;
 use vstd::prelude::*;
 
 verus! {
-
-/// Codes compare pointwise.
-pub proof fn nd_le(k: NdKey, p1: Seq<Cpt>, p2: Seq<Cpt>)
-    requires
-        p1.len() == p2.len(),
-        forall|i: int| 0 <= i < p1.len() ==> le(#[trigger] p1[i], p2[i]),
-    ensures
-        le(Cpt::Nd(k, p1), Cpt::Nd(k, p2)),
-{
-    let n2 = Cpt::Nd(k, p2);
-    let t = seq![n2];
-    assert(t[0] == n2);
-    parts_lower(n2);
-    assert forall|i: int| 0 <= i < p1.len() implies le_set(#[trigger] p1[i], nd_args(t, i, ht(n2), 1), dec(ht(n2))) by {
-        nd_args_one(n2, i, ht(n2));
-        let d = p2[i];
-        assert(seq![d][0] == d);
-        assert(fits(seq![d], ht(d)));
-        assert(fits(seq![d], dec(ht(n2))));
-        le_set_budget(p1[i], seq![d], ht(d), dec(ht(n2)));
-    }
-    assert(t[0] is Nd && t[0]->Nd_0 == k && t[0]->Nd_1.len() == p1.len());
-}
 
 /// Larger inputs, larger code.
 pub proof fn tf_mono_pre(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y: Cpt)

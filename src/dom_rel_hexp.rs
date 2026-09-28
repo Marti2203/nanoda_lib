@@ -58,6 +58,23 @@ pub proof fn rs_eq(sig: Sig, s: ExprSpec, t: ExprSpec)
     hred_det(sig, s, sort(l), sort(rs(sig, t)));
 }
 
+/// A redex of a term reducing to a constructor application reduces to the
+/// same one.
+pub proof fn cr_eq(sig: Sig, s: ExprSpec, t: ExprSpec)
+    requires
+        hred(sig, s, t),
+        ctor_red(sig, t),
+    ensures
+        ctor_red(sig, s),
+        cr(sig, s) == cr(sig, t),
+{
+    hred_trans(sig, s, t, cr(sig, t));
+    assert(hred(sig, s, cr(sig, t)) && ctor_app(sig, cr(sig, t)));
+    let x = cr(sig, s);
+    assert(hred(sig, s, x) && ctor_app(sig, x));
+    hred_det(sig, s, x, cr(sig, t));
+}
+
 /// HEAD EXPANSION OF THE TYPE RELATION.
 pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: ExprSpec, s2: ExprSpec, a: Cpt)
     requires
@@ -188,9 +205,17 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
             app_tm_intro(sig, k, g, s1, s2, ta, tb, u, a);
         },
         Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m1, m2, t, u, a),
-        Cpt::Nd(NdKey::Ty(..), _) => {
+        Cpt::Nd(NdKey::Ty(..), ts) => {
             tm_ind(sig, n, g, m1, m2, t, u, a);
             tm_ind(sig, n, g, s1, s2, t, u, a);
+            if !(u is Bot) && n >= 1 {
+                con_tm_unfold(sig, (n - 1) as nat, g, m1, m2, u, ts.len());
+                con_tm_unfold(sig, (n - 1) as nat, g, s1, s2, u, ts.len());
+                if con_body(sig, (n - 1) as nat, g, m1, m2, u, ts.len()) {
+                    cr_eq(sig, s1, m1);
+                    cr_eq(sig, s2, m2);
+                }
+            }
         },
     }
 }

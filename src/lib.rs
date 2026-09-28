@@ -17,6 +17,7 @@ pub mod dom_adeq;
 pub mod dom_adeq_base;
 pub mod dom_adeq_syn;
 pub mod dom_compact;
+pub mod dom_con_rel;
 pub mod dom_fund;
 pub mod dom_model;
 pub mod dom_proj;

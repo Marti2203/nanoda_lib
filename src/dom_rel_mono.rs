@@ -143,11 +143,14 @@ pub proof fn mono_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         Cpt::Pi(_, _) => mono_tm_pi(sig, n, g, m, m2, t, u, u2, a),
         Cpt::Lam(_) => ty_inv(n, a, Cpt::U),
         Cpt::Nd(NdKey::Con(..), _) => tm_other(sig, n, g, m, m2, t, u2, a),
-        Cpt::Nd(NdKey::Ty(..), _) => {
+        Cpt::Nd(NdKey::Ty(..), ts) => {
             tm_ind(sig, n, g, m, m2, t, u2, a);
             tm_ind(sig, n, g, m, m2, t, u, a);
             if !(u is Bot) {
                 head_le(u, u2);
+                con_tm_unfold(sig, (n - 1) as nat, g, m, m2, u2, ts.len());
+                con_tm_unfold(sig, (n - 1) as nat, g, m, m2, u, ts.len());
+                con_mono(sig, (n - 1) as nat, g, m, m2, u, u2, a);
             }
         },
     }
@@ -344,6 +347,45 @@ proof fn decr_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpe
         decr(sig, k, g, sapp(m, x), sapp(m2, x2), inst(0, x, tb), app(u, w), cod(a, w), cod(a2, w));
     }
     app_tm_intro(sig, k, g, m, m2, ta, tb, u, a);
+}
+
+
+/// The constructor clause descends along the element.
+proof fn con_mono(sig: Sig, k: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, u2: Cpt, a: Cpt)
+    requires
+        a is Nd && a->Nd_0 is Ty,
+        !(u is Bot),
+        le(u, u2),
+        has_type(k + 1, u, a),
+        has_type(k + 1, u2, a),
+        con_body(sig, k, g, m, m2, u2, a->Nd_1.len()),
+    ensures
+        con_body(sig, k, g, m, m2, u, a->Nd_1.len()),
+    decreases k, 5int, 0int,
+{
+    let lead = a->Nd_1.len();
+    let (cs, cs2) = (u->Nd_1, u2->Nd_1);
+    crate::dom_sem::nd_le_inv(u->Nd_0, cs, u2);
+    let (x, x2) = (cr(sig, m), cr(sig, m2));
+    let c = crate::beta_model::spine_head(x)->Const_0;
+    let np = sig.ienv.ctor_np[c] as nat;
+    let nf = nfields(cs, lead);
+    let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    assert forall|i: int| #![trigger fty(cs, lead, i)] 0 <= i < nf implies con_field(sig, k, g, x, x2, cs, lead, np, i) by {
+        assert(fty(cs2, lead, i) == cs2[lead + 2 * i]);
+        assert(con_field(sig, k, g, x, x2, cs2, lead, np, i));
+        let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+        let (ai, ai2) = (args[np + i], args2[np + i]);
+        let (e, e2, f, f2) = (fty(cs, lead, i), fty(cs2, lead, i), fval(cs, lead, i), fval(cs2, lead, i));
+        assert(le(cs[lead + 2 * i], cs2[lead + 2 * i]));
+        assert(le(cs[lead + 2 * i + 1], cs2[lead + 2 * i + 1]));
+        field_typed(k + 1, u, a, i);
+        field_typed(k + 1, u2, a, i);
+        decr_ty(sig, k, g, ti, ti2, e, e2);
+        ty_weak(k, f, e, e2);
+        mono_tm(sig, k, g, ai, ai2, ti, f, f2, e2);
+        decr(sig, k, g, ai, ai2, ti, f, e, e2);
+    }
 }
 
 } // verus!

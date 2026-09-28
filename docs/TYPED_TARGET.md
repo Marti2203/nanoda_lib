@@ -212,7 +212,7 @@ builds the rules. Sub-steps, each ending green:
 | | content |
 |---|---|
 | S6.4a | semantic type formers in `mem_w` (`sem_const`, `tf_fun`); soundness of their `ConstAx` (`dom_sem`); the relation at type codes (types: convertible; terms: bottom only, until constructors) and adequacy down the telescope (`dom_sem_rel`) (done) |
-| S6.4b | semantic constructors; typing of their values |
+| S6.4b | semantic constructors (`cf_fun`: field type codes are the type element's domains; `code_ok` dispatches by kind) with soundness (`dom_sem`); the relation at constructor values (both sides reduce to applications of the constructor, fields related at their codes; `con_tm`) with all relation lemmas; adequacy by induction down the constructor's telescope (`dom_con_rel::cf_rel`) (done) |
 | S6.4c | the semantic recursor; its typing by induction on the major |
 | S6.4d | the real `iota_ok`; soundness of `Iota` |
 
