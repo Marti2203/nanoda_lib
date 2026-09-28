@@ -1,0 +1,514 @@
+//! CANONICAL CODES of inductive types (the S6 redesign in
+//! docs/TYPED_TARGET.md): an inductive at a level instance and arguments
+//! has one code, carrying a table with, per constructor of its canonical
+//! recursor, each field's type code: a marker for a direct recursive
+//! field, else the code of the field's simple type at the parameters.
+//! Values then carry only their fields and are typed by the table. Other
+//! type formers get an empty table.
+#[allow(unused_imports)]
+use crate::expr_model::{BinderKind, ExprSpec};
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+#[allow(unused_imports)]
+use crate::dom_compact::*;
+#[cfg(verus_only)]
+use crate::rec_canon::*;
+#[cfg(verus_only)]
+use crate::ti_syntax::{Sig, dty_at, is_zero, esize};
+#[cfg(verus_only)]
+use crate::beta_model::{spine_head, spine_args};
+#[cfg(verus_only)]
+use crate::dom_sem::{pre_le, nd_le};
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
+verus! {
+
+/// `ind` has a canonical recursor.
+pub open spec fn has_canon(sig: Sig, ind: u64) -> bool {
+    exists|rid: u64| rec_canon(sig, rid) && rec_ind(sig, rid) == ind
+}
+
+pub open spec fn canon_rec(sig: Sig, ind: u64) -> u64 {
+    choose|rid: u64| rec_canon(sig, rid) && rec_ind(sig, rid) == ind
+}
+
+/// The shape of `ind`'s canonical recursor.
+pub open spec fn canon_shape(sig: Sig, ind: u64) -> IndShape {
+    shape_of(sig, sig.ienv.recs[canon_rec(sig, ind)], ind)
+}
+
+/// Level arguments written over `ind`'s level parameters, at its instance
+/// `ls`.
+pub open spec fn lsub(sig: Sig, ind: u64, ls: Seq<LevelSpec>, us: Seq<LevelSpec>) -> Seq<LevelSpec> {
+    Seq::new(us.len(), |i: int| crate::level_model::subst_level_spec(us[i], sig.consts[ind].lps, ls))
+}
+
+pub open spec fn rk(sig: Sig, ind: u64) -> int {
+    if sig.rank.contains_key(ind) { sig.rank[ind] as int } else { -1 }
+}
+
+/// The sort an inductive at `ls` lives in is Prop.
+pub open spec fn is_prop_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>) -> bool {
+    let t = dty_at(sig, ind, ls);
+    ls.len() == sig.consts[ind].lps.len() && tbody(t, tarity(t)) is Sort && is_zero(tbody(t, tarity(t))->Sort_0)
+}
+
+/// `ind` at `ls` has its canonical table over `args`.
+pub open spec fn tabled(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>) -> bool {
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && canon_shape(sig, ind).np <= args.len() && ls.len() == sig.consts[ind].lps.len()
+}
+
+/// The arguments a code keeps: a canonical inductive's parameters (its
+/// indices never reach typing), any other type former's all.
+pub open spec fn code_args(sig: Sig, ind: u64, args: Seq<Cpt>) -> Seq<Cpt> {
+    if rk(sig, ind) >= 0 && has_canon(sig, ind) && canon_shape(sig, ind).np <= args.len() {
+        args.subrange(0, canon_shape(sig, ind).np as int)
+    } else {
+        args
+    }
+}
+
+/// THE CANONICAL CODE of `ind` at levels `ls` and arguments `args`.
+pub open spec fn canon_code(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>) -> Cpt
+    decreases rk(sig, ind) + 1, 0int, 0int,
+{
+    let blocks = if tabled(sig, ind, ls, args) {
+        cblocks(sig, ind, ls, args, canon_shape(sig, ind).nmin())
+    } else {
+        Seq::empty()
+    };
+    Cpt::Nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls)), code_args(sig, ind, args) + seq![Cpt::Nd(NdKey::Tag(2), blocks)])
+}
+
+/// The table's first `j` blocks.
+pub open spec fn cblocks(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat) -> Seq<Cpt>
+    decreases rk(sig, ind), 3int, j,
+{
+    let sh = canon_shape(sig, ind);
+    if j == 0 || j > sh.nmin() || rk(sig, ind) < 0 {
+        Seq::empty()
+    } else {
+        cblocks(sig, ind, ls, args, (j - 1) as nat).push(Cpt::Nd(NdKey::Tag(3),
+            centries(sig, ind, ls, args, (j - 1) as nat, sh.fields[j - 1].len())))
+    }
+}
+
+/// Constructor `j`'s first `k` field entries.
+pub open spec fn centries(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat, k: nat) -> Seq<Cpt>
+    decreases rk(sig, ind), 2int, k,
+{
+    let sh = canon_shape(sig, ind);
+    if k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || args.len() < sh.np {
+        Seq::empty()
+    } else {
+        let e = sh.fields[j as int][k - 1];
+        let entry = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            Cpt::Nd(NdKey::Tag(1), Seq::empty())
+        } else {
+            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+        };
+        centries(sig, ind, ls, args, j, (k - 1) as nat).push(entry)
+    }
+}
+
+/// The code of a closed simple type written in `outer`'s constructor
+/// (levels over `outer`'s, at its instance `ls`); type formers below rank
+/// `r`.
+pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec) -> Cpt
+    decreases r, 1int, esize(e) + 1,
+{
+    match e {
+        ExprSpec::Var(_) => Cpt::Bot,
+        _ => match spine_head(e) {
+            ExprSpec::Const(jd, us) => if 0 <= rk(sig, jd) < r {
+                canon_code(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, e))
+            } else {
+                Cpt::Bot
+            },
+            _ => Cpt::Bot,
+        },
+    }
+}
+
+pub open spec fn cargs(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec) -> Seq<Cpt>
+    decreases r, 1int, esize(e),
+    via cargs_decreases
+{
+    match e {
+        ExprSpec::App(f, x) => cargs(sig, r, outer, ls, *f).push(ceval(sig, r, outer, ls, *x)),
+        _ => Seq::empty(),
+    }
+}
+
+/// All well formed.
+pub open spec fn aw(xs: Seq<Cpt>) -> bool {
+    forall|i: int| 0 <= i < xs.len() ==> #[trigger] wf(xs[i])
+}
+
+pub proof fn wf_nd(key: NdKey, cs: Seq<Cpt>)
+    requires
+        aw(cs),
+    ensures
+        wf(Cpt::Nd(key, cs)),
+{
+    assert forall|k: int| 0 <= k < cs.len() implies wf(#[trigger] cs[k]) by {}
+}
+
+pub proof fn aw_sub(xs: Seq<Cpt>, lo: int, hi: int)
+    requires
+        aw(xs),
+        0 <= lo <= hi <= xs.len(),
+    ensures
+        aw(xs.subrange(lo, hi)),
+{
+    assert forall|i: int| 0 <= i < hi - lo implies #[trigger] wf(xs.subrange(lo, hi)[i]) by {
+        assert(xs.subrange(lo, hi)[i] == xs[lo + i]);
+    }
+}
+
+pub proof fn aw_push(xs: Seq<Cpt>, x: Cpt)
+    requires
+        aw(xs),
+        wf(x),
+    ensures
+        aw(xs.push(x)),
+{
+    assert forall|i: int| 0 <= i < xs.len() + 1 implies #[trigger] wf(xs.push(x)[i]) by {
+        if i < xs.len() {
+            assert(xs.push(x)[i] == xs[i]);
+        }
+    }
+}
+
+pub proof fn pre_le_sub(xs: Seq<Cpt>, ys: Seq<Cpt>, lo: int, hi: int)
+    requires
+        pre_le(xs, ys),
+        0 <= lo <= hi <= xs.len(),
+    ensures
+        pre_le(xs.subrange(lo, hi), ys.subrange(lo, hi)),
+{
+    assert forall|i: int| 0 <= i < hi - lo implies le(#[trigger] xs.subrange(lo, hi)[i], ys.subrange(lo, hi)[i]) by {
+        assert(xs.subrange(lo, hi)[i] == xs[lo + i] && ys.subrange(lo, hi)[i] == ys[lo + i]);
+    }
+}
+
+pub proof fn pre_le_push2(xs: Seq<Cpt>, ys: Seq<Cpt>, x: Cpt, y: Cpt)
+    requires
+        pre_le(xs, ys),
+        le(x, y),
+    ensures
+        pre_le(xs.push(x), ys.push(y)),
+{
+    assert forall|i: int| 0 <= i < xs.len() + 1 implies le(#[trigger] xs.push(x)[i], ys.push(y)[i]) by {
+        if i < xs.len() {
+            assert(xs.push(x)[i] == xs[i] && ys.push(y)[i] == ys[i]);
+        }
+    }
+}
+
+/// CANONICAL CODES ARE WELL FORMED at well-formed arguments.
+pub proof fn canon_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
+    requires
+        aw(args),
+    ensures
+        wf(canon_code(sig, ind, ls, args)),
+    decreases rk(sig, ind) + 1, 0int, 0int,
+{
+    let has = tabled(sig, ind, ls, args);
+    let blocks = if has { cblocks(sig, ind, ls, args, canon_shape(sig, ind).nmin()) } else { Seq::empty() };
+    if has {
+        cblocks_wf(sig, ind, ls, args, canon_shape(sig, ind).nmin());
+        aw_sub(args, 0, canon_shape(sig, ind).np as int);
+    }
+    let ca = code_args(sig, ind, args);
+    let comps = ca + seq![Cpt::Nd(NdKey::Tag(2), blocks)];
+    wf_nd(NdKey::Tag(2), blocks);
+    assert forall|i: int| 0 <= i < comps.len() implies #[trigger] wf(comps[i]) by {
+        if i < ca.len() {
+            assert(comps[i] == ca[i]);
+        }
+    }
+    wf_nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls)), comps);
+}
+
+pub proof fn cblocks_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat)
+    requires
+        aw(args),
+    ensures
+        aw(cblocks(sig, ind, ls, args, j)),
+    decreases rk(sig, ind), 3int, j,
+{
+    let sh = canon_shape(sig, ind);
+    if !(j == 0 || j > sh.nmin() || rk(sig, ind) < 0) {
+        cblocks_wf(sig, ind, ls, args, (j - 1) as nat);
+        let es = centries(sig, ind, ls, args, (j - 1) as nat, sh.fields[j - 1].len());
+        centries_wf(sig, ind, ls, args, (j - 1) as nat, sh.fields[j - 1].len());
+        wf_nd(NdKey::Tag(3), es);
+        aw_push(cblocks(sig, ind, ls, args, (j - 1) as nat), Cpt::Nd(NdKey::Tag(3), es));
+    }
+}
+
+pub proof fn centries_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat, k: nat)
+    requires
+        aw(args),
+    ensures
+        aw(centries(sig, ind, ls, args, j, k)),
+    decreases rk(sig, ind), 2int, k,
+{
+    let sh = canon_shape(sig, ind);
+    if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || args.len() < sh.np) {
+        centries_wf(sig, ind, ls, args, j, (k - 1) as nat);
+        let e = sh.fields[j as int][k - 1];
+        if !direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            ceval_wf(sig, rk(sig, ind), ind, ls, e);
+            let c = ceval(sig, rk(sig, ind), ind, ls, e);
+            assert(wf(Cpt::Nd(NdKey::Tag(0), seq![c]))) by {
+                assert(seq![c][0] == c);
+            }
+        }
+        let entry = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            Cpt::Nd(NdKey::Tag(1), Seq::empty())
+        } else {
+            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+        };
+        aw_push(centries(sig, ind, ls, args, j, (k - 1) as nat), entry);
+    }
+}
+
+pub proof fn ceval_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec)
+    ensures
+        wf(ceval(sig, r, outer, ls, e)),
+    decreases r, 1int, esize(e) + 1,
+{
+    match e {
+        ExprSpec::Var(_) => {},
+        _ => {
+            if let ExprSpec::Const(jd, us) = spine_head(e) {
+                if 0 <= rk(sig, jd) < r {
+                    cargs_wf(sig, r, outer, ls, e);
+                    canon_wf(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, e));
+                }
+            }
+        },
+    }
+}
+
+pub proof fn cargs_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec)
+    ensures
+        aw(cargs(sig, r, outer, ls, e)),
+    decreases r, 1int, esize(e),
+{
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+        cargs_wf(sig, r, outer, ls, *f);
+        ceval_wf(sig, r, outer, ls, *x);
+        aw_push(cargs(sig, r, outer, ls, *f), ceval(sig, r, outer, ls, *x));
+    }
+}
+
+/// CANONICAL CODES ARE MONOTONE in their arguments.
+pub proof fn canon_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>)
+    requires
+        pre_le(a1, a2),
+    ensures
+        le(canon_code(sig, ind, ls, a1), canon_code(sig, ind, ls, a2)),
+    decreases rk(sig, ind) + 1, 0int, 0int,
+{
+    let has = tabled(sig, ind, ls, a1);
+    let (b1, b2) = if has {
+        (cblocks(sig, ind, ls, a1, canon_shape(sig, ind).nmin()), cblocks(sig, ind, ls, a2, canon_shape(sig, ind).nmin()))
+    } else {
+        (Seq::<Cpt>::empty(), Seq::<Cpt>::empty())
+    };
+    if has {
+        cblocks_mono(sig, ind, ls, a1, a2, canon_shape(sig, ind).nmin());
+        pre_le_sub(a1, a2, 0, canon_shape(sig, ind).np as int);
+    }
+    nd_le(NdKey::Tag(2), b1, b2);
+    let (c1, c2) = (code_args(sig, ind, a1), code_args(sig, ind, a2));
+    assert(pre_le(c1, c2));
+    pre_le_push2(c1, c2, Cpt::Nd(NdKey::Tag(2), b1), Cpt::Nd(NdKey::Tag(2), b2));
+    assert(c1.push(Cpt::Nd(NdKey::Tag(2), b1)) =~= c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)]);
+    assert(c2.push(Cpt::Nd(NdKey::Tag(2), b2)) =~= c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
+    nd_le(NdKey::Ty(ind, is_prop_at(sig, ind, ls)), c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)], c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
+}
+
+pub proof fn cblocks_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>, j: nat)
+    requires
+        pre_le(a1, a2),
+    ensures
+        pre_le(cblocks(sig, ind, ls, a1, j), cblocks(sig, ind, ls, a2, j)),
+    decreases rk(sig, ind), 3int, j,
+{
+    let sh = canon_shape(sig, ind);
+    if !(j == 0 || j > sh.nmin() || rk(sig, ind) < 0) {
+        cblocks_mono(sig, ind, ls, a1, a2, (j - 1) as nat);
+        let n = sh.fields[j - 1].len();
+        centries_mono(sig, ind, ls, a1, a2, (j - 1) as nat, n);
+        nd_le(NdKey::Tag(3), centries(sig, ind, ls, a1, (j - 1) as nat, n), centries(sig, ind, ls, a2, (j - 1) as nat, n));
+        pre_le_push2(cblocks(sig, ind, ls, a1, (j - 1) as nat), cblocks(sig, ind, ls, a2, (j - 1) as nat),
+            Cpt::Nd(NdKey::Tag(3), centries(sig, ind, ls, a1, (j - 1) as nat, n)),
+            Cpt::Nd(NdKey::Tag(3), centries(sig, ind, ls, a2, (j - 1) as nat, n)));
+    }
+}
+
+pub proof fn centries_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>, j: nat, k: nat)
+    requires
+        pre_le(a1, a2),
+    ensures
+        pre_le(centries(sig, ind, ls, a1, j, k), centries(sig, ind, ls, a2, j, k)),
+    decreases rk(sig, ind), 2int, k,
+{
+    let sh = canon_shape(sig, ind);
+    if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || a1.len() < sh.np) {
+        centries_mono(sig, ind, ls, a1, a2, j, (k - 1) as nat);
+        let e = sh.fields[j as int][k - 1];
+        let e1 = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            Cpt::Nd(NdKey::Tag(1), Seq::empty())
+        } else {
+            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+        };
+        le_refl(e1);
+        pre_le_push2(centries(sig, ind, ls, a1, j, (k - 1) as nat), centries(sig, ind, ls, a2, j, (k - 1) as nat), e1, e1);
+    }
+}
+
+/// Level-equivalent telescopes end in the same kind of sort.
+pub proof fn lveq_prop(t1: ExprSpec, t2: ExprSpec)
+    requires
+        crate::conv_cr::lveq(t1, t2),
+    ensures
+        tarity(t1) == tarity(t2),
+        (tbody(t1, tarity(t1)) is Sort) == (tbody(t2, tarity(t2)) is Sort),
+        tbody(t1, tarity(t1)) is Sort ==> is_zero(tbody(t1, tarity(t1))->Sort_0) == is_zero(tbody(t2, tarity(t2))->Sort_0),
+    decreases t1,
+{
+    match (t1, t2) {
+        (ExprSpec::Bind(k1, _, b1), ExprSpec::Bind(k2, _, b2)) => {
+            lveq_prop(*b1, *b2);
+        },
+        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) => {
+            if is_zero(l1) {
+                assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, r) == 0 by {
+                    assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+                }
+            }
+            if is_zero(l2) {
+                assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, r) == 0 by {
+                    assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+pub proof fn lsub_lv(sig: Sig, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, us: Seq<LevelSpec>)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[outer].lps.len(),
+    ensures
+        crate::conv_cr::levs_eq(lsub(sig, outer, ls, us), lsub(sig, outer, ls2, us)),
+{
+    let (a, b) = (lsub(sig, outer, ls, us), lsub(sig, outer, ls2, us));
+    assert forall|i: int, rho: Map<nat, nat>| 0 <= i < a.len() implies #[trigger] crate::level_model::interp(a[i], rho) == crate::level_model::interp(b[i], rho) by {
+        crate::conv_cr::lev_eq_subst(us[i], sig.consts[outer].lps, ls, ls2);
+    }
+}
+
+/// CANONICAL CODES SEE LEVELS ONLY UP TO EQUIVALENCE.
+pub proof fn canon_lv(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, args: Seq<Cpt>)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+    ensures
+        canon_code(sig, ind, ls, args) == canon_code(sig, ind, ls2, args),
+    decreases rk(sig, ind) + 1, 0int, 0int,
+{
+    if ls.len() == sig.consts[ind].lps.len() {
+        crate::conv_cr::lveq_sel(sig.consts[ind].ty, sig.consts[ind].lps, ls, ls2);
+        lveq_prop(dty_at(sig, ind, ls), dty_at(sig, ind, ls2));
+    }
+    if tabled(sig, ind, ls, args) {
+        cblocks_lv(sig, ind, ls, ls2, args, canon_shape(sig, ind).nmin());
+    }
+}
+
+pub proof fn cblocks_lv(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, args: Seq<Cpt>, j: nat)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[ind].lps.len(),
+    ensures
+        cblocks(sig, ind, ls, args, j) == cblocks(sig, ind, ls2, args, j),
+    decreases rk(sig, ind), 3int, j,
+{
+    let sh = canon_shape(sig, ind);
+    if !(j == 0 || j > sh.nmin() || rk(sig, ind) < 0) {
+        cblocks_lv(sig, ind, ls, ls2, args, (j - 1) as nat);
+        centries_lv(sig, ind, ls, ls2, args, (j - 1) as nat, sh.fields[j - 1].len());
+    }
+}
+
+pub proof fn centries_lv(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, args: Seq<Cpt>, j: nat, k: nat)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[ind].lps.len(),
+    ensures
+        centries(sig, ind, ls, args, j, k) == centries(sig, ind, ls2, args, j, k),
+    decreases rk(sig, ind), 2int, k,
+{
+    let sh = canon_shape(sig, ind);
+    if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || args.len() < sh.np) {
+        centries_lv(sig, ind, ls, ls2, args, j, (k - 1) as nat);
+        ceval_lv(sig, rk(sig, ind), ind, ls, ls2, sh.fields[j as int][k - 1]);
+    }
+}
+
+pub proof fn ceval_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[outer].lps.len(),
+    ensures
+        ceval(sig, r, outer, ls, e) == ceval(sig, r, outer, ls2, e),
+    decreases r, 1int, esize(e) + 1,
+{
+    if !(e is Var) {
+        if let ExprSpec::Const(jd, us) = spine_head(e) {
+            if 0 <= rk(sig, jd) < r {
+                cargs_lv(sig, r, outer, ls, ls2, e);
+                lsub_lv(sig, outer, ls, ls2, us);
+                canon_lv(sig, jd, lsub(sig, outer, ls, us), lsub(sig, outer, ls2, us), cargs(sig, r, outer, ls, e));
+            }
+        }
+    }
+}
+
+pub proof fn cargs_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[outer].lps.len(),
+    ensures
+        cargs(sig, r, outer, ls, e) == cargs(sig, r, outer, ls2, e),
+    decreases r, 1int, esize(e),
+{
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+        cargs_lv(sig, r, outer, ls, ls2, *f);
+        ceval_lv(sig, r, outer, ls, ls2, *x);
+    }
+}
+
+#[via_fn]
+proof fn cargs_decreases(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec) {
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+    }
+}
+
+} // verus!

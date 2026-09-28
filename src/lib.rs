@@ -16,6 +16,7 @@ pub mod env;
 pub mod dom_adeq;
 pub mod dom_adeq_base;
 pub mod dom_adeq_syn;
+pub mod dom_code;
 pub mod dom_compact;
 pub mod dom_con_rel;
 pub mod dom_fund;

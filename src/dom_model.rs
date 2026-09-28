@@ -90,45 +90,53 @@ pub open spec fn sem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
     &&& !(sig.ienv.ctor_ind.contains_key(c) && sig.ienv.recs.contains_key(c))
 }
 
-/// `v` approximates the code function of the type former `c` down its
-/// type telescope `t`, the inputs so far being `pre`: a lambda whose
-/// entries' outputs approximate it at one more input, and at a sort the
-/// code of `c` at the inputs. An axiom of any other type has only bottom.
-pub open spec fn tf_fun(c: u64, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) -> bool
+/// `v` approximates the code function of the type former `c` at levels
+/// `ls` down its type telescope `t`, the inputs so far being `pre`: a
+/// lambda whose entries' outputs approximate it at one more input, and at
+/// a sort the canonical code of `c` at the inputs. An axiom of any other
+/// type has only bottom.
+pub open spec fn tf_fun(sig: Sig, c: u64, ls: Seq<LevelSpec>, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) -> bool
     decreases t,
 {
     v is Bot || match t {
         ExprSpec::Bind(BinderKind::Pi, _, b) => match v {
-            Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==> tf_fun(c, *b, pre.push(f[i].0), #[trigger] f[i].1),
+            Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==> tf_fun(sig, c, ls, *b, pre.push(f[i].0), #[trigger] f[i].1),
             _ => false,
         },
-        ExprSpec::Sort(l) => le(v, Cpt::Nd(NdKey::Ty(c, is_zero(l)), pre)),
+        ExprSpec::Sort(_) => le(v, crate::dom_code::canon_code(sig, c, ls, pre)),
         _ => false,
     }
 }
 
-/// `v` approximates the code function of constructor `c` of inductive
-/// `ind` (with `np` parameters) down its type telescope `t`, `a` being the
-/// type element at this binder and `k` the binder's position: a lambda
-/// whose entries' outputs approximate it at the codomain, and at the end
-/// (an application of the inductive, past the parameters) the value node
-/// of `a`'s arguments (parameters and indices) followed by the field pairs
-/// so far, each field's type code the domain of its binder.
-pub open spec fn cf_fun(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, pre: Seq<Cpt>, k: nat, v: Cpt) -> bool
+/// `v` approximates the code function of the constructor at position `pc`
+/// of inductive `ind` (with `np` parameters) down its type telescope `t`,
+/// `k` being the binder's position and `fs` the fields so far: a lambda
+/// whose entries' outputs approximate it at one more input, and at the end
+/// (an application of the inductive, past the parameters) the value, the
+/// constructor's position over the fields.
+pub open spec fn cf_fun(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt) -> bool
     decreases t,
 {
     v is Bot || match t {
-        ExprSpec::Bind(BinderKind::Pi, _, b) => match (v, a) {
-            (Cpt::Lam(f), Cpt::Pi(d, _)) => forall|i: int| 0 <= i < f.len() ==>
-                cf_fun(c, ind, np, *b, cod(a, f[i].0), if k < np { pre } else { pre.push(*d).push(f[i].0) }, k + 1, #[trigger] f[i].1),
+        ExprSpec::Bind(BinderKind::Pi, _, b) => match v {
+            Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==>
+                cf_fun(ind, pc, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1),
             _ => false,
         },
         _ => k >= np && crate::beta_model::spine_head(t) is Const && crate::beta_model::spine_head(t)->Const_0 == ind
-            && match a {
-                Cpt::Nd(NdKey::Ty(i, false), ts) => i == ind && le(v, Cpt::Nd(NdKey::Con(ind, c), ts + pre)),
-                _ => false,
-            },
+            && le(v, Cpt::Nd(NdKey::Con(ind, pc), fs)),
     }
+}
+
+/// `c` is a constructor of `ind`'s canonical recursor.
+pub open spec fn ctor_of(sig: Sig, ind: u64, c: u64) -> bool {
+    crate::dom_code::has_canon(sig, ind)
+        && exists|p: int| 0 <= p < crate::dom_code::canon_shape(sig, ind).nmin() && crate::dom_code::canon_shape(sig, ind).ctors[p] == c
+}
+
+/// Its position there.
+pub open spec fn ctor_pos(sig: Sig, ind: u64, c: u64) -> int {
+    choose|p: int| 0 <= p < crate::dom_code::canon_shape(sig, ind).nmin() && crate::dom_code::canon_shape(sig, ind).ctors[p] == c
 }
 
 /// The code function a semantic constant approximates: a constructor's, a
@@ -136,11 +144,13 @@ pub open spec fn cf_fun(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, pre: Seq
 pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -> bool {
     let t = crate::ti_syntax::dty_at(sig, c, ls);
     if sig.ienv.ctor_ind.contains_key(c) {
-        sig.ienv.ctor_np.contains_key(c) && cf_fun(c, sig.ienv.ctor_ind[c], sig.ienv.ctor_np[c] as nat, t, a, Seq::empty(), 0, v)
+        let ind = sig.ienv.ctor_ind[c];
+        v is Bot || (ctor_of(sig, ind, c)
+            && cf_fun(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v))
     } else if sig.ienv.recs.contains_key(c) {
         v is Bot
     } else {
-        tf_fun(c, t, Seq::empty(), v)
+        tf_fun(sig, c, ls, t, Seq::empty(), v)
     }
 }
 

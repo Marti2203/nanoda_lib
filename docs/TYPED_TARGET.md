@@ -306,6 +306,56 @@ This replaces S6.2's typing clause and S6.4b's constructor code function
 and adds tables to S6.4a's type former; S6.1 (compacts) and S6.3
 (syntax) stay.
 
+### The redesign as built
+
+Working the plan above through changed it in four places.
+
+- **Positions, not ids.** A value is `Con(I, p)` over its fields, `p`
+  the constructor's position in `I`'s canonical recursor. Tables are
+  lists of blocks in that order, so the table a value reads is found by
+  position, which order and join respect. `p` is a `nat`, not a kernel
+  id (no `u64` casts).
+- **No indices in codes.** A canonical code keeps the parameters and the
+  table only. Index codes made a recursive field's code differ from the
+  enclosing one, and neither lay below the other.
+- **Deterministic tables.** `dom_code::canon_code` computes the table
+  from the signature: an entry is a marker (`Tag(1)`) for a direct
+  recursive field, else `Tag(0)` over the code of the field's type.
+  The type former's code function sits below the canonical code, and
+  values are typed at their type's table.
+- **Parameters.** A field whose type is a parameter (`x : α` in
+  `List α`) could not be carried: raising a code needs the type
+  relation of the value's own parameter argument at the larger code,
+  and that argument is only convertible to the type's, while the
+  relation is not closed under conversion. The canonical fragment is
+  therefore, for now, inductives whose fields are direct occurrences
+  or *closed* simple types (another type former applied to closed
+  simple types): `rec_canon::simple_ty` has no variable case, and the
+  typing asks every table entry to be an inductive's code or bottom
+  (`dom_typing::tyc`). This covers `Nat`, `Bool`, enumerations and
+  trees labelled by closed types; `List`, `Option` and `Prod` wait for
+  the parametric case.
+
+In this fragment every field value is bottom or itself a value, so the
+relation's constructor clause (`dom_rel::con_tm`) needs neither the
+stage nor the type's code: both sides reduce to applications of the
+value's constructor with convertible declared field types and derivably
+equal arguments, and each field above bottom is again related by the
+clause. The relation at an inductive's code is that clause plus the
+type's conversion, so raising, lowering and restaging at such codes are
+immediate, and constructor adequacy needs no bound on the type
+element's domains: a field above bottom is a value, so its domain is an
+inductive's code, where the relation already is the clause.
+
+### Open: parameters of any type
+
+Inductives with parameter-typed fields need the relation at a field's
+type code to follow the parameter's code, which the value no longer
+carries. Two routes to study: prove the type relation at inductive codes
+closed under conversion (the relation is closed under head expansion
+only), or let codes carry their parameters' relations the way the
+paper's Σ codes carry their components.
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no

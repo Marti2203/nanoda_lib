@@ -94,6 +94,46 @@ pub open spec fn direct_occ(d: ExprSpec, ind: u64, us: Seq<LevelSpec>, np: nat, 
     &&& spine_args(d).subrange(0, np as int) == vars(k, np)
 }
 
+/// The number of leading Pi binders.
+pub open spec fn tarity(t: ExprSpec) -> nat
+    decreases t,
+{
+    match t {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => 1 + tarity(*b),
+        _ => 0,
+    }
+}
+
+/// A type former other than `ind`: an axiom whose type is a Pi telescope
+/// ending in a sort.
+pub open spec fn other_former(sig: Sig, ind: u64, j: u64) -> bool {
+    &&& j != ind
+    &&& sig.consts.contains_key(j)
+    &&& sig.consts[j].val is None
+    &&& tbody(sig.consts[j].ty, tarity(sig.consts[j].ty)) is Sort
+}
+
+/// A CLOSED SIMPLE TYPE: another type former fully applied to closed
+/// simple types. Field types mentioning parameters or earlier fields are
+/// outside the canonical fragment for now (docs/TYPED_TARGET.md, S6
+/// "Parameters").
+pub open spec fn simple_ty(sig: Sig, ind: u64, e: ExprSpec) -> bool
+    decreases e, 1int,
+{
+    simple_app(sig, ind, e) && spine_head(e) is Const
+        && spine_args(e).len() == tarity(sig.consts[spine_head(e)->Const_0].ty)
+}
+
+pub open spec fn simple_app(sig: Sig, ind: u64, e: ExprSpec) -> bool
+    decreases e, 0int,
+{
+    match e {
+        ExprSpec::App(f, x) => simple_app(sig, ind, *f) && simple_ty(sig, ind, *x),
+        ExprSpec::Const(j, _) => other_former(sig, ind, j),
+        _ => false,
+    }
+}
+
 /// The recursive fields among the first `n`, in order.
 pub open spec fn rec_pos(fs: Seq<ExprSpec>, ind: u64, us: Seq<LevelSpec>, np: nat, ni: nat, n: nat) -> Seq<nat>
     decreases n,
@@ -247,7 +287,8 @@ pub open spec fn elim_level(sig: Sig, rid: u64, ind: u64) -> LevelSpec {
 }
 
 /// A CANONICAL RECURSOR: `rid` is the recursor the kernel builds for its
-/// inductive, a single one with one motive and direct recursive fields.
+/// inductive, a single one with one motive whose fields are direct
+/// recursive occurrences or simple types.
 pub open spec fn rec_canon(sig: Sig, rid: u64) -> bool {
     let rd = sig.ienv.recs[rid];
     let ind = rec_ind(sig, rid);
@@ -284,7 +325,7 @@ pub open spec fn rec_canon(sig: Sig, rid: u64) -> bool {
         &&& sh.tss[j].len() == ni
         &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
         &&& forall|k: int| 0 <= k < nf ==> direct_occ(#[trigger] sh.fields[j][k], ind, sh.us(), np, ni, k as nat)
-            || !crate::inductive_model::contains_const_named(sh.fields[j][k], seq![ind])
+            || simple_ty(sig, ind, sh.fields[j][k])
         &&& rd.rules[j].rhs == sh.rule_rhs(lm, rid, plevels(rd.uparams), j)
     }
     // the recursor's type

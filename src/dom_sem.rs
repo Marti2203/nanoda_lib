@@ -23,35 +23,27 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The code function sees levels only through whether the final sort is
-/// zero.
-pub proof fn tf_lveq(c: u64, t1: ExprSpec, t2: ExprSpec, pre: Seq<Cpt>, v: Cpt)
+/// The code function sees levels only up to equivalence, and the type
+/// only through its Pis and final sort.
+pub proof fn tf_lveq(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, t1: ExprSpec, t2: ExprSpec, pre: Seq<Cpt>, v: Cpt)
     requires
         crate::conv_cr::lveq(t1, t2),
+        crate::conv_cr::levs_eq(ls, ls2),
     ensures
-        tf_fun(c, t1, pre, v) == tf_fun(c, t2, pre, v),
+        tf_fun(sig, c, ls, t1, pre, v) == tf_fun(sig, c, ls2, t2, pre, v),
     decreases t1,
 {
     match (t1, t2) {
         (ExprSpec::Bind(k1, _, b1), ExprSpec::Bind(k2, _, b2)) => {
             if let Cpt::Lam(f) = v {
                 assert forall|i: int| 0 <= i < f.len() implies
-                    tf_fun(c, *b1, pre.push(f[i].0), #[trigger] f[i].1) == tf_fun(c, *b2, pre.push(f[i].0), f[i].1) by {
-                    tf_lveq(c, *b1, *b2, pre.push(f[i].0), f[i].1);
+                    tf_fun(sig, c, ls, *b1, pre.push(f[i].0), #[trigger] f[i].1) == tf_fun(sig, c, ls2, *b2, pre.push(f[i].0), f[i].1) by {
+                    tf_lveq(sig, c, ls, ls2, *b1, *b2, pre.push(f[i].0), f[i].1);
                 }
             }
         },
-        (ExprSpec::Sort(l1), ExprSpec::Sort(l2)) => {
-            if is_zero(l1) {
-                assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, r) == 0 by {
-                    assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
-                }
-            }
-            if is_zero(l2) {
-                assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, r) == 0 by {
-                    assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
-                }
-            }
+        (ExprSpec::Sort(_), ExprSpec::Sort(_)) => {
+            crate::dom_code::canon_lv(sig, c, ls, ls2, pre);
         },
         _ => {},
     }
@@ -103,27 +95,11 @@ pub proof fn pre_ok_push(p1: Seq<Cpt>, p2: Seq<Cpt>, x1: Cpt, x2: Cpt)
     }
 }
 
-/// A code at compatible inputs.
-proof fn tcode_compat(c: u64, p: bool, p1: Seq<Cpt>, p2: Seq<Cpt>)
-    requires
-        pre_ok(p1, p2),
-    ensures
-        compat(Cpt::Nd(NdKey::Ty(c, p), p1), Cpt::Nd(NdKey::Ty(c, p), p2)),
-        wf(Cpt::Nd(NdKey::Ty(c, p), p1)),
-        wf(Cpt::Nd(NdKey::Ty(c, p), p2)),
-{
-    assert forall|i: int| 0 <= i < p1.len() implies compat(#[trigger] p1[i], p2[i]) by {}
-    assert forall|k: int| 0 <= k < p1.len() implies wf(#[trigger] p1[k]) by {}
-    assert forall|k: int| 0 <= k < p2.len() implies wf(#[trigger] p2[k]) by {
-        assert(wf(p1[k]));
-    }
-}
-
 /// APPROXIMATIONS AT COMPATIBLE INPUTS ARE COMPATIBLE.
-pub proof fn tf_compat(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y1: Cpt, y2: Cpt)
+pub proof fn tf_compat(sig: Sig, c: u64, ls: Seq<LevelSpec>, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y1: Cpt, y2: Cpt)
     requires
-        tf_fun(c, t, p1, y1),
-        tf_fun(c, t, p2, y2),
+        tf_fun(sig, c, ls, t, p1, y1),
+        tf_fun(sig, c, ls, t, p2, y2),
         wf(y1),
         wf(y2),
         pre_ok(p1, p2),
@@ -148,47 +124,48 @@ pub proof fn tf_compat(c: u64, t: ExprSpec, p1: Seq<Cpt>, p2: Seq<Cpt>, y1: Cpt,
                 let pj = if j < f1.len() { p1 } else { p2 };
                 if i < f1.len() {
                     assert(l[i] == f1[i]);
-                    assert(tf_fun(c, *b, p1.push(f1[i].0), f1[i].1));
+                    assert(tf_fun(sig, c, ls, *b, p1.push(f1[i].0), f1[i].1));
                 } else {
                     assert(l[i] == f2[i - f1.len()]);
-                    assert(tf_fun(c, *b, p2.push(f2[i - f1.len()].0), f2[i - f1.len()].1));
+                    assert(tf_fun(sig, c, ls, *b, p2.push(f2[i - f1.len()].0), f2[i - f1.len()].1));
                 }
                 if j < f1.len() {
                     assert(l[j] == f1[j]);
-                    assert(tf_fun(c, *b, p1.push(f1[j].0), f1[j].1));
+                    assert(tf_fun(sig, c, ls, *b, p1.push(f1[j].0), f1[j].1));
                 } else {
                     assert(l[j] == f2[j - f1.len()]);
-                    assert(tf_fun(c, *b, p2.push(f2[j - f1.len()].0), f2[j - f1.len()].1));
+                    assert(tf_fun(sig, c, ls, *b, p2.push(f2[j - f1.len()].0), f2[j - f1.len()].1));
                 }
                 assert(pre_ok(pi, pj));
                 pre_ok_push(pi, pj, l[i].0, l[j].0);
-                tf_compat(c, *b, pi.push(l[i].0), pj.push(l[j].0), l[i].1, l[j].1);
+                tf_compat(sig, c, ls, *b, pi.push(l[i].0), pj.push(l[j].0), l[i].1, l[j].1);
             }
         },
-        ExprSpec::Sort(lv) => {
-            let n1 = Cpt::Nd(NdKey::Ty(c, is_zero(lv)), p1);
-            let n2 = Cpt::Nd(NdKey::Ty(c, is_zero(lv)), p2);
-            tcode_compat(c, is_zero(lv), p1, p2);
-            join_ub(n1, n2);
-            let j = join(n1, n2);
-            le_trans(y1, n1, j);
-            le_trans(y2, n2, j);
-            ub_compat(y1, y2, j);
+        ExprSpec::Sort(_) => {
+            let pj = pjoin(p1, p2);
+            pjoin_ub(p1, p2);
+            crate::dom_code::canon_mono(sig, c, ls, p1, pj);
+            crate::dom_code::canon_mono(sig, c, ls, p2, pj);
+            crate::dom_code::canon_wf(sig, c, ls, pj);
+            let top = crate::dom_code::canon_code(sig, c, ls, pj);
+            le_trans(y1, crate::dom_code::canon_code(sig, c, ls, p1), top);
+            le_trans(y2, crate::dom_code::canon_code(sig, c, ls, p2), top);
+            ub_compat(y1, y2, top);
         },
         _ => {},
     }
 }
 
 /// APPROXIMATIONS AT THE SAME INPUTS JOIN.
-pub proof fn tf_join(c: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
+pub proof fn tf_join(sig: Sig, c: u64, ls: Seq<LevelSpec>, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
     requires
-        tf_fun(c, t, p, y1),
-        tf_fun(c, t, p, y2),
+        tf_fun(sig, c, ls, t, p, y1),
+        tf_fun(sig, c, ls, t, p, y2),
         wf(y1),
         wf(y2),
         compat(y1, y2),
     ensures
-        tf_fun(c, t, p, join(y1, y2)),
+        tf_fun(sig, c, ls, t, p, join(y1, y2)),
     decreases t,
 {
     if y1 is Bot || y2 is Bot {
@@ -200,7 +177,7 @@ pub proof fn tf_join(c: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
             let f2 = y2->Lam_0;
             let l = f1 + f2;
             assert(join(y1, y2) == Cpt::Lam(l));
-            assert forall|i: int| 0 <= i < l.len() implies tf_fun(c, *b, p.push(l[i].0), #[trigger] l[i].1) by {
+            assert forall|i: int| 0 <= i < l.len() implies tf_fun(sig, c, ls, *b, p.push(l[i].0), #[trigger] l[i].1) by {
                 if i < f1.len() {
                     assert(l[i] == f1[i]);
                 } else {
@@ -208,8 +185,8 @@ pub proof fn tf_join(c: u64, t: ExprSpec, p: Seq<Cpt>, y1: Cpt, y2: Cpt)
                 }
             }
         },
-        ExprSpec::Sort(lv) => {
-            join_lub(y1, y2, Cpt::Nd(NdKey::Ty(c, is_zero(lv)), p));
+        ExprSpec::Sort(_) => {
+            join_lub(y1, y2, crate::dom_code::canon_code(sig, c, ls, p));
         },
         _ => {},
     }
@@ -280,22 +257,22 @@ pub proof fn lveq_head(t1: ExprSpec, t2: ExprSpec)
     }
 }
 
-/// The constructor's code function sees its type only through its Pi
-/// count and final head.
-pub proof fn cf_lveq(c: u64, ind: u64, np: nat, t1: ExprSpec, t2: ExprSpec, a: Cpt, pre: Seq<Cpt>, k: nat, v: Cpt)
+/// The constructor's code function sees its type only through its Pis and
+/// final head.
+pub proof fn cf_lveq(ind: u64, pc: nat, np: nat, t1: ExprSpec, t2: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt)
     requires
         crate::conv_cr::lveq(t1, t2),
     ensures
-        cf_fun(c, ind, np, t1, a, pre, k, v) == cf_fun(c, ind, np, t2, a, pre, k, v),
+        cf_fun(ind, pc, np, t1, fs, k, v) == cf_fun(ind, pc, np, t2, fs, k, v),
     decreases t1,
 {
     match (t1, t2) {
         (ExprSpec::Bind(k1, _, b1), ExprSpec::Bind(k2, _, b2)) => {
-            if let (Cpt::Lam(f), Cpt::Pi(d, _)) = (v, a) {
+            if let Cpt::Lam(f) = v {
                 assert forall|i: int| 0 <= i < f.len() implies
-                    cf_fun(c, ind, np, *b1, cod(a, f[i].0), if k < np { pre } else { pre.push(*d).push(f[i].0) }, k + 1, #[trigger] f[i].1)
-                    == cf_fun(c, ind, np, *b2, cod(a, f[i].0), if k < np { pre } else { pre.push(*d).push(f[i].0) }, k + 1, f[i].1) by {
-                    cf_lveq(c, ind, np, *b1, *b2, cod(a, f[i].0), if k < np { pre } else { pre.push(*d).push(f[i].0) }, k + 1, f[i].1);
+                    cf_fun(ind, pc, np, *b1, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1)
+                    == cf_fun(ind, pc, np, *b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1) by {
+                    cf_lveq(ind, pc, np, *b1, *b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
                 }
             }
         },
@@ -305,13 +282,12 @@ pub proof fn cf_lveq(c: u64, ind: u64, np: nat, t1: ExprSpec, t2: ExprSpec, a: C
     }
 }
 
-/// Instantiation keeps the code function's view of a type: its Pis and
-/// its final head constant.
-pub proof fn cf_inst(c: u64, ind: u64, np: nat, j: nat, x: ExprSpec, t: ExprSpec, a: Cpt, pre: Seq<Cpt>, k: nat, v: Cpt)
+/// Instantiation keeps the code function's view of a type.
+pub proof fn cf_inst(ind: u64, pc: nat, np: nat, j: nat, x: ExprSpec, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt)
     requires
-        cf_fun(c, ind, np, t, a, pre, k, v),
+        cf_fun(ind, pc, np, t, fs, k, v),
     ensures
-        cf_fun(c, ind, np, crate::subst_algebra::inst(j, x, t), a, pre, k, v),
+        cf_fun(ind, pc, np, crate::subst_algebra::inst(j, x, t), fs, k, v),
     decreases t,
 {
     if v is Bot {
@@ -320,12 +296,11 @@ pub proof fn cf_inst(c: u64, ind: u64, np: nat, j: nat, x: ExprSpec, t: ExprSpec
     match t {
         ExprSpec::Bind(BinderKind::Pi, ta, b) => {
             let f = v->Lam_0;
-            let d = *a->Pi_0;
             assert(crate::subst_algebra::inst(j, x, t) == ExprSpec::Bind(BinderKind::Pi,
                 Box::new(crate::subst_algebra::inst(j, x, *ta)), Box::new(crate::subst_algebra::inst(j + 1, x, *b))));
             assert forall|i: int| 0 <= i < f.len() implies
-                cf_fun(c, ind, np, crate::subst_algebra::inst(j + 1, x, *b), cod(a, f[i].0), if k < np { pre } else { pre.push(d).push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
-                cf_inst(c, ind, np, j + 1, x, *b, cod(a, f[i].0), if k < np { pre } else { pre.push(d).push(f[i].0) }, k + 1, f[i].1);
+                cf_fun(ind, pc, np, crate::subst_algebra::inst(j + 1, x, *b), if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
+                cf_inst(ind, pc, np, j + 1, x, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
             }
         },
         _ => {
@@ -373,70 +348,47 @@ pub proof fn pre_le_concat(a1: Seq<Cpt>, a2: Seq<Cpt>, p1: Seq<Cpt>, p2: Seq<Cpt
     }
 }
 
-/// A larger type element, larger inputs: still an approximation.
-pub proof fn cf_mono(c: u64, ind: u64, np: nat, t: ExprSpec, a1: Cpt, a2: Cpt, p1: Seq<Cpt>, p2: Seq<Cpt>, k: nat, v: Cpt)
+/// Larger fields: still an approximation.
+pub proof fn cf_mono(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: Seq<Cpt>, k: nat, v: Cpt)
     requires
-        cf_fun(c, ind, np, t, a1, p1, k, v),
-        le(a1, a2),
-        wf(a1),
-        wf(a2),
-        wf(v),
-        pre_le(p1, p2),
+        cf_fun(ind, pc, np, t, f1, k, v),
+        pre_le(f1, f2),
     ensures
-        cf_fun(c, ind, np, t, a2, p2, k, v),
+        cf_fun(ind, pc, np, t, f2, k, v),
     decreases t,
 {
     if v is Bot {
         return;
     }
-    head_le(a1, a2);
     match t {
         ExprSpec::Bind(BinderKind::Pi, _, b) => {
             let f = v->Lam_0;
-            let d1 = *a1->Pi_0;
-            let d2 = *a2->Pi_0;
-            pi_dom_le(a1, a2);
             assert forall|i: int| 0 <= i < f.len() implies
-                cf_fun(c, ind, np, *b, cod(a2, f[i].0), if k < np { p2 } else { p2.push(d2).push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
+                cf_fun(ind, pc, np, *b, if k < np { f2 } else { f2.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
                 let x = f[i].0;
-                assert(wf(x) && wf(f[i].1));
-                appk_mono_fun(a1, a2, x, false);
-                appk_wf(a1, x, false);
-                appk_wf(a2, x, false);
-                le_refl(x);
                 if k >= np {
-                    pre_le_push(p1, p2, d1, d2);
-                    pre_le_push(p1.push(d1), p2.push(d2), x, x);
+                    le_refl(x);
+                    pre_le_push(f1, f2, x, x);
                 }
-                cf_mono(c, ind, np, *b, cod(a1, x), cod(a2, x), if k < np { p1 } else { p1.push(d1).push(x) },
-                    if k < np { p2 } else { p2.push(d2).push(x) }, k + 1, f[i].1);
+                cf_mono(ind, pc, np, *b, if k < np { f1 } else { f1.push(x) }, if k < np { f2 } else { f2.push(x) }, k + 1, f[i].1);
             }
         },
         _ => {
-            let ts1 = a1->Nd_1;
-            nd_le_inv(a1->Nd_0, ts1, a2);
-            let ts2 = a2->Nd_1;
-            assert(pre_le(ts1, ts2));
-            pre_le_concat(ts1, ts2, p1, p2);
-            let key = NdKey::Con(ind, c);
-            nd_le(key, ts1 + p1, ts2 + p2);
-            le_trans(v, Cpt::Nd(key, ts1 + p1), Cpt::Nd(key, ts2 + p2));
+            let key = NdKey::Con(ind, pc);
+            nd_le(key, f1, f2);
+            le_trans(v, Cpt::Nd(key, f1), Cpt::Nd(key, f2));
         },
     }
 }
 
-/// Constructor approximations at compatible types and inputs are
-/// compatible.
-pub proof fn cf_compat(c: u64, ind: u64, np: nat, t: ExprSpec, a1: Cpt, a2: Cpt, p1: Seq<Cpt>, p2: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
+/// Constructor approximations at compatible fields are compatible.
+pub proof fn cf_compat(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
     requires
-        cf_fun(c, ind, np, t, a1, p1, k, y1),
-        cf_fun(c, ind, np, t, a2, p2, k, y2),
+        cf_fun(ind, pc, np, t, f1, k, y1),
+        cf_fun(ind, pc, np, t, f2, k, y2),
         wf(y1),
         wf(y2),
-        wf(a1),
-        wf(a2),
-        compat(a1, a2),
-        pre_ok(p1, p2),
+        pre_ok(f1, f2),
     ensures
         compat(y1, y2),
     decreases t,
@@ -446,81 +398,34 @@ pub proof fn cf_compat(c: u64, ind: u64, np: nat, t: ExprSpec, a1: Cpt, a2: Cpt,
     }
     match t {
         ExprSpec::Bind(BinderKind::Pi, _, b) => {
-            let f1 = y1->Lam_0;
-            let f2 = y2->Lam_0;
-            let l = f1 + f2;
-            let (d1, d2) = (*a1->Pi_0, *a2->Pi_0);
-            compat_unfold(a1, a2);
-            join_ub(a1, a2);
-            let aj = join(a1, a2);
-            compat_refl(a1);
-            compat_refl(a2);
-            compat_symm(a1, a2);
+            let g1 = y1->Lam_0;
+            let g2 = y2->Lam_0;
+            let l = g1 + g2;
+            pre_ok_symm(f1, f2);
+            pre_ok_refl(f1);
+            pre_ok_refl(f2);
             assert forall|i: int, j: int| 0 <= i < l.len() && 0 <= j < l.len() && compat(l[i].0, l[j].0)
                 implies compat(#[trigger] l[i].1, #[trigger] l[j].1) by {
-                let (ai, pi, di) = if i < f1.len() { (a1, p1, d1) } else { (a2, p2, d2) };
-                let (aj2, pj, dj) = if j < f1.len() { (a1, p1, d1) } else { (a2, p2, d2) };
-                if i < f1.len() { assert(l[i] == f1[i]); } else { assert(l[i] == f2[i - f1.len()]); }
-                if j < f1.len() { assert(l[j] == f1[j]); } else { assert(l[j] == f2[j - f1.len()]); }
-                let (x, xj) = (l[i].0, l[j].0);
-                assert(wf(x) && wf(xj) && wf(l[i].1) && wf(l[j].1));
-                assert(wf(di) && wf(dj));
-                assert(compat(ai, aj2));
-                assert(compat(di, dj)) by {
-                    compat_unfold(ai, aj2);
+                let fi = if i < g1.len() { f1 } else { f2 };
+                let fj = if j < g1.len() { f1 } else { f2 };
+                if i < g1.len() { assert(l[i] == g1[i]); } else { assert(l[i] == g2[i - g1.len()]); }
+                if j < g1.len() { assert(l[j] == g1[j]); } else { assert(l[j] == g2[j - g1.len()]); }
+                assert(wf(l[i].0) && wf(l[j].0) && wf(l[i].1) && wf(l[j].1));
+                assert(pre_ok(fi, fj));
+                if k >= np {
+                    pre_ok_push(fi, fj, l[i].0, l[j].0);
                 }
-                // the two codomains lie below one at the joined argument
-                join_ub(x, xj);
-                let xm = join(x, xj);
-                appk_mono_fun(ai, aj, xm, false);
-                appk_mono_fun(aj2, aj, xm, false);
-                appk_mono_arg(ai, x, xm, false);
-                appk_mono_arg(aj2, xj, xm, false);
-                appk_wf(ai, x, false);
-                appk_wf(aj2, xj, false);
-                appk_wf(aj, xm, false);
-                appk_wf(ai, xm, false);
-                appk_wf(aj2, xm, false);
-                le_trans(cod(ai, x), cod(ai, xm), cod(aj, xm));
-                le_trans(cod(aj2, xj), cod(aj2, xm), cod(aj, xm));
-                ub_compat(cod(ai, x), cod(aj2, xj), cod(aj, xm));
-                if k < np {
-                    assert(pre_ok(pi, pj)) by {
-                        pre_ok_refl(p1);
-                        pre_ok_refl(p2);
-                        pre_ok_symm(p1, p2);
-                    }
-                } else {
-                    assert(pre_ok(pi, pj)) by {
-                        pre_ok_refl(p1);
-                        pre_ok_refl(p2);
-                        pre_ok_symm(p1, p2);
-                    }
-                    pre_ok_push(pi, pj, di, dj);
-                    pre_ok_push(pi.push(di), pj.push(dj), x, xj);
-                }
-                cf_compat(c, ind, np, *b, cod(ai, x), cod(aj2, xj), if k < np { pi } else { pi.push(di).push(x) },
-                    if k < np { pj } else { pj.push(dj).push(xj) }, k + 1, l[i].1, l[j].1);
+                cf_compat(ind, pc, np, *b, if k < np { fi } else { fi.push(l[i].0) }, if k < np { fj } else { fj.push(l[j].0) },
+                    k + 1, l[i].1, l[j].1);
             }
         },
         _ => {
-            let (ts1, ts2) = (a1->Nd_1, a2->Nd_1);
-            compat_unfold(a1, a2);
-            let key = NdKey::Con(ind, c);
-            let (q1, q2) = (ts1 + p1, ts2 + p2);
-            let (n1, n2) = (Cpt::Nd(key, q1), Cpt::Nd(key, q2));
-            assert forall|i: int| 0 <= i < q1.len() implies compat(#[trigger] q1[i], q2[i]) && wf(q1[i]) && wf(q2[i]) by {
-                if i < ts1.len() {
-                    assert(q1[i] == ts1[i] && q2[i] == ts2[i]);
-                    assert(compat(ts1[i], ts2[i]));
-                } else {
-                    assert(q1[i] == p1[i - ts1.len()] && q2[i] == p2[i - ts1.len()]);
-                    assert(wf(p1[i - ts1.len()]));
-                }
-            }
-            assert forall|i: int| 0 <= i < q1.len() implies wf(#[trigger] q1[i]) by {}
-            assert forall|i: int| 0 <= i < q2.len() implies wf(#[trigger] q2[i]) by {
-                assert(wf(q1[i]));
+            let key = NdKey::Con(ind, pc);
+            let (n1, n2) = (Cpt::Nd(key, f1), Cpt::Nd(key, f2));
+            assert forall|i: int| 0 <= i < f1.len() implies compat(#[trigger] f1[i], f2[i]) by {}
+            assert forall|i: int| 0 <= i < f1.len() implies #[trigger] wf(f1[i]) by {}
+            assert forall|i: int| 0 <= i < f2.len() implies #[trigger] wf(f2[i]) by {
+                assert(wf(f1[i]));
             }
             join_ub(n1, n2);
             let jn = join(n1, n2);
@@ -531,16 +436,16 @@ pub proof fn cf_compat(c: u64, ind: u64, np: nat, t: ExprSpec, a1: Cpt, a2: Cpt,
     }
 }
 
-/// Constructor approximations at the same type and inputs join.
-pub proof fn cf_join(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, p: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
+/// Constructor approximations at the same fields join.
+pub proof fn cf_join(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
     requires
-        cf_fun(c, ind, np, t, a, p, k, y1),
-        cf_fun(c, ind, np, t, a, p, k, y2),
+        cf_fun(ind, pc, np, t, fs, k, y1),
+        cf_fun(ind, pc, np, t, fs, k, y2),
         wf(y1),
         wf(y2),
         compat(y1, y2),
     ensures
-        cf_fun(c, ind, np, t, a, p, k, join(y1, y2)),
+        cf_fun(ind, pc, np, t, fs, k, join(y1, y2)),
     decreases t,
 {
     if y1 is Bot || y2 is Bot {
@@ -548,22 +453,21 @@ pub proof fn cf_join(c: u64, ind: u64, np: nat, t: ExprSpec, a: Cpt, p: Seq<Cpt>
     }
     match t {
         ExprSpec::Bind(BinderKind::Pi, _, b) => {
-            let f1 = y1->Lam_0;
-            let f2 = y2->Lam_0;
-            let l = f1 + f2;
-            let d = *a->Pi_0;
+            let g1 = y1->Lam_0;
+            let g2 = y2->Lam_0;
+            let l = g1 + g2;
             assert(join(y1, y2) == Cpt::Lam(l));
             assert forall|i: int| 0 <= i < l.len() implies
-                cf_fun(c, ind, np, *b, cod(a, l[i].0), if k < np { p } else { p.push(d).push(l[i].0) }, k + 1, #[trigger] l[i].1) by {
-                if i < f1.len() {
-                    assert(l[i] == f1[i]);
+                cf_fun(ind, pc, np, *b, if k < np { fs } else { fs.push(l[i].0) }, k + 1, #[trigger] l[i].1) by {
+                if i < g1.len() {
+                    assert(l[i] == g1[i]);
                 } else {
-                    assert(l[i] == f2[i - f1.len()]);
+                    assert(l[i] == g2[i - g1.len()]);
                 }
             }
         },
         _ => {
-            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, c), a->Nd_1 + p));
+            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, pc), fs));
         },
     }
 }
@@ -579,8 +483,6 @@ pub open spec fn sem_mem(sig: Sig, c: u64, ls: Seq<LevelSpec>, u: Cpt, a: Cpt, v
     &&& mem(sig, dty_at(sig, c, ls), bot_env(), a)
 }
 
-/// The code function sees levels only through the type's shape and final
-/// sort.
 pub proof fn code_lveq(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, a: Cpt, v: Cpt)
     requires
         sig.consts.contains_key(c),
@@ -591,10 +493,11 @@ pub proof fn code_lveq(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>
 {
     let (t1, t2) = (dty_at(sig, c, ls), dty_at(sig, c, ls2));
     crate::conv_cr::lveq_sel(sig.consts[c].ty, sig.consts[c].lps, ls, ls2);
-    if sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_np.contains_key(c) {
-        cf_lveq(c, sig.ienv.ctor_ind[c], sig.ienv.ctor_np[c] as nat, t1, t2, a, Seq::empty(), 0, v);
+    if sig.ienv.ctor_ind.contains_key(c) {
+        let ind = sig.ienv.ctor_ind[c];
+        cf_lveq(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t1, t2, Seq::empty(), 0, v);
     }
-    tf_lveq(c, t1, t2, Seq::empty(), v);
+    tf_lveq(sig, c, ls, ls2, t1, t2, Seq::empty(), v);
 }
 
 pub proof fn code_mono(sig: Sig, c: u64, ls: Seq<LevelSpec>, a1: Cpt, a2: Cpt, v: Cpt)
@@ -607,9 +510,6 @@ pub proof fn code_mono(sig: Sig, c: u64, ls: Seq<LevelSpec>, a1: Cpt, a2: Cpt, v
     ensures
         code_ok(sig, c, ls, a2, v),
 {
-    if sig.ienv.ctor_ind.contains_key(c) {
-        cf_mono(c, sig.ienv.ctor_ind[c], sig.ienv.ctor_np[c] as nat, dty_at(sig, c, ls), a1, a2, Seq::empty(), Seq::empty(), 0, v);
-    }
 }
 
 pub proof fn code_compat(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, v2: Cpt)
@@ -622,11 +522,15 @@ pub proof fn code_compat(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, 
     ensures
         compat(v1, v2),
 {
+    let t = dty_at(sig, c, ls);
+    if v1 is Bot || v2 is Bot {
+        return;
+    }
     if sig.ienv.ctor_ind.contains_key(c) {
-        compat_refl(a);
-        cf_compat(c, sig.ienv.ctor_ind[c], sig.ienv.ctor_np[c] as nat, dty_at(sig, c, ls), a, a, Seq::empty(), Seq::empty(), 0, v1, v2);
+        let ind = sig.ienv.ctor_ind[c];
+        cf_compat(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), Seq::empty(), 0, v1, v2);
     } else if !sig.ienv.recs.contains_key(c) {
-        tf_compat(c, dty_at(sig, c, ls), Seq::empty(), Seq::empty(), v1, v2);
+        tf_compat(sig, c, ls, t, Seq::empty(), Seq::empty(), v1, v2);
     }
 }
 
@@ -640,10 +544,15 @@ pub proof fn code_join(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, v2
     ensures
         code_ok(sig, c, ls, a, join(v1, v2)),
 {
+    let t = dty_at(sig, c, ls);
+    if v1 is Bot || v2 is Bot {
+        return;
+    }
     if sig.ienv.ctor_ind.contains_key(c) {
-        cf_join(c, sig.ienv.ctor_ind[c], sig.ienv.ctor_np[c] as nat, dty_at(sig, c, ls), a, Seq::empty(), 0, v1, v2);
+        let ind = sig.ienv.ctor_ind[c];
+        cf_join(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v1, v2);
     } else if !sig.ienv.recs.contains_key(c) {
-        tf_join(c, dty_at(sig, c, ls), Seq::empty(), v1, v2);
+        tf_join(sig, c, ls, t, Seq::empty(), v1, v2);
     }
 }
 
@@ -775,6 +684,33 @@ pub proof fn sound_sem(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>
         }
     }
     jc_intro(sig, m1, rho);
+}
+
+/// The pointwise join of two input sequences.
+pub open spec fn pjoin(p1: Seq<Cpt>, p2: Seq<Cpt>) -> Seq<Cpt> {
+    Seq::new(p1.len(), |i: int| join(p1[i], p2[i]))
+}
+
+/// Compatible inputs lie below their pointwise join, which is well formed.
+pub proof fn pjoin_ub(p1: Seq<Cpt>, p2: Seq<Cpt>)
+    requires
+        pre_ok(p1, p2),
+    ensures
+        pre_le(p1, pjoin(p1, p2)),
+        pre_le(p2, pjoin(p1, p2)),
+        crate::dom_code::aw(pjoin(p1, p2)),
+{
+    let pj = pjoin(p1, p2);
+    assert forall|i: int| 0 <= i < p1.len() implies le(#[trigger] p1[i], pj[i]) && le(p2[i], pj[i]) && wf(pj[i]) by {
+        assert(wf(p1[i]) && wf(p2[i]) && compat(p1[i], p2[i]));
+        join_ub(p1[i], p2[i]);
+    }
+    assert forall|i: int| 0 <= i < p2.len() implies le(#[trigger] p2[i], pj[i]) by {
+        assert(le(p1[i], pj[i]));
+    }
+    assert forall|i: int| 0 <= i < pj.len() implies #[trigger] wf(pj[i]) by {
+        assert(le(p1[i], pj[i]));
+    }
 }
 
 } // verus!

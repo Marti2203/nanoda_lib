@@ -94,20 +94,6 @@ pub open spec fn arg_ty(sig: Sig, x: ExprSpec, k: nat) -> ExprSpec {
     tel_dom(crate::ti_syntax::dty_at(sig, h->Const_0, h->Const_1), crate::beta_model::spine_args(x), k)
 }
 
-/// A value node's `i`-th field: its type code and its value, after `lead`
-/// leading components.
-pub open spec fn fty(cs: Seq<Cpt>, lead: nat, i: int) -> Cpt {
-    cs[lead + 2 * i]
-}
-
-pub open spec fn fval(cs: Seq<Cpt>, lead: nat, i: int) -> Cpt {
-    cs[lead + 2 * i + 1]
-}
-
-pub open spec fn nfields(cs: Seq<Cpt>, lead: nat) -> nat {
-    ((cs.len() - lead) / 2) as nat
-}
-
 /// A Pi's domain and codomain are types.
 pub open spec fn pi_typed(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec) -> bool {
     crate::ti_sub::tconvd(sig, g, ta, ta) && crate::ti_sub::tconvd(sig, g.push(ta), tb, tb)
@@ -170,40 +156,53 @@ pub open spec fn rel_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         Cpt::U => to_sort(sig, g, t, false) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Prop => to_sort(sig, g, t, true) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a),
-        Cpt::Nd(NdKey::Ty(_, _), ts) => rel_ty(sig, n, g, t, t, a)
-            && (u is Bot || (n >= 1 && con_tm(sig, (n - 1) as nat, g, m, m2, u, ts.len()))),
+        Cpt::Nd(NdKey::Ty(_, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || con_tm(sig, g, m, m2, u)),
         _ => false,
     }
 }
 
-/// The constructor clause: both sides reduce to applications of the
-/// value's constructor, whose fields are related at the value's field
-/// codes, with convertible declared types.
+/// The value's constructor is `c`, at its position in the inductive's
+/// canonical order.
+pub open spec fn at_pos(sig: Sig, u: Cpt, c: u64) -> bool {
+    let (ind, p) = (u->Nd_0->Con_0, u->Nd_0->Con_1);
+    &&& sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_ind[c] == ind
+    &&& (p as int) < crate::dom_code::canon_shape(sig, ind).nmin()
+    &&& crate::dom_code::canon_shape(sig, ind).ctors[p as int] == c
+}
+
+/// THE CONSTRUCTOR CLAUSE: both sides reduce to applications of the
+/// value's constructor with convertible declared field types, derivably
+/// equal fields, and, where the value has a field, the fields related as
+/// constructor values in turn. Canonical inductives' fields are values of
+/// inductives (docs/TYPED_TARGET.md, S6 "Parameters"), so the clause needs
+/// neither the stage nor the type's code.
 #[verifier::opaque]
-pub open spec fn con_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, lead: nat) -> bool
-    decreases n, 4int,
+pub open spec fn con_tm(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt) -> bool
+    decreases ht(u),
+    via con_tm_decreases
 {
     u is Nd && u->Nd_0 is Con && ctor_red(sig, m) && ctor_red(sig, m2) && {
         let (x, x2) = (cr(sig, m), cr(sig, m2));
-        let cs = u->Nd_1;
+        let fs = u->Nd_1;
         let c = crate::beta_model::spine_head(x)->Const_0;
-        let np = sig.ienv.ctor_np[c] as nat;
-        let nf = nfields(cs, lead);
+        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
         let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
-        &&& c == u->Nd_0->Con_1
+        &&& at_pos(sig, u, c)
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
-        &&& lead <= cs.len()
-        &&& (cs.len() - lead) % 2 == 0
-        &&& args.len() == np + nf
-        &&& args2.len() == np + nf
-        &&& forall|i: int| #![trigger fty(cs, lead, i)] 0 <= i < nf ==> {
+        &&& args.len() == np + fs.len()
+        &&& args2.len() == np + fs.len()
+        &&& forall|i: int| 0 <= i < fs.len() ==> {
             let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
             &&& tchain(sig, g, ti, ti2)
             &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
-            &&& rel_ty(sig, n, g, ti, ti2, fty(cs, lead, i))
-            &&& rel_tm(sig, n, g, args[np + i], args2[np + i], ti, fval(cs, lead, i), fty(cs, lead, i))
+            &&& (#[trigger] fs[i] is Bot || con_tm(sig, g, args[np + i], args2[np + i], fs[i]))
         }
     }
+}
+
+#[via_fn]
+proof fn con_tm_decreases(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt) {
+    parts_lower(u);
 }
 
 /// The Pi term clause: related arguments give related applications.
@@ -262,64 +261,150 @@ pub proof fn ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
 }
 
 /// One field of the constructor clause.
-pub open spec fn con_field(sig: Sig, n: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, cs: Seq<Cpt>, lead: nat, np: nat, i: int) -> bool {
+pub open spec fn con_field(sig: Sig, g: Ctx, x: ExprSpec, x2: ExprSpec, fs: Seq<Cpt>, np: nat, i: int) -> bool {
     let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
     let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
     &&& tchain(sig, g, ti, ti2)
     &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
-    &&& rel_ty(sig, n, g, ti, ti2, fty(cs, lead, i))
-    &&& rel_tm(sig, n, g, args[np + i], args2[np + i], ti, fval(cs, lead, i), fty(cs, lead, i))
+    &&& (fs[i] is Bot || con_tm(sig, g, args[np + i], args2[np + i], fs[i]))
 }
 
 /// The constructor clause, unfolded.
-pub open spec fn con_body(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, lead: nat) -> bool {
+pub open spec fn con_body(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt) -> bool {
     u is Nd && u->Nd_0 is Con && ctor_red(sig, m) && ctor_red(sig, m2) && {
         let (x, x2) = (cr(sig, m), cr(sig, m2));
-        let cs = u->Nd_1;
+        let fs = u->Nd_1;
         let c = crate::beta_model::spine_head(x)->Const_0;
-        let np = sig.ienv.ctor_np[c] as nat;
-        let nf = nfields(cs, lead);
-        &&& c == u->Nd_0->Con_1
+        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+        &&& at_pos(sig, u, c)
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
-        &&& lead <= cs.len()
-        &&& (cs.len() - lead) % 2 == 0
-        &&& crate::beta_model::spine_args(x).len() == np + nf
-        &&& crate::beta_model::spine_args(x2).len() == np + nf
-        &&& forall|i: int| #![trigger fty(cs, lead, i)] 0 <= i < nf ==> con_field(sig, n, g, x, x2, cs, lead, np, i)
+        &&& crate::beta_model::spine_args(x).len() == np + fs.len()
+        &&& crate::beta_model::spine_args(x2).len() == np + fs.len()
+        &&& forall|i: int| 0 <= i < fs.len() ==> #[trigger] con_field(sig, g, x, x2, fs, np, i)
     }
 }
 
-pub proof fn con_tm_unfold(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, lead: nat)
+pub proof fn con_tm_unfold(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt)
     ensures
-        con_tm(sig, n, g, m, m2, u, lead) == con_body(sig, n, g, m, m2, u, lead),
+        con_tm(sig, g, m, m2, u) == con_body(sig, g, m, m2, u),
 {
-    reveal_with_fuel(rel_ty, 2);
-    reveal_with_fuel(rel_tm, 2);
-    reveal_with_fuel(cod_ty, 2);
-    reveal_with_fuel(app_tm, 2);
     reveal_with_fuel(con_tm, 2);
+    if con_tm(sig, g, m, m2, u) {
+        let (x, x2) = (cr(sig, m), cr(sig, m2));
+        let fs = u->Nd_1;
+        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+        assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, g, x, x2, fs, np, i) by {
+            assert(fs[i] == fs[i]);
+        }
+    }
+    if con_body(sig, g, m, m2, u) {
+        let (x, x2) = (cr(sig, m), cr(sig, m2));
+        let fs = u->Nd_1;
+        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+        let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+        assert forall|i: int| 0 <= i < fs.len() implies {
+            let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+            &&& tchain(sig, g, ti, ti2)
+            &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
+            &&& (#[trigger] fs[i] is Bot || con_tm(sig, g, args[np + i], args2[np + i], fs[i]))
+        } by {
+            assert(con_field(sig, g, x, x2, fs, np, i));
+        }
+    }
 }
 
-/// A typed value's fields are typed one stage down, at their codes.
-pub proof fn field_typed(n: nat, u: Cpt, a: Cpt, i: int)
+/// The constructor clause is symmetric.
+pub proof fn con_symm(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt)
     requires
-        has_type(n, u, a),
-        a is Nd && a->Nd_0 is Ty,
-        u is Nd && u->Nd_0 is Con,
-        0 <= i < nfields(u->Nd_1, a->Nd_1.len()),
+        con_tm(sig, g, m, m2, u),
     ensures
-        n >= 1,
-        a->Nd_1.len() <= u->Nd_1.len(),
-        (u->Nd_1.len() - a->Nd_1.len()) % 2 == 0,
-        has_type((n - 1) as nat, fty(u->Nd_1, a->Nd_1.len(), i), Cpt::U),
-        has_type((n - 1) as nat, fval(u->Nd_1, a->Nd_1.len(), i), fty(u->Nd_1, a->Nd_1.len(), i)),
+        con_tm(sig, g, m2, m, u),
+    decreases ht(u),
 {
-    let (cs, lead) = (u->Nd_1, a->Nd_1.len());
-    let k = lead + 2 * i;
-    assert(k + 1 < cs.len());
-    assert(cs[k] == fty(cs, lead, i));
-    assert(cs[k + 1] == fval(cs, lead, i));
-    assert((k - lead) % 2 == 0);
+    con_tm_unfold(sig, g, m, m2, u);
+    con_tm_unfold(sig, g, m2, m, u);
+    parts_lower(u);
+    let (x, x2) = (cr(sig, m), cr(sig, m2));
+    let fs = u->Nd_1;
+    let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, g, x2, x, fs, np, i) by {
+        assert(con_field(sig, g, x, x2, fs, np, i));
+        let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+        let (ai, ai2) = (args[np + i], args2[np + i]);
+        crate::ti_chain::tchain_sym(sig, g, ti, ti2);
+        crate::dom_adeq_syn::dsym(sig, g, ai, ai2, ti);
+        crate::ti_chain::conv_chain(sig, g, ai2, ai, ti, ti2);
+        if !(fs[i] is Bot) {
+            assert(ht(fs[i]) < ht(u));
+            con_symm(sig, g, ai, ai2, fs[i]);
+        }
+    }
+}
+
+/// The constructor clause is transitive.
+pub proof fn con_trans(sig: Sig, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: ExprSpec, u: Cpt)
+    requires
+        con_tm(sig, g, m1, m2, u),
+        con_tm(sig, g, m2, m3, u),
+    ensures
+        con_tm(sig, g, m1, m3, u),
+    decreases ht(u),
+{
+    con_tm_unfold(sig, g, m1, m2, u);
+    con_tm_unfold(sig, g, m2, m3, u);
+    con_tm_unfold(sig, g, m1, m3, u);
+    parts_lower(u);
+    let (x1, x2, x3) = (cr(sig, m1), cr(sig, m2), cr(sig, m3));
+    let fs = u->Nd_1;
+    let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    let (args1, args2, args3) = (crate::beta_model::spine_args(x1), crate::beta_model::spine_args(x2), crate::beta_model::spine_args(x3));
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, g, x1, x3, fs, np, i) by {
+        assert(con_field(sig, g, x1, x2, fs, np, i));
+        assert(con_field(sig, g, x2, x3, fs, np, i));
+        let (t1, t2, t3) = (arg_ty(sig, x1, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat), arg_ty(sig, x3, (np + i) as nat));
+        let (a1, a2, a3) = (args1[np + i], args2[np + i], args3[np + i]);
+        crate::ti_chain::tchain_trans(sig, g, t1, t2, t3);
+        crate::ti_chain::tchain_sym(sig, g, t1, t2);
+        crate::ti_chain::conv_chain(sig, g, a2, a3, t2, t1);
+        crate::dom_adeq_syn::dtrans(sig, g, a1, a2, a3, t1);
+        if !(fs[i] is Bot) {
+            assert(ht(fs[i]) < ht(u));
+            con_trans(sig, g, a1, a2, a3, fs[i]);
+        }
+    }
+}
+
+/// The constructor clause descends along the value.
+pub proof fn con_mono(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, u2: Cpt)
+    requires
+        wf(u),
+        !(u is Bot),
+        le(u, u2),
+        con_tm(sig, g, m, m2, u2),
+    ensures
+        con_tm(sig, g, m, m2, u),
+    decreases ht(u2),
+{
+    con_tm_unfold(sig, g, m, m2, u2);
+    con_tm_unfold(sig, g, m, m2, u);
+    head_le(u, u2);
+    let (fs, fs2) = (u->Nd_1, u2->Nd_1);
+    crate::dom_sem::nd_le_inv(u->Nd_0, fs, u2);
+    parts_lower(u2);
+    let (x, x2) = (cr(sig, m), cr(sig, m2));
+    let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, g, x, x2, fs, np, i) by {
+        assert(con_field(sig, g, x, x2, fs2, np, i));
+        if !(fs[i] is Bot) {
+            assert(le(fs[i], fs2[i]));
+            assert(wf(fs[i]));
+            head_le(fs[i], fs2[i]);
+            assert(ht(fs2[i]) < ht(u2));
+            con_mono(sig, g, args[np + i], args2[np + i], fs[i], fs2[i]);
+        }
+    }
 }
 
 /// At an inductive's code, related types convert.
@@ -341,19 +426,17 @@ pub proof fn tm_ind(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     requires
         a is Nd && a->Nd_0 is Ty,
     ensures
-        rel_tm(sig, n, g, m, m2, t, u, a) == (tchain(sig, g, t, t)
-            && (u is Bot || (n >= 1 && con_tm(sig, (n - 1) as nat, g, m, m2, u, a->Nd_1.len())))),
+        rel_tm(sig, n, g, m, m2, t, u, a) == (tchain(sig, g, t, t) && (u is Bot || con_tm(sig, g, m, m2, u))),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);
     reveal_with_fuel(cod_ty, 2);
     reveal_with_fuel(app_tm, 2);
-    reveal_with_fuel(con_tm, 2);
 }
 
 pub proof fn ty_other(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     requires
-        a is Lam || (a is Nd && a->Nd_0 is Con),
+        a is Lam || (a is Nd && !(a->Nd_0 is Ty)),
     ensures
         !rel_ty(sig, n, g, t, t2, a),
 {
@@ -399,7 +482,7 @@ pub proof fn tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
 
 pub proof fn tm_other(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
     requires
-        a is Lam || (a is Nd && a->Nd_0 is Con),
+        a is Lam || (a is Nd && !(a->Nd_0 is Ty)),
     ensures
         !rel_tm(sig, n, g, m, m2, t, u, a),
 {

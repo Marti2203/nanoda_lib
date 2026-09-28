@@ -1262,11 +1262,11 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
                     return;
                 }
                 // a type former's approximation, related down its telescope
-                crate::dom_sem_rel::tf_down(c, t, Seq::empty(), u, v);
+                crate::dom_sem_rel::tf_down(sig, c, ls, t, Seq::empty(), u, v);
                 related_left(sig, j->Eq_0, rho, dl, s, s2);
                 reveal(spair);
                 crate::ti_sub::d_sub(sig, d, dl, s, s2);
-                crate::dom_sem_rel::tf_rel(sig, n, dl, c, t, Seq::empty(), m, m2, t, u, a);
+                crate::dom_sem_rel::tf_rel(sig, n, dl, c, ls, t, Seq::empty(), m, m2, t, u, a);
                 return;
             }
             crate::dom_model::mem_const(sig, c, ls, rho, u);
