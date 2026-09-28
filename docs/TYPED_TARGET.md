@@ -216,6 +216,44 @@ builds the rules. Sub-steps, each ending green:
 | S6.4c | the semantic recursor; its typing by induction on the major |
 | S6.4d | the real `iota_ok`; soundness of `Iota` |
 
+### S6.4c/d design: the recursor
+
+Scope: a recursor of one inductive (one motive), whose recursive fields
+are direct (`I params idx'`, not `Π ys, I ...`). Mutual, nested and
+reflexive inductives stay outside `iota_ok` and keep their recursors
+uninterpreted (bottom); the kernel side then ports their iota steps only
+once they are covered.
+
+- The code function `RECVAL(inputs)` recurses on the major's code:
+  bottom gives bottom; a value `Con(I, c_j)` gives minor `j` (the rule
+  for `c_j`'s position) applied to the value's field values and then,
+  for each recursive field in order (read off `c_j`'s declared type, not
+  off the approximation, so the count matches the rule), `RECVAL` at the
+  field value with the indices of the field's type code.
+- Soundness of the axiom rule at the recursor needs `RECVAL` monotone and
+  well formed, as for the other kinds.
+- Soundness of `Iota` needs `⟦rec ... (c_j ps fs)⟧ = ⟦rhs_j ... fs⟧`. The
+  hard direction needs a member of `⟦rec⟧` that is exactly `RECVAL` at
+  given inputs, so `RECVAL`'s output must be typed at the motive's
+  application: the semantic typing of the recursor, by induction on the
+  major's code, with the type element of the recursor chosen large
+  enough (join-closure of the type) that each minor's domains lie above
+  the value's field codes.
+- `iota_ok` becomes the real condition: every rule's right-hand side is
+  `λ params motive minors fields. minor_j fields ihs` with `ihs` the
+  recursor at each recursive field, all of the kernel's own shape.
+- Head reduction takes iota steps (reducing the major first), so the
+  relation's head expansion covers `rec ... m ⇝ rhs_j ... ⇝ minor fs ihs`;
+  adequacy at the recursor is the paper's induction on the major's code:
+  the major relates (by `con_tm`) to a constructor application with
+  related fields, the minor's application clause relates the fields and
+  the recursive results (by induction), and head expansion closes.
+
+These three (typing of `RECVAL`, the real `iota_ok`, iota in head
+reduction) land together: the recursor's adequacy needs `Iota`
+derivations, which need the real `iota_ok`, whose soundness needs the
+typing.
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no

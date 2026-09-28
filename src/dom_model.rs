@@ -87,6 +87,7 @@ pub open spec fn sem_const(sig: Sig, c: u64, ls: Seq<LevelSpec>) -> bool {
     &&& sig.consts[c].lps.len() == ls.len()
     &&& sig.rank.contains_key(c)
     &&& crank(sig, crate::ti_syntax::dty_at(sig, c, ls)) <= sig.rank[c]
+    &&& !(sig.ienv.ctor_ind.contains_key(c) && sig.ienv.recs.contains_key(c))
 }
 
 /// `v` approximates the code function of the type former `c` down its

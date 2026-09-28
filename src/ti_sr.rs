@@ -243,6 +243,7 @@ pub proof fn wk_closed(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
 pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
         sig_wf(sig),
+        crate::ti_syntax::iota_ok(sig),
         derivable(sig, eq(g, m, m, t)),
         crate::ti_hred::hstep(sig, m) is Some,
     ensures
@@ -277,6 +278,8 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
                 tchain_sym(sig, g, t, inst(0, *x, bt));
                 conv_chain(sig, g, m, inst(0, *x, *body), inst(0, *x, bt), t);
             } else {
+                crate::ti_valid::iota_dead(sig, m);
+                assert(!crate::ti_hred::rec_major(sig, m));
                 sr(sig, g, *f, pi(a1, b1));
                 let f2 = crate::ti_hred::hstep(sig, *f)->Some_0;
                 let d0 = get(sig, eq(g, *f, f2, pi(a1, b1)));

@@ -161,14 +161,17 @@ pub proof fn rp_pi(sig: Sig, a: ExprSpec, b: ExprSpec)
     hred_stuck_self(sig, t, pi(p.0, p.1));
 }
 
-/// An application of a non-definition is stuck.
+/// An application of a constant that is neither a definition nor a
+/// recursor is stuck.
 pub proof fn stuck_spine(sig: Sig, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>)
     requires
         !crate::ti_syntax::is_def(sig, c, ls),
+        !sig.ienv.recs.contains_key(c),
     ensures
         stuck(sig, spine_app(ExprSpec::Const(c, ls), xs)),
     decreases xs.len(),
 {
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
     if xs.len() > 0 {
         stuck_spine(sig, c, ls, xs.subrange(0, xs.len() - 1));
     }
@@ -467,6 +470,7 @@ pub open spec fn cf_inv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Level
     &&& sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_ind[c] == ind
     &&& sig.ienv.ctor_np.contains_key(c) && sig.ienv.ctor_np[c] as nat == np
     &&& !crate::ti_syntax::is_def(sig, c, ls) && !crate::ti_syntax::is_def(sig, c, ls2)
+    &&& !sig.ienv.recs.contains_key(c)
     &&& tshape(t, ind, r) && tshape(t2, ind, r) && xs.len() + r >= np
     &&& cf_fun(c, ind, np, t, a, pre, xs.len() as nat, u)
     &&& has_type(n, u, a) && has_type(n, a, Cpt::U) && n <= nn

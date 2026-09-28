@@ -12,7 +12,17 @@ use vstd::prelude::*;
 
 verus! {
 
-/// One head step, if any.
+/// A recursor application ending at its major premise.
+pub open spec fn rec_major(sig: Sig, t: ExprSpec) -> bool {
+    let h = crate::beta_model::spine_head(t);
+    &&& h is Const
+    &&& sig.ienv.recs.contains_key(h->Const_0)
+    &&& crate::beta_model::spine_args(t).len() == sig.ienv.recs[h->Const_0].major_idx + 1
+}
+
+/// One head step, if any: beta, delta, zeta, reduction in function
+/// position, then iota at a recursor whose major premise is a constructor
+/// application, or reduction of that major premise.
 pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
     decreases t,
 {
@@ -21,7 +31,16 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
             ExprSpec::Bind(BinderKind::Lam, _, body) => Some(inst(0, *x, *body)),
             _ => match hstep(sig, *f) {
                 Some(f2) => Some(ExprSpec::App(Box::new(f2), x)),
-                None => None,
+                None => if crate::beta_model::rec_ready(sig.ienv, t) {
+                    Some(crate::beta_model::rec_result(sig.ienv, t))
+                } else if rec_major(sig, t) {
+                    match hstep(sig, *x) {
+                        Some(x2) => Some(ExprSpec::App(f, Box::new(x2))),
+                        None => None,
+                    }
+                } else {
+                    None
+                },
             },
         },
         ExprSpec::Const(c, ls) => if crate::ti_syntax::is_def(sig, c, ls) { Some(crate::ti_syntax::dval(sig, c, ls)) } else { None },
