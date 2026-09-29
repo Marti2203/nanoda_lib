@@ -656,7 +656,7 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
         if !(fsm[i] is Bot) {
             if es[i] != crate::dom_typing::rmark() {
                 let ec = ecode(es[i]);
-                assert(is_centry(es[i]) && has_type(nn, fsm[i], ec) && has_type(nn, ec, Cpt::U) && tyc(ec));
+                assert(is_centry(es[i]) && has_type(nn, fsm[i], ec) && has_type(nn, ec, Cpt::U));
                 if ec is Bot {
                     ty_of_bot(nn, fsm[i]);
                 }

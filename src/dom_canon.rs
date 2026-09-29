@@ -188,8 +188,7 @@ pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
     crate::dom_typing::tbl_lower(c);
     assert forall|j: int, k: int| 0 <= j < crate::dom_typing::tbl(ts).len() && crate::dom_typing::tbl(ts)[j] is Nd
         && 0 <= k < crate::dom_typing::tbl(ts)[j]->Nd_1.len() && crate::dom_typing::is_centry(crate::dom_typing::tbl(ts)[j]->Nd_1[k])
-        implies crate::dom_typing::tyc(crate::dom_typing::ecode(crate::dom_typing::tbl(ts)[j]->Nd_1[k]))
-            && has_type(n, #[trigger] crate::dom_typing::ecode(crate::dom_typing::tbl(ts)[j]->Nd_1[k]), Cpt::U) by {
+        implies has_type(n, #[trigger] crate::dom_typing::ecode(crate::dom_typing::tbl(ts)[j]->Nd_1[k]), Cpt::U) by {
         let sh = canon_shape(sig, ind);
         let blocks = cblocks(sig, ind, ls, args, sh.nmin());
         assert(tabled(sig, ind, ls, args));

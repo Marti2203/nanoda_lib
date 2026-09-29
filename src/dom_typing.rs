@@ -39,12 +39,6 @@ pub open spec fn ecode(e: Cpt) -> Cpt {
     e->Nd_1[0]
 }
 
-/// A table's field codes are inductive codes: fields of closed simple
-/// types (docs/TYPED_TARGET.md, S6 "Parameters").
-pub open spec fn tyc(c: Cpt) -> bool {
-    c is Bot || (c is Nd && c->Nd_0 is Ty)
-}
-
 /// Everything inside a table is lower than its code.
 pub proof fn tbl_lower(a: Cpt)
     requires
@@ -211,10 +205,10 @@ pub open spec fn has_type(n: nat, u: Cpt, a: Cpt) -> bool
                 && has_type((n - 1) as nat, f[k].1, cod(a, f[k].0)),
         (Cpt::Nd(NdKey::Ty(_, _), ts), Cpt::U) => forall|j: int, k: int|
             0 <= j < tbl(ts).len() && tbl(ts)[j] is Nd && 0 <= k < tbl(ts)[j]->Nd_1.len() && is_centry(tbl(ts)[j]->Nd_1[k])
-            ==> tyc(ecode(tbl(ts)[j]->Nd_1[k])) && has_type(n, #[trigger] ecode(tbl(ts)[j]->Nd_1[k]), Cpt::U),
+            ==> has_type(n, #[trigger] ecode(tbl(ts)[j]->Nd_1[k]), Cpt::U),
         (Cpt::Nd(NdKey::Ty(_, true), ts), Cpt::Prop) => forall|j: int, k: int|
             0 <= j < tbl(ts).len() && tbl(ts)[j] is Nd && 0 <= k < tbl(ts)[j]->Nd_1.len() && is_centry(tbl(ts)[j]->Nd_1[k])
-            ==> tyc(ecode(tbl(ts)[j]->Nd_1[k])) && has_type(n, #[trigger] ecode(tbl(ts)[j]->Nd_1[k]), Cpt::U),
+            ==> has_type(n, #[trigger] ecode(tbl(ts)[j]->Nd_1[k]), Cpt::U),
         (Cpt::Nd(NdKey::Con(i, p), fs), Cpt::Nd(NdKey::Ty(i2, false), ts)) => i == i2 && has_type(n, a, Cpt::U)
             && (p as int) < tbl(ts).len() && tbl(ts)[p as int] is Nd && {
                 let es = tbl(ts)[p as int]->Nd_1;
@@ -455,17 +449,16 @@ pub proof fn ty_join(n: nat, u: Cpt, v: Cpt, a: Cpt)
             tbl_lower(v);
             let tj = tbl(j->Nd_1);
             assert forall|jj: int, k: int| 0 <= jj < tj.len() && tj[jj] is Nd && 0 <= k < tj[jj]->Nd_1.len()
-                && is_centry(tj[jj]->Nd_1[k]) implies tyc(ecode(tbl(j->Nd_1)[jj]->Nd_1[k]))
-                && has_type(n, #[trigger] ecode(tbl(j->Nd_1)[jj]->Nd_1[k]), Cpt::U) by {
+                && is_centry(tj[jj]->Nd_1[k]) implies has_type(n, #[trigger] ecode(tbl(j->Nd_1)[jj]->Nd_1[k]), Cpt::U) by {
                 tbl_join_code(u, v, jj, k);
                 let (tu, tv) = (tbl(u->Nd_1), tbl(v->Nd_1));
                 let hu = jj < tu.len() && tu[jj] is Nd && k < tu[jj]->Nd_1.len() && is_centry(tu[jj]->Nd_1[k]);
                 let hv = jj < tv.len() && tv[jj] is Nd && k < tv[jj]->Nd_1.len() && is_centry(tv[jj]->Nd_1[k]);
                 if hu {
-                    assert(tyc(ecode(tbl(u->Nd_1)[jj]->Nd_1[k])) && has_type(n, ecode(tbl(u->Nd_1)[jj]->Nd_1[k]), Cpt::U));
+                    assert(has_type(n, ecode(tbl(u->Nd_1)[jj]->Nd_1[k]), Cpt::U));
                 }
                 if hv {
-                    assert(tyc(ecode(tbl(v->Nd_1)[jj]->Nd_1[k])) && has_type(n, ecode(tbl(v->Nd_1)[jj]->Nd_1[k]), Cpt::U));
+                    assert(has_type(n, ecode(tbl(v->Nd_1)[jj]->Nd_1[k]), Cpt::U));
                 }
                 if hu && hv {
                     assert(ht(ecode(tbl(u->Nd_1)[jj]->Nd_1[k])) + 3 < ht(u));

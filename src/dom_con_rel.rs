@@ -570,33 +570,6 @@ pub proof fn cf_rel(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     tm_pi(sig, n, g, m, m2, t, u, a);
 }
 
-/// A typed value's fields are bottom or values themselves: its type's
-/// table gives them inductive codes.
-pub proof fn field_shape(n: nat, u: Cpt, a: Cpt, i: int)
-    requires
-        has_type(n, u, a),
-        u is Nd && u->Nd_0 is Con,
-        0 <= i < u->Nd_1.len(),
-    ensures
-        u->Nd_1[i] is Bot || (u->Nd_1[i] is Nd && u->Nd_1[i]->Nd_0 is Con),
-{
-    let f = u->Nd_1[i];
-    let p = u->Nd_0->Con_1 as int;
-    let es = tbl(a->Nd_1)[p]->Nd_1;
-    if !(f is Bot) {
-        if es[i] == crate::dom_typing::rmark() {
-            assert(has_type(n, f, a));
-        } else {
-            assert(is_centry(es[i]) && has_type(n, f, ecode(es[i])));
-            assert(has_type(n, a, Cpt::U));
-            assert(tyc(ecode(tbl(a->Nd_1)[p]->Nd_1[i])));
-            if ecode(es[i]) is Bot {
-                ty_of_bot(n, f);
-            }
-        }
-    }
-}
-
 /// A value typed at a code is a value of an inductive, which the code is.
 pub proof fn val_code(n: nat, w: Cpt, d: Cpt)
     requires
