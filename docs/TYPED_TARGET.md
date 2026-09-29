@@ -728,6 +728,18 @@ Stages, each landing through the gate:
   type, a canonical former's type parameters are typed at their declared
   sorts in the stripped signature. The kernel port certifies it with
   `former_args_typed` (spine inversion, outside the cycle).
+  **P4b-1: Iota's subject reduction with type parameters.** `iota_sr`
+  holds for recursors whose parameters are all type parameters (`sr_ok`
+  asks `pdoms[q] is Sort`, the inductive monomorphic and semantic). The
+  major `c ps' fs` is typed at `I ps'` (`sr_major`) and, from the redex,
+  at `I ps`; `ind_inj_args` gives `ps ≡ ps'` at their sorts
+  (`sr_inj_fields`), the fields retype at `F[ps]` (`sr_field_conv`: a
+  direct field by the chain `I ps' ~ I ps`, a parameter field by the
+  parameter's equality, a closed one unchanged), the rule instance is
+  typed at `motive (c ps fs)` (`sr_rule`), and `spine_cong` plus the
+  motive's application give `motive (c ps fs) ≡ motive (c ps' fs)`
+  (`sr_result`). The model's recursor stack still asks `np == 0`
+  (`rec_frag`), so `sr_ok_of` only produces the `np == 0` case for now.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

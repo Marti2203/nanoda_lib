@@ -260,6 +260,9 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), lt, lt, pt));
     crate::dom_iota::rule_split(sig, rid, lv, p);
     crate::iota_sr::rule_ty_split(sig, rid, lv, p);
+    let nf = sh.fields[p].len();
+    assert(crate::rec_canon::vars(1 + sh.nmin() + nf, sh.np) + crate::rec_canon::vars(0, nf) =~= crate::rec_canon::vars(0, nf));
+    assert(crate::iota_sr::rbty(sig, rid, p) == bt);
     assert(crate::dom_rec_minor::fields_plain(sig, rid, lv, p));
 }
 

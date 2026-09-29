@@ -20,6 +20,8 @@ use crate::rec_canon::{binds, vars};
 #[cfg(verus_only)]
 use crate::dom_con_rel::trest;
 #[cfg(verus_only)]
+use crate::ti_chain::tchain;
+#[cfg(verus_only)]
 use crate::dom_rec_ty::{rshape, rtds, rbody, rec_scope};
 #[allow(unused_imports)]
 use vstd::prelude::*;
@@ -39,13 +41,15 @@ pub open spec fn rule_ty(sig: Sig, rid: u64, p: int) -> ExprSpec {
 }
 
 /// What subject reduction for rule `p` at levels `lv` needs of the
-/// signature.
+/// signature: the fragment (parameters all type parameters, the inductive
+/// universe-monomorphic and semantic) and the rule typed.
 pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
     &&& rec_scope(sig, rid)
-    &&& sh.np == 0
+    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& sig.consts[sh.ind].lps.len() == 0
+    &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& 0 <= p < sh.nmin()
     &&& lv.len() == rd.uparams.len()
     &&& forall|k: int| 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, rid, p, k) ==>
@@ -58,20 +62,26 @@ pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
             crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), rd.uparams, lv)))
 }
 
-/// The rule's type at the instance (without parameters).
+/// The rule's body type: the motive at the constructor applied to the
+/// parameters and the fields.
+pub open spec fn rbty(sig: Sig, rid: u64, p: int) -> ExprSpec {
+    let sh = rshape(sig, rid);
+    let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
+    ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)),
+        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), vars(1 + nmin + nf, np) + vars(0, nf))))
+}
+
+/// The rule's type at the instance.
 pub proof fn rule_ty_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     requires
         rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         0 <= p < rshape(sig, rid).nmin(),
     ensures ({
         let sh = rshape(sig, rid);
-        let (nmin, nf) = (sh.nmin(), sh.fields[p].len());
-        let pre = (1 + nmin) as int;
+        let pre = (sh.np + 1 + sh.nmin()) as int;
         crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), sig.ienv.recs[rid].uparams, lv)
-            == binds(BinderKind::Pi, rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p),
-                ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)), Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), vars(0, nf)))))
+            == binds(BinderKind::Pi, rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p), rbty(sig, rid, p))
     }),
 {
     let sh = rshape(sig, rid);
@@ -81,17 +91,19 @@ pub proof fn rule_ty_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
     let (ks, vs) = (rd.uparams, lv);
     let fds = Seq::new(nf, |i: int| sh.field_at(p, i, 1 + nmin));
-    let cv = spine_app(ExprSpec::Const(sh.ctors[p], sh.us()), vars(1 + nmin + nf, np) + vars(0, nf));
+    let cargs = vars(1 + nmin + nf, np) + vars(0, nf);
+    let cv = spine_app(ExprSpec::Const(sh.ctors[p], sh.us()), cargs);
     let body = ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)), Box::new(cv));
     crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.head_doms(lm) + fds, body, ks, vs);
     crate::dom_rec_shape::sls_concat(sh.head_doms(lm), fds, ks, vs);
     let major = crate::rec_canon::ind_app(sh.ind, sh.us(), vars(1 + nmin, np));
     crate::dom_rec_shape::sls_concat(sh.head_doms(lm), seq![major], ks, vs);
-    assert(rtds(sig, rid, lv).subrange(0, (1 + nmin) as int) =~= crate::dom_rec_shape::sls(sh.head_doms(lm), ks, vs));
-    assert(vars(1 + nmin + nf, np) =~= Seq::<ExprSpec>::empty());
-    assert(vars(1 + nmin + nf, np) + vars(0, nf) =~= vars(0, nf));
+    assert(sh.pdoms.len() == np);
+    assert(rtds(sig, rid, lv).subrange(0, (np + 1 + nmin) as int) =~= crate::dom_rec_shape::sls(sh.head_doms(lm), ks, vs));
     assert(sh.us() =~= Seq::<LevelSpec>::empty());
-    crate::dom_rec_shape::sl_spine(ExprSpec::Const(sh.ctors[p], sh.us()), vars(0, nf), ks, vs);
+    crate::dom_rec_shape::sl_spine(ExprSpec::Const(sh.ctors[p], sh.us()), cargs, ks, vs);
+    crate::dom_rec_shape::sls_concat(vars(1 + nmin + nf, np), vars(0, nf), ks, vs);
+    crate::dom_rec_shape::sl_vars(1 + nmin + nf, np, ks, vs);
     crate::dom_rec_shape::sl_vars(0, nf, ks, vs);
     assert(crate::level_model::subst_levels_spec(sh.us(), ks, vs) =~= Seq::<LevelSpec>::empty());
     assert(crate::expr_model::subst_expr_levels(ExprSpec::Var(nmin + nf), ks, vs) == ExprSpec::Var(nmin + nf));
@@ -104,19 +116,18 @@ pub proof fn sr_heads(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<Ex
     requires
         crate::dom_rec_end::sig_sr(sig),
         rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
-        a0.len() == rshape(sig, rid).nmin() + 2,
+        a0.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 2,
         derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0), th)),
     ensures ({
-        let pre = (rshape(sig, rid).nmin() + 1) as int;
+        let np = rshape(sig, rid).np as int;
+        let pre = (rshape(sig, rid).np + rshape(sig, rid).nmin() + 1) as int;
         &&& derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0),
-                ExprSpec::App(Box::new(a0[0]), Box::new(a0[pre]))))
+                ExprSpec::App(Box::new(a0[np]), Box::new(a0[pre]))))
         &&& forall|i: int| 0 <= i < a0.len() ==> derivable(sig, eq(g, #[trigger] a0[i], a0[i], crate::ti_spine::vsub(rtds(sig, rid, lv)[i], a0.subrange(0, i))))
     }),
 {
     let sh = rshape(sig, rid);
     let nmin = sh.nmin();
-    let pre = (nmin + 1) as int;
     let h = ExprSpec::Const(rid, lv);
     let thc = crate::dom_iota::spine_gen(sig, g, h, a0, th);
     const_typed(sig, g, rid, lv, thc);
@@ -139,30 +150,37 @@ pub proof fn sr_heads(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<Ex
     }
 }
 
-/// THE MAJOR, typed at the inductive: its constructor at no levels, its
-/// fields at their closed types.
+/// The constructor's type: the parameters' and fields' telescope over the
+/// inductive at the parameters.
+pub open spec fn ctel(sig: Sig, rid: u64, p: int) -> ExprSpec {
+    let sh = rshape(sig, rid);
+    binds(BinderKind::Pi, sh.pdoms + sh.fields[p], spine_app(ExprSpec::Const(sh.ind, Seq::empty()), vars(sh.fields[p].len(), sh.np)))
+}
+
+/// THE MAJOR, typed: its constructor at no levels typed at its telescope,
+/// its arguments at the telescope's domains, its type chained to the
+/// inductive at its parameters.
 #[verifier::spinoff_prover]
 pub proof fn sr_major(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, cargs: Seq<ExprSpec>, tm: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
         rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         0 <= p < rshape(sig, rid).nmin(),
-        cargs.len() == rshape(sig, rid).fields[p].len(),
+        cargs.len() == rshape(sig, rid).np + rshape(sig, rid).fields[p].len(),
         derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], clv), cargs),
             spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], clv), cargs), tm)),
     ensures
         clv == Seq::<LevelSpec>::empty(),
-        forall|k: int| 0 <= k < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[k], cargs[k], rshape(sig, rid).fields[p][k]))
-            && crate::expr_model::nlbv(rshape(sig, rid).fields[p][k]) == 0,
+        derivable(sig, eq(g, ExprSpec::Const(rshape(sig, rid).ctors[p], clv), ExprSpec::Const(rshape(sig, rid).ctors[p], clv), ctel(sig, rid, p))),
+        tchain(sig, g, tm, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), cargs.subrange(0, rshape(sig, rid).np as int))),
+        forall|i: int| 0 <= i < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[i], cargs[i],
+            crate::ti_spine::vsub((rshape(sig, rid).pdoms + rshape(sig, rid).fields[p])[i], cargs.subrange(0, i)))),
 {
     let sh = rshape(sig, rid);
-    let rd = sig.ienv.recs[rid];
     let c = sh.ctors[p];
-    let nf = sh.fields[p].len();
+    let (np, nf) = (sh.np, sh.fields[p].len());
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
-    assert(sh.fields[p].len() == rd.rules[p].nfields);
     let thc = crate::dom_iota::spine_gen(sig, g, ExprSpec::Const(c, clv), cargs, tm);
     const_typed(sig, g, c, clv, thc);
     assert(clv =~= Seq::<LevelSpec>::empty());
@@ -170,63 +188,117 @@ pub proof fn sr_major(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, c
     crate::dom_iota::ctor_plain(sig, rid, p, clv);
     let tds = crate::dom_iota::ctds(sig, rid, p, clv);
     let cb = crate::dom_iota::cbody(sig, rid, p, clv);
-    assert(sh.pdoms.len() == 0);
-    assert(tds =~= sh.fields[p]);
     let tc = binds(BinderKind::Pi, tds, cb);
+    assert(tc == ctel(sig, rid, p));
     assert forall|i: int| 0 <= i < cargs.len() implies #[trigger] is_pi(trest(tc, cargs.subrange(0, i))) by {
         tel_next(tds, cb, cargs, i);
     }
     spine_ty(sig, g, ExprSpec::Const(c, clv), tc, cargs, tm);
-    assert forall|k: int| 0 <= k < cargs.len() implies derivable(sig, eq(g, #[trigger] cargs[k], cargs[k], sh.fields[p][k]))
-        && crate::expr_model::nlbv(sh.fields[p][k]) == 0 by {
-        tel_next(tds, cb, cargs, k);
-        if crate::dom_iota::isrec(sig, rid, p, k) {
-            crate::dom_iota::occ_plain(sig, rid, p, k);
-            assert(vars(k as nat, 0) =~= Seq::<ExprSpec>::empty());
-        } else {
-            assert(crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]));
-            crate::dom_iota::simple_closed(sig, sh.ind, sh.fields[p][k]);
-        }
-        vsub_closed(sh.fields[p][k], cargs.subrange(0, k));
-        assert(derivable(sig, eq(g, cargs[k], cargs[k], sdom(tc, cargs, k))));
+    trest_binds(tds, cb, cargs);
+    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    crate::dom_iota::vars_vidx(nf, np);
+    vsub_spine_vars(ci, crate::dom_iota::vidx(nf, np), cargs);
+    assert(Seq::new(np, |i: int| cargs[cargs.len() - 1 - crate::dom_iota::vidx(nf, np)[i]]) =~= cargs.subrange(0, np as int));
+    assert forall|i: int| 0 <= i < cargs.len() implies derivable(sig, eq(g, #[trigger] cargs[i], cargs[i],
+        crate::ti_spine::vsub((sh.pdoms + sh.fields[p])[i], cargs.subrange(0, i)))) by {
+        tel_next(tds, cb, cargs, i);
+        assert(derivable(sig, eq(g, cargs[i], cargs[i], sdom(tc, cargs, i))));
+    }
+}
+
+/// A field's type at the major's parameters converts to its type at the
+/// recursor's, the two parameter lists being equal at their sorts and the
+/// two inductive applications chained.
+#[verifier::spinoff_prover]
+proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int)
+    requires
+        rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        0 <= p < rshape(sig, rid).nmin(),
+        ps.len() == rshape(sig, rid).np,
+        ps2.len() == rshape(sig, rid).np,
+        fs.len() == rshape(sig, rid).fields[p].len(),
+        0 <= k < fs.len(),
+        tchain(sig, g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps2)),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q])),
+        derivable(sig, eq(g, fs[k], fs[k], crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps2 + fs.subrange(0, k)))),
+    ensures
+        derivable(sig, eq(g, fs[k], fs[k], crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k)))),
+{
+    let sh = rshape(sig, rid);
+    let np = sh.np;
+    let f = sh.fields[p][k];
+    let (xs, xs2) = (ps + fs.subrange(0, k), ps2 + fs.subrange(0, k));
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
+        crate::beta_model::spine_recompose(f);
+        assert(sh.us() =~= Seq::<LevelSpec>::empty());
+        assert(crate::beta_model::spine_args(f) =~= vars(k as nat, np));
+        crate::dom_iota::vars_vidx(k as nat, np);
+        vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), xs);
+        vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), xs2);
+        assert(Seq::new(np, |i: int| xs[xs.len() - 1 - crate::dom_iota::vidx(k as nat, np)[i]]) =~= ps);
+        assert(Seq::new(np, |i: int| xs2[xs2.len() - 1 - crate::dom_iota::vidx(k as nat, np)[i]]) =~= ps2);
+        crate::ti_chain::tchain_sym(sig, g, spine_app(ci, ps), spine_app(ci, ps2));
+        crate::ti_chain::conv_chain(sig, g, fs[k], fs[k], spine_app(ci, ps2), spine_app(ci, ps));
+    } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
+        crate::dom_iota::simple_closed(sig, sh.ind, f);
+        vsub_closed(f, xs);
+        vsub_closed(f, xs2);
+    } else {
+        let v = f->Var_0;
+        let q = (np + k - 1 - v) as int;
+        vsub_var(v, xs);
+        vsub_var(v, xs2);
+        assert(xs[xs.len() - 1 - v] == ps[q] && xs2[xs2.len() - 1 - v] == ps2[q]);
+        assert(derivable(sig, eq(g, ps[q], ps2[q], sh.pdoms[q])));
+        crate::dom_adeq_syn::dsym(sig, g, ps[q], ps2[q], sh.pdoms[q]);
+        let l = sh.pdoms[q]->Sort_0;
+        assert(derivable(sig, eq(g, ps2[q], ps[q], crate::ti_syntax::sort(l))));
+        reveal(crate::ti_sub::tconvd);
+        crate::ti_chain::tchain_one(sig, g, ps2[q], ps[q]);
+        crate::ti_chain::conv_chain(sig, g, fs[k], fs[k], ps2[q], ps[q]);
     }
 }
 
 /// THE RULE'S SPINE over the head arguments and the fields: typed at the
-/// motive at the constructor applied to the fields.
+/// motive at the constructor applied to the parameters and the fields.
 #[verifier::spinoff_prover]
 pub proof fn sr_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>)
     requires
         crate::dom_rec_end::sig_sr(sig),
         sr_ok(sig, rid, lv, p),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
-        heads.len() == rshape(sig, rid).nmin() + 1,
+        heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
         cargs.len() == rshape(sig, rid).fields[p].len(),
         forall|i: int| 0 <= i < heads.len() ==> derivable(sig, eq(g, #[trigger] heads[i], heads[i], crate::ti_spine::vsub(rtds(sig, rid, lv)[i], heads.subrange(0, i)))),
-        forall|k: int| 0 <= k < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[k], cargs[k], rshape(sig, rid).fields[p][k]))
-            && crate::expr_model::nlbv(rshape(sig, rid).fields[p][k]) == 0,
+        forall|k: int| 0 <= k < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[k], cargs[k],
+            crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], heads.subrange(0, rshape(sig, rid).np as int) + cargs.subrange(0, k)))),
     ensures ({
         let rd = sig.ienv.recs[rid];
         let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
+        let np = rshape(sig, rid).np as int;
         derivable(sig, eq(g, spine_app(body, heads + cargs), spine_app(body, heads + cargs),
-            ExprSpec::App(Box::new(heads[0]), Box::new(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty()), cargs)))))
+            ExprSpec::App(Box::new(heads[np]), Box::new(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty()),
+                heads.subrange(0, np) + cargs)))))
     }),
 {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
-    let (nmin, nf) = (sh.nmin(), sh.fields[p].len());
-    let pre = (nmin + 1) as int;
+    let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
+    let pre = (np + nmin + 1) as int;
     let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
     let rty = crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), rd.uparams, lv);
     crate::dom_rec_shape::nlbv_sl(rd.rules[p].rhs, rd.uparams, lv);
     crate::ti_sr::wk_closed(sig, g, body, body, rty);
     rule_ty_split(sig, rid, lv, p);
     let tl = rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p);
-    let bty = ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)), Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), vars(0, nf))));
+    let bty = rbty(sig, rid, p);
     let xs = heads + cargs;
-    let ff = crate::dom_iota::ftds(sig, rid, lv, p);
     crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
-    assert(sh.us() =~= Seq::<LevelSpec>::empty());
     assert forall|i: int| 0 <= i < xs.len() implies #[trigger] is_pi(trest(rty, xs.subrange(0, i))) by {
         sr_rule_arg(sig, g, rid, lv, p, heads, cargs, i);
     }
@@ -235,23 +307,28 @@ pub proof fn sr_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
     }
     spine_build(sig, g, body, rty, xs);
     trest_binds(tl, bty, xs);
-    vsub_app(ExprSpec::Var(nmin + nf), spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), vars(0, nf)), xs);
+    let cv = vars(1 + nmin + nf, np) + vars(0, nf);
+    let cc = ExprSpec::Const(sh.ctors[p], Seq::empty());
+    vsub_app(ExprSpec::Var(nmin + nf), spine_app(cc, cv), xs);
     vsub_var(nmin + nf, xs);
+    crate::dom_iota::vars_vidx(1 + nmin + nf, np);
     crate::dom_iota::vars_vidx(0, nf);
-    let vs = crate::dom_iota::vidx(0, nf);
-    vsub_spine_vars(ExprSpec::Const(sh.ctors[p], Seq::empty()), vs, xs);
-    assert(Seq::new(vs.len(), |i: int| xs[xs.len() - 1 - vs[i]]) =~= cargs);
+    let vs = crate::dom_iota::vidx(1 + nmin + nf, np) + crate::dom_iota::vidx(0, nf);
+    assert(cv =~= Seq::new(vs.len(), |i: int| ExprSpec::Var(vs[i])));
+    vsub_spine_vars(cc, vs, xs);
+    assert(Seq::new(vs.len(), |i: int| xs[xs.len() - 1 - vs[i]]) =~= heads.subrange(0, np as int) + cargs);
 }
 
 /// One argument of the rule's spine, at its domain.
+#[verifier::spinoff_prover]
 proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>, i: int)
     requires
         sr_ok(sig, rid, lv, p),
-        heads.len() == rshape(sig, rid).nmin() + 1,
+        heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
         cargs.len() == rshape(sig, rid).fields[p].len(),
         forall|i: int| 0 <= i < heads.len() ==> derivable(sig, eq(g, #[trigger] heads[i], heads[i], crate::ti_spine::vsub(rtds(sig, rid, lv)[i], heads.subrange(0, i)))),
-        forall|k: int| 0 <= k < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[k], cargs[k], rshape(sig, rid).fields[p][k]))
-            && crate::expr_model::nlbv(rshape(sig, rid).fields[p][k]) == 0,
+        forall|k: int| 0 <= k < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[k], cargs[k],
+            crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], heads.subrange(0, rshape(sig, rid).np as int) + cargs.subrange(0, k)))),
         0 <= i < heads.len() + cargs.len(),
     ensures ({
         let rd = sig.ienv.recs[rid];
@@ -263,12 +340,12 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
 {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
-    let (nmin, nf) = (sh.nmin(), sh.fields[p].len());
-    let pre = (nmin + 1) as int;
+    let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
+    let pre = (np + nmin + 1) as int;
     let rty = crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), rd.uparams, lv);
     rule_ty_split(sig, rid, lv, p);
     let tl = rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p);
-    let bty = ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)), Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), vars(0, nf))));
+    let bty = rbty(sig, rid, p);
     let xs = heads + cargs;
     let ff = crate::dom_iota::ftds(sig, rid, lv, p);
     crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
@@ -281,15 +358,103 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
         let k = i - pre;
         assert(tl[i] == ff[k] && xs[i] == cargs[k]);
         let f = sh.fields[p][k];
-        assert(crate::expr_model::nlbv(f) == 0);
-        crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
+        let ys = heads.subrange(0, np as int) + cargs.subrange(0, k);
+        let xk = xs.subrange(0, i);
+        assert(xk.len() == pre + k);
+        crate::dom_rec_ty::scope_ctor(sig, rid, p);
+        crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+        let ks = rd.uparams;
         if crate::dom_iota::isrec(sig, rid, p, k) {
-            crate::dom_iota::occ_plain(sig, rid, p, k);
-            assert(vars(k as nat, 0) =~= Seq::<ExprSpec>::empty());
-            assert(crate::level_model::subst_levels_spec(Seq::<LevelSpec>::empty(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
+            let ci = ExprSpec::Const(sh.ind, Seq::empty());
+            crate::beta_model::spine_recompose(f);
+            assert(crate::beta_model::spine_args(f) =~= vars(k as nat, np));
+            let lf = crate::subst_algebra::lift(1 + nmin, k as nat, f);
+            crate::subst_algebra::lift_spine_app(1 + nmin, k as nat, ci, vars(k as nat, np));
+            assert(crate::subst_algebra::slift(1 + nmin, k as nat, vars(k as nat, np)) =~= vars(k as nat + 1 + nmin, np));
+            crate::dom_rec_shape::sl_spine(ci, vars(k as nat + 1 + nmin, np), ks, lv);
+            crate::dom_rec_shape::sl_vars(k as nat + 1 + nmin, np, ks, lv);
+            assert(crate::level_model::subst_levels_spec(Seq::<LevelSpec>::empty(), ks, lv) =~= Seq::<LevelSpec>::empty());
+            assert(ff[k] == spine_app(ci, vars(k as nat + 1 + nmin, np)));
+            crate::dom_iota::vars_vidx(k as nat + 1 + nmin, np);
+            crate::dom_iota::vars_vidx(k as nat, np);
+            vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat + 1 + nmin, np), xk);
+            vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), ys);
+            assert(Seq::new(np, |q: int| xk[xk.len() - 1 - crate::dom_iota::vidx(k as nat + 1 + nmin, np)[q]]) =~= heads.subrange(0, np as int));
+            assert(Seq::new(np, |q: int| ys[ys.len() - 1 - crate::dom_iota::vidx(k as nat, np)[q]]) =~= heads.subrange(0, np as int));
+        } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
+            crate::dom_iota::simple_closed(sig, sh.ind, f);
+            crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
+            assert(ff[k] == f);
+            vsub_closed(f, xk);
+            vsub_closed(f, ys);
+        } else {
+            let v = f->Var_0;
+            assert(crate::subst_algebra::lift(1 + nmin, k as nat, f) == ExprSpec::Var(v + 1 + nmin));
+            assert(ff[k] == ExprSpec::Var(v + 1 + nmin));
+            vsub_var(v + 1 + nmin, xk);
+            vsub_var(v, ys);
+            assert(xk[xk.len() - 1 - (v + 1 + nmin)] == heads[np + k - 1 - v]);
+            assert(ys[ys.len() - 1 - v] == heads[np + k - 1 - v]);
         }
-        assert(ff[k] == f);
-        vsub_closed(f, xs.subrange(0, i));
+        assert(derivable(sig, eq(g, cargs[k], cargs[k], crate::ti_spine::vsub(f, ys))));
+    }
+}
+
+/// The fired rule's motive type at the recursor's parameters: a Pi over
+/// the inductive at them into a sort.
+proof fn motive_at(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, ps: Seq<ExprSpec>) -> (l: LevelSpec)
+    requires
+        rec_scope(sig, rid),
+        0 <= p < rshape(sig, rid).nmin(),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        ps.len() == rshape(sig, rid).np,
+    ensures
+        crate::ti_spine::vsub(rtds(sig, rid, lv)[rshape(sig, rid).np as int], ps)
+            == crate::ti_syntax::pi(spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps), crate::ti_syntax::sort(l)),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let np = sh.np;
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    let lm = crate::rec_canon::elim_level(sig, rid, ind);
+    let (ks, vs) = (rd.uparams, lv);
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), vars(1 + sh.nmin(), np));
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(sh.idoms.len() == 0);
+    assert(sh.pdoms.len() == np);
+    assert((sh.head_doms(lm) + seq![major])[np as int] == sh.motive_ty(lm));
+    assert(vars(0, 0) =~= Seq::<ExprSpec>::empty());
+    assert(vars(sh.ni, np) + vars(0, sh.ni) =~= vars(0, np));
+    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    assert(sh.us() =~= Seq::<LevelSpec>::empty());
+    let a = crate::rec_canon::ind_app(sh.ind, sh.us(), vars(0, np));
+    assert(sh.motive_ty(lm) == crate::ti_syntax::pi(a, ExprSpec::Sort(lm)));
+    crate::dom_rec_shape::sl_spine(ci, vars(0, np), ks, vs);
+    crate::dom_rec_shape::sl_vars(0, np, ks, vs);
+    assert(crate::level_model::subst_levels_spec(Seq::<LevelSpec>::empty(), ks, vs) =~= Seq::<LevelSpec>::empty());
+    let l = crate::level_model::subst_level_spec(lm, ks, vs);
+    assert(crate::expr_model::subst_expr_levels(a, ks, vs) == a);
+    assert(crate::expr_model::subst_expr_levels(ExprSpec::Sort(lm), ks, vs) == ExprSpec::Sort(l));
+    assert(crate::expr_model::subst_expr_levels(crate::ti_syntax::pi(a, ExprSpec::Sort(lm)), ks, vs) == crate::ti_syntax::pi(a, ExprSpec::Sort(l)));
+    crate::dom_rec_minor::vsub_pi_dom(a, ExprSpec::Sort(l), ps);
+    vsubk_closed(1, ExprSpec::Sort(l), ps);
+    crate::dom_iota::vars_vidx(0, np);
+    vsub_spine_vars(ci, crate::dom_iota::vidx(0, np), ps);
+    assert(Seq::new(np, |q: int| ps[ps.len() - 1 - crate::dom_iota::vidx(0, np)[q]]) =~= ps);
+    l
+}
+
+proof fn vsubk_closed(k: nat, e: ExprSpec, xs: Seq<ExprSpec>)
+    requires
+        crate::expr_model::nlbv(e) == 0,
+    ensures
+        crate::dom_rec_minor::vsubk(k, e, xs) == e,
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        crate::subst_algebra::inst_closed(k + (xs.len() - 1) as nat, xs[0], e);
+        vsubk_closed(k, e, xs.drop_first());
     }
 }
 
@@ -298,6 +463,134 @@ pub open spec fn fired_rule(sig: Sig, m: ExprSpec) -> int {
     let rd = sig.ienv.recs[spine_head(m)->Const_0];
     let major = spine_args(m)[rd.major_idx as int];
     crate::beta_model::find_rule(rd.rules, spine_head(major)->Const_0)->Some_0
+}
+
+/// The reduct's type converts to the redex's: the motive at the
+/// constructor applied to the recursor's parameters and at the major.
+#[verifier::spinoff_prover]
+proof fn sr_result(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>)
+    requires
+        rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        0 <= p < rshape(sig, rid).nmin(),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
+        ps2.len() == rshape(sig, rid).np,
+        fs.len() == rshape(sig, rid).fields[p].len(),
+        derivable(sig, eq(g, heads[rshape(sig, rid).np as int], heads[rshape(sig, rid).np as int],
+            crate::ti_spine::vsub(rtds(sig, rid, lv)[rshape(sig, rid).np as int], heads.subrange(0, rshape(sig, rid).np as int)))),
+        derivable(sig, eq(g, ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty()), ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty()),
+            ctel(sig, rid, p))),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] heads[q], ps2[q], rshape(sig, rid).pdoms[q])),
+        forall|k: int| 0 <= k < fs.len() ==> derivable(sig, eq(g, #[trigger] fs[k], fs[k],
+            crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], heads.subrange(0, rshape(sig, rid).np as int) + fs.subrange(0, k)))),
+    ensures ({
+        let np = rshape(sig, rid).np as int;
+        let cc = ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty());
+        tchain(sig, g, ExprSpec::App(Box::new(heads[np]), Box::new(spine_app(cc, heads.subrange(0, np) + fs))),
+            ExprSpec::App(Box::new(heads[np]), Box::new(spine_app(cc, ps2 + fs))))
+    }),
+{
+    let sh = rshape(sig, rid);
+    let (np, nf) = (sh.np, sh.fields[p].len());
+    let ps = heads.subrange(0, np as int);
+    let cc = ExprSpec::Const(sh.ctors[p], Seq::empty());
+    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    let (xs, ys) = (ps + fs, ps2 + fs);
+    let tds = sh.pdoms + sh.fields[p];
+    let cb = spine_app(ci, vars(nf, np));
+    let tc = ctel(sig, rid, p);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(sh.pdoms.len() == np);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] is_pi(trest(tc, xs.subrange(0, i))) by {
+        tel_next(tds, cb, xs, i);
+    }
+    assert forall|i: int| 0 <= i < xs.len() implies derivable(sig, eq(g, #[trigger] xs[i], ys[i], sdom(tc, xs, i))) by {
+        tel_next(tds, cb, xs, i);
+        if i < np {
+            assert(xs[i] == heads[i] && ys[i] == ps2[i]);
+            assert(sh.pdoms[i] is Sort);
+            vsub_closed(tds[i], xs.subrange(0, i));
+        } else {
+            let k = i - np;
+            assert(xs[i] == fs[k] && ys[i] == fs[k]);
+            assert(xs.subrange(0, i) =~= ps + fs.subrange(0, k));
+        }
+    }
+    spine_cong(sig, g, cc, tc, xs, ys);
+    trest_binds(tds, cb, xs);
+    crate::dom_iota::vars_vidx(nf, np);
+    vsub_spine_vars(ci, crate::dom_iota::vidx(nf, np), xs);
+    assert(Seq::new(np, |q: int| xs[xs.len() - 1 - crate::dom_iota::vidx(nf, np)[q]]) =~= ps);
+    let ip = spine_app(ci, ps);
+    let l = motive_at(sig, rid, lv, p, ps);
+    let mt = crate::ti_syntax::pi(ip, crate::ti_syntax::sort(l));
+    let mo = heads[np as int];
+    crate::ti_spine::pi_typed_of(sig, g, mo, ip, crate::ti_syntax::sort(l));
+    crate::ti_chain::tchain_refl(sig, g, mt);
+    crate::dom_sem_rel::app_pair(sig, g, mo, mo, mt, ip, crate::ti_syntax::sort(l), spine_app(cc, xs), spine_app(cc, ys));
+    assert(crate::subst_algebra::inst(0, spine_app(cc, xs), crate::ti_syntax::sort(l)) == crate::ti_syntax::sort(l));
+    reveal(crate::ti_sub::tconvd);
+    crate::ti_chain::tchain_one(sig, g, ExprSpec::App(Box::new(mo), Box::new(spine_app(cc, xs))),
+        ExprSpec::App(Box::new(mo), Box::new(spine_app(cc, ys))));
+}
+
+/// The major's parameters equal the recursor's at their sorts
+/// (injectivity), and its fields are typed at the recursor's parameters.
+#[verifier::spinoff_prover]
+proof fn sr_inj_fields(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, cargs: Seq<ExprSpec>)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        rec_scope(sig, rid),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        crate::dom_model::sem_const(sig, rshape(sig, rid).ind, Seq::empty()),
+        0 <= p < rshape(sig, rid).nmin(),
+        ps.len() == rshape(sig, rid).np,
+        cargs.len() == rshape(sig, rid).np + rshape(sig, rid).fields[p].len(),
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty()), cargs),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], Seq::empty()), cargs),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps))),
+        tchain(sig, g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), cargs.subrange(0, rshape(sig, rid).np as int))),
+        forall|i: int| 0 <= i < cargs.len() ==> derivable(sig, eq(g, #[trigger] cargs[i], cargs[i],
+            crate::ti_spine::vsub((rshape(sig, rid).pdoms + rshape(sig, rid).fields[p])[i], cargs.subrange(0, i)))),
+    ensures ({
+        let np = rshape(sig, rid).np as int;
+        let (ps2, fs) = (cargs.subrange(0, np), cargs.subrange(np, cargs.len() as int));
+        &&& forall|q: int| 0 <= q < np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q]))
+        &&& forall|k: int| 0 <= k < fs.len() ==> derivable(sig, eq(g, #[trigger] fs[k], fs[k],
+            crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k))))
+    }),
+{
+    let sh = rshape(sig, rid);
+    let np = sh.np;
+    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    let ip = spine_app(ci, ps);
+    let major = spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), cargs);
+    let ps2 = cargs.subrange(0, np as int);
+    let fs = cargs.subrange(np as int, cargs.len() as int);
+    let dmj = crate::ti_sub::get(sig, eq(g, major, major, ip));
+    crate::ti_valid::d_ty(sig, dmj);
+    reveal(crate::ti_sub::tconvd);
+    let lt = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, ip, ip, crate::ti_syntax::sort(l)));
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    crate::dom_fund::ind_inj_args(sig, g, sh.ind, Seq::empty(), Seq::empty(), ps, ps2, crate::ti_syntax::sort(lt));
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], ps2[q], sh.pdoms[q])) by {
+        assert(sh.pdoms[q] is Sort);
+        assert(crate::dom_rel::peq(sig, g, sh.ind, q, ps[q], ps2[q]));
+    }
+    assert forall|k: int| 0 <= k < fs.len() implies derivable(sig, eq(g, #[trigger] fs[k], fs[k],
+        crate::ti_spine::vsub(sh.fields[p][k], ps + fs.subrange(0, k)))) by {
+        assert(fs[k] == cargs[np + k]);
+        assert(cargs.subrange(0, np + k) =~= ps2 + fs.subrange(0, k));
+        assert((sh.pdoms + sh.fields[p])[np + k] == sh.fields[p][k]);
+        assert(derivable(sig, eq(g, cargs[np + k], cargs[np + k],
+            crate::ti_spine::vsub((sh.pdoms + sh.fields[p])[np + k], cargs.subrange(0, np + k)))));
+        sr_field_conv(sig, g, rid, p, ps, ps2, fs, k);
+    }
 }
 
 /// SUBJECT REDUCTION FOR IOTA: a typed redex's reduct is typed at the
@@ -317,8 +610,8 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let args = spine_args(m);
     let rd = sig.ienv.recs[rid];
     let sh = rshape(sig, rid);
-    let nmin = sh.nmin();
-    let pre = (nmin + 1) as int;
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + nmin + 1) as int;
     crate::beta_model::spine_recompose(m);
     assert(rd.major_idx == pre);
     let major = args[pre];
@@ -329,11 +622,12 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     assert(rd.rules[p].ctor_id == cid);
     assert(sh.ctors[p] == cid);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
-    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    let nf = sh.fields[p].len();
+    assert(nf == rd.rules[p].nfields);
     let cargs = spine_args(major);
     crate::beta_model::spine_recompose(major);
-    assert(sig.ienv.ctor_np[cid] as nat == sh.np);
-    assert(cargs.len() == rd.rules[p].nfields);
+    assert(sig.ienv.ctor_np[cid] as nat == np);
+    assert(cargs.len() == np + nf);
     // the redex, split at its major
     let a0 = args.subrange(0, pre + 1);
     let extra = args.subrange(pre + 1, args.len() as int);
@@ -342,17 +636,24 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let x1 = spine_app(h, a0);
     let th1 = crate::dom_iota::spine_gen(sig, g, x1, extra, t);
     sr_heads(sig, g, rid, lv, a0, th1);
-    // the major
+    let heads = a0.subrange(0, pre);
+    let ps = heads.subrange(0, np as int);
+    // the major, at the inductive at the recursor's parameters
     crate::dom_iota::major_form(sig, rid, lv);
     assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
-    assert(vars(1 + nmin, 0) =~= Seq::<ExprSpec>::empty());
     let ci = ExprSpec::Const(sh.ind, Seq::empty());
-    assert(rtds(sig, rid, lv)[pre] == ci);
-    vsub_closed(ci, a0.subrange(0, pre));
+    crate::dom_iota::vars_vidx(1 + nmin, np);
+    vsub_spine_vars(ci, crate::dom_iota::vidx(1 + nmin, np), heads);
+    assert(a0.subrange(0, pre) =~= heads);
+    assert(Seq::new(np, |i: int| heads[heads.len() - 1 - crate::dom_iota::vidx(1 + nmin, np)[i]]) =~= ps);
+    let ip = spine_app(ci, ps);
     assert(a0[pre] == major);
-    sr_major(sig, g, rid, p, clv, cargs, ci);
+    assert(derivable(sig, eq(g, major, major, ip)));
+    sr_major(sig, g, rid, p, clv, cargs, ip);
+    let ps2 = cargs.subrange(0, np as int);
+    let fs = cargs.subrange(np as int, cargs.len() as int);
+    sr_inj_fields(sig, g, rid, p, ps, cargs);
     // the rule's side
-    let heads = a0.subrange(0, pre);
     let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
     let w = crate::ti_meta::d_wf(sig, dm);
     crate::ti_meta::mk_d(sig, w);
@@ -361,14 +662,23 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
         assert(heads[i] == a0[i]);
         assert(heads.subrange(0, i) =~= a0.subrange(0, i));
     }
-    sr_rule(sig, g, rid, lv, p, heads, cargs);
+    sr_rule(sig, g, rid, lv, p, heads, fs);
     let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
-    let x2 = spine_app(body, heads + cargs);
-    assert(heads[0] == a0[0]);
-    retype_spine(sig, g, x1, x2, ExprSpec::App(Box::new(a0[0]), Box::new(a0[pre])), extra, t);
+    let x2 = spine_app(body, heads + fs);
+    let cc = ExprSpec::Const(cid, Seq::empty());
+    assert(heads[np as int] == a0[np as int]);
+    assert(ps2 + fs =~= cargs);
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] heads[q], ps2[q], sh.pdoms[q])) by {
+        assert(heads[q] == ps[q]);
+    }
+    sr_result(sig, g, rid, lv, p, heads, ps2, fs);
+    crate::ti_chain::conv_chain(sig, g, x2, x2,
+        ExprSpec::App(Box::new(heads[np as int]), Box::new(spine_app(cc, ps + fs))),
+        ExprSpec::App(Box::new(a0[np as int]), Box::new(a0[pre])));
+    retype_spine(sig, g, x1, x2, ExprSpec::App(Box::new(a0[np as int]), Box::new(a0[pre])), extra, t);
     // the reduct
-    crate::dom_iota::spine_concat(body, heads, cargs);
-    assert(cargs.subrange(cargs.len() - rd.rules[p].nfields, cargs.len() as int) =~= cargs);
+    crate::dom_iota::spine_concat(body, heads, fs);
+    assert(cargs.subrange(cargs.len() - rd.rules[p].nfields, cargs.len() as int) =~= fs);
     assert(args.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
     assert(args.subrange((rd.major_idx + 1) as int, args.len() as int) =~= extra);
 }
