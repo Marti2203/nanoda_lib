@@ -54,9 +54,27 @@ pub open spec fn is_prop_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>) -> bool {
     ls.len() == sig.consts[ind].lps.len() && tbody(t, tarity(t)) is Sort && is_zero(tbody(t, tarity(t))->Sort_0)
 }
 
+/// Field `k` of constructor `p`, at the level instance `ls`, is a type
+/// without recursors.
+pub open spec fn ftyped(sig: Sig, ind: u64, p: int, k: int, ls: Seq<LevelSpec>) -> bool {
+    crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig),
+        crate::expr_model::subst_expr_levels(canon_shape(sig, ind).fields[p][k], sig.consts[ind].lps, ls))
+}
+
+/// Every field of `ind`'s constructors that is not a direct recursive
+/// occurrence is a type (docs/TYPED_TARGET.md, S6 "Parameters", P2b).
+#[verifier::opaque]
+pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
+    let sh = canon_shape(sig, ind);
+    forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        && ls.len() == sig.consts[ind].lps.len() && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+        ==> #[trigger] ftyped(sig, ind, p, k, ls)
+}
+
 /// `ind` at `ls` has its canonical table over `args`.
 pub open spec fn tabled(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>) -> bool {
     rk(sig, ind) >= 0 && has_canon(sig, ind) && canon_shape(sig, ind).np <= args.len() && ls.len() == sig.consts[ind].lps.len()
+        && fields_typed(sig, ind)
 }
 
 /// The arguments a code keeps: a canonical inductive's parameters (its

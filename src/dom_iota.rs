@@ -562,7 +562,8 @@ pub proof fn major_code(sig: Sig, rid: u64, lv: Seq<LevelSpec>, env: Env, d: Cpt
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
-        d is Bot || (crate::dom_code::tabled(sig, sh.ind, us2, ws) && le(d, crate::dom_code::canon_code(sig, sh.ind, us2, ws)))
+        d is Bot || ((crate::dom_code::fields_typed(sig, sh.ind) ==> crate::dom_code::tabled(sig, sh.ind, us2, ws))
+            && le(d, crate::dom_code::canon_code(sig, sh.ind, us2, ws)))
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -636,6 +637,15 @@ pub proof fn rec_field_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, 
     let c0 = crate::dom_code::canon_code(sig, sh.ind, us2, ws);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     assert(sh.fields[p].len() == sig.ienv.recs[rid].rules[p].nfields);
+    if !crate::dom_code::fields_typed(sig, sh.ind) {
+        // no table: nothing is typed at the code but bottom
+        assert(!crate::dom_code::tabled(sig, sh.ind, us2, ws));
+        assert(c0->Nd_1.last() == Cpt::Nd(NdKey::Tag(2), Seq::empty()));
+        assert(tbl(c0->Nd_1) =~= Seq::<Cpt>::empty());
+        assert(p < tbl(dm->Nd_1).len() && tbl(dm->Nd_1)[p] is Nd);
+        tbl_le(dm, c0, p);
+        assert(false);
+    }
     crate::dom_code::canon_rmark(sig, sh.ind, us2, ws, p as nat, k as nat);
     rec_field_typed(n, x, dm, c0, k);
     if !(x->Nd_1[k] is Bot) {
@@ -1459,6 +1469,7 @@ pub open spec fn cf_fields_ok(sig: Sig, rid: u64, p: int, xf: Seq<Cpt>, ak: Seq<
     &&& sig.consts[sh.ind].lps.len() == 0
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
+    &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& xf.len() == sh.fields[p].len()
     &&& ak.len() == xf.len()
     &&& crate::dom_code::aw(xf)
@@ -2069,6 +2080,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& crate::dom_model::sem_const(sig, sh.ctors[p], clv)
     &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
+    &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& forall|k: int| 0 <= k < sh.fields[p].len() && !isrec(sig, rid, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
         && crate::expr_model::subst_expr_levels(sh.fields[p][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[p][k]

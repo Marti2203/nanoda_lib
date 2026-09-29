@@ -620,6 +620,23 @@ Stages, each landing through the gate:
   type clause stays `tchain`); **P2b** gives the type clause its table
   part and the fields their types at `Q`; then P1b drops `tyc` and P1c
   widens the fragment.
+  P2a landed (a047f94). **P2b, what it takes** (2026-09-29): with
+  entries other than inductive codes, a field related at one code must be
+  moved to another (constructor adequacy: from the telescope's domain code
+  to the result's table entry; the recursor's end: from the major's entry
+  to the minor's domain). No coherence between two arbitrary codes of one
+  type is available, so the move goes through the canonical code
+  `C = ceval(F, parameters' codes)`: up to `C` by `incr`, down by `decr`.
+  That needs (i) `rel_ty(F[Q], F[Q2], C)`, the lifting lemma (by rank and
+  the field type's size; a parameter variable takes its relation from the
+  type clause, a former applied to arguments is the type former's clause
+  one rank down), and (ii) both codes below `C`: members of a
+  constructor's telescope interpretation are bounded by the canonical
+  codes along it (`closed_bound` for telescopes, with the parameters'
+  codes in `ceval`'s environment, P1a). The lifting lemma needs the field
+  types typed; the signature gives that as a fact next to `rec_model`'s
+  typed constructor types (`fields_typed`), and canonical tables exist only
+  where it holds (`tabled`), so the definitions stay acyclic.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.
