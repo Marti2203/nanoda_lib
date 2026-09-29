@@ -806,6 +806,78 @@ pub proof fn val_code(n: nat, w: Cpt, d: Cpt)
 {
 }
 
+/// A recursive field's type has the result type's parameters.
+pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np: nat, xs: Seq<ExprSpec>, i: int, a: Cpt)
+    requires
+        ctor_at(sig, c, ind, pc, np),
+        crate::dom_code::canon_ok(sig, ind),
+        0 <= i < crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
+        xs.len() == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
+        crate::rec_canon::direct_occ(crate::dom_code::canon_shape(sig, ind).fields[pc as int][i], ind,
+            crate::dom_code::canon_shape(sig, ind).us(), np, crate::dom_code::canon_shape(sig, ind).ni, i as nat),
+        a is Nd && a->Nd_0 == NdKey::Ty(ind, a->Nd_0->Ty_1),
+        rel_ty(sig, n, g, trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls), xs), a),
+    ensures
+        crate::dom_rel::pconv(sig, g, ind, tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat),
+            trest(crate::ti_syntax::dty_at(sig, c, ls), xs)),
+{
+    let t = trest(crate::ti_syntax::dty_at(sig, c, ls), xs);
+    let ty = tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    direct_ty(sig, c, ls, ind, pc, np, xs, i);
+    ctor_result(sig, c, ls, ind, pc, np, xs);
+    crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
+    crate::dom_rel::ty_ind(sig, n, g, t, t, a);
+    if crate::dom_code::has_canon(sig, ind) {
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, spine_args(ty)[q], spine_args(t)[q]) by {
+            assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
+            assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(t)[q], spine_args(t)[q]));
+        }
+    }
+}
+
+/// The constructor applications' type parameters are their type's: the
+/// type is the inductive at the arguments, whose parameters the relation
+/// already equates.
+pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, ind: u64, pc: nat, np: nat,
+    xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt)
+    requires
+        ctor_at(sig, c, ind, pc, np),
+        crate::dom_code::canon_ok(sig, ind),
+        xs.len() == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
+        xs2.len() == xs.len(),
+        a is Nd && a->Nd_0 == NdKey::Ty(ind, a->Nd_0->Ty_1),
+        rel_ty(sig, n, g, trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls), xs), a),
+        rel_ty(sig, n, g, trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls2), xs2), a),
+    ensures
+        crate::dom_rel::cpar(sig, g, ind, spine_app(ExprSpec::Const(c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls), xs)),
+        crate::dom_rel::cpar(sig, g, ind, spine_app(ExprSpec::Const(c, ls2), xs2), trest(crate::ti_syntax::dty_at(sig, c, ls), xs)),
+{
+    let (t, t2) = (trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls2), xs2));
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    ctor_result(sig, c, ls, ind, pc, np, xs);
+    ctor_result(sig, c, ls2, ind, pc, np, xs2);
+    crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
+    crate::dom_rel::ty_ind(sig, n, g, t, t, a);
+    crate::dom_rel::ty_ind(sig, n, g, t, t2, a);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls2), xs2);
+    if crate::dom_code::has_canon(sig, ind) {
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, xs[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
+            assert(spine_args(t)[q] == xs[q]);
+            assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(t)[q], spine_args(t)[q]));
+        }
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, xs2[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
+            assert(spine_args(t)[q] == xs[q] && spine_args(t2)[q] == xs2[q]);
+            assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(t)[q], spine_args(t2)[q]));
+            crate::dom_rel::peq_symm(sig, g, ind, q, xs[q], xs2[q]);
+        }
+    }
+}
+
 /// THE END OF THE TELESCOPE: the value's fields lie below the arguments'
 /// values, which are related at the type element's domains; a field above
 /// bottom is a value, so its domain is an inductive's code, where the
@@ -853,6 +925,8 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), pv);
     crate::dom_lift::tbl_canon_le(sig, ind, pv, a, top);
     ctor_result(sig, c, ls, ind, pc, np, xs);
+    assert(a->Nd_0->Ty_0 == ind);
+    cf_cpar(sig, n, g, c, ls, ls2, ind, pc, np, xs, xs2, a);
     assert forall|i: int| 0 <= i < us.len() implies #[trigger] con_field(sig, n, g, m, m2, t, us, es, np, pc as int, a, i) by {
         cf_end_field(sig, nn, n, g, c, ls, ls2, ind, pc, np, xs, xs2, a, ds, fs, u, pv, i);
     }
@@ -939,6 +1013,9 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
             assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
             crate::dom_lift::par_xfer(sig, nn, n, g, xs[q], pv[q], z, z2, w1, v1, e1, e2);
         }
+        head_le(a, top);
+        crate::dom_lift::tbl_canon_le(sig, ind, pv, a, top);
+        direct_pconv(sig, n, g, c, ls, ind, pc, np, xs, i, a);
         crate::dom_lift::con_below(sig, nn, n, g, y, y2, ty, t, w, us[i], d, a, pv);
     } else {
         let ec = ecode(es[i]);

@@ -767,6 +767,16 @@ Stages, each landing through the gate:
     `fields_plain` becomes the three-kind field condition; last.
   Order: C and E as `np`-general restatements while the gate still holds
   (each a checkpoint), then D's relation clause, then B, then A.
+  **P4b-2a (900b816)**: C/E for dom_rec_minor and dom_rec_red.
+  **P4b-2b: D's relation clause.** `con_tm` carries `cpar` on both sides:
+  the constructor reduct's type-parameter arguments are `peq` to those of
+  the type's stuck reduct (keyed on the code's inductive). Constructor
+  adequacy gets it from the relation itself (`cf_cpar`: the result type is
+  the inductive at the arguments, and `rel_ty(t, t)`/`rel_ty(t, t2)` carry
+  `pconv`); moving the clause to another type needs `pconv` between the
+  two (`cpar_conv`, a new premise of `con_conv` and `con_below`, from
+  `ty_nd`, `closed_rel`'s `rel_ty(r, r)`, or `direct_pconv` for a
+  recursive field, whose type has the result's parameters).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

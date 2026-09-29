@@ -164,6 +164,15 @@ pub proof fn peq_trans(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprS
     }
 }
 
+/// THE CONSTRUCTOR'S TYPE PARAMETERS are the type's: a constructor
+/// application's type-parameter arguments equal those of the application
+/// its type reduces to.
+pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> bool {
+    crate::dom_code::has_canon(sig, ind) ==> forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
+        && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
+        ==> #[trigger] peq(sig, g, ind, q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
+}
+
 /// THE TYPE PARAMETERS CONVERT: of a canonical inductive, the applications
 /// two types reduce to are applied past the parameters, with equal type
 /// parameters. What injectivity of the inductive reads back.
@@ -286,6 +295,7 @@ pub open spec fn con_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
         &&& args.len() == np + fs.len()
         &&& args2.len() == np + fs.len()
+        &&& cpar(sig, g, a->Nd_0->Ty_0, x, t) && cpar(sig, g, a->Nd_0->Ty_0, x2, t)
         &&& forall|i: int| 0 <= i < fs.len() ==> {
             let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
             &&& tchain(sig, g, ti, ti2)
@@ -398,6 +408,7 @@ pub open spec fn con_body(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
         &&& crate::beta_model::spine_args(x).len() == np + fs.len()
         &&& crate::beta_model::spine_args(x2).len() == np + fs.len()
+        &&& cpar(sig, g, a->Nd_0->Ty_0, x, t) && cpar(sig, g, a->Nd_0->Ty_0, x2, t)
         &&& forall|i: int| 0 <= i < fs.len() ==> #[trigger] con_field(sig, n, g, x, x2, t, fs, cblock(u, a), np, u->Nd_0->Con_1 as int, a, i)
     }
 }

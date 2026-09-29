@@ -451,11 +451,33 @@ pub proof fn con_trans(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3:
     }
 }
 
+/// A constructor application's parameters move along a type whose
+/// parameters convert.
+pub proof fn cpar_conv(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec, s: ExprSpec)
+    requires
+        cpar(sig, g, ind, x, t),
+        pconv(sig, g, ind, t, s),
+    ensures
+        cpar(sig, g, ind, x, s),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let (a, b, c) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(ir(sig, t, ind)),
+        crate::beta_model::spine_args(ir(sig, s, ind)));
+    if crate::dom_code::has_canon(sig, ind) {
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies #[trigger] peq(sig, g, ind, q, a[q], c[q]) by {
+            assert(peq(sig, g, ind, q, a[q], b[q]));
+            assert(peq(sig, g, ind, q, b[q], c[q]));
+            peq_trans(sig, g, ind, q, a[q], b[q], c[q]);
+        }
+    }
+}
+
 /// The constructor clause moves along a related type.
 pub proof fn con_conv(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, s: ExprSpec, u: Cpt, a: Cpt)
     requires
         a is Nd && a->Nd_0 is Ty,
         tbl_rel(sig, n, g, t, s, a),
+        pconv(sig, g, a->Nd_0->Ty_0, t, s),
         con_tm(sig, n, g, m, m2, t, u, a),
     ensures
         con_tm(sig, n, g, m, m2, s, u, a),
@@ -472,6 +494,8 @@ pub proof fn con_conv(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Ex
     let ind = a->Nd_0->Ty_0;
     let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
     let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    cpar_conv(sig, g, ind, x, t, s);
+    cpar_conv(sig, g, ind, x2, t, s);
     assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, x, x2, s, fs, es, np, p, a, i) by {
         assert(con_field(sig, n, g, x, x2, t, fs, es, np, p, a, i));
         if !(fs[i] is Bot) {

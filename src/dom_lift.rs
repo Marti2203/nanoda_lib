@@ -599,6 +599,8 @@ pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
         tbl(d2->Nd_1).len() > 0 ==> spine_args(ir(sig, t, d->Nd_0->Ty_0)).len() >= canon_shape(sig, d->Nd_0->Ty_0).np
             && spine_args(ir(sig, t2, d->Nd_0->Ty_0)).len() >= canon_shape(sig, d->Nd_0->Ty_0).np,
         ptr(sig, n0, n, g, d->Nd_0->Ty_0, t, t2, pv),
+        d2 is Nd && d2->Nd_0 == d->Nd_0,
+        crate::dom_rel::pconv(sig, g, d->Nd_0->Ty_0, t, t2),
     ensures
         con_tm(sig, n, g, m, m2, t2, v, d2),
     decreases (rk(sig, d->Nd_0->Ty_0) + 1) as nat, 1int, ht(v),
@@ -618,6 +620,8 @@ pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
     let np = canon_shape(sig, v->Nd_0->Con_0).np;
     let (ew, ev) = (cblock(w, d), cblock(v, d2));
     let (args, args2) = (spine_args(x), spine_args(x2));
+    crate::dom_rel_per::cpar_conv(sig, g, j, x, t, t2);
+    crate::dom_rel_per::cpar_conv(sig, g, j, x2, t, t2);
     assert forall|i: int| 0 <= i < fv.len() implies #[trigger] con_field(sig, n, g, x, x2, t2, fv, ev, np, p, d2, i) by {
         assert(con_field(sig, n0, g, x, x2, t, fw, ew, np, p, d, i));
         if !(fv[i] is Bot) {
@@ -740,6 +744,9 @@ pub proof fn closed_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpec
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(rsh.pdoms + rsh.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, rsh.np + rsh.ni));
     }
+    head_le(c1, c0);
+    head_le(c2, c0);
+    crate::dom_rel::ty_ind(sig, n, g, r, r, c2);
     con_below(sig, n0, n, g, y, y2, r, r, fw, fv, c1, c2, cs);
 }
 
