@@ -118,6 +118,64 @@ pub proof fn vsub_pi_dom(t: ExprSpec, r: ExprSpec, xs: Seq<ExprSpec>)
     vsub_k0(t, xs);
 }
 
+/// A FIELD TYPE UNDER A LIFTED BLOCK: substituting into field `k` of rule
+/// `p` lifted past `s` binders skips them; the parameters sit first, the
+/// earlier fields last.
+pub proof fn field_vsub(sig: Sig, rid: u64, p: int, k: int, s: nat, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        0 <= p < rshape(sig, rid).nmin(),
+        0 <= k < rshape(sig, rid).fields[p].len(),
+        a.len() == rshape(sig, rid).np,
+        b.len() == s,
+        c.len() == k,
+    ensures
+        vsub(crate::subst_algebra::lift(s, k as nat, rshape(sig, rid).fields[p][k]), a + b + c)
+            == vsub(rshape(sig, rid).fields[p][k], a + c),
+{
+    let sh = rshape(sig, rid);
+    let np = sh.np;
+    let f = sh.fields[p][k];
+    let (xs, ys) = (a + b + c, a + c);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
+        crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+        crate::beta_model::spine_recompose(f);
+        assert(sh.us() =~= Seq::<LevelSpec>::empty());
+        assert(crate::beta_model::spine_args(f) =~= crate::rec_canon::vars(k as nat, np));
+        crate::subst_algebra::lift_spine_app(s, k as nat, ci, crate::rec_canon::vars(k as nat, np));
+        assert(crate::subst_algebra::slift(s, k as nat, crate::rec_canon::vars(k as nat, np)) =~= crate::rec_canon::vars(k as nat + s, np));
+        crate::dom_iota::vars_vidx(k as nat + s, np);
+        crate::dom_iota::vars_vidx(k as nat, np);
+        crate::ti_spine::vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat + s, np), xs);
+        crate::ti_spine::vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), ys);
+        assert(Seq::new(np, |q: int| xs[xs.len() - 1 - crate::dom_iota::vidx(k as nat + s, np)[q]]) =~= a);
+        assert(Seq::new(np, |q: int| ys[ys.len() - 1 - crate::dom_iota::vidx(k as nat, np)[q]]) =~= a);
+    } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
+        crate::dom_iota::simple_closed(sig, sh.ind, f);
+        crate::subst_algebra::lift_closed(s, k as nat, f);
+        crate::ti_spine::vsub_closed(f, xs);
+        crate::ti_spine::vsub_closed(f, ys);
+    } else {
+        let v = f->Var_0;
+        assert(crate::subst_algebra::lift(s, k as nat, f) == ExprSpec::Var(v + s));
+        crate::ti_spine::vsub_var(v + s, xs);
+        crate::ti_spine::vsub_var(v, ys);
+        assert(xs[xs.len() - 1 - (v + s)] == a[np + k - 1 - v]);
+        assert(ys[ys.len() - 1 - v] == a[np + k - 1 - v]);
+    }
+}
+
+/// Rule `j`'s field types are level-invariant.
+pub open spec fn fields_lv(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> bool {
+    let sh = rshape(sig, rid);
+    forall|k: int| 0 <= k < sh.fields[j].len() ==>
+        crate::expr_model::subst_expr_levels(#[trigger] sh.fields[j][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[j][k]
+}
+
 /// The fragment's field facts for rule `j`: closed and level-invariant.
 pub open spec fn fields_plain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> bool {
     let sh = rshape(sig, rid);
@@ -146,14 +204,13 @@ pub open spec fn mbody(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> ExprSp
 pub proof fn minor_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> (r: (Seq<ExprSpec>, ExprSpec))
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
         0 <= j < rshape(sig, rid).nmin(),
     ensures ({
         let sh = rshape(sig, rid);
         let (nf, nr) = (sh.fields[j].len(), sh.rposj(j).len());
         let (ks, vs) = (sig.ienv.recs[rid].uparams, lv);
         &&& r.0 == msds(sig, rid, lv, j) && r.1 == mbody(sig, rid, lv, j)
-        &&& rtds(sig, rid, lv)[1 + j] == binds(BinderKind::Pi, r.0, r.1)
+        &&& rtds(sig, rid, lv)[sh.np + 1 + j] == binds(BinderKind::Pi, r.0, r.1)
         &&& r.0.len() == nf + nr
         &&& forall|i: int| 0 <= i < nf ==> #[trigger] r.0[i] == crate::expr_model::subst_expr_levels(sh.field_at(j, i, (1 + j) as nat), ks, vs)
         &&& forall|q: int| 0 <= q < nr ==> #[trigger] r.0[nf + q] == crate::expr_model::subst_expr_levels(sh.ih_ty(j, q), ks, vs)
@@ -167,8 +224,11 @@ pub proof fn minor_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> (r: 
     let lm = crate::rec_canon::elim_level(sig, rid, ind);
     let tds = rtds(sig, rid, lv);
     let (f2, i2) = crate::dom_rec_shape::minor_shape(sh, j, rd.uparams, lv);
-    assert(sh.head_doms(lm)[1 + j] == sh.minor_ty(j));
-    assert(tds[1 + j] == crate::expr_model::subst_expr_levels(sh.minor_ty(j), rd.uparams, lv));
+    assert(sh.pdoms.len() == sh.np) by {
+        crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    }
+    assert(sh.head_doms(lm)[sh.np + 1 + j] == sh.minor_ty(j));
+    assert(tds[sh.np + 1 + j] == crate::expr_model::subst_expr_levels(sh.minor_ty(j), rd.uparams, lv));
     let nf = sh.fields[j].len();
     let nr = sh.rposj(j).len();
     let body = crate::dom_rec_ty::minor_body((j + nf + nr) as nat, sh.ctors[j],
@@ -185,20 +245,21 @@ pub proof fn minor_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> (r: 
 pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<ExprSpec>, ys: Seq<ExprSpec>, i: int)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         0 <= j < rshape(sig, rid).nmin(),
-        fields_plain(sig, rid, lv, j),
-        xs0.len() == 1 + j,
+        fields_lv(sig, rid, lv, j),
+        xs0.len() == rshape(sig, rid).np + 1 + j,
         0 <= i <= ys.len(),
         i < rshape(sig, rid).fields[j].len() + rshape(sig, rid).rposj(j).len(),
     ensures ({
         let sh = rshape(sig, rid);
         let nf = sh.fields[j].len();
-        let t = trest(vsub(rtds(sig, rid, lv)[1 + j], xs0), ys.subrange(0, i));
+        let t = trest(vsub(rtds(sig, rid, lv)[sh.np + 1 + j], xs0), ys.subrange(0, i));
         &&& t is Bind && t->Bind_0 == BinderKind::Pi
-        &&& *t->Bind_1 == if i < nf { sh.fields[j][i] } else {
-                ExprSpec::App(Box::new(xs0[0]), Box::new(ys[sh.rposj(j)[i - nf] as int]))
+        &&& *t->Bind_1 == if i < nf { vsub(sh.fields[j][i], xs0.subrange(0, sh.np as int) + ys.subrange(0, i)) } else {
+                ExprSpec::App(Box::new(xs0[sh.np as int]), Box::new(ys[sh.rposj(j)[i - nf] as int]))
             }
+        &&& i < nf && crate::expr_model::nlbv(sh.fields[j][i]) == 0 ==> *t->Bind_1 == sh.fields[j][i]
     }),
 {
     let sh = rshape(sig, rid);
@@ -215,9 +276,15 @@ pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
     let xa = xs0 + yi;
     if i < nf {
         let f = sh.fields[j][i];
-        crate::subst_algebra::lift_closed((1 + j) as nat, i as nat, f);
+        crate::ti_level::ls_lift((1 + j) as nat, i as nat, f, rd.uparams, lv);
         assert(ds[i] == crate::expr_model::subst_expr_levels(sh.field_at(j, i, (1 + j) as nat), rd.uparams, lv));
-        crate::ti_spine::vsub_closed(f, xa);
+        assert(ds[i] == crate::subst_algebra::lift((1 + j) as nat, i as nat, f));
+        let (a, b) = (xs0.subrange(0, sh.np as int), xs0.subrange(sh.np as int, xs0.len() as int));
+        assert(a + b + yi =~= xa);
+        field_vsub(sig, rid, j, i, (1 + j) as nat, a, b, yi);
+        if crate::expr_model::nlbv(f) == 0 {
+            crate::ti_spine::vsub_closed(f, a + yi);
+        }
     } else {
         let q = i - nf;
         crate::dom_rec_ty::rec_pos_facts(sh.fields[j], sh.ind, sh.us(), sh.np, sh.ni, nf);
@@ -241,7 +308,7 @@ pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
         crate::ti_spine::vsub_app(va, vb, xa);
         crate::ti_spine::vsub_var((j + nf + q) as nat, xa);
         crate::ti_spine::vsub_var((nf - 1 - k + q) as nat, xa);
-        assert(xa[0] == xs0[0]);
+        assert(xa[xa.len() - 1 - (j + nf + q)] == xs0[sh.np as int]);
         assert(xa[xa.len() - 1 - (nf - 1 - k + q)] == ys[k as int]);
     }
 }
@@ -252,15 +319,14 @@ pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
 pub proof fn minor_end(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<ExprSpec>, ys: Seq<ExprSpec>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         0 <= j < rshape(sig, rid).nmin(),
-        xs0.len() == 1 + j,
+        xs0.len() == rshape(sig, rid).np + 1 + j,
         ys.len() == rshape(sig, rid).fields[j].len() + rshape(sig, rid).rposj(j).len(),
     ensures
-        trest(vsub(rtds(sig, rid, lv)[1 + j], xs0), ys) == ExprSpec::App(Box::new(xs0[0]),
+        trest(vsub(rtds(sig, rid, lv)[rshape(sig, rid).np + 1 + j], xs0), ys) == ExprSpec::App(Box::new(xs0[rshape(sig, rid).np as int]),
             Box::new(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], Seq::empty()),
-                ys.subrange(0, rshape(sig, rid).fields[j].len() as int)))),
+                xs0.subrange(0, rshape(sig, rid).np as int) + ys.subrange(0, rshape(sig, rid).fields[j].len() as int)))),
 {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
@@ -273,19 +339,25 @@ pub proof fn minor_end(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
     let xa = xs0 + ys;
     let h = ExprSpec::Const(sh.ctors[j], Seq::empty());
     let va = ExprSpec::Var((j + nf + nr) as nat);
-    let cargs = crate::rec_canon::vars((1 + j + nf + nr) as nat, 0) + crate::rec_canon::vars(nr, nf);
-    assert(cargs =~= crate::rec_canon::vars(nr, nf));
+    let np = sh.np;
+    let cargs = crate::rec_canon::vars((1 + j + nf + nr) as nat, np) + crate::rec_canon::vars(nr, nf);
     crate::ti_spine::vsub_app(va, spine_app(h, cargs), xa);
     crate::ti_spine::vsub_var((j + nf + nr) as nat, xa);
     crate::ti_hred_rec::vsub_spine(h, cargs, xa);
     crate::ti_spine::vsub_const(sh.ctors[j], Seq::empty(), xa);
     let sa = Seq::new(cargs.len(), |i: int| vsub(cargs[i], xa));
-    assert forall|i: int| 0 <= i < nf implies sa[i] == ys[i] by {
-        assert(cargs[i] == ExprSpec::Var((nr + nf - 1 - i) as nat));
-        crate::ti_spine::vsub_var((nr + nf - 1 - i) as nat, xa);
+    let want = xs0.subrange(0, np as int) + ys.subrange(0, nf as int);
+    assert forall|i: int| 0 <= i < np + nf implies sa[i] == want[i] by {
+        if i < np {
+            assert(cargs[i] == ExprSpec::Var((1 + j + nf + nr + np - 1 - i) as nat));
+            crate::ti_spine::vsub_var((1 + j + nf + nr + np - 1 - i) as nat, xa);
+        } else {
+            assert(cargs[i] == ExprSpec::Var((nr + nf - 1 - (i - np)) as nat));
+            crate::ti_spine::vsub_var((nr + nf - 1 - (i - np)) as nat, xa);
+        }
     }
-    assert(sa =~= ys.subrange(0, nf as int));
-    assert(xa[0] == xs0[0]);
+    assert(sa =~= want);
+    assert(xa[xa.len() - 1 - (j + nf + nr)] == xs0[np as int]);
 }
 
 /// The recursor type's `i`-th declared domain.
@@ -316,16 +388,16 @@ pub proof fn rec_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, 
 pub proof fn rec_tend(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
         xs.len() == rtds(sig, rid, lv).len(),
     ensures
-        xs.len() == rshape(sig, rid).nmin() + 2,
+        xs.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 2,
         trest(crate::ti_syntax::dty_at(sig, rid, lv), xs)
-            == ExprSpec::App(Box::new(xs[0]), Box::new(xs[rshape(sig, rid).nmin() + 1int])),
+            == ExprSpec::App(Box::new(xs[rshape(sig, rid).np as int]), Box::new(xs[rshape(sig, rid).np + rshape(sig, rid).nmin() + 1int])),
 {
     let body = crate::dom_rec_ty::rbody(sig, rid);
     crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
     crate::ti_spine::trest_binds(rtds(sig, rid, lv), body, xs);
+    crate::dom_iota::major_form(sig, rid, lv);
     let n = rshape(sig, rid).nmin();
     crate::ti_spine::vsub_app(ExprSpec::Var(n + 1), ExprSpec::Var(0), xs);
     crate::ti_spine::vsub_var(n + 1, xs);
@@ -336,7 +408,6 @@ pub proof fn rec_tend(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>)
 pub proof fn msds_ih(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, q: int)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        rshape(sig, rid).np == 0,
         0 <= j < rshape(sig, rid).nmin(),
         0 <= q < rshape(sig, rid).rposj(j).len(),
     ensures ({

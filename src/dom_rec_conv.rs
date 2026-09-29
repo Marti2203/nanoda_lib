@@ -192,7 +192,8 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, heads: 
     crate::dom_rec_minor::rec_tend(sig, c, lv, xs);
     let (m, m1) = (spine_app(h, xs), spine_app(h, xs1));
     // the Iota step, and the rule's Beta chain
-    crate::dom_rec_red::rec_red(sig, c, lv, heads, x, j, args);
+    assert(Seq::<ExprSpec>::empty() + args =~= args);
+    crate::dom_rec_red::rec_red(sig, c, lv, heads, x, j, Seq::empty(), args);
     let body = crate::expr_model::subst_expr_levels(rd.rules[j].rhs, rd.uparams, lv);
     let n1 = spine_app(body, heads + args);
     let r = spine_app(heads[1 + j], args + crate::dom_rec_red::ih_tms(sig, c, lv, j, heads, args));

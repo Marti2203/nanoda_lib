@@ -1812,7 +1812,8 @@ pub proof fn rec_red_left(sig: Sig, rc: Rc)
     rc_levels(sig, rc);
     let heads = rc.xs.subrange(0, pre);
     assert(heads.push(rc.xs[pre]) =~= rc.xs);
-    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.args);
+    assert(Seq::<ExprSpec>::empty() + rc.args =~= rc.args);
+    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls, heads, rc.xs[pre], rc.j, Seq::empty(), rc.args);
     assert(w.ysk(l) =~= w.ys);
     assert(heads[1 + rc.j] == rc.xs[1 + rc.j]);
     reds_typed(sig, rc);
@@ -1840,7 +1841,8 @@ pub proof fn rec_red_right(sig: Sig, rc: Rc)
     rc_levels(sig, rc);
     let heads = rc.xs2.subrange(0, pre);
     assert(heads.push(rc.xs2[pre]) =~= rc.xs2);
-    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, rc.args2);
+    assert(Seq::<ExprSpec>::empty() + rc.args2 =~= rc.args2);
+    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, Seq::empty(), rc.args2);
     assert(w.ys2k(l) =~= w.ys2);
     assert(heads[1 + rc.j] == rc.xs2[1 + rc.j]);
     reds_typed(sig, rc);

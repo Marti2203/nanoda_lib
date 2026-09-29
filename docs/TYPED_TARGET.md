@@ -740,6 +740,33 @@ Stages, each landing through the gate:
   motive's application give `motive (c ps fs) ≡ motive (c ps' fs)`
   (`sr_result`). The model's recursor stack still asks `np == 0`
   (`rec_frag`), so `sr_ok_of` only produces the `np == 0` case for now.
+  **P4b-2 plan: the model's recursor stack with type parameters.** Survey
+  (2026-09-29): `recval`/`rf_fun` already take parameter inputs and pass
+  them to recursive calls unread, so the code function needs no change.
+  Every `np == 0` traces to `rec_frag` (and `fields_plain`, which forces
+  it on its own: a direct field `I vars(k, np)` is open). Five groups:
+  - (C) index arithmetic with the motive at 0, minor `j` at `1 + j`, the
+    major at `nmin + 1` (dom_rec_minor, dom_rec_red, dom_rec_conv,
+    dom_rec_end `Rc`, `sound_iota`): shift by `np`, mechanical, ~22 fns.
+  - (E) field types closed (`fields_plain`, `lift_closed`/`vsub_closed`):
+    fields become `I vars(k, np)`, a parameter `Var`, or closed; instantiate
+    at the parameter terms, ~12 fns.
+  - (B) parameter codes: tables and field codes at `pv` = the parameter
+    inputs' codes instead of `[]`/`bots(np)` (`fbnd`, `con_rel_arg`,
+    `field_dom_bnd`, `rec_ctx`, `motive_top`, `major_bnd` — whose
+    `tbl_canon_np0` is false for `np > 0` —, `typed_at_canon`, the
+    constructor chain `cf_*`, the right-to-left Iota `r2l_*`), ~20 fns.
+  - (D) the major `c ps' fs` against the recursor's `ps`: Iota drops `ps'`,
+    so the typing (`rule_beta`, `rec_conv_side`) and the relation need
+    `ps' ≡ ps` at their sorts. Not from `ind_inj_args`: it goes through the
+    fundamental lemma, i.e. through adequacy (a cycle). From the relation
+    instead: `con_tm` records that a constructor reduct's type parameters
+    are `peq` to its type's reduct's (`pconv`'s counterpart for terms),
+    established where constructor adequacy builds it. ~12 fns.
+  - (A) the gate: `rec_frag` asks `pdoms` all sorts instead of `np == 0`,
+    `fields_plain` becomes the three-kind field condition; last.
+  Order: C and E as `np`-general restatements while the gate still holds
+  (each a checkpoint), then D's relation clause, then B, then A.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.
