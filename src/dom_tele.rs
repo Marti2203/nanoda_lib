@@ -900,4 +900,115 @@ pub proof fn lam_apps(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, t: E
     (xs, dcs, y)
 }
 
+/// THE REST OF A DERIVABLE TELESCOPE is derivable in the prefix context.
+pub proof fn tele_rest(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, i: int) -> (li: LevelSpec)
+    requires
+        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, tds, body), crate::rec_canon::binds(BinderKind::Pi, tds, body), sort(l))),
+        0 <= i <= tds.len(),
+    ensures
+        derivable(sig, eq(g + tds.subrange(0, i),
+            crate::rec_canon::binds(BinderKind::Pi, tds.subrange(i, tds.len() as int), body),
+            crate::rec_canon::binds(BinderKind::Pi, tds.subrange(i, tds.len() as int), body), sort(li))),
+    decreases i,
+{
+    if i == 0 {
+        assert(g + tds.subrange(0, 0) =~= g);
+        assert(tds.subrange(0, tds.len() as int) =~= tds);
+        return l;
+    }
+    let (ta, rest) = (tds[0], tds.drop_first());
+    let tb = crate::rec_canon::binds(BinderKind::Pi, rest, body);
+    assert(crate::rec_canon::binds(BinderKind::Pi, tds, body) == pi(ta, tb));
+    let dd = crate::ti_sub::get(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
+    gen(sig, dd);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(ta, tb, l1, l2)
+        && typ(sig, g, ta, l1) && typ(sig, g.push(ta), tb, l2) && crate::ti_chain::tchain(sig, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
+    let li = tele_rest(sig, g.push(ta), rest, body, l2, i - 1);
+    assert(g.push(ta) + rest.subrange(0, i - 1) =~= g + tds.subrange(0, i));
+    assert(rest.subrange(i - 1, rest.len() as int) =~= tds.subrange(i, tds.len() as int));
+    li
+}
+
+/// A Pi member's domain is in the domain's denotation.
+pub proof fn pi_dom_mem(sig: Sig, ta: ExprSpec, tb: ExprSpec, rho: Env, d: Cpt)
+    requires
+        mem(sig, pi(ta, tb), rho, d),
+        d is Pi,
+        wf(d),
+    ensures
+        mem(sig, ta, rho, *d->Pi_0),
+{
+    reveal(mem);
+    let wit = choose|wit: Wit| #[trigger] mem_w(sig, pi(ta, tb), rho, d, wit);
+    assert(pi(ta, tb) == ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(tb)));
+    match wit {
+        Wit::Gen(a, gen_, wa, _) => {
+            assert(mem_w(sig, ta, rho, a, *wa));
+            head_le(d, gen_);
+            pi_dom_le(d, gen_);
+            parts_lower(d);
+            mem_down_e(sig, ta, rho, a, *d->Pi_0);
+        },
+        _ => {
+            assert(false);
+        },
+    }
+}
+
+/// A chain's environment fits the chain's context.
+pub proof fn chain_fits(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, rho: Env, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        chain_ok(sig, tds, rho, ds, xs),
+        fits_env(sig, g, rho),
+    ensures
+        fits_env(sig, g + tds, exts(rho, xs)),
+    decreases tds.len(),
+{
+    if tds.len() == 0 {
+        assert(g + tds =~= g);
+        return;
+    }
+    chain_ok_rest(sig, tds, rho, ds, xs);
+    fits_ext(sig, g, rho, tds[0], ds[0], xs[0]);
+    chain_fits(sig, g.push(tds[0]), tds.drop_first(), ext(rho, xs[0]), ds.drop_first(), xs.drop_first());
+    assert(g.push(tds[0]) + tds.drop_first() =~= g + tds);
+}
+
+/// One more value, innermost.
+pub proof fn exts_push(rho: Env, ws: Seq<Cpt>, w: Cpt)
+    ensures
+        exts(rho, ws.push(w)) == ext(exts(rho, ws), w),
+    decreases ws.len(),
+{
+    if ws.len() == 0 {
+        assert(ws.push(w).drop_first() =~= Seq::<Cpt>::empty());
+        assert(ws.push(w)[0] == w);
+        reveal_with_fuel(exts, 2);
+    } else {
+        exts_push(ext(rho, ws[0]), ws.drop_first(), w);
+        assert(ws.push(w).drop_first() =~= ws.drop_first().push(w));
+        assert(ws.push(w)[0] == ws[0]);
+    }
+}
+
+/// A chain one longer.
+pub proof fn chain_push(sig: Sig, tds: Seq<ExprSpec>, rho: Env, ds: Seq<Cpt>, xs: Seq<Cpt>, t: ExprSpec, d: Cpt, x: Cpt)
+    requires
+        chain_ok(sig, tds, rho, ds, xs),
+        dfit(sig, t, exts(rho, xs), d, x),
+    ensures
+        chain_ok(sig, tds.push(t), rho, ds.push(d), xs.push(x)),
+{
+    let (t2, d2, x2) = (tds.push(t), ds.push(d), xs.push(x));
+    assert forall|i: int| 0 <= i < t2.len() implies #[trigger] dfit(sig, t2[i], exts(rho, x2.subrange(0, i)), d2[i], x2[i]) by {
+        assert(x2.subrange(0, i) =~= xs.subrange(0, i) || i == xs.len());
+        if i < tds.len() {
+            assert(x2.subrange(0, i) =~= xs.subrange(0, i));
+            assert(t2[i] == tds[i] && d2[i] == ds[i] && x2[i] == xs[i]);
+        } else {
+            assert(x2.subrange(0, i) =~= xs);
+        }
+    }
+}
+
 } // verus!

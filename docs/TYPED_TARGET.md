@@ -428,6 +428,34 @@ Next, in order:
    each other: a nonempty recursor denotation owes adequacy, and
    adequacy needs Iota derivations.
 
+#### The end of the recursor's telescope (`rec_end`, plan 2026-09-29)
+
+The telescope induction (`dom_rec_adeq::rf_rel`) carries a semantic side
+(`rf_sem`) at one level instance `lsem`: the argument codes and values
+form a chain along the recursor's domains, and the current code belongs
+to the rest of the telescope. At the end, this gives `a <= app(p, wx)`
+for the motive's value `p` and the major's value `wx`. The end itself is
+proven by induction on the major's height:
+
+1. The major is related at an inductive code, so `con_tm` holds: `x`
+   head-reduces to `c_j args`.
+2. `rec P ms x` head-reduces to `R = m_j args ihs`: the major reduces in
+   place, then one iota step, then beta through the rule's lambdas. Each
+   step is typed by subject reduction, taken as the hypothesis `hsr` until
+   `iota_ok` is real (then `ti_sr::sr` discharges it).
+3. A walk down the minor's code applies it to the fields and then the
+   IHs. Every argument is projected (`jproj`), which leaves the
+   application and the codomain unchanged, so the walk ends at exactly
+   `recval(fs)`. Field arguments are related through `con_mono`; IH
+   arguments by the induction, at the walk's current domain code. Beside
+   the walk, a membership walk at `lsem` (as `tele_step_fit` does) shows
+   each IH code lies below `app(p, field)`, which is the IH instance's own
+   `rf_sem`.
+4. The walk's code `E` and the goal's `a` both lie below `T* = app(p, wx)`.
+   The motive's relation at the major gives the type relation at `T*`, so
+   the reduct's relation moves up to `T*` (`incr`), down to `a` (`decr`),
+   and back to the redex by head expansion (`expand_tm`).
+
 ### Open: parameters of any type (analysis 2026-09-28)
 
 What failed: the constructor clause related a field at its table code

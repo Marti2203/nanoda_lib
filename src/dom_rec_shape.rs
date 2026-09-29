@@ -111,6 +111,7 @@ pub proof fn minor_shape(sh: IndShape, j: int, ks: Seq<u64>, vs: Seq<LevelSpec>)
         r.0.len() == sh.fields[j].len(),
         r.1.len() == sh.rposj(j).len(),
         r.0 == sls(Seq::new(sh.fields[j].len(), |i: int| sh.field_at(j, i, (1 + j) as nat)), ks, vs),
+        r.1 == sls(Seq::new(sh.rposj(j).len(), |r: int| sh.ih_ty(j, r)), ks, vs),
         subst_expr_levels(sh.minor_ty(j), ks, vs) == binds(BinderKind::Pi, r.0 + r.1,
             crate::dom_rec_ty::minor_body((j + sh.fields[j].len() + sh.rposj(j).len()) as nat, sh.ctors[j],
                 crate::level_model::subst_levels_spec(sh.us(), ks, vs),
