@@ -104,6 +104,30 @@ pub open spec fn sapp(m: ExprSpec, x: ExprSpec) -> ExprSpec {
     ExprSpec::App(Box::new(m), Box::new(x))
 }
 
+/// A stuck application of `ind`.
+pub open spec fn iapp(sig: Sig, x: ExprSpec, ind: u64) -> bool {
+    crate::ti_hred::stuck(sig, x) && crate::beta_model::spine_head(x) is Const && crate::beta_model::spine_head(x)->Const_0 == ind
+}
+
+/// The stuck application of `ind` a type reduces to, when it does.
+pub open spec fn ir(sig: Sig, t: ExprSpec, ind: u64) -> ExprSpec {
+    choose|x: ExprSpec| hred(sig, t, x) && iapp(sig, x, ind)
+}
+
+pub open spec fn ind_red(sig: Sig, t: ExprSpec, ind: u64) -> bool {
+    hred(sig, t, ir(sig, t, ind)) && iapp(sig, ir(sig, t, ind), ind)
+}
+
+/// Field `k` of `ind`'s constructor `p` at the level instance and the
+/// parameters of the application `t` reduces to; the earlier fields, which
+/// the fragment's field types do not mention, are placeholders.
+pub open spec fn fq(sig: Sig, ind: u64, t: ExprSpec, p: int, k: int) -> ExprSpec {
+    let x = ir(sig, t, ind);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let f = crate::expr_model::subst_expr_levels(sh.fields[p][k], sig.consts[ind].lps, crate::beta_model::spine_head(x)->Const_1);
+    crate::ti_spine::vsub(f, crate::beta_model::spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed))
+}
+
 /// Marker trigger for the clauses' quantifiers (a same-group call inside a
 /// recursive definition is fuel-encoded and never matches a plain term).
 pub open spec fn rmark(m: ExprSpec, m2: ExprSpec, v: Cpt) -> bool {
@@ -114,6 +138,7 @@ pub open spec fn rmark(m: ExprSpec, m2: ExprSpec, v: Cpt) -> bool {
 #[verifier::opaque]
 pub open spec fn rel_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bool
     decreases n, 0int, ht(a), 0int,
+    via rel_ty_decreases
 {
     match a {
         Cpt::Bot => true,
@@ -127,8 +152,18 @@ pub open spec fn rel_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: 
                 && rel_ty(sig, (n - 1) as nat, g, ta, ta2, *b)
                 && cod_ty(sig, (n - 1) as nat, g, a, ta, tb, tb2)
         },
-        Cpt::Nd(NdKey::Ty(_, _), _) => tchain(sig, g, t, t2),
+        Cpt::Nd(NdKey::Ty(ind, _), ts) => tchain(sig, g, t, t2) && ind_red(sig, t, ind) && ind_red(sig, t2, ind)
+            && forall|p: int, k: int| #![trigger tbl(ts)[p]->Nd_1[k]]
+                0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len() && is_centry(tbl(ts)[p]->Nd_1[k])
+                ==> rel_ty(sig, n, g, fq(sig, ind, t, p, k), fq(sig, ind, t2, p, k), ecode(tbl(ts)[p]->Nd_1[k])),
         _ => false,
+    }
+}
+
+#[via_fn]
+proof fn rel_ty_decreases(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) {
+    if a is Nd {
+        tbl_lower(a);
     }
 }
 
@@ -156,7 +191,7 @@ pub open spec fn rel_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         Cpt::U => to_sort(sig, g, t, false) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Prop => to_sort(sig, g, t, true) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a),
-        Cpt::Nd(NdKey::Ty(_, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || (con_tm(sig, n, g, m, m2, u, a)
+        Cpt::Nd(NdKey::Ty(_, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || (con_tm(sig, n, g, m, m2, t, u, a)
             && derivable(sig, eq(g, m, cr(sig, m), t)) && derivable(sig, eq(g, m2, cr(sig, m2), t)))),
         _ => false,
     }
@@ -183,13 +218,13 @@ pub open spec fn blk_ok(u: Cpt, a: Cpt) -> bool {
     a is Nd && p < tbl(a->Nd_1).len() && tbl(a->Nd_1)[p] is Nd && tbl(a->Nd_1)[p]->Nd_1.len() == u->Nd_1.len()
 }
 
-/// THE CONSTRUCTOR CLAUSE at the code `a`: both sides reduce to
-/// applications of the value's constructor with convertible declared field
-/// types and derivably equal fields; where the value has a field, a
-/// recursive one is related by the clause in turn, another at its table
-/// entry's code.
+/// THE CONSTRUCTOR CLAUSE at the type `t` and its code `a`: both sides
+/// reduce to applications of the value's constructor with convertible
+/// declared field types and derivably equal fields; where the value has a
+/// field, a recursive one is related by the clause in turn, another at its
+/// table entry's code and at its type at `t`'s parameters.
 #[verifier::opaque]
-pub open spec fn con_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt) -> bool
+pub open spec fn con_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt) -> bool
     decreases n, 1int, ht(a), ht(u),
     via con_tm_decreases
 {
@@ -209,16 +244,17 @@ pub open spec fn con_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: 
             &&& tchain(sig, g, ti, ti2)
             &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
             &&& (#[trigger] fs[i] is Bot
-                || (es[i] == crate::dom_typing::rmark() && con_tm(sig, n, g, args[np + i], args2[np + i], fs[i], a)
+                || (es[i] == crate::dom_typing::rmark() && con_tm(sig, n, g, args[np + i], args2[np + i], t, fs[i], a)
                     && derivable(sig, eq(g, args[np + i], cr(sig, args[np + i]), ti))
                     && derivable(sig, eq(g, args2[np + i], cr(sig, args2[np + i]), ti)))
-                || (is_centry(es[i]) && rel_ty(sig, n, g, ti, ti2, ecode(es[i])) && rel_tm(sig, n, g, args[np + i], args2[np + i], ti, fs[i], ecode(es[i]))))
+                || (is_centry(es[i]) && rel_tm(sig, n, g, args[np + i], args2[np + i], fq(sig, a->Nd_0->Ty_0, t, u->Nd_0->Con_1 as int, i),
+                    fs[i], ecode(es[i]))))
         }
     }
 }
 
 #[via_fn]
-proof fn con_tm_decreases(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt) {
+proof fn con_tm_decreases(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt) {
     parts_lower(u);
     if a is Nd {
         tbl_lower(a);
@@ -228,7 +264,7 @@ proof fn con_tm_decreases(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u
 /// The constructor clause at a type: related, and both sides convert at
 /// the type with the constructor applications they reduce to.
 pub open spec fn con_top(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt) -> bool {
-    &&& con_tm(sig, n, g, m, m2, u, a)
+    &&& con_tm(sig, n, g, m, m2, t, u, a)
     &&& derivable(sig, eq(g, m, cr(sig, m), t))
     &&& derivable(sig, eq(g, m2, cr(sig, m2), t))
 }
@@ -292,18 +328,20 @@ pub proof fn ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
 }
 
 /// One field of the constructor clause.
-pub open spec fn con_field(sig: Sig, n: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, fs: Seq<Cpt>, es: Seq<Cpt>, np: nat, a: Cpt, i: int) -> bool {
+pub open spec fn con_field(sig: Sig, n: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, t: ExprSpec, fs: Seq<Cpt>, es: Seq<Cpt>, np: nat, p: int, a: Cpt, i: int) -> bool {
     let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
     let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
     &&& tchain(sig, g, ti, ti2)
     &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
     &&& (fs[i] is Bot
-        || (es[i] == crate::dom_typing::rmark() && con_top(sig, n, g, args[np + i], args2[np + i], ti, fs[i], a))
-        || (is_centry(es[i]) && rel_ty(sig, n, g, ti, ti2, ecode(es[i])) && rel_tm(sig, n, g, args[np + i], args2[np + i], ti, fs[i], ecode(es[i]))))
+        || (es[i] == crate::dom_typing::rmark() && con_tm(sig, n, g, args[np + i], args2[np + i], t, fs[i], a)
+            && derivable(sig, eq(g, args[np + i], cr(sig, args[np + i]), ti))
+            && derivable(sig, eq(g, args2[np + i], cr(sig, args2[np + i]), ti)))
+        || (is_centry(es[i]) && rel_tm(sig, n, g, args[np + i], args2[np + i], fq(sig, a->Nd_0->Ty_0, t, p, i), fs[i], ecode(es[i]))))
 }
 
 /// The constructor clause, unfolded.
-pub open spec fn con_body(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt) -> bool {
+pub open spec fn con_body(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt) -> bool {
     u is Nd && u->Nd_0 is Con && blk_ok(u, a) && ctor_red(sig, m) && ctor_red(sig, m2) && {
         let (x, x2) = (cr(sig, m), cr(sig, m2));
         let fs = u->Nd_1;
@@ -313,54 +351,68 @@ pub open spec fn con_body(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u
         &&& crate::beta_model::spine_head(x2)->Const_0 == c
         &&& crate::beta_model::spine_args(x).len() == np + fs.len()
         &&& crate::beta_model::spine_args(x2).len() == np + fs.len()
-        &&& forall|i: int| 0 <= i < fs.len() ==> #[trigger] con_field(sig, n, g, x, x2, fs, cblock(u, a), np, a, i)
+        &&& forall|i: int| 0 <= i < fs.len() ==> #[trigger] con_field(sig, n, g, x, x2, t, fs, cblock(u, a), np, u->Nd_0->Con_1 as int, a, i)
     }
 }
 
-pub proof fn con_tm_unfold(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt)
+pub proof fn con_tm_unfold(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
     ensures
-        con_tm(sig, n, g, m, m2, u, a) == con_body(sig, n, g, m, m2, u, a),
+        con_tm(sig, n, g, m, m2, t, u, a) == con_body(sig, n, g, m, m2, t, u, a),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);
     reveal_with_fuel(cod_ty, 2);
     reveal_with_fuel(app_tm, 2);
     reveal_with_fuel(con_tm, 2);
-    if con_tm(sig, n, g, m, m2, u, a) {
-        let (x, x2) = (cr(sig, m), cr(sig, m2));
-        let fs = u->Nd_1;
-        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
-        assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, x, x2, fs, cblock(u, a), np, a, i) by {
+    let (x, x2) = (cr(sig, m), cr(sig, m2));
+    let fs = u->Nd_1;
+    let es = cblock(u, a);
+    let p = u->Nd_0->Con_1 as int;
+    let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    if con_tm(sig, n, g, m, m2, t, u, a) {
+        assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, x, x2, t, fs, es, np, p, a, i) by {
             assert(fs[i] == fs[i]);
         }
     }
-    if con_body(sig, n, g, m, m2, u, a) {
-        let (x, x2) = (cr(sig, m), cr(sig, m2));
-        let fs = u->Nd_1;
-        let es = cblock(u, a);
-        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    if con_body(sig, n, g, m, m2, t, u, a) {
         let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
         assert forall|i: int| 0 <= i < fs.len() implies {
             let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
             &&& tchain(sig, g, ti, ti2)
             &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
             &&& (#[trigger] fs[i] is Bot
-                || (es[i] == crate::dom_typing::rmark() && con_tm(sig, n, g, args[np + i], args2[np + i], fs[i], a)
+                || (es[i] == crate::dom_typing::rmark() && con_tm(sig, n, g, args[np + i], args2[np + i], t, fs[i], a)
                     && derivable(sig, eq(g, args[np + i], cr(sig, args[np + i]), ti))
                     && derivable(sig, eq(g, args2[np + i], cr(sig, args2[np + i]), ti)))
-                || (is_centry(es[i]) && rel_ty(sig, n, g, ti, ti2, ecode(es[i])) && rel_tm(sig, n, g, args[np + i], args2[np + i], ti, fs[i], ecode(es[i]))))
+                || (is_centry(es[i]) && rel_tm(sig, n, g, args[np + i], args2[np + i], fq(sig, a->Nd_0->Ty_0, t, p, i),
+                    fs[i], ecode(es[i]))))
         } by {
-            assert(con_field(sig, n, g, x, x2, fs, es, np, a, i));
+            assert(con_field(sig, n, g, x, x2, t, fs, es, np, p, a, i));
         }
     }
 }
 
-/// At an inductive's code, related types convert.
+/// The table part of the type clause: at each entry holding a code, the
+/// field's types at the two sides' parameters are related there.
+pub open spec fn tbl_rel(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bool {
+    let (ind, ts) = (a->Nd_0->Ty_0, a->Nd_1);
+    forall|p: int, k: int| #![trigger tbl(ts)[p]->Nd_1[k]]
+        0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len() && is_centry(tbl(ts)[p]->Nd_1[k])
+        ==> rel_ty(sig, n, g, fq(sig, ind, t, p, k), fq(sig, ind, t2, p, k), ecode(tbl(ts)[p]->Nd_1[k]))
+}
+
+/// The type clause at an inductive's code, unfolded.
+pub open spec fn ty_nd(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bool {
+    tchain(sig, g, t, t2) && ind_red(sig, t, a->Nd_0->Ty_0) && ind_red(sig, t2, a->Nd_0->Ty_0) && tbl_rel(sig, n, g, t, t2, a)
+}
+
+/// At an inductive's code, related types convert, reduce to applications
+/// of the inductive, and have their table's field types related.
 pub proof fn ty_ind(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
     requires
         a is Nd && a->Nd_0 is Ty,
     ensures
-        rel_ty(sig, n, g, t, t2, a) == tchain(sig, g, t, t2),
+        rel_ty(sig, n, g, t, t2, a) == ty_nd(sig, n, g, t, t2, a),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);
@@ -375,7 +427,7 @@ pub proof fn tm_ind(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     requires
         a is Nd && a->Nd_0 is Ty,
     ensures
-        rel_tm(sig, n, g, m, m2, t, u, a) == (tchain(sig, g, t, t) && (u is Bot || con_top(sig, n, g, m, m2, t, u, a))),
+        rel_tm(sig, n, g, m, m2, t, u, a) == (rel_ty(sig, n, g, t, t, a) && (u is Bot || con_top(sig, n, g, m, m2, t, u, a))),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);

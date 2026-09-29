@@ -637,6 +637,27 @@ Stages, each landing through the gate:
   types typed; the signature gives that as a fact next to `rec_model`'s
   typed constructor types (`fields_typed`), and canonical tables exist only
   where it holds (`tabled`), so the definitions stay acyclic.
+  **P2b landed (2026-09-29).** As designed, with these findings:
+  - The transfer bound is "a table below the canonical one"
+    (`dom_lift::tbl_canon`: every entry below the canonical entry), since
+    codes differ in their parameter components, which the relation never
+    reads. Below it the lifting lemma needs no typing at any stage
+    (`canon_rel`), and `con_below`/`field_below` replace P2a's `con_xfer`.
+  - Constructor adequacy's codes are bounded along the constructor's
+    telescope (`dom_ctor_bound::tb`, the parameters' values threaded
+    through `cf_inv`); the bound is closed downward from any set it bounds
+    (`tb_le_set`), which gives codomains and the membership lemma
+    (`tb_mem`) without joins' well-formedness.
+  - Model changes, all gating: canonical tables need `canon_ok` (a
+    monomorphic inductive, not a constructor or recursor, with typed and
+    ranked field types); a constructor's code function is interpreted only
+    where its inductive has them (as a recursor's under `rec_hyps`); a
+    simple field type's head is not a recursor.
+  - **Universe polymorphism is out of the fragment** until its own stage:
+    the relation's two sides may sit at different but equivalent level
+    instances, and relating a field type at two instances needs a
+    conversion between level-equivalent terms that the judgment does not
+    provide as a lemma yet.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

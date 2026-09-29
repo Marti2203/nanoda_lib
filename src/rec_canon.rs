@@ -104,12 +104,13 @@ pub open spec fn tarity(t: ExprSpec) -> nat
     }
 }
 
-/// A type former other than `ind`: an axiom whose type is a Pi telescope
-/// ending in a sort.
+/// A type former other than `ind`: an axiom, not a recursor, whose type is
+/// a Pi telescope ending in a sort.
 pub open spec fn other_former(sig: Sig, ind: u64, j: u64) -> bool {
     &&& j != ind
     &&& sig.consts.contains_key(j)
     &&& sig.consts[j].val is None
+    &&& !sig.ienv.recs.contains_key(j)
     &&& tbody(sig.consts[j].ty, tarity(sig.consts[j].ty)) is Sort
 }
 

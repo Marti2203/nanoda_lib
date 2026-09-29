@@ -1552,6 +1552,7 @@ proof fn adeq_ctor(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     typed_up(a, Cpt::U, nn);
     adeq_type(sig, ps[1], rho, dl, s, s2, nn, ab);
     adeq_type(sig, ps[1], rho, dl, s, s2, nn, a);
+    crate::dom_model::mem_closed_env(sig, t, rho, ab);
     crate::dom_con_rel::ctor_adeq_core(sig, nn, n, dl, c, ls, ls2, l, u, a, av, v);
     adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
     symm_ty(sig, n, dl, t, t2, a);

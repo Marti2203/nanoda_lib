@@ -562,7 +562,7 @@ pub proof fn major_code(sig: Sig, rid: u64, lv: Seq<LevelSpec>, env: Env, d: Cpt
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
-        d is Bot || ((crate::dom_code::fields_typed(sig, sh.ind) ==> crate::dom_code::tabled(sig, sh.ind, us2, ws))
+        d is Bot || ((crate::dom_code::canon_ok(sig, sh.ind) ==> crate::dom_code::tabled(sig, sh.ind, us2, ws))
             && le(d, crate::dom_code::canon_code(sig, sh.ind, us2, ws)))
     }),
 {
@@ -637,7 +637,7 @@ pub proof fn rec_field_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, 
     let c0 = crate::dom_code::canon_code(sig, sh.ind, us2, ws);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     assert(sh.fields[p].len() == sig.ienv.recs[rid].rules[p].nfields);
-    if !crate::dom_code::fields_typed(sig, sh.ind) {
+    if !crate::dom_code::canon_ok(sig, sh.ind) {
         // no table: nothing is typed at the code but bottom
         assert(!crate::dom_code::tabled(sig, sh.ind, us2, ws));
         assert(c0->Nd_1.last() == Cpt::Nd(NdKey::Tag(2), Seq::empty()));
@@ -650,6 +650,41 @@ pub proof fn rec_field_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, 
     rec_field_typed(n, x, dm, c0, k);
     if !(x->Nd_1[k] is Bot) {
         typed_down(x->Nd_1[k], dm, n);
+    }
+}
+
+/// ALONG A TYPED CHAIN, the major's domain code lies below its inductive's
+/// canonical table (docs/TYPED_TARGET.md, S6 "Parameters", P2b).
+pub proof fn major_bnd(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
+    ensures
+        ds[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int] is Bot
+            || crate::dom_lift::tbl_canon(sig, crate::dom_rec_ty::rshape(sig, rid).ind,
+                ds[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int]),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let pre = sh.np + 1 + sh.nmin();
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    major_form(sig, rid, lv);
+    let dm = ds[pre as int];
+    let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, pre as int));
+    assert(crate::dom_sound::dfit(sig, tds[pre as int], env, dm, xs[pre as int]));
+    assert forall|i: nat| #[trigger] wf(env(i)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre as int), i);
+        if i < pre {
+            let j = pre - 1 - i;
+            assert(crate::dom_sound::dfit(sig, tds[j as int], crate::dom_tele::exts(bot_env(), xs.subrange(0, j as int)), ds[j as int], xs[j as int]));
+            typed_wf(xs[j as int], ds[j as int]);
+        }
+    }
+    let ws = major_code(sig, rid, lv, env, dm);
+    typed_wf(xs[pre as int], dm);
+    if !(dm is Bot) {
+        let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
+        crate::dom_lift::canon_is_tbl(sig, sh.ind, us2, ws);
+        crate::dom_lift::tbl_canon_le(sig, sh.ind, dm, crate::dom_code::canon_code(sig, sh.ind, us2, ws));
     }
 }
 

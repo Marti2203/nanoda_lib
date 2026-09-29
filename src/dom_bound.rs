@@ -62,6 +62,16 @@ pub open spec fn args_w(sig: Sig, args: Seq<ExprSpec>, rho: Env, ws: Seq<Cpt>) -
     &&& forall|i: int| 0 <= i < args.len() ==> #[trigger] mem(sig, args[i], rho, ws[i]) && wf(ws[i])
 }
 
+/// One argument's witness.
+pub proof fn args_w_at(sig: Sig, args: Seq<ExprSpec>, rho: Env, ws: Seq<Cpt>, i: int)
+    requires
+        args_w(sig, args, rho, ws),
+        0 <= i < args.len(),
+    ensures
+        mem(sig, args[i], rho, ws[i]) && wf(ws[i]),
+{
+}
+
 pub proof fn args_w_push(sig: Sig, args: Seq<ExprSpec>, rho: Env, ws: Seq<Cpt>, x: ExprSpec, w: Cpt)
     requires
         args_w(sig, args, rho, ws),

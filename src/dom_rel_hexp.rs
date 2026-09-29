@@ -75,6 +75,23 @@ pub proof fn cr_eq(sig: Sig, s: ExprSpec, t: ExprSpec)
     hred_det(sig, s, x, cr(sig, t));
 }
 
+/// A redex of a type reducing to an application of an inductive reduces
+/// to the same one.
+pub proof fn ir_eq(sig: Sig, s: ExprSpec, t: ExprSpec, ind: u64)
+    requires
+        hred(sig, s, t),
+        ind_red(sig, t, ind),
+    ensures
+        ind_red(sig, s, ind),
+        ir(sig, s, ind) == ir(sig, t, ind),
+{
+    hred_trans(sig, s, t, ir(sig, t, ind));
+    assert(hred(sig, s, ir(sig, t, ind)) && iapp(sig, ir(sig, t, ind), ind));
+    let x = ir(sig, s, ind);
+    assert(hred(sig, s, x) && iapp(sig, x, ind));
+    hred_det(sig, s, x, ir(sig, t, ind));
+}
+
 /// HEAD EXPANSION OF THE TYPE RELATION.
 pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: ExprSpec, s2: ExprSpec, a: Cpt)
     requires
@@ -107,12 +124,16 @@ pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: E
             tchain_trans(sig, g, s2, t2, pi(rp(sig, t2).0, rp(sig, t2).1));
         },
         Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) | Cpt::Nd(NdKey::Tag(..), _) => ty_other(sig, n, g, t, t2, a),
-        Cpt::Nd(NdKey::Ty(..), _) => {
+        Cpt::Nd(NdKey::Ty(ind, _), _) => {
             ty_ind(sig, n, g, t, t2, a);
             ty_ind(sig, n, g, s, s2, a);
             tchain_trans(sig, g, s, t, t2);
             tchain_sym(sig, g, s2, t2);
             tchain_trans(sig, g, s, t2, s2);
+            if rel_ty(sig, n, g, t, t2, a) {
+                ir_eq(sig, s, t, ind);
+                ir_eq(sig, s2, t2, ind);
+            }
         },
     }
 }
@@ -209,9 +230,9 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
             tm_ind(sig, n, g, m1, m2, t, u, a);
             tm_ind(sig, n, g, s1, s2, t, u, a);
             if !(u is Bot) {
-                con_tm_unfold(sig, n, g, m1, m2, u, a);
-                con_tm_unfold(sig, n, g, s1, s2, u, a);
-                if con_body(sig, n, g, m1, m2, u, a) {
+                con_tm_unfold(sig, n, g, m1, m2, t, u, a);
+                con_tm_unfold(sig, n, g, s1, s2, t, u, a);
+                if con_body(sig, n, g, m1, m2, t, u, a) {
                     cr_eq(sig, s1, m1);
                     cr_eq(sig, s2, m2);
                 }

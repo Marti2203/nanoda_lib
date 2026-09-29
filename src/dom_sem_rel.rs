@@ -187,6 +187,12 @@ pub proof fn app_pair(sig: Sig, g: Ctx, f: ExprSpec, f2: ExprSpec, t: ExprSpec, 
 /// convertible terms of a type related to itself.
 pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
     requires
+        crate::beta_model::spine_head(m) is Const && crate::beta_model::spine_head(m)->Const_0 == c,
+        crate::beta_model::spine_head(m2) is Const && crate::beta_model::spine_head(m2)->Const_0 == c,
+        !sig.ienv.recs.contains_key(c),
+        !crate::ti_syntax::is_def(sig, c, crate::beta_model::spine_head(m)->Const_1),
+        !crate::ti_syntax::is_def(sig, c, crate::beta_model::spine_head(m2)->Const_1),
+        derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         tf_fun(sig, c, ls, tel, p, u),
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
@@ -227,15 +233,20 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
             tm_pi(sig, n, g, m, m2, t, u, a);
         },
         ExprSpec::Sort(l) => {
-            let code = crate::dom_code::canon_code(sig, c, ls, p);
-            head_le(u, code);
+            head_le(u, crate::dom_code::canon_code(sig, c, ls, p));
             ty_sort(sig, n, g, t, t);
             tm_sort(sig, n, g, m, m2, t, u);
-            ty_ind(sig, n, g, m, m2, u);
             crate::ti_chain::conv_chain(sig, g, m, m2, t, sort(rs(sig, t)));
             let d = get(sig, eq(g, m, m2, sort(rs(sig, t))));
             mk_t(sig, d, rs(sig, t));
             tchain_one(sig, g, m, m2);
+            ty_inv(n, u, a);
+            let code = crate::dom_code::canon_code(sig, c, ls, p);
+            crate::dom_lift::canon_is_tbl(sig, c, ls, p);
+            if !(u is Bot) {
+                crate::dom_lift::tbl_canon_le(sig, c, u, code);
+            }
+            crate::dom_lift::canon_rel(sig, n, g, m, m2, u);
         },
         _ => {},
     }

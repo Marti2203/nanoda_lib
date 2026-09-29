@@ -62,19 +62,29 @@ pub open spec fn ftyped(sig: Sig, ind: u64, p: int, k: int, ls: Seq<LevelSpec>) 
 }
 
 /// Every field of `ind`'s constructors that is not a direct recursive
-/// occurrence is a type (docs/TYPED_TARGET.md, S6 "Parameters", P2b).
+/// occurrence is a type, its constants ranked below `ind`
+/// (docs/TYPED_TARGET.md, S6 "Parameters", P2b).
 #[verifier::opaque]
 pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
     let sh = canon_shape(sig, ind);
     forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
         && ls.len() == sig.consts[ind].lps.len() && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
-        ==> #[trigger] ftyped(sig, ind, p, k, ls)
+        ==> #[trigger] ftyped(sig, ind, p, k, ls) && crate::dom_canon::ranked(sig, sh.fields[p][k], rk(sig, ind))
 }
 
 /// `ind` at `ls` has its canonical table over `args`.
+/// `ind` has canonical tables: ranked, with a canonical recursor, no level
+/// parameters, typed field types, and neither a constructor nor a
+/// recursor.
+pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && sig.consts[ind].lps.len() == 0 && fields_typed(sig, ind)
+        && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
+}
+
+/// Universe-polymorphic inductives are not in the fragment yet
+/// (docs/TYPED_TARGET.md, S6 "Parameters"): their tables are empty.
 pub open spec fn tabled(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && canon_shape(sig, ind).np <= args.len() && ls.len() == sig.consts[ind].lps.len()
-        && fields_typed(sig, ind)
+    canon_ok(sig, ind) && canon_shape(sig, ind).np <= args.len() && ls.len() == sig.consts[ind].lps.len()
 }
 
 /// The arguments a code keeps: a canonical inductive's parameters (its

@@ -155,14 +155,15 @@ pub open spec fn ctor_pos(sig: Sig, ind: u64, c: u64) -> int {
     choose|p: int| 0 <= p < crate::dom_code::canon_shape(sig, ind).nmin() && crate::dom_code::canon_shape(sig, ind).ctors[p] == c
 }
 
-/// The code function a semantic constant approximates: a constructor's, a
-/// recursor's where the model interprets it (`rec_hyps`, otherwise only
-/// bottom), or a type former's.
+/// The code function a semantic constant approximates: a constructor's
+/// where its inductive has canonical tables, a recursor's where the model
+/// interprets it (`rec_hyps`; otherwise both only bottom), or a type
+/// former's.
 pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -> bool {
     let t = crate::ti_syntax::dty_at(sig, c, ls);
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
-        v is Bot || (ctor_of(sig, ind, c)
+        v is Bot || (ctor_of(sig, ind, c) && crate::dom_code::canon_ok(sig, ind)
             && cf_fun(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v))
     } else if sig.ienv.recs.contains_key(c) {
         v is Bot || (crate::dom_rec_end::rec_hyps(sig, c) && rf_fun(sig, c, t, Seq::empty(), v))
