@@ -521,8 +521,11 @@ Open, for S6.6: discharging `sig_sr` for kernel signatures with recursors.
 It asks only typings in the stripped signature and signature facts, which
 the kernel's checks of the inductive and its recursor establish (the
 recursor, its constructors and its rules are checked without recursors).
-Subject reduction is no longer assumed by the model, so `ti_sr::sr` can
-take its Iota case (`iota_sr`) under `sig_sr` without a circle.
+Subject reduction is no longer assumed by the model, and `ti_sr::sr` now
+holds for signatures in the fragment (`iota_ok ∧ sig_sr`, not only
+`no_recs`): its Iota step is the Iota rule over `iota_sr`, whose rule
+typings `dom_rec_conv::sr_ok_of` derives from the model's facts, and a
+major reducing inside a recursor application is congruence.
 
 ### Open: parameters of any type (analysis 2026-09-28)
 

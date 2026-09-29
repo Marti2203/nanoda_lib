@@ -230,4 +230,37 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, heads: 
     crate::dom_adeq_syn::dtrans(sig, g, m, n1, r, t);
 }
 
+/// SUBJECT REDUCTION'S IOTA FACTS, from the model's: a recursor of a
+/// signature in the fragment has its rules' right-hand sides typed at
+/// their rule types.
+pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::iota_ok(sig),
+        sig.ienv.recs.contains_key(rid),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+        0 <= p < rshape(sig, rid).nmin(),
+    ensures
+        crate::iota_sr::sr_ok(sig, rid, lv, p),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    assert(!crate::ti_syntax::no_recs(sig));
+    reveal(crate::dom_rec_end::sig_rec);
+    assert(crate::dom_rec_end::rec_model(sig, rid));
+    assert(rule_typed(sig, rid, lv, p));
+    let ss = crate::ti_strip::strip(sig);
+    let ctx = rule_ctx(sig, rid, lv, p);
+    let (b, bt) = (crate::dom_iota::rule_body(sig, rid, lv, p), rule_bty(sig, rid, p));
+    let lb = choose|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, sort(lb)));
+    assert(Seq::<ExprSpec>::empty() + ctx =~= ctx);
+    crate::ti_beta::lam_tele(ss, Seq::empty(), ctx, b, bt, lb);
+    let (lt, pt) = (crate::rec_canon::binds(BinderKind::Lam, ctx, b), crate::rec_canon::binds(BinderKind::Pi, ctx, bt));
+    crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), lt, lt, pt));
+    crate::dom_iota::rule_split(sig, rid, lv, p);
+    crate::iota_sr::rule_ty_split(sig, rid, lv, p);
+    assert(crate::dom_rec_minor::fields_plain(sig, rid, lv, p));
+}
+
 } // verus!

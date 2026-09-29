@@ -244,7 +244,8 @@ pub proof fn wk_closed(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
 pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
         sig_wf(sig),
-        crate::ti_syntax::no_recs(sig),
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, m, m, t)),
         crate::ti_hred::hstep(sig, m) is Some,
     ensures
@@ -278,9 +279,7 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
                 tchain_trans(sig, g, t, inst(0, *x, b1), inst(0, *x, bt));
                 tchain_sym(sig, g, t, inst(0, *x, bt));
                 conv_chain(sig, g, m, inst(0, *x, *body), inst(0, *x, bt), t);
-            } else {
-                crate::ti_valid::iota_dead(sig, m);
-                assert(!crate::ti_hred::rec_major(sig, m));
+            } else if crate::ti_hred::hstep(sig, *f) is Some {
                 sr(sig, g, *f, pi(a1, b1));
                 let f2 = crate::ti_hred::hstep(sig, *f)->Some_0;
                 let d0 = get(sig, eq(g, *f, f2, pi(a1, b1)));
@@ -291,6 +290,40 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
                 let aj = eq(g, m, m2, inst(0, *x, b1));
                 let ap = seq![d0, d1, d2, d3];
                 assert(prems(ap, seq![eq(g, *f, f2, pi(a1, b1)), eq(g, *x, *x, a1), eq(g, a1, a1, sort(l1)), eq(g.push(a1), b1, b1, sort(l2b))]));
+                valid_node(sig, Rule::AppCong(l1, l2b), aj, ap);
+                mk_d(sig, node(Rule::AppCong(l1, l2b), aj, ap));
+                tchain_sym(sig, g, t, inst(0, *x, b1));
+                conv_chain(sig, g, m, m2, inst(0, *x, b1), t);
+            } else if crate::ti_hred::rec_fire(sig, m) {
+                // iota: the rule instance is typed at the redex's type
+                let h = crate::beta_model::spine_head(m);
+                let rd = sig.ienv.recs[h->Const_0];
+                let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
+                let pr = crate::iota_sr::fired_rule(sig, m);
+                crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
+                assert(crate::dom_rec_end::rec_frag(sig, h->Const_0));
+                crate::dom_rec_conv::sr_ok_of(sig, h->Const_0, h->Const_1, pr);
+                crate::iota_sr::iota_sr(sig, g, m, t);
+                let n = crate::beta_model::rec_result(sig.ienv, m);
+                let d1 = get(sig, eq(g, n, n, t));
+                let ij = eq(g, m, n, t);
+                let ip = seq![dm, d1];
+                assert(prems(ip, seq![eq(g, m, m, t), eq(g, n, n, t)]));
+                valid_node(sig, Rule::Iota, ij, ip);
+                mk_d(sig, node(Rule::Iota, ij, ip));
+            } else {
+                // the major of a recursor application, reduced in place
+                assert(crate::ti_hred::rec_major(sig, m));
+                sr(sig, g, *x, a1);
+                let x2 = crate::ti_hred::hstep(sig, *x)->Some_0;
+                let d0 = get(sig, eq(g, *f, *f, pi(a1, b1)));
+                let d1 = get(sig, eq(g, *x, x2, a1));
+                let d2 = get(sig, eq(g, a1, a1, sort(l1)));
+                let d3 = get(sig, eq(g.push(a1), b1, b1, sort(l2b)));
+                let m2 = ExprSpec::App(f, Box::new(x2));
+                let aj = eq(g, m, m2, inst(0, *x, b1));
+                let ap = seq![d0, d1, d2, d3];
+                assert(prems(ap, seq![eq(g, *f, *f, pi(a1, b1)), eq(g, *x, x2, a1), eq(g, a1, a1, sort(l1)), eq(g.push(a1), b1, b1, sort(l2b))]));
                 valid_node(sig, Rule::AppCong(l1, l2b), aj, ap);
                 mk_d(sig, node(Rule::AppCong(l1, l2b), aj, ap));
                 tchain_sym(sig, g, t, inst(0, *x, b1));
