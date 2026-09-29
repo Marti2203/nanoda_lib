@@ -90,6 +90,7 @@ pub proof fn symm_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
             ty_ind(sig, n, g, t, t2, a);
             ty_ind(sig, n, g, t2, t, a);
             crate::ti_chain::tchain_sym(sig, g, t, t2);
+            pconv_symm(sig, g, a->Nd_0->Ty_0, t, t2);
             tbl_lower(a);
             let (ind, ts) = (a->Nd_0->Ty_0, a->Nd_1);
             assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
@@ -162,6 +163,7 @@ pub proof fn trans_ty(sig: Sig, n: nat, g: Ctx, t1: ExprSpec, t2: ExprSpec, t3: 
             ty_ind(sig, n, g, t2, t3, a);
             ty_ind(sig, n, g, t1, t3, a);
             crate::ti_chain::tchain_trans(sig, g, t1, t2, t3);
+            pconv_trans(sig, g, a->Nd_0->Ty_0, t1, t2, t3);
             tbl_lower(a);
             let (ind, ts) = (a->Nd_0->Ty_0, a->Nd_1);
             assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
@@ -330,6 +332,43 @@ proof fn trans_tm_pi(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: E
         trans_tm(sig, k, g, sapp(m1, x), sapp(m2, x2), sapp(m3, x2), inst(0, x, tb), app(u, w), cod(a, w));
     }
     app_tm_intro(sig, k, g, m1, m3, ta, tb, u, a);
+}
+
+pub proof fn pconv_symm(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec)
+    requires
+        pconv(sig, g, ind, t, t2),
+    ensures
+        pconv(sig, g, ind, t2, t),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
+    if crate::dom_code::has_canon(sig, ind) {
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, a2[q], a[q]) by {
+            assert(tchain(sig, g, a[q], a2[q]));
+            tchain_sym(sig, g, a[q], a2[q]);
+        }
+    }
+}
+
+pub proof fn pconv_trans(sig: Sig, g: Ctx, ind: u64, t1: ExprSpec, t2: ExprSpec, t3: ExprSpec)
+    requires
+        pconv(sig, g, ind, t1, t2),
+        pconv(sig, g, ind, t2, t3),
+    ensures
+        pconv(sig, g, ind, t1, t3),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let (a1, a2, a3) = (crate::beta_model::spine_args(ir(sig, t1, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)),
+        crate::beta_model::spine_args(ir(sig, t3, ind)));
+    if crate::dom_code::has_canon(sig, ind) {
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, a1[q], a3[q]) by {
+            assert(tchain(sig, g, a1[q], a2[q]));
+            assert(tchain(sig, g, a2[q], a3[q]));
+            tchain_trans(sig, g, a1[q], a2[q], a3[q]);
+        }
+    }
 }
 
 /// The constructor clause is symmetric.

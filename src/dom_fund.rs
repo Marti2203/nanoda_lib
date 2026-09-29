@@ -504,4 +504,111 @@ pub proof fn sort_inj_chain(sig: Sig, g: Ctx, l1: LevelSpec, l2: LevelSpec)
     }
 }
 
+/// A fully applied canonical inductive has its canonical code at bottom
+/// arguments as a member, a universe element.
+proof fn ind_code_mem(sig: Sig, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>) -> (c: Cpt)
+    requires
+        crate::dom_code::has_canon(sig, ind),
+        crate::dom_model::sem_const(sig, ind, ls),
+        !sig.ienv.ctor_ind.contains_key(ind),
+        !sig.ienv.recs.contains_key(ind),
+        xs.len() == crate::dom_code::canon_shape(sig, ind).np + crate::dom_code::canon_shape(sig, ind).ni,
+    ensures
+        mem(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), bot_env(), c),
+        typed(c, Cpt::U),
+        c is Nd && c->Nd_0 == crate::dom_compact::NdKey::Ty(ind, crate::dom_code::is_prop_at(sig, ind, ls)),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+    let lps = sig.consts[ind].lps;
+    let tb0 = crate::rec_canon::tbody(sig.consts[ind].ty, sh.np + sh.ni);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, tb0, lps, ls);
+    let tds = crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, ls);
+    let l = crate::expr_model::subst_expr_levels(tb0, lps, ls)->Sort_0;
+    assert(crate::expr_model::subst_expr_levels(tb0, lps, ls) == ExprSpec::Sort(l));
+    let k = tds.len();
+    assert(k == xs.len());
+    let bn = crate::dom_iota::bots(k);
+    crate::dom_iota::bot_chain(sig, tds, bot_env());
+    let (ai, vi) = crate::dom_canon::tf_step(sig, ind, ls, tds, l, bn, bn);
+    typed_wf(vi, ai);
+    le_refl(vi);
+    assert(crate::dom_sem::sem_mem(sig, ind, ls, vi, ai, vi));
+    crate::dom_sem::mem_sem(sig, ind, ls, bot_env(), vi);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] mem(sig, xs[i], bot_env(), bn[i]) && wf(bn[i]) by {
+        mem_bot(sig, xs[i], bot_env());
+        reveal(mem);
+    }
+    let c = crate::dom_code::canon_code(sig, ind, ls, bn);
+    assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_code::canon_wf(sig, ind, ls, bn);
+    crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(ind, ls), xs, bot_env(), vi, bn, c);
+    crate::dom_canon::bots_sparams(sig, ind, bn);
+    crate::dom_canon::canon_typed(sig, ind, ls, bn);
+    c
+}
+
+/// INDUCTIVE INJECTIVITY: a fully applied canonical inductive chains only
+/// to types reducing to an application of it, whose type parameters
+/// convert with its own.
+pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, t2: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::dom_code::has_canon(sig, ind),
+        crate::dom_model::sem_const(sig, ind, ls),
+        !sig.ienv.ctor_ind.contains_key(ind),
+        !sig.ienv.recs.contains_key(ind),
+        xs.len() == crate::dom_code::canon_shape(sig, ind).np + crate::dom_code::canon_shape(sig, ind).ni,
+        tchain(sig, g, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), t2),
+    ensures
+        ind_red(sig, t2, ind),
+        pconv(sig, g, ind, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), t2),
+{
+    let t = crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), xs);
+    crate::dom_lift::iapp_self(sig, t);
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == t && #[trigger] ch[ch.len() - 1] == t2
+        && crate::ti_chain::chain_ok(sig, g, ch);
+    if ch.len() == 1 {
+        let sh = crate::dom_code::canon_shape(sig, ind);
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, crate::beta_model::spine_args(t)[q], crate::beta_model::spine_args(t)[q]) by {
+            crate::ti_chain::tchain_refl(sig, g, crate::beta_model::spine_args(t)[q]);
+        }
+    } else {
+        let c = ind_code_mem(sig, ind, ls, xs);
+        let nn = cstage(c, Cpt::U);
+        typed_up(c, Cpt::U, nn);
+        chain_rel(sig, g, ch, ch.len() - 1, nn, c);
+        ty_ind(sig, nn, g, t, t2, c);
+    }
+}
+
+/// INDUCTIVE INJECTIVITY, at two applications of the inductive: their
+/// type parameters convert.
+pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, xs: Seq<ExprSpec>, ys: Seq<ExprSpec>)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::dom_code::has_canon(sig, ind),
+        crate::dom_model::sem_const(sig, ind, ls),
+        !sig.ienv.ctor_ind.contains_key(ind),
+        !sig.ienv.recs.contains_key(ind),
+        xs.len() == crate::dom_code::canon_shape(sig, ind).np + crate::dom_code::canon_shape(sig, ind).ni,
+        tchain(sig, g, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs),
+            crate::beta_model::spine_app(ExprSpec::Const(ind, ls2), ys)),
+    ensures
+        ys.len() >= crate::dom_code::canon_shape(sig, ind).np,
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
+            ==> #[trigger] tchain(sig, g, xs[q], ys[q]),
+{
+    let t2 = crate::beta_model::spine_app(ExprSpec::Const(ind, ls2), ys);
+    ind_inj_chain(sig, g, ind, ls, xs, t2);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), xs);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls2), ys);
+    crate::dom_lift::iapp_self(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs));
+    crate::dom_lift::iapp_self(sig, t2);
+}
+
 } // verus!

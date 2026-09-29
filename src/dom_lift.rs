@@ -375,6 +375,15 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
             ty_bot(sig, n, g, pq(sig, kk, r, q), pq(sig, kk, r, q));
         }
     }
+    if has_canon(sig, kk) {
+        // fully applied: its parameters convert with themselves
+        crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
+        crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
+        assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
+            implies #[trigger] crate::ti_chain::tchain(sig, g, spine_args(r)[q], spine_args(r)[q]) by {
+            crate::ti_chain::tchain_refl(sig, g, spine_args(r)[q]);
+        }
+    }
     canon_rel(sig, n, g, r, r, cs, c);
 }
 
@@ -429,6 +438,7 @@ pub proof fn canon_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: 
         u is Bot || tbl(u->Nd_1).len() == 0 || (spine_args(e).len() >= canon_shape(sig, spine_head(e)->Const_0).np
             && spine_args(e2).len() >= canon_shape(sig, spine_head(e)->Const_0).np),
         prel(sig, n, g, spine_head(e)->Const_0, e, e2, pv),
+        pconv(sig, g, spine_head(e)->Const_0, e, e2),
     ensures
         rel_ty(sig, n, g, e, e2, u),
     decreases (rk(sig, spine_head(e)->Const_0) + 1) as nat, 2int, ht(u),

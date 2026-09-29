@@ -128,6 +128,16 @@ pub open spec fn fq(sig: Sig, ind: u64, t: ExprSpec, p: int, k: int) -> ExprSpec
     crate::ti_spine::vsub(f, crate::beta_model::spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed))
 }
 
+/// THE TYPE PARAMETERS CONVERT: of a canonical inductive, the applications
+/// two types reduce to are applied past the parameters, with convertible
+/// type parameters. What injectivity of the inductive reads back.
+pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) -> bool {
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
+    crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() >= sh.np
+        && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] tchain(sig, g, a[q], a2[q])
+}
+
 /// Marker trigger for the clauses' quantifiers (a same-group call inside a
 /// recursive definition is fuel-encoded and never matches a plain term).
 pub open spec fn rmark(m: ExprSpec, m2: ExprSpec, v: Cpt) -> bool {
@@ -153,6 +163,7 @@ pub open spec fn rel_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: 
                 && cod_ty(sig, (n - 1) as nat, g, a, ta, tb, tb2)
         },
         Cpt::Nd(NdKey::Ty(ind, _), ts) => tchain(sig, g, t, t2) && ind_red(sig, t, ind) && ind_red(sig, t2, ind)
+            && pconv(sig, g, ind, t, t2)
             && forall|p: int, k: int| #![trigger tbl(ts)[p]->Nd_1[k]]
                 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len() && is_centry(tbl(ts)[p]->Nd_1[k])
                 ==> rel_ty(sig, n, g, fq(sig, ind, t, p, k), fq(sig, ind, t2, p, k), ecode(tbl(ts)[p]->Nd_1[k])),
@@ -403,7 +414,8 @@ pub open spec fn tbl_rel(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a:
 
 /// The type clause at an inductive's code, unfolded.
 pub open spec fn ty_nd(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt) -> bool {
-    tchain(sig, g, t, t2) && ind_red(sig, t, a->Nd_0->Ty_0) && ind_red(sig, t2, a->Nd_0->Ty_0) && tbl_rel(sig, n, g, t, t2, a)
+    tchain(sig, g, t, t2) && ind_red(sig, t, a->Nd_0->Ty_0) && ind_red(sig, t2, a->Nd_0->Ty_0)
+        && pconv(sig, g, a->Nd_0->Ty_0, t, t2) && tbl_rel(sig, n, g, t, t2, a)
 }
 
 /// At an inductive's code, related types convert, reduce to applications

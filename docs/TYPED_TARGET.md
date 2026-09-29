@@ -686,6 +686,35 @@ Stages, each landing through the gate:
     injectivity for parameters a field does not mention; the recursor's
     Iota with parameters needs the rule instance typed, which the
     parameters' conversion gives where fields mention them.
+  **P1c+P3 landed (2504c79, 2026-09-29)** for fields that are a type
+  parameter itself (`pvar_field`); `List α`, `Option α`, `Prod α β` and
+  trees over `α` are in the model's constructor adequacy and type-former
+  relation. Findings: a type former's argument needs no domain syntax
+  (at a sort's code it is a type; at a Pi's or an inductive's code it is a
+  value, below which only bottom is typed at `U`), so `tf_rel` carries
+  every argument's relation (`tf_prel`); nested closed types get their
+  parameters' relation and transfer from their own arguments by rank and
+  size (`closed_rel`, `closed_below`); a parameter-typed field moves
+  through the parameter's code at the high stage (`par_xfer`).
+  **Still open for parameters:** (P3b) formers applied to parameters as
+  field types (`Option α` as a field), the nested case of the same
+  lemmas with the parameter relation threaded through; (P4) the recursor
+  with parameters, whose proofs assume `np == 0` (`rec_frag`, the walk,
+  the Iota cores, Iota's subject reduction) and whose Iota instance needs
+  the major's parameters convertible with the recursor's.
+  **P4a landed (2026-09-29): injectivity of the inductive in its type
+  parameters.** The relation's inductive clause gains `pconv`: the
+  applications the two types reduce to have convertible type parameters
+  (those whose declared domain is a sort). `tf_rel` carries the former's
+  telescope instance (`tf_shape`), so at each type-parameter argument the
+  derivable conversion at the sort domain is a `tchain` step; the lifting
+  lemma asks it, `closed_rel` gives it reflexively. `ind_inj_chain` /
+  `ind_inj_args` (dom_fund) read it back through the fundamental lemma at
+  the canonical code at bottom arguments, a member of every full
+  application. Only type parameters convert this way: a value parameter's
+  code is a value, below which only bottom is a type, so the relation
+  says nothing of it; P4b needs the recursor's value parameters handled
+  another way, or kept out of the fragment.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

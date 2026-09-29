@@ -188,6 +188,109 @@ pub open spec fn tf_prel(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p:
         ==> #[trigger] rel_ty(sig, n, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q], c)
 }
 
+/// The type parameters so far convert.
+pub open spec fn tf_pconv(sig: Sig, g: Ctx, c: u64, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>) -> bool {
+    let sh = crate::dom_code::canon_shape(sig, c);
+    forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
+        ==> #[trigger] tchain(sig, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
+}
+
+/// Where the former has canonical tables, the type is its telescope's
+/// instance at arguments as many as the inputs, the remaining telescope its
+/// body, and the type parameters so far convert.
+pub open spec fn tf_shape(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec,
+    t: ExprSpec, t0: ExprSpec, tt: Seq<ExprSpec>) -> bool {
+    let sh = crate::dom_code::canon_shape(sig, c);
+    crate::dom_code::has_canon(sig, c) ==> {
+        &&& t0 == crate::ti_syntax::dty_at(sig, c, ls)
+        &&& t == crate::dom_con_rel::trest(t0, tt)
+        &&& tt.len() == p.len()
+        &&& tt.len() <= sh.np + sh.ni
+        &&& tel == crate::rec_canon::tbody(t0, tt.len())
+        &&& tf_pconv(sig, g, c, m, m2, p)
+    }
+}
+
+/// One more argument: the telescope's shape and the type parameters'
+/// conversion.
+#[verifier::spinoff_prover]
+pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec,
+    t: ExprSpec, t0: ExprSpec, tt: Seq<ExprSpec>, x: ExprSpec, x2: ExprSpec, w: Cpt)
+    requires
+        tf_shape(sig, g, c, ls, tel, p, m, m2, t, t0, tt),
+        tel is Bind && tel->Bind_0 == BinderKind::Pi,
+        crate::beta_model::spine_args(m).len() == p.len(),
+        crate::beta_model::spine_args(m2).len() == p.len(),
+        derivable(sig, eq(g, x, x2, rp(sig, t).0)),
+    ensures ({
+        let tt2 = tt.push(x);
+        let (tel2, t2) = (*tel->Bind_2, crate::subst_algebra::inst(0, x, rp(sig, t).1));
+        &&& crate::dom_code::has_canon(sig, c) ==> t == pi(rp(sig, t).0, rp(sig, t).1)
+        &&& tf_shape(sig, g, c, ls, tel2, p.push(w), sapp(m, x), sapp(m2, x2), t2, t0, tt2)
+        &&& tf_shape(sig, g, c, ls, tel2, p.push(w), sapp(m, x), sapp(m, x2), t2, t0, tt2)
+        &&& tf_shape(sig, g, c, ls, tel2, p.push(w), sapp(m2, x), sapp(m2, x2), t2, t0, tt2)
+    }),
+{
+    if crate::dom_code::has_canon(sig, c) {
+        let sh = crate::dom_code::canon_shape(sig, c);
+        crate::dom_ctor_bound::ctor_shape_ind(sig, c);
+        let lps = sig.consts[c].lps;
+        let tb0 = crate::rec_canon::tbody(sig.consts[c].ty, sh.np + sh.ni);
+        crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, tb0, lps, ls);
+        let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, ls);
+        let b = crate::expr_model::subst_expr_levels(tb0, lps, ls);
+        let k = tt.len() as int;
+        crate::dom_ctor_bound::tbody_suffix(ds, b, k as nat);
+        if k == ds.len() {
+            assert(ds.subrange(k, ds.len() as int) =~= Seq::<ExprSpec>::empty());
+            assert(false);
+        }
+        crate::ti_spine::tel_next(ds, b, tt.push(x), k);
+        assert(tt.push(x).subrange(0, k) =~= tt);
+        let (ta, tb) = (*t->Bind_1, *t->Bind_2);
+        crate::dom_adeq_base::rp_pi(sig, ta, tb);
+        crate::dom_con_rel::trest_push(t0, tt, x);
+        crate::dom_ctor_bound::tbody_suffix(ds, b, (k + 1) as nat);
+        assert(ds.subrange(k, ds.len() as int).drop_first() =~= ds.subrange(k + 1, ds.len() as int));
+        let (a1, a2) = (crate::beta_model::spine_args(m), crate::beta_model::spine_args(m2));
+        assert(crate::beta_model::spine_args(sapp(m, x)) == a1.push(x));
+        assert(crate::beta_model::spine_args(sapp(m, x2)) == a1.push(x2));
+        assert(crate::beta_model::spine_args(sapp(m2, x)) == a2.push(x));
+        assert(crate::beta_model::spine_args(sapp(m2, x2)) == a2.push(x2));
+        if k < sh.np && sh.pdoms[k] is Sort {
+            // a type parameter: its arguments convert as types
+            assert(ds[k] == crate::expr_model::subst_expr_levels(sh.pdoms[k], lps, ls));
+            crate::ti_spine::vsub_closed(ds[k], tt);
+            let l = ta->Sort_0;
+            assert(derivable(sig, eq(g, x, x2, sort(l))));
+            reveal(crate::ti_sub::tconvd);
+            tchain_one(sig, g, x, x2);
+        }
+        let p2 = p.push(w);
+        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, a1.push(x)[q], a2.push(x2)[q]) by {
+            if q < p.len() {
+                assert(tchain(sig, g, a1[q], a2[q]));
+                assert(a1.push(x)[q] == a1[q] && a2.push(x2)[q] == a2[q]);
+            }
+        }
+        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, a1.push(x)[q], a1.push(x2)[q]) by {
+            if q < p.len() {
+                tchain_refl(sig, g, a1[q]);
+                assert(a1.push(x)[q] == a1[q] && a1.push(x2)[q] == a1[q]);
+            }
+        }
+        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, a2.push(x)[q], a2.push(x2)[q]) by {
+            if q < p.len() {
+                tchain_refl(sig, g, a2[q]);
+                assert(a2.push(x)[q] == a2[q] && a2.push(x2)[q] == a2[q]);
+            }
+        }
+    }
+}
+
 /// One more argument: related below its value (a type former's arguments
 /// at a code other than a sort's are values of which only bottom is a
 /// type), the earlier ones one stage down, on each side's diagonal too.
@@ -317,7 +420,8 @@ pub proof fn tf_arg_rel(sig: Sig, k: nat, g: Ctx, ta: ExprSpec, x: ExprSpec, x2:
 /// THE RELATION AT A TYPE FORMER: an approximation of its code function,
 /// down the remaining telescope `tel` with inputs `p`, relates two
 /// convertible terms of a type related to itself.
-pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
+pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt,
+    t0: ExprSpec, tt: Seq<ExprSpec>)
     requires
         crate::beta_model::spine_head(m) is Const && crate::beta_model::spine_head(m)->Const_0 == c,
         crate::beta_model::spine_head(m2) is Const && crate::beta_model::spine_head(m2)->Const_0 == c,
@@ -328,6 +432,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
         crate::beta_model::spine_args(m).len() == p.len(),
         crate::beta_model::spine_args(m2).len() == p.len(),
         tf_prel(sig, n, g, m, m2, p),
+        tf_shape(sig, g, c, ls, tel, p, m, m2, t, t0, tt),
         tf_fun(sig, c, ls, tel, p, u),
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
@@ -362,9 +467,10 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
                 app_pair(sig, g, m, m2, t, ta, tb, x, x2);
                 crate::dom_con_rel::pi_dom_typed(n, a);
                 tf_prel_step(sig, n, g, m, m2, p, ta, x, x2, w, bd);
-                tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m, x), sapp(m, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
-                tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m2, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
-                tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
+                tf_shape_step(sig, g, c, ls, tel, p, m, m2, t, t0, tt, x, x2, w);
+                tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m, x), sapp(m, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w), t0, tt.push(x));
+                tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m2, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w), t0, tt.push(x));
+                tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w), t0, tt.push(x));
             }
             app_tm_intro(sig, k, g, m, m2, ta, tb, u, a);
             tm_pi(sig, n, g, m, m2, t, u, a);
@@ -387,6 +493,20 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
             crate::dom_lift::canon_bnd(sig, c, ls, p, cs, u);
             crate::dom_lift::iapp_self(sig, m);
             crate::dom_lift::iapp_self(sig, m2);
+            if crate::dom_code::has_canon(sig, c) {
+                // all arguments given: the type parameters convert
+                crate::dom_ctor_bound::ctor_shape_ind(sig, c);
+                let lps = sig.consts[c].lps;
+                let tb0 = crate::rec_canon::tbody(sig.consts[c].ty, sc.np + sc.ni);
+                crate::dom_rec_shape::sl_binds(BinderKind::Pi, sc.pdoms + sc.idoms, tb0, lps, ls);
+                let ds = crate::dom_rec_shape::sls(sc.pdoms + sc.idoms, lps, ls);
+                crate::dom_ctor_bound::tbody_suffix(ds, crate::expr_model::subst_expr_levels(tb0, lps, ls), tt.len());
+                if tt.len() < ds.len() {
+                    assert(ds.subrange(tt.len() as int, ds.len() as int).len() > 0);
+                }
+                assert(tt.len() == ds.len());
+                assert(crate::dom_rel::pconv(sig, g, c, m, m2));
+            }
             assert forall|q: int, c2: Cpt| 0 <= q < sc.np && sc.pdoms[q] is Sort && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
                 implies #[trigger] rel_ty(sig, n, g, crate::dom_lift::pq(sig, c, m, q), crate::dom_lift::pq(sig, c, m2, q), c2) by {
                 if q < p.len() {
