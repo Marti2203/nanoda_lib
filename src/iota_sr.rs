@@ -62,15 +62,6 @@ pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
             crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), rd.uparams, lv)))
 }
 
-/// The rule's body type: the motive at the constructor applied to the
-/// parameters and the fields.
-pub open spec fn rbty(sig: Sig, rid: u64, p: int) -> ExprSpec {
-    let sh = rshape(sig, rid);
-    let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
-    ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)),
-        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), vars(1 + nmin + nf, np) + vars(0, nf))))
-}
-
 /// The rule's type at the instance.
 pub proof fn rule_ty_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     requires
@@ -81,7 +72,7 @@ pub proof fn rule_ty_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
         let sh = rshape(sig, rid);
         let pre = (sh.np + 1 + sh.nmin()) as int;
         crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), sig.ienv.recs[rid].uparams, lv)
-            == binds(BinderKind::Pi, rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p), rbty(sig, rid, p))
+            == binds(BinderKind::Pi, rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p), crate::dom_rec_end::rule_bty(sig, rid, p))
     }),
 {
     let sh = rshape(sig, rid);
@@ -296,7 +287,7 @@ pub proof fn sr_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
     crate::ti_sr::wk_closed(sig, g, body, body, rty);
     rule_ty_split(sig, rid, lv, p);
     let tl = rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p);
-    let bty = rbty(sig, rid, p);
+    let bty = crate::dom_rec_end::rule_bty(sig, rid, p);
     let xs = heads + cargs;
     crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
     assert forall|i: int| 0 <= i < xs.len() implies #[trigger] is_pi(trest(rty, xs.subrange(0, i))) by {
@@ -345,7 +336,7 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
     let rty = crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), rd.uparams, lv);
     rule_ty_split(sig, rid, lv, p);
     let tl = rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, p);
-    let bty = rbty(sig, rid, p);
+    let bty = crate::dom_rec_end::rule_bty(sig, rid, p);
     let xs = heads + cargs;
     let ff = crate::dom_iota::ftds(sig, rid, lv, p);
     crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
@@ -402,7 +393,7 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
 
 /// The fired rule's motive type at the recursor's parameters: a Pi over
 /// the inductive at them into a sort.
-proof fn motive_at(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, ps: Seq<ExprSpec>) -> (l: LevelSpec)
+pub proof fn motive_at(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, ps: Seq<ExprSpec>) -> (l: LevelSpec)
     requires
         rec_scope(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
@@ -468,7 +459,7 @@ pub open spec fn fired_rule(sig: Sig, m: ExprSpec) -> int {
 /// The reduct's type converts to the redex's: the motive at the
 /// constructor applied to the recursor's parameters and at the major.
 #[verifier::spinoff_prover]
-proof fn sr_result(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>)
+pub proof fn sr_result(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>)
     requires
         rec_scope(sig, rid),
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,

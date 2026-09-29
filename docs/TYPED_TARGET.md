@@ -777,6 +777,15 @@ Stages, each landing through the gate:
   two (`cpar_conv`, a new premise of `con_conv` and `con_below`, from
   `ty_nd`, `closed_rel`'s `rel_ty(r, r)`, or `direct_pconv` for a
   recursive field, whose type has the result's parameters).
+  **P4b-2c: the redex conversion with parameters.** `rule_bty` (the rule
+  body's type in the model hypothesis) states the constructor at the
+  parameters and the fields (unchanged at `np == 0`; `iota_sr` uses it
+  directly). `bty_inst`, `rule_beta` (field binders via `field_ctx` +
+  `field_vsub`) and `rec_conv_side` hold for any `np`; the latter takes
+  the constructor's own parameter arguments with `heads[q] ≡ pargs[q]` at
+  their sorts — what `cpar` will supply — and converts the rule instance's
+  type through `iota_sr::sr_result`. `major_dom`/`motive_form` state the
+  inductive at the parameters.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

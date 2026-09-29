@@ -218,12 +218,12 @@ pub open spec fn rule_ctx(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> Seq<E
 }
 
 /// Rule `p`'s body's type in its binders: the motive at the constructor
-/// applied to the fields.
+/// applied to the parameters and the fields.
 pub open spec fn rule_bty(sig: Sig, c: u64, p: int) -> ExprSpec {
     let sh = crate::dom_rec_ty::rshape(sig, c);
-    let nf = sh.fields[p].len();
-    ExprSpec::App(Box::new(ExprSpec::Var(sh.nmin() + nf)),
-        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), crate::rec_canon::vars(0, nf))))
+    let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
+    ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)),
+        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), crate::rec_canon::vars(1 + nmin + nf, np) + crate::rec_canon::vars(0, nf))))
 }
 
 /// Rule `p`'s body at a level instance is typed in its binders, without
@@ -529,29 +529,38 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     &&& forall|i: int| 0 <= i < rc.nf(sig) ==> #[trigger] rc_field(sig, rc, i)
 }
 
-/// The major's closed type at the recursor's `pre`-th domain.
+/// The major's type at the recursor's `pre`-th domain: the inductive at
+/// the parameters.
 pub proof fn major_dom(sig: Sig, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>)
     requires
         rec_hyps(sig, c),
-        xs.len() >= crate::dom_rec_ty::rshape(sig, c).nmin() + 1,
+        xs.len() >= crate::dom_rec_ty::rshape(sig, c).np + crate::dom_rec_ty::rshape(sig, c).nmin() + 1,
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, c);
-        let pre = (sh.nmin() + 1) as int;
+        let pre = (sh.np + sh.nmin() + 1) as int;
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
         &&& crate::dom_rec_ty::rtds(sig, c, ls).len() == pre + 1
-        &&& crate::dom_rec_ty::rtds(sig, c, ls)[pre] == ExprSpec::Const(sh.ind, Seq::empty())
-        &&& tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, pre as nat) == ExprSpec::Const(sh.ind, Seq::empty())
+        &&& crate::dom_rec_ty::rtds(sig, c, ls)[pre] == spine_app(ci, crate::rec_canon::vars(1 + sh.nmin(), sh.np))
+        &&& tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, pre as nat) == spine_app(ci, xs.subrange(0, sh.np as int))
+        &&& sh.np == 0 ==> crate::dom_rec_ty::rtds(sig, c, ls)[pre] == ci && tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, pre as nat) == ci
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
-    let pre = (sh.nmin() + 1) as int;
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + nmin + 1) as int;
     crate::dom_iota::major_form(sig, c, ls);
     assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, ls) =~= Seq::<LevelSpec>::empty());
-    assert(crate::rec_canon::vars(1 + sh.nmin(), 0) =~= Seq::<ExprSpec>::empty());
     let ci = ExprSpec::Const(sh.ind, Seq::empty());
-    assert(crate::dom_rec_ty::rtds(sig, c, ls)[pre] == ci);
     crate::dom_rec_minor::rec_dom(sig, c, ls, xs, pre);
-    crate::ti_spine::vsub_closed(ci, xs.subrange(0, pre));
+    let xp = xs.subrange(0, pre);
+    crate::dom_iota::vars_vidx(1 + nmin, np);
+    crate::ti_spine::vsub_spine_vars(ci, crate::dom_iota::vidx(1 + nmin, np), xp);
+    assert(Seq::new(np, |q: int| xp[xp.len() - 1 - crate::dom_iota::vidx(1 + nmin, np)[q]]) =~= xs.subrange(0, np as int));
+    if np == 0 {
+        assert(crate::rec_canon::vars(1 + nmin, 0) =~= Seq::<ExprSpec>::empty());
+        assert(xs.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    }
 }
 
 /// A constructor's `i`-th argument type is its field's closed type.
@@ -1489,29 +1498,41 @@ pub proof fn motive_form(sig: Sig, c: u64, lv: Seq<LevelSpec>)
     requires
         rec_hyps(sig, c),
     ensures ({
-        let t = crate::dom_rec_ty::rtds(sig, c, lv)[0];
+        let sh = crate::dom_rec_ty::rshape(sig, c);
+        let t = crate::dom_rec_ty::rtds(sig, c, lv)[sh.np as int];
         &&& t is Bind && t->Bind_0 == BinderKind::Pi
-        &&& *t->Bind_1 == ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty())
+        &&& *t->Bind_1 == spine_app(ExprSpec::Const(sh.ind, Seq::empty()), crate::rec_canon::vars(0, sh.np))
+        &&& sh.np == 0 ==> *t->Bind_1 == ExprSpec::Const(sh.ind, Seq::empty())
         &&& *t->Bind_2 is Sort
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
+    let np = sh.np;
     let lm = crate::rec_canon::elim_level(sig, c, sh.ind);
     crate::dom_iota::major_form(sig, c, lv);
-    assert(sh.pdoms =~= Seq::<ExprSpec>::empty());
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(sh.pdoms.len() == np);
     assert(sh.idoms =~= Seq::<ExprSpec>::empty());
-    assert(sh.head_doms(lm)[0] == sh.motive_ty(lm));
+    assert(sh.head_doms(lm)[np as int] == sh.motive_ty(lm));
     let e = crate::rec_canon::vars(sh.ni, sh.np) + crate::rec_canon::vars(0, sh.ni);
-    assert(e =~= Seq::<ExprSpec>::empty());
+    assert(e =~= crate::rec_canon::vars(0, np));
     let ci0 = ExprSpec::Const(sh.ind, sh.us());
-    assert(crate::rec_canon::ind_app(sh.ind, sh.us(), e) == ci0);
-    let mt = ExprSpec::Bind(BinderKind::Pi, Box::new(ci0), Box::new(ExprSpec::Sort(lm)));
+    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    let a0 = crate::rec_canon::ind_app(sh.ind, sh.us(), e);
+    let mt = ExprSpec::Bind(BinderKind::Pi, Box::new(a0), Box::new(ExprSpec::Sort(lm)));
     assert(sh.motive_ty(lm) == mt);
+    assert(sh.us() =~= Seq::<LevelSpec>::empty());
     assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
-    assert(crate::expr_model::subst_expr_levels(mt, rd.uparams, lv) == ExprSpec::Bind(BinderKind::Pi,
-        Box::new(ExprSpec::Const(sh.ind, Seq::empty())), Box::new(ExprSpec::Sort(crate::level_model::subst_level_spec(lm, rd.uparams, lv))))) by {
-        reveal_with_fuel(crate::expr_model::subst_expr_levels, 2);
+    crate::dom_rec_shape::sl_spine(ci0, crate::rec_canon::vars(0, np), rd.uparams, lv);
+    crate::dom_rec_shape::sl_vars(0, np, rd.uparams, lv);
+    let a = spine_app(ci, crate::rec_canon::vars(0, np));
+    assert(crate::expr_model::subst_expr_levels(a0, rd.uparams, lv) == a);
+    let l = crate::level_model::subst_level_spec(lm, rd.uparams, lv);
+    assert(crate::expr_model::subst_expr_levels(ExprSpec::Sort(lm), rd.uparams, lv) == ExprSpec::Sort(l));
+    assert(crate::expr_model::subst_expr_levels(mt, rd.uparams, lv) == ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(ExprSpec::Sort(l))));
+    if np == 0 {
+        assert(crate::rec_canon::vars(0, 0) =~= Seq::<ExprSpec>::empty());
     }
 }
 
@@ -1817,7 +1838,12 @@ pub proof fn rec_red_left(sig: Sig, rc: Rc)
     assert(w.ysk(l) =~= w.ys);
     assert(heads[1 + rc.j] == rc.xs[1 + rc.j]);
     reds_typed(sig, rc);
-    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.args);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    assert(sh.np == 0);
+    assert(heads.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    assert(spine_app(rc.ind(sig), Seq::<ExprSpec>::empty()) == rc.ind(sig));
+    crate::dom_rec_conv::plain_args(sig, rc.g, rc.c, rc.ls, rc.j, heads, rc.args);
+    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls, heads, rc.xs[pre], rc.j, Seq::empty(), rc.args);
     assert(heads[0] == rc.xs[0]);
 }
 
@@ -1846,7 +1872,12 @@ pub proof fn rec_red_right(sig: Sig, rc: Rc)
     assert(w.ys2k(l) =~= w.ys2);
     assert(heads[1 + rc.j] == rc.xs2[1 + rc.j]);
     reds_typed(sig, rc);
-    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, rc.args2);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    assert(sh.np == 0);
+    assert(heads.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    assert(spine_app(rc.ind(sig), Seq::<ExprSpec>::empty()) == rc.ind(sig));
+    crate::dom_rec_conv::plain_args(sig, rc.g, rc.c, rc.ls2, rc.j, heads, rc.args2);
+    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, Seq::empty(), rc.args2);
     assert(heads[0] == rc.xs2[0]);
 }
 
