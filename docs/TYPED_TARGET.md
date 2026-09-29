@@ -474,6 +474,37 @@ they are rebuilt from the heads and the argument pairs (`spine_build2`).
 The pieces: `dom_rec_red` (the reduction), `dom_rec_minor` (the minor's
 type after its arguments), `dom_rec_walk` (the walk), `dom_rec_end`.
 
+#### The landing: proposal (2026-09-29, needs a decision)
+
+What is left of the recursor stage lands together: the real `iota_ok`, the
+recursor branch of `code_ok`, the sound and adequate Iota case, and the
+adequacy of the recursor constant. Two design points:
+
+1. **Where the typing facts live.** Subject reduction for iota
+   (`iota_sr`) needs each rule's right-hand side typed at its rule type
+   (`sr_ok`). If `iota_ok` states that, then `valid` (Iota's premise) needs
+   `iota_ok`, which needs `derivable`, which needs `valid`: a cycle. Two
+   ways out:
+   - (a) **`iota_ok` stays syntactic** (`rec_hyps` minus `hsr`: scope, no
+     parameters or levels, constructors not recursors, well-formed rules,
+     plain fields). The typing facts go into a separate hypothesis that the
+     model assumes, `sig_sr(sig) := iota_ok(sig) ==> hsr(sig)`. It holds
+     trivially outside the fragment, and inside it `ti_sr::sr` gives it
+     from `sig_wf` plus the rules' typings, which S6.6 establishes on the
+     kernel side. No change to `valid`. Recommended.
+   - (b) `iota_ok` states the typings in the recursor-stripped signature,
+     and `valid` decreases on the number of recursors first. It is
+     self-contained, but it changes the judgment's core definition and
+     every lemma about signature extension.
+2. **Gating the recursor's denotation.** `code_ok` for a recursor becomes
+   `rf_fun` where `rec_hyps(sig, c)` holds, and bottom elsewhere. Adequacy
+   of a nonempty recursor denotation then has `rec_hyps`, so `rf_rel`
+   applies. Soundness of Iota's right-in-left direction needs the
+   denotation nonempty, so it has `rec_hyps`: from `iota_ok` (the rule's
+   premise) and `hsr` (from `sig_sr`). So `sound`, `adeq` and
+   `fundamental` gain the requirement `sig_sr(sig)`, which is vacuous for
+   signatures outside the fragment.
+
 ### Open: parameters of any type (analysis 2026-09-28)
 
 What failed: the constructor clause related a field at its table code
