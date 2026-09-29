@@ -126,6 +126,22 @@ pub open spec fn fields_plain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) ->
         && crate::expr_model::subst_expr_levels(sh.fields[j][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[j][k]
 }
 
+/// The minor's binders at the instance: fields, then hypotheses.
+pub open spec fn msds(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> Seq<ExprSpec> {
+    let sh = rshape(sig, rid);
+    let (ks, vs) = (sig.ienv.recs[rid].uparams, lv);
+    crate::dom_rec_shape::sls(Seq::new(sh.fields[j].len(), |i: int| sh.field_at(j, i, (1 + j) as nat)), ks, vs)
+        + crate::dom_rec_shape::sls(Seq::new(sh.rposj(j).len(), |r: int| sh.ih_ty(j, r)), ks, vs)
+}
+
+/// The minor's body at the instance.
+pub open spec fn mbody(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> ExprSpec {
+    let sh = rshape(sig, rid);
+    let (nf, nr) = (sh.fields[j].len(), sh.rposj(j).len());
+    crate::dom_rec_ty::minor_body((j + nf + nr) as nat, sh.ctors[j],
+        crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv), crate::rec_canon::vars((1 + j + nf + nr) as nat, sh.np), nf, nr)
+}
+
 /// The minor's type at the instance: its binders and body.
 pub proof fn minor_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> (r: (Seq<ExprSpec>, ExprSpec))
     requires
@@ -136,6 +152,7 @@ pub proof fn minor_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> (r: 
         let sh = rshape(sig, rid);
         let (nf, nr) = (sh.fields[j].len(), sh.rposj(j).len());
         let (ks, vs) = (sig.ienv.recs[rid].uparams, lv);
+        &&& r.0 == msds(sig, rid, lv, j) && r.1 == mbody(sig, rid, lv, j)
         &&& rtds(sig, rid, lv)[1 + j] == binds(BinderKind::Pi, r.0, r.1)
         &&& r.0.len() == nf + nr
         &&& forall|i: int| 0 <= i < nf ==> #[trigger] r.0[i] == crate::expr_model::subst_expr_levels(sh.field_at(j, i, (1 + j) as nat), ks, vs)
@@ -237,7 +254,6 @@ pub proof fn minor_end(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
         crate::dom_rec_ty::rec_scope(sig, rid),
         rshape(sig, rid).np == 0,
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
-        lv.len() == sig.ienv.recs[rid].uparams.len(),
         0 <= j < rshape(sig, rid).nmin(),
         xs0.len() == 1 + j,
         ys.len() == rshape(sig, rid).fields[j].len() + rshape(sig, rid).rposj(j).len(),
@@ -314,6 +330,45 @@ pub proof fn rec_tend(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>)
     crate::ti_spine::vsub_app(ExprSpec::Var(n + 1), ExprSpec::Var(0), xs);
     crate::ti_spine::vsub_var(n + 1, xs);
     crate::ti_spine::vsub_var(0, xs);
+}
+
+/// The minor's hypothesis binder: the motive at its field.
+pub proof fn msds_ih(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, q: int)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        rshape(sig, rid).np == 0,
+        0 <= j < rshape(sig, rid).nmin(),
+        0 <= q < rshape(sig, rid).rposj(j).len(),
+    ensures ({
+        let sh = rshape(sig, rid);
+        let nf = sh.fields[j].len();
+        let k = sh.rposj(j)[q];
+        &&& k < nf
+        &&& msds(sig, rid, lv, j)[nf + q] == ExprSpec::App(Box::new(ExprSpec::Var((j + nf + q) as nat)),
+                Box::new(ExprSpec::Var((nf - 1 - k + q) as nat)))
+    }),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let nf = sh.fields[j].len();
+    let (ds, _) = minor_split(sig, rid, lv, j);
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[j], sh.ind, sh.us(), sh.np, sh.ni, nf);
+    let k = sh.rposj(j)[q];
+    let idx = crate::rec_canon::occ_idx(sh.fields[j][k as int], sh.np, sh.ni);
+    let idx2 = Seq::new(sh.ni, |qq: int| crate::subst_algebra::lift((nf - k + q) as nat, 0,
+        crate::subst_algebra::lift((1 + j) as nat, k, idx[qq])));
+    assert(idx2.push(ExprSpec::Var((nf - 1 - k + q) as nat)) =~= seq![ExprSpec::Var((nf - 1 - k + q) as nat)]);
+    let (va, vb) = (ExprSpec::Var((j + nf + q) as nat), ExprSpec::Var((nf - 1 - k + q) as nat));
+    assert(sh.ih_ty(j, q) == ExprSpec::App(Box::new(va), Box::new(vb))) by {
+        assert(seq![vb].subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(seq![vb][0] == vb);
+        reveal_with_fuel(spine_app, 2);
+    }
+    assert(ds[nf + q] == crate::expr_model::subst_expr_levels(sh.ih_ty(j, q), rd.uparams, lv));
+    assert(crate::expr_model::subst_expr_levels(ExprSpec::App(Box::new(va), Box::new(vb)), rd.uparams, lv)
+        == ExprSpec::App(Box::new(va), Box::new(vb))) by {
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 2);
+    }
 }
 
 } // verus!

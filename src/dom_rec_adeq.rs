@@ -2,7 +2,7 @@
 //! docs/TYPED_TARGET.md): an approximation of the recursor's code function
 //! relates two applications of it, by induction down its type telescope,
 //! every argument recorded with its domain code and value; the end of the
-//! telescope is `rec_end`.
+//! telescope is `dom_rec_end`.
 #[allow(unused_imports)]
 use crate::expr_model::{BinderKind, ExprSpec};
 #[allow(unused_imports)]
@@ -121,6 +121,14 @@ pub open spec fn rf_inv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
     &&& flds_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0)
     &&& xs2.len() == xs.len()
     &&& rf_sem(sig, c, sm, xs.len(), r, a, ds, fs)
+    &&& rf_heads(sig, g, c, ls, ls2)
+}
+
+/// The two heads, derivably equal at the left one's type, and the right
+/// one at its own.
+pub open spec fn rf_heads(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>) -> bool {
+    &&& derivable(sig, eq(g, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2), crate::ti_syntax::dty_at(sig, c, ls)))
+    &&& derivable(sig, eq(g, ExprSpec::Const(c, ls2), ExprSpec::Const(c, ls2), crate::ti_syntax::dty_at(sig, c, ls2)))
 }
 
 /// The semantic side of the induction, at one level instance `sm.0`
@@ -176,23 +184,14 @@ pub proof fn rf_sem_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Lev
     crate::dom_tele::exts_push(bot_env(), fs, w);
 }
 
-/// THE END OF THE RECURSOR'S TELESCOPE, as a hypothesis: past its last
-/// Pi, an approximation above bottom relates the two applications.
-pub open spec fn rec_end(sig: Sig) -> bool {
-    forall|nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>,
-        a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt|
-        #[trigger] rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u) && !(u is Bot)
-        ==> rel_tm(sig, n, g, spine_app(ExprSpec::Const(c, ls), xs), spine_app(ExprSpec::Const(c, ls2), xs2),
-            trest(crate::ti_syntax::dty_at(sig, c, ls), xs), u, a)
-}
-
-/// THE CONSTRUCTOR INDUCTION: an approximation of a constructor's code
-/// function relates two applications of it.
+/// THE RECURSOR INDUCTION: an approximation of the recursor's code
+/// function relates two applications of it; past the telescope's last Pi,
+/// `dom_rec_end::rec_end_at`.
 #[verifier::spinoff_prover]
 pub proof fn rf_rel(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, r: nat,
     xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt)
     requires
-        rec_end(sig),
+        crate::dom_rec_end::rec_hyps(sig, c),
         rf_inv(sig, nn, n, g, c, sm, ls, ls2, r, xs, xs2, a, ds, fs, u),
     ensures
         rel_tm(sig, n, g, spine_app(ExprSpec::Const(c, ls), xs), spine_app(ExprSpec::Const(c, ls2), xs2),
@@ -207,7 +206,7 @@ pub proof fn rf_rel(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpe
         return;
     }
     if r == 0 {
-        assert(rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u));
+        crate::dom_rec_end::rec_end_at(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
         return;
     }
     let (ta, tb) = (*t->Bind_1, *t->Bind_2);
@@ -251,7 +250,7 @@ pub proof fn rf_combo(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelS
 pub open spec fn rf_step_pre(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, r: nat,
     xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt, x: ExprSpec, x2: ExprSpec, w: Cpt) -> bool {
     let t = trest(crate::ti_syntax::dty_at(sig, c, ls), xs);
-    &&& rec_end(sig)
+    &&& crate::dom_rec_end::rec_hyps(sig, c)
     &&& rf_inv(sig, nn, n, g, c, sm, ls, ls2, r, xs, xs2, a, ds, fs, u)
     &&& r > 0
     &&& !(u is Bot)
@@ -409,6 +408,7 @@ pub proof fn rf_diag_l(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Level
     assert(ys2.subrange(0, k as int) =~= xs);
     tchain_refl(sig, g, ta);
     flds_diag_l(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0);
+    crate::dom_adeq_syn::dsym(sig, g, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2), t0);
     fld_push(sig, nn, g, t0, t0, xs, xs, ds, fs, 0, x, x2, d0, w);
     rf_rel(sig, nn, k1, g, c, sm, ls, ls, (r - 1) as nat, ys, ys2, cod(a, w), dz, fz, crate::dom_compact::app(u, w));
 }

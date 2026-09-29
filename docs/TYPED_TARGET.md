@@ -428,7 +428,7 @@ Next, in order:
    each other: a nonempty recursor denotation owes adequacy, and
    adequacy needs Iota derivations.
 
-#### The end of the recursor's telescope (`rec_end`, plan 2026-09-29)
+#### The end of the recursor's telescope (proven 2026-09-29)
 
 The telescope induction (`dom_rec_adeq::rf_rel`) carries a semantic side
 (`rf_sem`) at one level instance `lsem`: the argument codes and values
@@ -455,6 +455,24 @@ proven by induction on the major's height:
    The motive's relation at the major gives the type relation at `T*`, so
    the reduct's relation moves up to `T*` (`incr`), down to `a` (`decr`),
    and back to the redex by head expansion (`expand_tm`).
+
+As built: `dom_rec_end::rec_end_at` (with the walk driver `walk_run`), and
+`rf_rel` calls it at the end, so the recursor's telescope induction has no
+hypothesis left beyond `rec_hyps(sig, c)`. It asks:
+
+- `hsr`, subject reduction, which `ti_sr::sr` gives once `iota_ok` is
+  real;
+- the recursor in scope (`rec_scope`) over an inductive without
+  parameters or universe levels;
+- its constructors neither recursors nor definitions, its rules'
+  right-hand sides well formed (`rule_rhs_ok`);
+- its fields closed and level-invariant at every level instance.
+
+The induction also carries the two heads, derivably equal (`rf_heads`),
+because the recursive calls need `ih ≡ ih2` for the application clause;
+they are rebuilt from the heads and the argument pairs (`spine_build2`).
+The pieces: `dom_rec_red` (the reduction), `dom_rec_minor` (the minor's
+type after its arguments), `dom_rec_walk` (the walk), `dom_rec_end`.
 
 ### Open: parameters of any type (analysis 2026-09-28)
 
