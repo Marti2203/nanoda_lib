@@ -177,49 +177,6 @@ proof fn hred_rec_major_k(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<Exp
     }
 }
 
-/// SUBJECT REDUCTION as a hypothesis on the signature: a typed term
-/// converts with its head reduct. `ti_sr::sr` gives it once `iota_ok`
-/// admits recursors.
-pub open spec fn hsr(sig: Sig) -> bool {
-    forall|g: crate::ti_syntax::Ctx, m: ExprSpec, t: ExprSpec|
-        #[trigger] crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, m, t)) && hstep(sig, m) is Some
-        ==> crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, hstep(sig, m)->Some_0, t))
-}
-
-/// Along head reduction.
-pub proof fn sr_hred(sig: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
-    requires
-        hsr(sig),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, m, t)),
-        hred(sig, m, m2),
-    ensures
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, m2, t)),
-{
-    let k = choose|k: nat| #[trigger] hiter(sig, m, k) == m2;
-    sr_hiter(sig, g, m, t, k);
-}
-
-proof fn sr_hiter(sig: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec, t: ExprSpec, k: nat)
-    requires
-        hsr(sig),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, m, t)),
-    ensures
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, hiter(sig, m, k), t)),
-    decreases k,
-{
-    if k == 0 {
-        return;
-    }
-    let km = (k - 1) as nat;
-    sr_hiter(sig, g, m, t, km);
-    let p = hiter(sig, m, km);
-    if let Some(p2) = hstep(sig, p) {
-        crate::dom_adeq_syn::dsym(sig, g, m, p, t);
-        assert(crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, p, p, t)));
-        crate::dom_adeq_syn::dtrans(sig, g, m, p, p2, t);
-    }
-}
-
 /// Substitution through a spine.
 pub proof fn vsub_spine(h: ExprSpec, args: Seq<ExprSpec>, xs: Seq<ExprSpec>)
     ensures

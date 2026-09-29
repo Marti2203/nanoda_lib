@@ -2147,6 +2147,38 @@ pub proof fn r2l_rec_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: 
     typed_at_canon(sig, rid, (k + 1 + nmin) as nat, env, xs[i], ds[i]);
 }
 
+/// One field input of the chain, at the rule's field.
+#[verifier::spinoff_prover]
+pub proof fn r2l_at(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
+    requires
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+        0 <= k < crate::dom_rec_ty::rshape(sig, rid).fields[p].len(),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = (sh.np + 1 + sh.nmin()) as int;
+        let (xf, ak) = (xs.subrange(pre, xs.len() as int), ds.subrange(pre, ds.len() as int));
+        &&& wf(xf[k])
+        &&& !isrec(sig, rid, p, k) ==> mem(sig, sh.fields[p][k], bot_env(), ak[k]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
+            && crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+        &&& isrec(sig, rid, p, k) ==> typed(xf[k], crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), bots(sh.np)))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let pre = (sh.np + 1 + sh.nmin()) as int;
+    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
+    let i = pre + k;
+    assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+    typed_wf(xs[i], ds[i]);
+    if isrec(sig, rid, p, k) {
+        r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
+    } else {
+        r2l_closed_field(sig, rid, lv, p, clv, ds, xs, k);
+    }
+}
+
 /// THE FIELD INPUTS of a typed chain along the rule's binders are what the
 /// constructor step needs.
 #[verifier::spinoff_prover]
@@ -2167,26 +2199,19 @@ pub proof fn r2l_fields(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     let pre = (np + 1 + nmin) as int;
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     assert(sh.fields[p].len() == rd.rules[p].nfields);
-    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
     let xf = xs.subrange(pre, xs.len() as int);
     let ak = ds.subrange(pre, ds.len() as int);
-    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
-        assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
-        typed_wf(xs[i], ds[i]);
-    }
     assert forall|k: int| 0 <= k < xf.len() implies #[trigger] wf(xf[k]) by {
-        assert(xf[k] == xs[pre + k]);
+        r2l_at(sig, rid, lv, p, clv, ds, xs, k);
     }
     assert forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) implies
         mem(sig, sh.fields[p][k], bot_env(), #[trigger] ak[k]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
         && crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind)) by {
-        r2l_closed_field(sig, rid, lv, p, clv, ds, xs, k);
-        assert(ak[k] == ds[pre + k] && xf[k] == xs[pre + k]);
+        r2l_at(sig, rid, lv, p, clv, ds, xs, k);
     }
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
         typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), bots(np))) by {
-        r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
-        assert(xf[k] == xs[pre + k]);
+        r2l_at(sig, rid, lv, p, clv, ds, xs, k);
     }
 }
 

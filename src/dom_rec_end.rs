@@ -33,7 +33,7 @@ pub proof fn tm_ty(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
     requires
         a is Nd && a->Nd_0 is Ty,
     ensures
-        rel_tm(sig, n, g, m, m2, t, u, a) == (rel_ty(sig, n, g, t, t, a) && (u is Bot || con_tm(sig, g, m, m2, u))),
+        rel_tm(sig, n, g, m, m2, t, u, a) == (rel_ty(sig, n, g, t, t, a) && (u is Bot || con_top(sig, g, m, m2, t, u))),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);
@@ -50,7 +50,7 @@ pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty
         le(v, w),
         wf(v),
         wf(w),
-        w is Bot || con_tm(sig, g, y, y2, w),
+        w is Bot || con_top(sig, g, y, y2, ty, w),
     ensures
         rel_tm(sig, n, g, y, y2, ty, v, d),
 {
@@ -173,7 +173,7 @@ pub proof fn tel_dom_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i:
 /// its constructors neither recursors nor definitions, its rules well
 /// formed, and its fields closed and level-invariant.
 pub open spec fn rec_hyps(sig: Sig, c: u64) -> bool {
-    sig_rec(sig) && rec_frag(sig, c)
+    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c)
 }
 
 /// A closed type: typed in the empty context.
@@ -181,19 +181,39 @@ pub open spec fn ty_closed(sig: Sig, t: ExprSpec) -> bool {
     exists|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)))
 }
 
-/// Rule `p`'s right-hand side at a level instance is typed in the empty
-/// context, without recursors.
-pub open spec fn rhs_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> bool {
-    let rd = sig.ienv.recs[c];
-    let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
-    exists|tb: ExprSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), body, body, tb))
+/// Rule `p`'s binders at a level instance: the recursor's head binders,
+/// then the constructor's fields.
+pub open spec fn rule_ctx(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> Seq<ExprSpec> {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    crate::dom_rec_ty::rtds(sig, c, lv).subrange(0, (sh.np + 1 + sh.nmin()) as int) + crate::dom_iota::ftds(sig, c, lv, p)
+}
+
+/// Rule `p`'s body's type in its binders: the motive at the constructor
+/// applied to the fields.
+pub open spec fn rule_bty(sig: Sig, c: u64, p: int) -> ExprSpec {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let nf = sh.fields[p].len();
+    ExprSpec::App(Box::new(ExprSpec::Var(sh.nmin() + nf)),
+        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), crate::rec_canon::vars(0, nf))))
+}
+
+/// Rule `p`'s body at a level instance is typed in its binders, without
+/// recursors, and its type telescope is closed.
+pub open spec fn rule_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> bool {
+    let ss = crate::ti_strip::strip(sig);
+    let (ctx, b, bt) = (rule_ctx(sig, c, lv, p), crate::dom_iota::rule_body(sig, c, lv, p), rule_bty(sig, c, p));
+    &&& derivable(ss, crate::ti_syntax::Jd::Wf(ctx))
+    &&& derivable(ss, eq(ctx, b, b, bt))
+    &&& (exists|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, crate::ti_syntax::sort(lb))))
+    &&& crate::expr_model::nlbv(crate::rec_canon::binds(BinderKind::Pi, ctx, bt)) == 0
 }
 
 /// What the model assumes of each recursor beyond the syntactic fragment:
 /// the constants involved are semantic, the recursor's and constructors'
-/// types and the rules' right-hand sides are typed without recursors (so
-/// without Iota: soundness's Iota case uses their soundness), the inductive
-/// is not a proposition, and its closed fields are ranked below it.
+/// types and the rules' bodies (in their binders) are typed without
+/// recursors (so without Iota: soundness's Iota case uses their soundness),
+/// the inductive is not a proposition, and its closed fields are ranked
+/// below it.
 pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
@@ -203,17 +223,16 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::dom_model::sem_const(sig, #[trigger] sh.ctors[p], Seq::empty())
         && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty()))
-    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rhs_typed(sig, c, lv, p)
+    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
 }
 
 /// THE MODEL'S HYPOTHESIS on a signature with recursors (docs/TYPED_TARGET.md,
-/// "The landing", option (a)): subject reduction, and every recursor's
-/// model facts.
+/// "The landing", option (a)): every recursor's model facts.
+#[verifier::opaque]
 pub open spec fn sig_rec(sig: Sig) -> bool {
-    &&& crate::ti_hred_rec::hsr(sig)
-    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_model(sig, c)
+    forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_model(sig, c)
 }
 
 /// The hypothesis soundness and adequacy take: vacuous without recursors
@@ -367,7 +386,7 @@ impl Rc {
 pub open spec fn rc_field(sig: Sig, rc: Rc, i: int) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     &&& derivable(sig, eq(rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i]))
-    &&& (rc.fsm(sig)[i] is Bot || con_tm(sig, rc.g, rc.args[i], rc.args2[i], rc.fsm(sig)[i]))
+    &&& (rc.fsm(sig)[i] is Bot || con_top(sig, rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i], rc.fsm(sig)[i]))
 }
 
 /// The end's context holds: the invariant at the end of the telescope, a
@@ -452,6 +471,7 @@ pub proof fn major_side(sig: Sig, g: Ctx, c: u64, j: int, x: ExprSpec)
         rec_hyps(sig, c),
         0 <= j < crate::dom_rec_ty::rshape(sig, c).nmin(),
         derivable(sig, eq(g, x, x, ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()))),
+        derivable(sig, eq(g, x, cr(sig, x), ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()))),
         ctor_red(sig, x),
         spine_head(cr(sig, x))->Const_0 == crate::dom_rec_ty::rshape(sig, c).ctors[j],
         spine_args(cr(sig, x)).len() == crate::dom_rec_ty::rshape(sig, c).fields[j].len(),
@@ -462,7 +482,6 @@ pub proof fn major_side(sig: Sig, g: Ctx, c: u64, j: int, x: ExprSpec)
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let ci = ExprSpec::Const(sh.ind, Seq::empty());
     let cx = cr(sig, x);
-    crate::ti_hred_rec::sr_hred(sig, g, x, cx, ci);
     crate::dom_adeq_syn::dsym(sig, g, x, cx, ci);
     crate::beta_model::spine_recompose(cx);
     let (h, clv) = (spine_head(cx), spine_head(cx)->Const_1);
@@ -1120,6 +1139,18 @@ pub proof fn ih_inv(sig: Sig, rc: Rc, k: nat)
     parts_lower(rc.wx(sig));
 }
 
+/// A member of a variable argument lies below the variable's value.
+pub proof fn var_arg_le(sig: Sig, from: nat, n: nat, rho: crate::dom_model::Env, i: int, v: Cpt)
+    requires
+        0 <= i < n,
+        crate::dom_model::mem(sig, crate::rec_canon::vars(from, n)[i], rho, v),
+    ensures
+        le(v, rho((from + n - 1 - i) as nat)),
+{
+    assert(crate::rec_canon::vars(from, n)[i] == ExprSpec::Var((from + n - 1 - i) as nat));
+    crate::dom_adeq_base::mem_var(sig, (from + n - 1 - i) as nat, rho, v);
+}
+
 /// A CONSTRUCTOR OVER VARIABLES denotes at most the constructor value over
 /// bounds on the variables.
 #[verifier::spinoff_prover]
@@ -1146,7 +1177,8 @@ pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, from: nat, rho: crate::dom_mo
     }
     assert forall|i: int| 0 <= i < vs.len() implies #[trigger] le(vs[i], bnd[i]) by {
         assert(crate::dom_model::mem(sig, args[i], rho, vs[i]) && wf(vs[i]));
-        crate::dom_adeq_base::mem_var(sig, (from + bnd.len() - 1 - i) as nat, rho, vs[i]);
+        var_arg_le(sig, from, bnd.len(), rho, i, vs[i]);
+        assert(wf(bnd[i]));
         le_trans(vs[i], rho((from + bnd.len() - 1 - i) as nat), bnd[i]);
     }
     crate::dom_sem::nd_le(NdKey::Con(sh.ind, j as nat), vs, bnd);
@@ -1454,6 +1486,7 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     con_symm(sig, rc.g, x, x2, wx);
     con_trans(sig, rc.g, x, x2, x, wx);
     con_red(sig, rc.g, x, x, wx);
+    cr_self(sig, x);
     crate::dom_adeq_syn::dsym(sig, rc.g, x, x2, ci);
     crate::dom_adeq_syn::dsym(sig, rc.g, x, rc.cx(sig), ci);
     con_rel_arg(sig, k1, rc.g, x, x, ci, jw, d0, wx);
@@ -1464,6 +1497,180 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     assert(inst(0, rc.cx(sig), sp) == sp);
     tm_sort(sig, k1, rc.g, sapp(p, x), sapp(p, x), sp, top);
     tm_sort(sig, k1, rc.g, sapp(p, rc.cx(sig)), sapp(p, x), sp, top);
+}
+
+/// One head argument on each side, typed at its declared domain.
+pub proof fn head_typed_at(sig: Sig, rc: Rc, i: int)
+    requires
+        rec_ctx(sig, rc),
+        0 <= i < rc.pre(sig),
+    ensures ({
+        let pre = rc.pre(sig);
+        let (heads, heads2) = (rc.xs.subrange(0, pre), rc.xs2.subrange(0, pre));
+        &&& derivable(sig, eq(rc.g, heads[i], heads[i], tel_dom(rc.t0(sig), heads, i as nat)))
+        &&& derivable(sig, eq(rc.g, heads2[i], heads2[i], tel_dom(rc.t02(sig), heads2, i as nat)))
+    }),
+{
+    let pre = rc.pre(sig);
+    let (t0, t02) = (rc.t0(sig), rc.t02(sig));
+    let (heads, heads2) = (rc.xs.subrange(0, pre), rc.xs2.subrange(0, pre));
+    assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, i));
+    assert(heads.push(rc.xs[pre]) =~= rc.xs);
+    assert(heads2.push(rc.xs2[pre]) =~= rc.xs2);
+    crate::dom_con_rel::tel_dom_push(t0, heads, rc.xs[pre], i as nat);
+    crate::dom_con_rel::tel_dom_push(t02, heads2, rc.xs2[pre], i as nat);
+    assert(heads[i] == rc.xs[i] && heads2[i] == rc.xs2[i]);
+    let (ty, ty2) = (tel_dom(t0, rc.xs, i as nat), tel_dom(t02, rc.xs2, i as nat));
+    crate::dom_adeq_syn::dsym(sig, rc.g, rc.xs[i], rc.xs2[i], ty);
+    crate::ti_chain::conv_chain(sig, rc.g, rc.xs2[i], rc.xs2[i], ty, ty2);
+}
+
+/// The redexes' arguments, typed at their declared domains.
+#[verifier::spinoff_prover]
+pub proof fn reds_typed(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures ({
+        let pre = rc.pre(sig);
+        let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+        let (heads, heads2) = (rc.xs.subrange(0, pre), rc.xs2.subrange(0, pre));
+        &&& forall|i: int| 0 <= i < heads.len() ==> derivable(sig, eq(rc.g, #[trigger] heads[i], heads[i], tel_dom(rc.t0(sig), heads, i as nat)))
+        &&& forall|i: int| 0 <= i < heads2.len() ==> derivable(sig, eq(rc.g, #[trigger] heads2[i], heads2[i], tel_dom(rc.t02(sig), heads2, i as nat)))
+        &&& forall|k: int| 0 <= k < rc.args.len() ==> derivable(sig, eq(rc.g, #[trigger] rc.args[k], rc.args[k], sh.fields[rc.j][k]))
+        &&& forall|k: int| 0 <= k < rc.args2.len() ==> derivable(sig, eq(rc.g, #[trigger] rc.args2[k], rc.args2[k], sh.fields[rc.j][k]))
+    }),
+{
+    let pre = rc.pre(sig);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let (heads, heads2) = (rc.xs.subrange(0, pre), rc.xs2.subrange(0, pre));
+    let (t0, t02) = (rc.t0(sig), rc.t02(sig));
+    let ci = rc.ind(sig);
+    assert forall|i: int| 0 <= i < heads.len() implies derivable(sig, eq(rc.g, #[trigger] heads[i], heads[i], tel_dom(rc.t0(sig), heads, i as nat))) by {
+        head_typed_at(sig, rc, i);
+    }
+    assert forall|i: int| 0 <= i < heads2.len() implies derivable(sig, eq(rc.g, #[trigger] heads2[i], heads2[i], tel_dom(rc.t02(sig), heads2, i as nat))) by {
+        head_typed_at(sig, rc, i);
+    }
+    assert forall|k: int| 0 <= k < rc.args.len() implies derivable(sig, eq(rc.g, #[trigger] rc.args[k], rc.args[k], sh.fields[rc.j][k])) by {
+        assert(rc_field(sig, rc, k));
+        crate::dom_adeq_syn::dsym(sig, rc.g, rc.args[k], rc.args2[k], sh.fields[rc.j][k]);
+    }
+    assert forall|k: int| 0 <= k < rc.args2.len() implies derivable(sig, eq(rc.g, #[trigger] rc.args2[k], rc.args2[k], sh.fields[rc.j][k])) by {
+        assert(rc_field(sig, rc, k));
+        crate::dom_adeq_syn::dsym(sig, rc.g, rc.args[k], rc.args2[k], sh.fields[rc.j][k]);
+    }
+}
+
+/// The two redexes' types convert: the motive and major pairs.
+#[verifier::spinoff_prover]
+pub proof fn sides_ty(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures ({
+        let pre = rc.pre(sig);
+        crate::ti_chain::tchain(sig, rc.g, ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.xs2[pre])),
+            ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre])))
+    }),
+{
+    let pre = rc.pre(sig);
+    let (t0, t02) = (rc.t0(sig), rc.t02(sig));
+    let ci = rc.ind(sig);
+    assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, 0));
+    assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, pre));
+    major_dom(sig, rc.c, rc.ls, rc.xs);
+    crate::dom_rec_minor::rec_dom(sig, rc.c, rc.ls, rc.xs, 0);
+    assert(rc.xs.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    motive_form(sig, rc.c, rc.ls);
+    let mt = crate::dom_rec_ty::rtds(sig, rc.c, rc.ls)[0];
+    let so = *mt->Bind_2;
+    assert(mt == pi(ci, so));
+    let (p, p2, x, x2) = (rc.xs[0], rc.xs2[0], rc.xs[pre], rc.xs2[pre]);
+    crate::dom_adeq_syn::dsym(sig, rc.g, p, p2, mt);
+    crate::ti_spine::pi_typed_of(sig, rc.g, p, ci, so);
+    crate::ti_chain::tchain_refl(sig, rc.g, mt);
+    crate::dom_sem_rel::app_pair(sig, rc.g, p, p2, mt, ci, so, x, x2);
+    assert(crate::subst_algebra::inst(0, x, so) == so);
+    let (t, t2) = (ExprSpec::App(Box::new(p), Box::new(x)), ExprSpec::App(Box::new(p2), Box::new(x2)));
+    let lm = so->Sort_0;
+    assert(so == crate::ti_syntax::sort(lm));
+    let dt = crate::ti_sub::get(sig, eq(rc.g, t, t2, crate::ti_syntax::sort(lm)));
+    crate::ti_sub::mk_t(sig, dt, lm);
+    crate::ti_chain::tchain_one(sig, rc.g, t, t2);
+    crate::ti_chain::tchain_sym(sig, rc.g, t, t2);
+}
+
+/// The two level instances have the recursor's level count, and the heads
+/// are typed at their own types.
+pub proof fn rc_levels(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures
+        rc.ls.len() == sig.ienv.recs[rc.c].uparams.len(),
+        rc.ls2.len() == sig.ienv.recs[rc.c].uparams.len(),
+        derivable(sig, eq(rc.g, ExprSpec::Const(rc.c, rc.ls), ExprSpec::Const(rc.c, rc.ls), rc.t0(sig))),
+        derivable(sig, eq(rc.g, ExprSpec::Const(rc.c, rc.ls2), ExprSpec::Const(rc.c, rc.ls2), rc.t02(sig))),
+{
+    let (h, h2) = (ExprSpec::Const(rc.c, rc.ls), ExprSpec::Const(rc.c, rc.ls2));
+    assert(crate::dom_rec_adeq::rf_heads(sig, rc.g, rc.c, rc.ls, rc.ls2));
+    crate::dom_adeq_syn::dsym(sig, rc.g, h, h2, rc.t0(sig));
+    crate::ti_spine::const_typed(sig, rc.g, rc.c, rc.ls, rc.t0(sig));
+    crate::ti_spine::const_typed(sig, rc.g, rc.c, rc.ls2, rc.t02(sig));
+}
+
+/// THE LEFT REDEX: the redex reduces to the walk's application, and converts with
+/// it at the motive at its major.
+#[verifier::spinoff_prover]
+pub proof fn rec_red_left(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures ({
+        let w = walk_of(sig, rc);
+        let l = w.ys.len();
+        let pre = rc.pre(sig);
+        &&& hred(sig, rc.m(), w.m(l))
+        &&& derivable(sig, eq(rc.g, rc.m(), w.m(l), ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre]))))
+    }),
+{
+    let w = walk_of(sig, rc);
+    let l = w.ys.len();
+    let pre = rc.pre(sig);
+    rc_levels(sig, rc);
+    let heads = rc.xs.subrange(0, pre);
+    assert(heads.push(rc.xs[pre]) =~= rc.xs);
+    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.args);
+    assert(w.ysk(l) =~= w.ys);
+    assert(heads[1 + rc.j] == rc.xs[1 + rc.j]);
+    reds_typed(sig, rc);
+    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.args);
+    assert(heads[0] == rc.xs[0]);
+}
+
+/// THE RIGHT REDEX: the redex reduces to the walk's application, and converts with
+/// it at the motive at its major.
+#[verifier::spinoff_prover]
+pub proof fn rec_red_right(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures ({
+        let w = walk_of(sig, rc);
+        let l = w.ys.len();
+        let pre = rc.pre(sig);
+        &&& hred(sig, rc.m2(), w.m2(l))
+        &&& derivable(sig, eq(rc.g, rc.m2(), w.m2(l), ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.xs2[pre]))))
+    }),
+{
+    let w = walk_of(sig, rc);
+    let l = w.ys.len();
+    let pre = rc.pre(sig);
+    rc_levels(sig, rc);
+    let heads = rc.xs2.subrange(0, pre);
+    assert(heads.push(rc.xs2[pre]) =~= rc.xs2);
+    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, rc.args2);
+    assert(w.ys2k(l) =~= w.ys2);
+    assert(heads[1 + rc.j] == rc.xs2[1 + rc.j]);
+    reds_typed(sig, rc);
+    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, rc.args2);
+    assert(heads[0] == rc.xs2[0]);
 }
 
 /// The redexes reduce to the walk's applications, typed.
@@ -1482,25 +1689,11 @@ pub proof fn rec_reds(sig: Sig, rc: Rc)
     let w = walk_of(sig, rc);
     let l = w.ys.len();
     let pre = rc.pre(sig);
-    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
-    let (h, h2) = (ExprSpec::Const(rc.c, rc.ls), ExprSpec::Const(rc.c, rc.ls2));
-    walk_facts(sig, rc);
-    assert(crate::dom_rec_adeq::rf_heads(sig, rc.g, rc.c, rc.ls, rc.ls2));
-    crate::dom_adeq_syn::dsym(sig, rc.g, h, h2, rc.t0(sig));
-    crate::ti_spine::const_typed(sig, rc.g, rc.c, rc.ls, rc.t0(sig));
-    crate::ti_spine::const_typed(sig, rc.g, rc.c, rc.ls2, rc.t02(sig));
-    let (heads, heads2) = (rc.xs.subrange(0, pre), rc.xs2.subrange(0, pre));
-    assert(heads.push(rc.xs[pre]) =~= rc.xs);
-    assert(heads2.push(rc.xs2[pre]) =~= rc.xs2);
-    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.args);
-    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls2, heads2, rc.xs2[pre], rc.j, rc.args2);
-    assert(w.ysk(l) =~= w.ys);
-    assert(w.ys2k(l) =~= w.ys2);
-    assert(heads[1 + rc.j] == rc.xs[1 + rc.j]);
-    assert(heads2[1 + rc.j] == rc.xs2[1 + rc.j]);
-    crate::dom_adeq_syn::dsym(sig, rc.g, rc.m(), rc.m2(), rc.t(sig));
-    crate::ti_hred_rec::sr_hred(sig, rc.g, rc.m(), w.m(l), rc.t(sig));
-    crate::ti_hred_rec::sr_hred(sig, rc.g, rc.m2(), w.m2(l), rc.t(sig));
+    rec_red_left(sig, rc);
+    rec_red_right(sig, rc);
+    sides_ty(sig, rc);
+    let (t, t2) = (ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre])), ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.xs2[pre])));
+    crate::ti_chain::conv_chain(sig, rc.g, rc.m2(), w.m2(l), t2, t);
 }
 
 /// THE END, from the walk's last step: the walk's applications move to the

@@ -440,9 +440,11 @@ proven by induction on the major's height:
 1. The major is related at an inductive code, so `con_tm` holds: `x`
    head-reduces to `c_j args`.
 2. `rec P ms x` head-reduces to `R = m_j args ihs`: the major reduces in
-   place, then one iota step, then beta through the rule's lambdas. Each
-   step is typed by subject reduction, taken as the hypothesis `hsr` until
-   `iota_ok` is real (then `ti_sr::sr` discharges it).
+   place, then one iota step, then beta through the rule's lambdas. The
+   conversion `rec P ms x ≡ R` is built from the rules
+   (`dom_rec_conv::rec_conv_side`): congruence at the major (the relation
+   carries `x ≡ cx`), the Iota rule, and a Beta chain through the rule's
+   lambda telescope (`ti_beta::beta_upto`, by simultaneous substitution).
 3. A walk down the minor's code applies it to the fields and then the
    IHs. Every argument is projected (`jproj`), which leaves the
    application and the codomain unchanged, so the walk ends at exactly
@@ -460,8 +462,7 @@ As built: `dom_rec_end::rec_end_at` (with the walk driver `walk_run`), and
 `rf_rel` calls it at the end, so the recursor's telescope induction has no
 hypothesis left beyond `rec_hyps(sig, c)`. It asks:
 
-- `hsr`, subject reduction, which `ti_sr::sr` gives once `iota_ok` is
-  real;
+- `iota_ok`, and the model's facts for every recursor (`sig_rec`);
 - the recursor in scope (`rec_scope`) over an inductive without
   parameters or universe levels;
 - its constructors neither recursors nor definitions, its rules'
@@ -488,13 +489,16 @@ The recursor stage is in the judgment and the model:
   declares. The kernel does not check either condition; a typed major has
   both, and S6.6 derives them.
 - **The model's hypothesis** is `sig_sr(sig) := iota_ok ∧ ¬no_recs ⟹
-  sig_rec`, where `sig_rec` is subject reduction (`hsr`) plus each
-  recursor's model facts (`rec_model`): semantic constants, a non-Prop
-  inductive, ranked fields, and the recursor's type, the constructors'
-  types and the rules' right-hand sides typed in the **recursor-stripped
-  signature** (`ti_strip::strip`). `sound`, `adeq` and `fundamental` take
-  `sig_sr`; it is vacuous without recursors, so the kernel side is
-  unaffected.
+  sig_rec`, where `sig_rec` is each recursor's model facts
+  (`rec_model`): semantic constants, a non-Prop inductive, ranked
+  fields, and, typed in the **recursor-stripped signature**
+  (`ti_strip::strip`), the recursor's type, the constructors' types and
+  each rule's body in its binders (`rule_typed`). No subject reduction:
+  the relation's constructor clause carries the typed conversion of each
+  side to its constructor reduct (`con_top`), and the redex's conversion
+  comes from the rules (`dom_rec_conv`). `sound`, `adeq` and
+  `fundamental` take `sig_sr`; it is vacuous without recursors, so the
+  kernel side is unaffected.
 - **Recursors are interpreted** where `rec_hyps` (= `sig_rec` ∧ `rec_frag`)
   holds: `code_ok` is then `rf_fun`, and `rec_wired` is a theorem
   (`dom_iota::rec_wired_holds`).
@@ -514,11 +518,11 @@ The recursor stage is in the judgment and the model:
   started at no arguments.
 
 Open, for S6.6: discharging `sig_sr` for kernel signatures with recursors.
-`hsr` would come from `ti_sr::sr`, whose Iota case is `iota_sr`, but `sr`
-and `uniq` use injectivity from the model, which assumes `sig_sr`. That
-circle needs an Iota-free stratum (as soundness has) or syntactic
-injectivity. The model's typings in the stripped signature need the
-kernel's checks of the recursor and its rules.
+It asks only typings in the stripped signature and signature facts, which
+the kernel's checks of the inductive and its recursor establish (the
+recursor, its constructors and its rules are checked without recursors).
+Subject reduction is no longer assumed by the model, so `ti_sr::sr` can
+take its Iota case (`iota_sr`) under `sig_sr` without a circle.
 
 ### Open: parameters of any type (analysis 2026-09-28)
 

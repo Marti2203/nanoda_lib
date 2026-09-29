@@ -142,6 +142,9 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec
     ensures
         hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
             spine_app(heads[1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs))),
+        rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], Seq::empty()), cargs)))),
+        crate::beta_model::rec_result(sig.ienv, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], Seq::empty()), cargs))))
+            == spine_app(crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[j].rhs, sig.ienv.recs[rid].uparams, lv), heads + cargs),
 {
     let rd = sig.ienv.recs[rid];
     let sh = rshape(sig, rid);

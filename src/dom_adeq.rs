@@ -1278,6 +1278,7 @@ proof fn adeq_rec(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     typed_wf(v, av);
     head_le(u, v);
     assert(crate::dom_rec_end::rec_hyps(sig, c));
+    reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, c));
     assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), t));
     let l0 = choose|l0: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), t, t, sort(l0)));

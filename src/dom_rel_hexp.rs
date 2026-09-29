@@ -215,6 +215,10 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
                     cr_eq(sig, s1, m1);
                     cr_eq(sig, s2, m2);
                 }
+                if con_top(sig, g, m1, m2, t, u) {
+                    crate::dom_adeq_syn::dtrans(sig, g, s1, m1, cr(sig, m1), t);
+                    crate::dom_adeq_syn::dtrans(sig, g, s2, m2, cr(sig, m2), t);
+                }
             }
         },
     }

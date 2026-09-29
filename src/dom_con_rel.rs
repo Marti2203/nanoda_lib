@@ -609,6 +609,7 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     assert(ctor_app(sig, m2));
     ctor_self(sig, m);
     ctor_self(sig, m2);
+    crate::dom_adeq_syn::dsym(sig, g, m, m2, t);
     assert(us.len() == xs.len() - np);
     assert forall|i: int| 0 <= i < us.len() implies #[trigger] con_field(sig, g, m, m2, us, np, i) by {
         let j = (np + i) as nat;

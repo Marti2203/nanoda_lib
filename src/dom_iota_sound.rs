@@ -103,6 +103,7 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(!crate::ti_syntax::no_recs(sig)) by {
         assert(sig.ienv.recs.contains_key(rid));
     }
+    reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, rid));
     assert(crate::dom_rec_end::rec_hyps(sig, rid));
     crate::dom_iota::rec_wired_holds(sig);
@@ -143,8 +144,14 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(n == spine_app(core, extra));
     crate::dom_iota::spine_concat(body, heads, cargs);
     let ss = crate::ti_strip::strip(sig);
-    assert(crate::dom_rec_end::rhs_typed(sig, rid, lv, p));
-    let tb = choose|tb: ExprSpec| #[trigger] derivable(ss, eq(Seq::empty(), body, body, tb));
+    assert(crate::dom_rec_end::rule_typed(sig, rid, lv, p));
+    let ctx = crate::dom_rec_end::rule_ctx(sig, rid, lv, p);
+    let bt = crate::dom_rec_end::rule_bty(sig, rid, p);
+    let lb = choose|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, crate::ti_syntax::sort(lb)));
+    assert(Seq::<ExprSpec>::empty() + ctx =~= ctx);
+    crate::ti_beta::lam_tele(ss, Seq::empty(), ctx, crate::dom_iota::rule_body(sig, rid, lv, p), bt, lb);
+    crate::dom_iota::rule_split(sig, rid, lv, p);
+    let tb = crate::rec_canon::binds(BinderKind::Pi, ctx, bt);
     // the model's facts at the instance
     assert(crate::dom_model::sem_const(sig, rid, lv) && crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, rid, lv)));
     let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),

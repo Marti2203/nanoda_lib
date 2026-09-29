@@ -353,6 +353,10 @@ pub proof fn conv_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
             ty_ind(sig, n, g, t, s, a);
             tm_ind(sig, n, g, m, m2, t, u, a);
             tm_ind(sig, n, g, m, m2, s, u, a);
+            if !(u is Bot) {
+                crate::ti_chain::conv_chain(sig, g, m, cr(sig, m), t, s);
+                crate::ti_chain::conv_chain(sig, g, m2, cr(sig, m2), t, s);
+            }
             crate::ti_chain::tchain_sym(sig, g, t, s);
             crate::ti_chain::tchain_trans(sig, g, s, t, s);
         },

@@ -103,4 +103,16 @@ pub proof fn inode_prems(d: Deriv)
     }
 }
 
+/// What the stripped signature derives, the full one does.
+pub proof fn strip_derivable(sig: Sig, j: crate::ti_syntax::Jd)
+    requires
+        crate::ti_syntax::derivable(strip(sig), j),
+    ensures
+        crate::ti_syntax::derivable(sig, j),
+{
+    let d = crate::ti_sub::get(strip(sig), j);
+    strip_valid(sig, d);
+    crate::ti_meta::mk_d(sig, d);
+}
+
 } // verus!

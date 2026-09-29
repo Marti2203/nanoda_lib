@@ -156,7 +156,7 @@ pub open spec fn rel_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         Cpt::U => to_sort(sig, g, t, false) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Prop => to_sort(sig, g, t, true) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a),
-        Cpt::Nd(NdKey::Ty(_, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || con_tm(sig, g, m, m2, u)),
+        Cpt::Nd(NdKey::Ty(_, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || con_top(sig, g, m, m2, t, u)),
         _ => false,
     }
 }
@@ -195,7 +195,9 @@ pub open spec fn con_tm(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt) -> 
             let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
             &&& tchain(sig, g, ti, ti2)
             &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
-            &&& (#[trigger] fs[i] is Bot || con_tm(sig, g, args[np + i], args2[np + i], fs[i]))
+            &&& (#[trigger] fs[i] is Bot || (con_tm(sig, g, args[np + i], args2[np + i], fs[i])
+                && derivable(sig, eq(g, args[np + i], cr(sig, args[np + i]), ti))
+                && derivable(sig, eq(g, args2[np + i], cr(sig, args2[np + i]), ti))))
         }
     }
 }
@@ -203,6 +205,14 @@ pub open spec fn con_tm(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt) -> 
 #[via_fn]
 proof fn con_tm_decreases(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt) {
     parts_lower(u);
+}
+
+/// The constructor clause at a type: related, and both sides convert at
+/// the type with the constructor applications they reduce to.
+pub open spec fn con_top(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt) -> bool {
+    &&& con_tm(sig, g, m, m2, u)
+    &&& derivable(sig, eq(g, m, cr(sig, m), t))
+    &&& derivable(sig, eq(g, m2, cr(sig, m2), t))
 }
 
 /// The Pi term clause: related arguments give related applications.
@@ -266,7 +276,7 @@ pub open spec fn con_field(sig: Sig, g: Ctx, x: ExprSpec, x2: ExprSpec, fs: Seq<
     let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
     &&& tchain(sig, g, ti, ti2)
     &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
-    &&& (fs[i] is Bot || con_tm(sig, g, args[np + i], args2[np + i], fs[i]))
+    &&& (fs[i] is Bot || con_top(sig, g, args[np + i], args2[np + i], ti, fs[i]))
 }
 
 /// The constructor clause, unfolded.
@@ -306,7 +316,9 @@ pub proof fn con_tm_unfold(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt)
             let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
             &&& tchain(sig, g, ti, ti2)
             &&& derivable(sig, eq(g, args[np + i], args2[np + i], ti))
-            &&& (#[trigger] fs[i] is Bot || con_tm(sig, g, args[np + i], args2[np + i], fs[i]))
+            &&& (#[trigger] fs[i] is Bot || (con_tm(sig, g, args[np + i], args2[np + i], fs[i])
+                && derivable(sig, eq(g, args[np + i], cr(sig, args[np + i]), ti))
+                && derivable(sig, eq(g, args2[np + i], cr(sig, args2[np + i]), ti))))
         } by {
             assert(con_field(sig, g, x, x2, fs, np, i));
         }
@@ -338,6 +350,8 @@ pub proof fn con_symm(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt)
         if !(fs[i] is Bot) {
             assert(ht(fs[i]) < ht(u));
             con_symm(sig, g, ai, ai2, fs[i]);
+            crate::ti_chain::conv_chain(sig, g, ai, cr(sig, ai), ti, ti2);
+            crate::ti_chain::conv_chain(sig, g, ai2, cr(sig, ai2), ti, ti2);
         }
     }
 }
@@ -371,6 +385,7 @@ pub proof fn con_trans(sig: Sig, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: ExprSpe
         if !(fs[i] is Bot) {
             assert(ht(fs[i]) < ht(u));
             con_trans(sig, g, a1, a2, a3, fs[i]);
+            crate::ti_chain::conv_chain(sig, g, a3, cr(sig, a3), t2, t1);
         }
     }
 }
@@ -426,7 +441,7 @@ pub proof fn tm_ind(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
     requires
         a is Nd && a->Nd_0 is Ty,
     ensures
-        rel_tm(sig, n, g, m, m2, t, u, a) == (tchain(sig, g, t, t) && (u is Bot || con_tm(sig, g, m, m2, u))),
+        rel_tm(sig, n, g, m, m2, t, u, a) == (tchain(sig, g, t, t) && (u is Bot || con_top(sig, g, m, m2, t, u))),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);
