@@ -209,13 +209,13 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
             tm_ind(sig, n, g, m1, m2, t, u, a);
             tm_ind(sig, n, g, s1, s2, t, u, a);
             if !(u is Bot) {
-                con_tm_unfold(sig, g, m1, m2, u);
-                con_tm_unfold(sig, g, s1, s2, u);
-                if con_body(sig, g, m1, m2, u) {
+                con_tm_unfold(sig, n, g, m1, m2, u, a);
+                con_tm_unfold(sig, n, g, s1, s2, u, a);
+                if con_body(sig, n, g, m1, m2, u, a) {
                     cr_eq(sig, s1, m1);
                     cr_eq(sig, s2, m2);
                 }
-                if con_top(sig, g, m1, m2, t, u) {
+                if con_top(sig, n, g, m1, m2, t, u, a) {
                     crate::dom_adeq_syn::dtrans(sig, g, s1, m1, cr(sig, m1), t);
                     crate::dom_adeq_syn::dtrans(sig, g, s2, m2, cr(sig, m2), t);
                 }

@@ -33,24 +33,27 @@ pub proof fn tm_ty(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
     requires
         a is Nd && a->Nd_0 is Ty,
     ensures
-        rel_tm(sig, n, g, m, m2, t, u, a) == (rel_ty(sig, n, g, t, t, a) && (u is Bot || con_top(sig, g, m, m2, t, u))),
+        rel_tm(sig, n, g, m, m2, t, u, a) == (rel_ty(sig, n, g, t, t, a) && (u is Bot || con_top(sig, n, g, m, m2, t, u, a))),
 {
     reveal_with_fuel(rel_ty, 2);
     reveal_with_fuel(rel_tm, 2);
     reveal_with_fuel(cod_ty, 2);
     reveal_with_fuel(app_tm, 2);
+    reveal_with_fuel(con_tm, 2);
 }
 
 /// A CONSTRUCTOR ARGUMENT, projected: typed at a code its type relates
-/// to itself at, below a value its terms are constructor-related at.
-pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty: ExprSpec, v: Cpt, d: Cpt, w: Cpt)
+/// to itself at, below a value its terms are constructor-related at (at
+/// that value's own code and stage).
+pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty: ExprSpec, v: Cpt, d: Cpt, n0: nat, w: Cpt, c: Cpt)
     requires
         has_type(n, v, d),
+        has_type(n, d, Cpt::U),
         rel_ty(sig, n, g, ty, ty, d),
         le(v, w),
         wf(v),
         wf(w),
-        w is Bot || con_top(sig, g, y, y2, ty, w),
+        w is Bot || (con_top(sig, n0, g, y, y2, ty, w, c) && has_type(n0, w, c) && has_type(n0, c, Cpt::U)),
     ensures
         rel_tm(sig, n, g, y, y2, ty, v, d),
 {
@@ -59,10 +62,10 @@ pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty
         return;
     }
     head_le(v, w);
-    con_mono(sig, g, y, y2, v, w);
-    con_tm_unfold(sig, g, y, y2, v);
+    con_tm_unfold(sig, n0, g, y, y2, w, c);
     assert(v is Nd && v->Nd_0 is Con);
-    assert(d is Nd && d->Nd_0 is Ty);
+    crate::dom_con_rel::val_code(n, v, d);
+    crate::dom_rel_mono::con_xfer(sig, n0, n, g, y, y2, w, v, c, d);
     tm_ty(sig, n, g, y, y2, ty, v, d);
 }
 
@@ -84,20 +87,21 @@ pub proof fn cr_self(sig: Sig, m: ExprSpec)
 
 /// The constructor clause, on the constructor application the left term
 /// reduces to.
-pub proof fn con_red(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt)
+pub proof fn con_red(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt)
     requires
-        con_tm(sig, g, m, m2, u),
+        con_tm(sig, n, g, m, m2, u, a),
     ensures
-        con_tm(sig, g, cr(sig, m), m2, u),
+        con_tm(sig, n, g, cr(sig, m), m2, u, a),
 {
-    con_tm_unfold(sig, g, m, m2, u);
-    con_tm_unfold(sig, g, cr(sig, m), m2, u);
+    con_tm_unfold(sig, n, g, m, m2, u, a);
+    con_tm_unfold(sig, n, g, cr(sig, m), m2, u, a);
     cr_self(sig, m);
     let (x, x2) = (cr(sig, m), cr(sig, m2));
     let fs = u->Nd_1;
     let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
-    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, g, cr(sig, cr(sig, m)), x2, fs, np, i) by {
-        assert(con_field(sig, g, x, x2, fs, np, i));
+    let es = cblock(u, a);
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, cr(sig, cr(sig, m)), x2, fs, es, np, a, i) by {
+        assert(con_field(sig, n, g, x, x2, fs, es, np, a, i));
     }
 }
 
@@ -369,6 +373,13 @@ impl Rc {
     pub open spec fn pre(self, sig: Sig) -> int { (crate::dom_rec_ty::rshape(sig, self.c).nmin() + 1) as int }
     pub open spec fn wx(self, sig: Sig) -> Cpt { self.fs[self.pre(sig)] }
     pub open spec fn fsm(self, sig: Sig) -> Seq<Cpt> { self.wx(sig)->Nd_1 }
+    pub open spec fn dm(self, sig: Sig) -> Cpt { self.ds[self.pre(sig)] }
+    /// The code a field of the major is related at: the major's own for a
+    /// recursive field, else its table entry's.
+    pub open spec fn fcode(self, sig: Sig, i: int) -> Cpt {
+        let e = crate::dom_rel::cblock(self.wx(sig), self.dm(sig))[i];
+        if e == crate::dom_typing::rmark() { self.dm(sig) } else { crate::dom_typing::ecode(e) }
+    }
     pub open spec fn nf(self, sig: Sig) -> nat { crate::dom_rec_ty::rshape(sig, self.c).fields[self.j].len() }
     pub open spec fn cid(self, sig: Sig) -> u64 { crate::dom_rec_ty::rshape(sig, self.c).ctors[self.j] }
     pub open spec fn cx(self, sig: Sig) -> ExprSpec { spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.args) }
@@ -386,7 +397,8 @@ impl Rc {
 pub open spec fn rc_field(sig: Sig, rc: Rc, i: int) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     &&& derivable(sig, eq(rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i]))
-    &&& (rc.fsm(sig)[i] is Bot || con_top(sig, rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i], rc.fsm(sig)[i]))
+    &&& (rc.fsm(sig)[i] is Bot || (con_top(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i], rc.fsm(sig)[i], rc.fcode(sig, i))
+        && has_type(rc.nn, rc.fsm(sig)[i], rc.fcode(sig, i)) && has_type(rc.nn, rc.fcode(sig, i), Cpt::U)))
 }
 
 /// The end's context holds: the invariant at the end of the telescope, a
@@ -408,7 +420,7 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     &&& rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig)
     &&& rc.ds[pre] is Nd && rc.ds[pre]->Nd_0 is Ty
     &&& tel_dom(rc.t0(sig), rc.xs, pre as nat) == rc.ind(sig)
-    &&& con_tm(sig, rc.g, rc.xs[pre], rc.xs2[pre], rc.wx(sig))
+    &&& con_tm(sig, rc.nn, rc.g, rc.xs[pre], rc.xs2[pre], rc.wx(sig), rc.ds[pre])
     &&& hred(sig, rc.xs[pre], rc.cx(sig)) && hred(sig, rc.xs2[pre], rc.cx2(sig))
     &&& cr(sig, rc.xs[pre]) == rc.cx(sig) && ctor_red(sig, rc.xs[pre])
     &&& derivable(sig, eq(rc.g, rc.xs[pre], rc.cx(sig), rc.ind(sig)))
@@ -534,7 +546,7 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     assert(has_type(nn, wx, dm));
     assert(dm is Nd && dm->Nd_0 is Ty);
     tm_ty(sig, nn, g, x, x2, ci, wx, dm);
-    con_tm_unfold(sig, g, x, x2, wx);
+    con_tm_unfold(sig, nn, g, x, x2, wx, dm);
     let (cx, cx2) = (cr(sig, x), cr(sig, x2));
     let fsm = wx->Nd_1;
     assert(crate::dom_code::canon_shape(sig, sh.ind).np == 0);
@@ -544,10 +556,24 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     let (args, args2) = (spine_args(cx), spine_args(cx2));
     let rc = Rc { nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u, j, args, args2 };
     assert(rc.cx(sig) == cx && rc.cx2(sig) == cx2);
+    let es = cblock(wx, dm);
+    assert(has_type(nn, dm, Cpt::U));
     assert forall|i: int| 0 <= i < rc.nf(sig) implies #[trigger] rc_field(sig, rc, i) by {
-        assert(con_field(sig, g, cx, cx2, fsm, 0, i));
+        assert(con_field(sig, nn, g, cx, cx2, fsm, es, 0, dm, i));
         ctor_arg_ty(sig, c, j, args, i);
         assert(args[0 + i] == args[i]);
+        if !(fsm[i] is Bot) {
+            if es[i] != crate::dom_typing::rmark() {
+                let ec = ecode(es[i]);
+                assert(is_centry(es[i]) && has_type(nn, fsm[i], ec) && has_type(nn, ec, Cpt::U) && tyc(ec));
+                if ec is Bot {
+                    ty_of_bot(nn, fsm[i]);
+                }
+                tm_ty(sig, nn, g, args[i], args2[i], arg_ty(sig, cx, i as nat), fsm[i], ec);
+            } else {
+                assert(has_type(nn, fsm[i], dm));
+            }
+        }
     }
     rc
 }
@@ -961,7 +987,7 @@ pub proof fn ih_flds(sig: Sig, rc: Rc, kf: int)
         } else {
             assert(ys[i] == rc.args[kf] && ys2[i] == rc.args2[kf] && fz[i] == v);
             le_refl(v);
-            con_rel_arg(sig, rc.nn, rc.g, rc.args[kf], rc.args2[kf], ci, v, dm, v);
+            con_rel_arg(sig, rc.nn, rc.g, rc.args[kf], rc.args2[kf], ci, v, dm, rc.nn, v, rc.fcode(sig, kf));
         }
     }
 }
@@ -1321,7 +1347,8 @@ pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
     assert(rc_field(sig, rc, k as int));
     assert(w.ys[k as int] == rc.args[k as int] && w.ys2[k as int] == rc.args2[k as int]);
     assert(w.ws[k as int] == rc.fsm(sig)[k as int]);
-    con_rel_arg(sig, (n - 1) as nat, rc.g, rc.args[k as int], rc.args2[k as int], ta, w.wv(k), *a->Pi_0, w.ws[k as int]);
+    crate::dom_con_rel::pi_dom_typed(n, a);
+    con_rel_arg(sig, (n - 1) as nat, rc.g, rc.args[k as int], rc.args2[k as int], ta, w.wv(k), *a->Pi_0, rc.nn, w.ws[k as int], rc.fcode(sig, k as int));
 }
 
 /// The motive's type at a level instance: the inductive to a sort.
@@ -1484,14 +1511,16 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     tm_pi(sig, nn, rc.g, p, p2, tp, pv, dp);
     crate::dom_rel_per::symm_ty(sig, k1, rc.g, ci, ci, d0);
     // the major's pairs
-    con_symm(sig, rc.g, x, x2, wx);
-    con_trans(sig, rc.g, x, x2, x, wx);
-    con_red(sig, rc.g, x, x, wx);
+    let dm = rc.ds[pre];
+    crate::dom_rel_per::con_symm(sig, nn, rc.g, x, x2, wx, dm);
+    crate::dom_rel_per::con_trans(sig, nn, rc.g, x, x2, x, wx, dm);
+    con_red(sig, nn, rc.g, x, x, wx, dm);
     cr_self(sig, x);
     crate::dom_adeq_syn::dsym(sig, rc.g, x, x2, ci);
     crate::dom_adeq_syn::dsym(sig, rc.g, x, rc.cx(sig), ci);
-    con_rel_arg(sig, k1, rc.g, x, x, ci, jw, d0, wx);
-    con_rel_arg(sig, k1, rc.g, rc.cx(sig), x, ci, jw, d0, wx);
+    assert(has_type(nn, wx, dm) && has_type(nn, dm, Cpt::U));
+    con_rel_arg(sig, k1, rc.g, x, x, ci, jw, d0, nn, wx, dm);
+    con_rel_arg(sig, k1, rc.g, rc.cx(sig), x, ci, jw, d0, nn, wx, dm);
     app_tm_elim(sig, k1, rc.g, p, p2, ci, sp, pv, dp, x, x, jw);
     app_tm_elim(sig, k1, rc.g, p, p2, ci, sp, pv, dp, rc.cx(sig), x, jw);
     assert(inst(0, x, sp) == sp);

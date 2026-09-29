@@ -33,7 +33,7 @@ pub proof fn stab_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
         has_type(n, a, Cpt::U),
     ensures
         rel_ty(sig, n, g, t, t2, a) == rel_ty(sig, n + 1, g, t, t2, a),
-    decreases n, 0int, 1int,
+    decreases n, 0int, ht(a), 0int, 1int,
 {
     ty_inv(n, a, Cpt::U);
     match a {
@@ -65,7 +65,7 @@ proof fn stab_ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
         has_type(n, a, Cpt::U),
     ensures
         rel_ty(sig, n, g, t, t2, a) == rel_ty(sig, n + 1, g, t, t2, a),
-    decreases n, 0int, 0int,
+    decreases n, 0int, ht(a), 0int, 0int,
 {
     ty_pi(sig, n, g, t, t2, a);
     ty_pi(sig, n + 1, g, t, t2, a);
@@ -115,7 +115,7 @@ pub proof fn stab_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         has_type(n, a, Cpt::U),
     ensures
         rel_tm(sig, n, g, m, m2, t, u, a) == rel_tm(sig, n + 1, g, m, m2, t, u, a),
-    decreases n, 1int, 1int,
+    decreases n, 1int, ht(a), ht(u) + 1, 1int,
 {
     ty_inv(n, a, Cpt::U);
     match a {
@@ -142,8 +142,73 @@ pub proof fn stab_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         Cpt::Nd(NdKey::Ty(..), _) => {
             tm_ind(sig, n, g, m, m2, t, u, a);
             tm_ind(sig, n + 1, g, m, m2, t, u, a);
+            con_stab(sig, n, g, m, m2, u, a);
         },
         _ => {},
+    }
+}
+
+/// The constructor clause does not see the stage past its values' own.
+pub proof fn con_stab(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        has_type(n, u, a),
+        has_type(n, a, Cpt::U),
+    ensures
+        con_tm(sig, n, g, m, m2, u, a) == con_tm(sig, n + 1, g, m, m2, u, a),
+    decreases n, 1int, ht(a), ht(u), 0int,
+{
+    con_tm_unfold(sig, n, g, m, m2, u, a);
+    con_tm_unfold(sig, n + 1, g, m, m2, u, a);
+    if u is Nd && u->Nd_0 is Con {
+        parts_lower(u);
+        tbl_lower(a);
+        let (x, x2) = (cr(sig, m), cr(sig, m2));
+        let fs = u->Nd_1;
+        let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+        let es = cblock(u, a);
+        if con_body(sig, n, g, m, m2, u, a) {
+            assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n + 1, g, x, x2, fs, es, np, a, i) by {
+                assert(con_field(sig, n, g, x, x2, fs, es, np, a, i));
+                con_field_stab(sig, n, g, x, x2, fs, es, np, a, u, i);
+            }
+        }
+        if con_body(sig, n + 1, g, m, m2, u, a) {
+            assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, x, x2, fs, es, np, a, i) by {
+                assert(con_field(sig, n + 1, g, x, x2, fs, es, np, a, i));
+                con_field_stab(sig, n, g, x, x2, fs, es, np, a, u, i);
+            }
+        }
+    }
+}
+
+/// One field of `con_stab`.
+proof fn con_field_stab(sig: Sig, n: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, fs: Seq<Cpt>, es: Seq<Cpt>, np: nat, a: Cpt, u: Cpt, i: int)
+    requires
+        u is Nd && u->Nd_0 is Con,
+        fs == u->Nd_1,
+        es == cblock(u, a),
+        0 <= i < fs.len(),
+        has_type(n, u, a),
+        has_type(n, a, Cpt::U),
+    ensures
+        con_field(sig, n, g, x, x2, fs, es, np, a, i) == con_field(sig, n + 1, g, x, x2, fs, es, np, a, i),
+    decreases n, 1int, ht(a), ht(fs[i]), 1int,
+{
+    parts_lower(u);
+    tbl_lower(a);
+    let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    if !(fs[i] is Bot) {
+        let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+        assert(ht(fs[i]) < ht(u));
+        if es[i] == crate::dom_typing::rmark() {
+            assert(has_type(n, fs[i], a));
+            con_stab(sig, n, g, args[np + i], args2[np + i], fs[i], a);
+        } else if is_centry(es[i]) {
+            let ec = ecode(es[i]);
+            assert(has_type(n, fs[i], ec) && has_type(n, ec, Cpt::U));
+            stab_tm(sig, n, g, args[np + i], args2[np + i], ti, fs[i], ec);
+            stab_ty(sig, n, g, ti, ti2, ec);
+        }
     }
 }
 
@@ -155,7 +220,7 @@ proof fn stab_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
         has_type(n, a, Cpt::U),
     ensures
         rel_tm(sig, n, g, m, m2, t, u, a) == rel_tm(sig, n + 1, g, m, m2, t, u, a),
-    decreases n, 1int, 0int,
+    decreases n, 1int, ht(a), ht(u) + 1, 0int,
 {
     tm_pi(sig, n, g, m, m2, t, u, a);
     tm_pi(sig, n + 1, g, m, m2, t, u, a);

@@ -600,7 +600,7 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     val_code(n, u, a);
     ty_ind(sig, n, g, t, t, a);
     tm_ind(sig, n, g, m, m2, t, u, a);
-    con_tm_unfold(sig, g, m, m2, u);
+    con_tm_unfold(sig, n, g, m, m2, u, a);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls2), xs2);
     stuck_spine(sig, c, ls, xs);
@@ -611,7 +611,9 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     ctor_self(sig, m2);
     crate::dom_adeq_syn::dsym(sig, g, m, m2, t);
     assert(us.len() == xs.len() - np);
-    assert forall|i: int| 0 <= i < us.len() implies #[trigger] con_field(sig, g, m, m2, us, np, i) by {
+    let es = crate::dom_rel::cblock(u, a);
+    assert(crate::dom_rel::blk_ok(u, a));
+    assert forall|i: int| 0 <= i < us.len() implies #[trigger] con_field(sig, n, g, m, m2, us, es, np, a, i) by {
         let j = (np + i) as nat;
         assert(fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, np, i));
         let (ty, ty2) = (tel_dom(t0, xs, j), tel_dom(t02, xs2, j));
@@ -624,7 +626,19 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
             head_le(us[i], w);
             val_code(nn, w, d);
             tm_ind(sig, nn, g, y, y2, ty, w, d);
-            con_mono(sig, g, y, y2, us[i], w);
+            if es[i] == crate::dom_typing::rmark() {
+                assert(has_type(n, us[i], a));
+                crate::dom_rel_mono::con_xfer(sig, nn, n, g, y, y2, w, us[i], d, a);
+            } else {
+                let ec = ecode(es[i]);
+                assert(is_centry(es[i]) && has_type(n, us[i], ec) && has_type(n, ec, Cpt::U) && tyc(ec));
+                if ec is Bot {
+                    ty_of_bot(n, us[i]);
+                }
+                crate::dom_rel_mono::con_xfer(sig, nn, n, g, y, y2, w, us[i], d, ec);
+                ty_ind(sig, n, g, ty, ty2, ec);
+                tm_ind(sig, n, g, y, y2, ty, us[i], ec);
+            }
         }
     }
 }

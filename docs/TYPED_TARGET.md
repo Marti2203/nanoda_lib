@@ -602,6 +602,24 @@ Stages, each landing through the gate:
   type's parameters `Q` (not the value's). So the clause is staged, and
   it recurses through the relation at a smaller code: the relation's
   measure becomes `(n, ht(a), k)`.
+  Refined (2026-09-29, after P1a): the type clause relates the *table's
+  field types* rather than the parameters. At `a = Nd(Ty(I), ..)`,
+  `rel_ty(t, t2, a)` asks `tchain(t, t2)`, both sides reducing to `I`
+  applied to parameters `Q`, `Q2`, and for every table entry holding a
+  code `c`, the field type at the parameters related at `c`:
+  `rel_ty(F[Q], F[Q2], c)`. That needs no canonical codes (joins and
+  codomains of codes are not canonical), and monotonicity in the code
+  (`incr`) reads the field types' relation at the larger code straight
+  off the type clause. Only adequacy at a type former has to produce it
+  from the arguments, and that is the lifting lemma of P3 (by rank and the
+  field type's size). The constructor clause moves into the relation's
+  recursive group, takes the stage, the type and the code, relates a field
+  at an entry's code by `rel_tm` at `F[Q]`, and a recursive field by the
+  clause itself at the same code. Order: **P2a** moves the clause into
+  the group (the table's codes are still inductive codes, `tyc`, so the
+  type clause stays `tchain`); **P2b** gives the type clause its table
+  part and the fields their types at `Q`; then P1b drops `tyc` and P1c
+  widens the fragment.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

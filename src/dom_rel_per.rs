@@ -71,7 +71,7 @@ pub proof fn symm_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt
         rel_ty(sig, n, g, t, t2, a),
     ensures
         rel_ty(sig, n, g, t2, t, a),
-    decreases n, 0int, 1int,
+    decreases n, 0int, ht(a), 0int, 1int,
 {
     match a {
         Cpt::Bot => ty_bot(sig, n, g, t2, t),
@@ -101,7 +101,7 @@ proof fn symm_ty_pi(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: Cpt)
         rel_ty(sig, n, g, t, t2, a),
     ensures
         rel_ty(sig, n, g, t2, t, a),
-    decreases n, 0int, 0int,
+    decreases n, 0int, ht(a), 0int, 0int,
 {
     ty_pi(sig, n, g, t, t2, a);
     ty_pi(sig, n, g, t2, t, a);
@@ -133,7 +133,7 @@ pub proof fn trans_ty(sig: Sig, n: nat, g: Ctx, t1: ExprSpec, t2: ExprSpec, t3: 
         rel_ty(sig, n, g, t2, t3, a),
     ensures
         rel_ty(sig, n, g, t1, t3, a),
-    decreases n, 1int, 1int,
+    decreases n, 1int, ht(a), 0int, 1int,
 {
     match a {
         Cpt::Bot => ty_bot(sig, n, g, t1, t3),
@@ -167,7 +167,7 @@ proof fn trans_ty_pi(sig: Sig, n: nat, g: Ctx, t1: ExprSpec, t2: ExprSpec, t3: E
         rel_ty(sig, n, g, t2, t3, a),
     ensures
         rel_ty(sig, n, g, t1, t3, a),
-    decreases n, 1int, 0int,
+    decreases n, 1int, ht(a), 0int, 0int,
 {
     ty_pi(sig, n, g, t1, t2, a);
     ty_pi(sig, n, g, t2, t3, a);
@@ -206,7 +206,7 @@ pub proof fn symm_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         rel_tm(sig, n, g, m, m2, t, u, a),
     ensures
         rel_tm(sig, n, g, m2, m, t, u, a),
-    decreases n, 2int, 1int,
+    decreases n, 3int, ht(a), ht(u) + 1, 1int,
 {
     match a {
         Cpt::Bot => tm_bot(sig, n, g, m2, m, t, u),
@@ -221,7 +221,7 @@ pub proof fn symm_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
             tm_ind(sig, n, g, m, m2, t, u, a);
             tm_ind(sig, n, g, m2, m, t, u, a);
             if !(u is Bot) {
-                con_symm(sig, g, m, m2, u);
+                con_symm(sig, n, g, m, m2, u, a);
             }
         },
     }
@@ -234,7 +234,7 @@ proof fn symm_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
         rel_tm(sig, n, g, m, m2, t, u, a),
     ensures
         rel_tm(sig, n, g, m2, m, t, u, a),
-    decreases n, 2int, 0int,
+    decreases n, 3int, ht(a), ht(u) + 1, 0int,
 {
     tm_pi(sig, n, g, m, m2, t, u, a);
     tm_pi(sig, n, g, m2, m, t, u, a);
@@ -262,7 +262,7 @@ pub proof fn trans_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: 
         rel_tm(sig, n, g, m2, m3, t, u, a),
     ensures
         rel_tm(sig, n, g, m1, m3, t, u, a),
-    decreases n, 3int, 1int,
+    decreases n, 4int, ht(a), ht(u) + 1, 1int,
 {
     match a {
         Cpt::Bot => tm_bot(sig, n, g, m1, m3, t, u),
@@ -279,7 +279,7 @@ pub proof fn trans_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: 
             tm_ind(sig, n, g, m2, m3, t, u, a);
             tm_ind(sig, n, g, m1, m3, t, u, a);
             if !(u is Bot) {
-                con_trans(sig, g, m1, m2, m3, u);
+                con_trans(sig, n, g, m1, m2, m3, u, a);
             }
         },
     }
@@ -293,7 +293,7 @@ proof fn trans_tm_pi(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: E
         rel_tm(sig, n, g, m2, m3, t, u, a),
     ensures
         rel_tm(sig, n, g, m1, m3, t, u, a),
-    decreases n, 3int, 0int,
+    decreases n, 4int, ht(a), ht(u) + 1, 0int,
 {
     tm_pi(sig, n, g, m1, m2, t, u, a);
     tm_pi(sig, n, g, m2, m3, t, u, a);
@@ -318,6 +318,92 @@ proof fn trans_tm_pi(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: E
     app_tm_intro(sig, k, g, m1, m3, ta, tb, u, a);
 }
 
+/// The constructor clause is symmetric.
+pub proof fn con_symm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        con_tm(sig, n, g, m, m2, u, a),
+    ensures
+        con_tm(sig, n, g, m2, m, u, a),
+    decreases n, 3int, ht(a), ht(u), 0int,
+{
+    con_tm_unfold(sig, n, g, m, m2, u, a);
+    con_tm_unfold(sig, n, g, m2, m, u, a);
+    parts_lower(u);
+    tbl_lower(a);
+    let (x, x2) = (cr(sig, m), cr(sig, m2));
+    let fs = u->Nd_1;
+    let es = cblock(u, a);
+    let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    let (args, args2) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(x2));
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, x2, x, fs, es, np, a, i) by {
+        assert(con_field(sig, n, g, x, x2, fs, es, np, a, i));
+        let (ti, ti2) = (arg_ty(sig, x, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat));
+        let (ai, ai2) = (args[np + i], args2[np + i]);
+        tchain_sym(sig, g, ti, ti2);
+        crate::dom_adeq_syn::dsym(sig, g, ai, ai2, ti);
+        conv_chain(sig, g, ai2, ai, ti, ti2);
+        if !(fs[i] is Bot) {
+            assert(ht(fs[i]) < ht(u));
+            if es[i] == crate::dom_typing::rmark() {
+                con_symm(sig, n, g, ai, ai2, fs[i], a);
+                conv_chain(sig, g, ai, cr(sig, ai), ti, ti2);
+                conv_chain(sig, g, ai2, cr(sig, ai2), ti, ti2);
+            } else {
+                let ec = ecode(es[i]);
+                assert(ht(ec) < ht(a));
+                symm_tm(sig, n, g, ai, ai2, ti, fs[i], ec);
+                conv_tm(sig, n, g, ai2, ai, ti, ti2, fs[i], ec);
+                symm_ty(sig, n, g, ti, ti2, ec);
+            }
+        }
+    }
+}
+
+/// The constructor clause is transitive.
+pub proof fn con_trans(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, m3: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        con_tm(sig, n, g, m1, m2, u, a),
+        con_tm(sig, n, g, m2, m3, u, a),
+    ensures
+        con_tm(sig, n, g, m1, m3, u, a),
+    decreases n, 4int, ht(a), ht(u), 0int,
+{
+    con_tm_unfold(sig, n, g, m1, m2, u, a);
+    con_tm_unfold(sig, n, g, m2, m3, u, a);
+    con_tm_unfold(sig, n, g, m1, m3, u, a);
+    parts_lower(u);
+    tbl_lower(a);
+    let (x1, x2, x3) = (cr(sig, m1), cr(sig, m2), cr(sig, m3));
+    let fs = u->Nd_1;
+    let es = cblock(u, a);
+    let np = crate::dom_code::canon_shape(sig, u->Nd_0->Con_0).np;
+    let (args1, args2, args3) = (crate::beta_model::spine_args(x1), crate::beta_model::spine_args(x2), crate::beta_model::spine_args(x3));
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] con_field(sig, n, g, x1, x3, fs, es, np, a, i) by {
+        assert(con_field(sig, n, g, x1, x2, fs, es, np, a, i));
+        assert(con_field(sig, n, g, x2, x3, fs, es, np, a, i));
+        let (t1, t2, t3) = (arg_ty(sig, x1, (np + i) as nat), arg_ty(sig, x2, (np + i) as nat), arg_ty(sig, x3, (np + i) as nat));
+        let (a1, a2, a3) = (args1[np + i], args2[np + i], args3[np + i]);
+        tchain_trans(sig, g, t1, t2, t3);
+        tchain_sym(sig, g, t1, t2);
+        conv_chain(sig, g, a2, a3, t2, t1);
+        crate::dom_adeq_syn::dtrans(sig, g, a1, a2, a3, t1);
+        if !(fs[i] is Bot) {
+            assert(ht(fs[i]) < ht(u));
+            if es[i] == crate::dom_typing::rmark() {
+                con_trans(sig, n, g, a1, a2, a3, fs[i], a);
+                conv_chain(sig, g, a3, cr(sig, a3), t2, t1);
+            } else {
+                let ec = ecode(es[i]);
+                assert(ht(ec) < ht(a));
+                symm_ty(sig, n, g, t1, t2, ec);
+                conv_tm(sig, n, g, a2, a3, t2, t1, fs[i], ec);
+                trans_tm(sig, n, g, a1, a2, a3, t1, fs[i], ec);
+                trans_ty(sig, n, g, t1, t2, t3, ec);
+            }
+        }
+    }
+}
+
 /// Related terms are each related to themselves.
 pub proof fn per_diag(sig: Sig, n: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, t: ExprSpec, w: Cpt, a: Cpt)
     requires
@@ -325,7 +411,7 @@ pub proof fn per_diag(sig: Sig, n: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, t: Ex
     ensures
         rel_tm(sig, n, g, x, x, t, w, a),
         rel_tm(sig, n, g, x2, x2, t, w, a),
-    decreases n, 6int, 1int,
+    decreases n, 6int, ht(a), ht(w) + 1, 1int,
 {
     symm_tm(sig, n, g, x, x2, t, w, a);
     trans_tm(sig, n, g, x, x2, x, t, w, a);
@@ -338,7 +424,7 @@ pub proof fn conv_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Exp
         rel_tm(sig, n, g, m, m2, t, u, a),
     ensures
         rel_tm(sig, n, g, m, m2, s, u, a),
-    decreases n, 4int, 1int,
+    decreases n, 2int, ht(a), ht(u) + 1, 1int,
 {
     match a {
         Cpt::Bot => tm_bot(sig, n, g, m, m2, s, u),
@@ -371,7 +457,7 @@ proof fn conv_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
         rel_tm(sig, n, g, m, m2, t, u, a),
     ensures
         rel_tm(sig, n, g, m, m2, s, u, a),
-    decreases n, 4int, 0int,
+    decreases n, 2int, ht(a), ht(u) + 1, 0int,
 {
     ty_pi(sig, n, g, t, s, a);
     tm_pi(sig, n, g, m, m2, t, u, a);
@@ -406,7 +492,7 @@ pub proof fn bot_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: Expr
         rel_ty(sig, n, g, t, t, a),
     ensures
         rel_tm(sig, n, g, m, m2, t, Cpt::Bot, a),
-    decreases n, 5int, 1int,
+    decreases n, 5int, ht(a), 1int, 1int,
 {
     match a {
         Cpt::Bot => tm_bot(sig, n, g, m, m2, t, Cpt::Bot),
@@ -431,7 +517,7 @@ proof fn bot_tm_pi(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
         rel_ty(sig, n, g, t, t, a),
     ensures
         rel_tm(sig, n, g, m, m2, t, Cpt::Bot, a),
-    decreases n, 5int, 0int,
+    decreases n, 5int, ht(a), 1int, 0int,
 {
     ty_pi(sig, n, g, t, t, a);
     tm_pi(sig, n, g, m, m2, t, Cpt::Bot, a);
