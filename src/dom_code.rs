@@ -57,18 +57,35 @@ pub open spec fn is_prop_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>) -> bool {
 /// Field `k` of constructor `p`, at the level instance `ls`, is a type
 /// without recursors.
 pub open spec fn ftyped(sig: Sig, ind: u64, p: int, k: int, ls: Seq<LevelSpec>) -> bool {
-    crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig),
-        crate::expr_model::subst_expr_levels(canon_shape(sig, ind).fields[p][k], sig.consts[ind].lps, ls))
+    styped(sig, crate::expr_model::subst_expr_levels(canon_shape(sig, ind).fields[p][k], sig.consts[ind].lps, ls))
 }
 
-/// Every field of `ind`'s constructors that is not a direct recursive
-/// occurrence is a type, its constants ranked below `ind`
+/// A closed type typed without recursors, and so its arguments.
+pub open spec fn styped(sig: Sig, e: ExprSpec) -> bool
+    decreases e, 1int,
+{
+    crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), e) && sargs_typed(sig, e)
+}
+
+pub open spec fn sargs_typed(sig: Sig, e: ExprSpec) -> bool
+    decreases e, 0int,
+{
+    match e {
+        ExprSpec::App(f, x) => sargs_typed(sig, *f) && styped(sig, *x),
+        _ => true,
+    }
+}
+
+/// Every field of `ind`'s constructors that is neither a direct recursive
+/// occurrence nor a type parameter is a type, its constants ranked below
+/// `ind`
 /// (docs/TYPED_TARGET.md, S6 "Parameters", P2b).
 #[verifier::opaque]
 pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
     let sh = canon_shape(sig, ind);
     forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
         && ls.len() == sig.consts[ind].lps.len() && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+        && !pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
         ==> #[trigger] ftyped(sig, ind, p, k, ls) && crate::dom_canon::ranked(sig, sh.fields[p][k], rk(sig, ind))
 }
 

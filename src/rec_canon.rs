@@ -135,6 +135,14 @@ pub open spec fn simple_app(sig: Sig, ind: u64, e: ExprSpec) -> bool
     }
 }
 
+/// A FIELD TYPED BY A TYPE PARAMETER: the parameter's variable under the
+/// `k` earlier fields, the parameter's declared domain a sort.
+pub open spec fn pvar_field(pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool {
+    &&& e is Var
+    &&& k <= e->Var_0 < k + np
+    &&& pdoms[(k + np - 1 - e->Var_0) as int] is Sort
+}
+
 /// The recursive fields among the first `n`, in order.
 pub open spec fn rec_pos(fs: Seq<ExprSpec>, ind: u64, us: Seq<LevelSpec>, np: nat, ni: nat, n: nat) -> Seq<nat>
     decreases n,
@@ -326,7 +334,7 @@ pub open spec fn rec_canon(sig: Sig, rid: u64) -> bool {
         &&& sh.tss[j].len() == ni
         &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
         &&& forall|k: int| 0 <= k < nf ==> direct_occ(#[trigger] sh.fields[j][k], ind, sh.us(), np, ni, k as nat)
-            || simple_ty(sig, ind, sh.fields[j][k])
+            || simple_ty(sig, ind, sh.fields[j][k]) || pvar_field(sh.pdoms, np, k as nat, sh.fields[j][k])
         &&& rd.rules[j].rhs == sh.rule_rhs(lm, rid, plevels(rd.uparams), j)
     }
     // the recursor's type

@@ -171,15 +171,151 @@ pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, 
     le_trans(d, canon_code(sig, j, us, ws), code);
 }
 
+/// The codes of `ind`'s type parameters among `args` are types.
+pub open spec fn sparams_typed(sig: Sig, ind: u64, args: Seq<Cpt>) -> bool {
+    let sh = canon_shape(sig, ind);
+    has_canon(sig, ind) ==> forall|q: int| 0 <= q < sh.np && q < args.len() && sh.pdoms[q] is Sort ==> #[trigger] typed(args[q], Cpt::U)
+}
+
+/// Bottom parameters' codes are types.
+pub proof fn bots_sparams(sig: Sig, ind: u64, bn: Seq<Cpt>)
+    requires
+        forall|i: int| 0 <= i < bn.len() ==> #[trigger] bn[i] == Cpt::Bot,
+    ensures
+        sparams_typed(sig, ind, bn),
+{
+    crate::dom_sound::typed_basic();
+    assert forall|q: int| 0 <= q < canon_shape(sig, ind).np && q < bn.len() && canon_shape(sig, ind).pdoms[q] is Sort
+        implies #[trigger] typed(bn[q], Cpt::U) by {
+        assert(bn[q] == Cpt::Bot);
+    }
+}
+
+/// What a sort's member types is a type.
+pub proof fn sort_mem_typed(sig: Sig, l: LevelSpec, rho: Env, a: Cpt, x: Cpt)
+    requires
+        mem(sig, ExprSpec::Sort(l), rho, a),
+        typed(x, a),
+    ensures
+        typed(x, Cpt::U),
+{
+    reveal(mem);
+    let w = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Sort(l), rho, a, w);
+    crate::dom_sound::typed_basic();
+    let n = cstage(x, a);
+    typed_up(x, a, n);
+    if a is Bot {
+        crate::dom_typing::ty_of_bot(n, x);
+    } else if a is Prop {
+        crate::dom_typing::prop_is_type(n, x);
+        typed_down(x, Cpt::U, n);
+    }
+}
+
+/// Telescopes ending in non-binders agree only domain by domain.
+pub proof fn binds_eq(ds1: Seq<ExprSpec>, b1: ExprSpec, ds2: Seq<ExprSpec>, b2: ExprSpec)
+    requires
+        crate::rec_canon::binds(BinderKind::Pi, ds1, b1) == crate::rec_canon::binds(BinderKind::Pi, ds2, b2),
+        !(b1 is Bind),
+        !(b2 is Bind),
+    ensures
+        ds1 == ds2,
+        b1 == b2,
+    decreases ds1.len(),
+{
+    if ds1.len() > 0 && ds2.len() > 0 {
+        binds_eq(ds1.drop_first(), b1, ds2.drop_first(), b2);
+        assert(ds1 =~= seq![ds1[0]] + ds1.drop_first());
+        assert(ds2 =~= seq![ds2[0]] + ds2.drop_first());
+    } else if ds1.len() > 0 || ds2.len() > 0 {
+        assert(false);
+    } else {
+        assert(ds1 =~= ds2);
+    }
+}
+
+/// A TYPE FORMER'S INPUTS at its sort parameters are types.
+pub proof fn chain_sparams(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)),
+        crate::dom_tele::chain_ok(sig, tds, bot_env(), ds, xs),
+    ensures
+        sparams_typed(sig, c, xs),
+{
+    if has_canon(sig, c) {
+        let sh = canon_shape(sig, c);
+        crate::dom_ctor_bound::ctor_shape_ind(sig, c);
+        let ty = sig.consts[c].ty;
+        let tb = crate::rec_canon::tbody(ty, sh.np + sh.ni);
+        let lps = sig.consts[c].lps;
+        crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, tb, lps, ls);
+        binds_eq(crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, ls), crate::expr_model::subst_expr_levels(tb, lps, ls),
+            tds, ExprSpec::Sort(l));
+        assert forall|q: int| 0 <= q < sh.np && q < xs.len() && sh.pdoms[q] is Sort implies #[trigger] typed(xs[q], Cpt::U) by {
+            assert(tds[q] == crate::expr_model::subst_expr_levels(sh.pdoms[q], lps, ls));
+            let l2 = tds[q]->Sort_0;
+            assert(crate::dom_sound::dfit(sig, tds[q], crate::dom_tele::exts(bot_env(), xs.subrange(0, q)), ds[q], xs[q]));
+            sort_mem_typed(sig, l2, crate::dom_tele::exts(bot_env(), xs.subrange(0, q)), ds[q], xs[q]);
+        }
+    }
+}
+
+/// A simple application's arguments are simple types.
+pub proof fn simple_args(sig: Sig, ind: u64, e: ExprSpec)
+    requires
+        simple_app(sig, ind, e),
+    ensures
+        forall|i: int| 0 <= i < spine_args(e).len() ==> simple_ty(sig, ind, #[trigger] spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        simple_args(sig, ind, *f);
+        let a = spine_args(e);
+        assert forall|i: int| 0 <= i < a.len() implies simple_ty(sig, ind, #[trigger] a[i]) by {
+            if i < a.len() - 1 {
+                assert(a[i] == spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// A CLOSED SIMPLE TYPE'S CODE IS A TYPE.
+pub proof fn ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        simple_ty(sig, outer, e),
+        aw(pe),
+    ensures
+        typed(ceval(sig, r, outer, ls, pe, e), Cpt::U),
+    decreases r, 1int, esize(e),
+{
+    crate::dom_sound::typed_basic();
+    let h = spine_head(e);
+    let (jd, us) = (h->Const_0, h->Const_1);
+    assert(!(e is Var));
+    if !(0 <= rk(sig, jd) < r) {
+        return;
+    }
+    let ca = cargs(sig, r, outer, ls, pe, e);
+    cargs_spine(sig, r, outer, ls, pe, e);
+    cargs_wf(sig, r, outer, ls, pe, e);
+    simple_args(sig, outer, e);
+    spine_args_size(e);
+    assert forall|q: int| 0 <= q < ca.len() implies #[trigger] typed(ca[q], Cpt::U) by {
+        ceval_typed(sig, r, outer, ls, pe, spine_args(e)[q]);
+    }
+    canon_typed(sig, jd, lsub(sig, outer, ls, us), ca);
+}
+
 /// CANONICAL CODES ARE TYPES: their table entries are canonical codes of
-/// lower-ranked formers, or bottom.
+/// lower-ranked formers, parameters' codes, or bottom.
 pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
     requires
         aw(args),
+        sparams_typed(sig, ind, args),
     ensures
         typed(canon_code(sig, ind, ls, args), Cpt::U),
         is_prop_at(sig, ind, ls) ==> typed(canon_code(sig, ind, ls, args), Cpt::Prop),
-    decreases rk(sig, ind) + 1,
+    decreases rk(sig, ind) + 1, 0int, 0int,
 {
     let c = canon_code(sig, ind, ls, args);
     canon_wf(sig, ind, ls, args);
@@ -204,14 +340,14 @@ pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
         let v = ceval(sig, rk(sig, ind), ind, ls, pe, e);
         assert(crate::dom_typing::ecode(en) == v);
         crate::dom_sound::typed_basic();
-        if !(v is Bot) {
-            assert(!(e is Var));
-            let h = spine_head(e);
-            let (jd, us) = (h->Const_0, h->Const_1);
-            assert(0 <= rk(sig, jd) < rk(sig, ind));
-            fpe_aw(args, sh.np, k as nat);
-            cargs_wf(sig, rk(sig, ind), ind, ls, pe, e);
-            canon_typed(sig, jd, lsub(sig, ind, ls, us), cargs(sig, rk(sig, ind), ind, ls, pe, e));
+        fpe_aw(args, sh.np, k as nat);
+        if crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, e) {
+            // a type parameter's code
+            let q = (k + sh.np - 1 - e->Var_0) as int;
+            assert(pe[pe.len() - 1 - e->Var_0] == args[q]);
+            assert(typed(args[q], Cpt::U));
+        } else {
+            ceval_typed(sig, rk(sig, ind), ind, ls, pe, e);
         }
         typed_up(v, Cpt::U, n);
     }
@@ -283,6 +419,7 @@ pub proof fn tf_step(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>, l
     let code = canon_code(sig, c, ls, xs);
     crate::dom_rec_shape::tarity_binds(tds, ExprSpec::Sort(l));
     crate::dom_iota::tbody_binds(tds, ExprSpec::Sort(l));
+    chain_sparams(sig, c, ls, tds, l, ds, xs);
     canon_typed(sig, c, ls, xs);
     if !crate::ti_syntax::is_zero(l) {
         assert(sc == Cpt::U);
@@ -365,6 +502,7 @@ pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
         let sh = canon_shape(sig, ind);
         crate::rec_canon::direct_occ(sh.fields[j][k], ind, sh.us(), sh.np, sh.ni, k as nat)
             || crate::rec_canon::simple_ty(sig, ind, sh.fields[j][k])
+            || crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[j][k])
     }),
 {
     let rid = canon_rec(sig, ind);
@@ -373,10 +511,11 @@ pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
     assert(sh.ctors[j] == sh.ctors[j]);
 }
 
-/// A universe-monomorphic inductive's canonical codes at equally many
-/// arguments share their key and table.
+/// A universe-monomorphic inductive's canonical codes without parameters,
+/// at equally many arguments, share their key and table.
 pub proof fn canon_same_table(sig: Sig, ind: u64, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>)
     requires
+        canon_shape(sig, ind).np == 0,
         sig.consts[ind].lps.len() == 0,
         l1.len() == 0,
         l2.len() == 0,

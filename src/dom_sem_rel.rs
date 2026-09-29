@@ -182,6 +182,138 @@ pub proof fn app_pair(sig: Sig, g: Ctx, f: ExprSpec, f2: ExprSpec, t: ExprSpec, 
     mk_d(sig, node(Rule::AppCong(l1, l2), j, ps));
 }
 
+/// The arguments so far, related at every typed code below their values.
+pub open spec fn tf_prel(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>) -> bool {
+    forall|q: int, c: Cpt| 0 <= q < p.len() && wf(c) && le(c, p[q]) && has_type(n, c, Cpt::U)
+        ==> #[trigger] rel_ty(sig, n, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q], c)
+}
+
+/// One more argument: related below its value (a type former's arguments
+/// at a code other than a sort's are values of which only bottom is a
+/// type), the earlier ones one stage down, on each side's diagonal too.
+#[verifier::spinoff_prover]
+pub proof fn tf_prel_step(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>, ta: ExprSpec, x: ExprSpec, x2: ExprSpec,
+    w: Cpt, bd: Cpt)
+    requires
+        n >= 1,
+        tf_prel(sig, n, g, m, m2, p),
+        crate::beta_model::spine_args(m).len() == p.len(),
+        crate::beta_model::spine_args(m2).len() == p.len(),
+        has_type((n - 1) as nat, w, bd),
+        has_type((n - 1) as nat, bd, Cpt::U),
+        rel_tm(sig, (n - 1) as nat, g, x, x2, ta, w, bd),
+    ensures ({
+        let k = (n - 1) as nat;
+        &&& tf_prel(sig, k, g, sapp(m, x), sapp(m2, x2), p.push(w))
+        &&& tf_prel(sig, k, g, sapp(m, x), sapp(m, x2), p.push(w))
+        &&& tf_prel(sig, k, g, sapp(m2, x), sapp(m2, x2), p.push(w))
+    }),
+{
+    let k = (n - 1) as nat;
+    let (a1, a2) = (crate::beta_model::spine_args(m), crate::beta_model::spine_args(m2));
+    let p2 = p.push(w);
+    assert(crate::beta_model::spine_args(sapp(m, x)) == a1.push(x));
+    assert(crate::beta_model::spine_args(sapp(m, x2)) == a1.push(x2));
+    assert(crate::beta_model::spine_args(sapp(m2, x)) == a2.push(x));
+    assert(crate::beta_model::spine_args(sapp(m2, x2)) == a2.push(x2));
+    let (s1, s2, s3, s4) = (sapp(m, x), sapp(m2, x2), sapp(m, x2), sapp(m2, x));
+    assert forall|q: int, c: Cpt| 0 <= q < p2.len() && wf(c) && le(c, p2[q]) && has_type(k, c, Cpt::U) implies
+        #[trigger] rel_ty(sig, k, g, crate::beta_model::spine_args(s1)[q], crate::beta_model::spine_args(s2)[q], c) by {
+        tf_prel_at(sig, n, g, m, m2, p, ta, x, x2, w, bd, q, c);
+    }
+    assert forall|q: int, c: Cpt| 0 <= q < p2.len() && wf(c) && le(c, p2[q]) && has_type(k, c, Cpt::U) implies
+        #[trigger] rel_ty(sig, k, g, crate::beta_model::spine_args(s1)[q], crate::beta_model::spine_args(s3)[q], c) by {
+        tf_prel_at(sig, n, g, m, m2, p, ta, x, x2, w, bd, q, c);
+    }
+    assert forall|q: int, c: Cpt| 0 <= q < p2.len() && wf(c) && le(c, p2[q]) && has_type(k, c, Cpt::U) implies
+        #[trigger] rel_ty(sig, k, g, crate::beta_model::spine_args(s4)[q], crate::beta_model::spine_args(s2)[q], c) by {
+        tf_prel_at(sig, n, g, m, m2, p, ta, x, x2, w, bd, q, c);
+    }
+}
+
+/// One argument of `tf_prel_step`.
+proof fn tf_prel_at(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>, ta: ExprSpec, x: ExprSpec, x2: ExprSpec,
+    w: Cpt, bd: Cpt, q: int, c: Cpt)
+    requires
+        n >= 1,
+        tf_prel(sig, n, g, m, m2, p),
+        crate::beta_model::spine_args(m).len() == p.len(),
+        crate::beta_model::spine_args(m2).len() == p.len(),
+        has_type((n - 1) as nat, w, bd),
+        has_type((n - 1) as nat, bd, Cpt::U),
+        rel_tm(sig, (n - 1) as nat, g, x, x2, ta, w, bd),
+        0 <= q < p.len() + 1,
+        wf(c),
+        le(c, p.push(w)[q]),
+        has_type((n - 1) as nat, c, Cpt::U),
+    ensures ({
+        let k = (n - 1) as nat;
+        let (a1, a2) = (crate::beta_model::spine_args(m), crate::beta_model::spine_args(m2));
+        &&& rel_ty(sig, k, g, a1.push(x)[q], a2.push(x2)[q], c)
+        &&& rel_ty(sig, k, g, a1.push(x)[q], a1.push(x2)[q], c)
+        &&& rel_ty(sig, k, g, a2.push(x)[q], a2.push(x2)[q], c)
+        &&& crate::beta_model::spine_args(sapp(m, x)) == a1.push(x)
+        &&& crate::beta_model::spine_args(sapp(m, x2)) == a1.push(x2)
+        &&& crate::beta_model::spine_args(sapp(m2, x)) == a2.push(x)
+        &&& crate::beta_model::spine_args(sapp(m2, x2)) == a2.push(x2)
+    }),
+{
+    let k = (n - 1) as nat;
+    let (a1, a2) = (crate::beta_model::spine_args(m), crate::beta_model::spine_args(m2));
+    if q < p.len() {
+        crate::dom_adeq_base::ty_up(k, n, c, Cpt::U);
+        assert(p.push(w)[q] == p[q]);
+        assert(rel_ty(sig, n, g, a1[q], a2[q], c));
+        crate::dom_rel_per::symm_ty(sig, n, g, a1[q], a2[q], c);
+        crate::dom_rel_per::trans_ty(sig, n, g, a1[q], a2[q], a1[q], c);
+        crate::dom_rel_per::trans_ty(sig, n, g, a2[q], a1[q], a2[q], c);
+        crate::dom_rel_stab::stab_ty(sig, k, g, a1[q], a2[q], c);
+        crate::dom_rel_stab::stab_ty(sig, k, g, a1[q], a1[q], c);
+        crate::dom_rel_stab::stab_ty(sig, k, g, a2[q], a2[q], c);
+        assert(a1.push(x)[q] == a1[q] && a2.push(x2)[q] == a2[q] && a1.push(x2)[q] == a1[q] && a2.push(x)[q] == a2[q]);
+    } else {
+        assert(a1.push(x)[q] == x && a2.push(x2)[q] == x2 && a1.push(x2)[q] == x2 && a2.push(x)[q] == x);
+        tf_arg_rel(sig, k, g, ta, x, x2, w, bd, c);
+    }
+}
+
+/// A type former's argument, related at its domain's code, is related as a
+/// type at every typed code below its value.
+pub proof fn tf_arg_rel(sig: Sig, k: nat, g: Ctx, ta: ExprSpec, x: ExprSpec, x2: ExprSpec, w: Cpt, bd: Cpt, c: Cpt)
+    requires
+        has_type(k, w, bd),
+        has_type(k, bd, Cpt::U),
+        rel_tm(sig, k, g, x, x2, ta, w, bd),
+        wf(c),
+        le(c, w),
+        has_type(k, c, Cpt::U),
+    ensures
+        rel_ty(sig, k, g, x, x2, c),
+{
+    if c is Bot {
+        ty_bot(sig, k, g, x, x2);
+        return;
+    }
+    head_le(c, w);
+    match bd {
+        Cpt::U | Cpt::Prop => {
+            tm_sort(sig, k, g, x, x2, ta, w);
+            if bd is Prop {
+                prop_is_type(k, w);
+            }
+            crate::dom_rel_mono::decr_ty(sig, k, g, x, x2, c, w);
+        },
+        Cpt::Bot => {
+            ty_of_bot(k, w);
+        },
+        _ => {
+            // a value of a Pi's or an inductive's code, of which only bottom
+            // is a type
+            assert(false);
+        },
+    }
+}
+
 /// THE RELATION AT A TYPE FORMER: an approximation of its code function,
 /// down the remaining telescope `tel` with inputs `p`, relates two
 /// convertible terms of a type related to itself.
@@ -193,6 +325,9 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
         !crate::ti_syntax::is_def(sig, c, crate::beta_model::spine_head(m)->Const_1),
         !crate::ti_syntax::is_def(sig, c, crate::beta_model::spine_head(m2)->Const_1),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
+        crate::beta_model::spine_args(m).len() == p.len(),
+        crate::beta_model::spine_args(m2).len() == p.len(),
+        tf_prel(sig, n, g, m, m2, p),
         tf_fun(sig, c, ls, tel, p, u),
         has_type(n, u, a),
         has_type(n, a, Cpt::U),
@@ -225,6 +360,8 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
                 app_pair(sig, g, m, m, t, ta, tb, x, x2);
                 app_pair(sig, g, m2, m2, t, ta, tb, x, x2);
                 app_pair(sig, g, m, m2, t, ta, tb, x, x2);
+                crate::dom_con_rel::pi_dom_typed(n, a);
+                tf_prel_step(sig, n, g, m, m2, p, ta, x, x2, w, bd);
                 tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m, x), sapp(m, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
                 tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m2, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
                 tf_rel(sig, k, g, c, ls, *b, p.push(w), sapp(m, x), sapp(m2, x2), inst(0, x, tb), crate::dom_compact::app(u, w), cod(a, w));
@@ -241,12 +378,28 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
             mk_t(sig, d, rs(sig, t));
             tchain_one(sig, g, m, m2);
             ty_inv(n, u, a);
-            let code = crate::dom_code::canon_code(sig, c, ls, p);
-            crate::dom_lift::canon_is_tbl(sig, c, ls, p);
-            if !(u is Bot) {
-                crate::dom_lift::tbl_canon_le(sig, c, u, code);
+            if a is Prop {
+                prop_is_type(n, u);
             }
-            crate::dom_lift::canon_rel(sig, n, g, m, m2, u);
+            let code = crate::dom_code::canon_code(sig, c, ls, p);
+            let sc = crate::dom_code::canon_shape(sig, c);
+            let cs = if p.len() >= sc.np { p } else { p + Seq::new((sc.np - p.len()) as nat, |_i: int| Cpt::Bot) };
+            crate::dom_lift::canon_bnd(sig, c, ls, p, cs, u);
+            crate::dom_lift::iapp_self(sig, m);
+            crate::dom_lift::iapp_self(sig, m2);
+            assert forall|q: int, c2: Cpt| 0 <= q < sc.np && sc.pdoms[q] is Sort && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
+                implies #[trigger] rel_ty(sig, n, g, crate::dom_lift::pq(sig, c, m, q), crate::dom_lift::pq(sig, c, m2, q), c2) by {
+                if q < p.len() {
+                    assert(cs[q] == p[q]);
+                } else {
+                    assert(cs[q] == Cpt::Bot);
+                    if !(c2 is Bot) {
+                        head_le(c2, cs[q]);
+                    }
+                    ty_bot(sig, n, g, crate::dom_lift::pq(sig, c, m, q), crate::dom_lift::pq(sig, c, m2, q));
+                }
+            }
+            crate::dom_lift::canon_rel(sig, n, g, m, m2, cs, u);
         },
         _ => {},
     }

@@ -239,8 +239,39 @@ pub proof fn wk_closed(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
     mk_d(sig, e);
 }
 
+/// SUBJECT REDUCTION's Iota case: a firing recursor application converts
+/// with its rule instance.
+#[verifier::spinoff_prover]
+proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, m, m, t)),
+        crate::ti_hred::rec_fire(sig, m),
+    ensures
+        derivable(sig, eq(g, m, crate::beta_model::rec_result(sig.ienv, m), t)),
+{
+    let dm = get(sig, eq(g, m, m, t));
+    let h = crate::beta_model::spine_head(m);
+    let rd = sig.ienv.recs[h->Const_0];
+    let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
+    let pr = crate::iota_sr::fired_rule(sig, m);
+    crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
+    assert(crate::dom_rec_end::rec_frag(sig, h->Const_0));
+    crate::dom_rec_conv::sr_ok_of(sig, h->Const_0, h->Const_1, pr);
+    crate::iota_sr::iota_sr(sig, g, m, t);
+    let n = crate::beta_model::rec_result(sig.ienv, m);
+    let d1 = get(sig, eq(g, n, n, t));
+    let ij = eq(g, m, n, t);
+    let ip = seq![dm, d1];
+    assert(prems(ip, seq![eq(g, m, m, t), eq(g, n, n, t)]));
+    valid_node(sig, Rule::Iota, ij, ip);
+    mk_d(sig, node(Rule::Iota, ij, ip));
+}
+
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its
 /// type.
+#[verifier::spinoff_prover]
 pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
         sig_wf(sig),
@@ -296,21 +327,7 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
                 conv_chain(sig, g, m, m2, inst(0, *x, b1), t);
             } else if crate::ti_hred::rec_fire(sig, m) {
                 // iota: the rule instance is typed at the redex's type
-                let h = crate::beta_model::spine_head(m);
-                let rd = sig.ienv.recs[h->Const_0];
-                let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
-                let pr = crate::iota_sr::fired_rule(sig, m);
-                crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
-                assert(crate::dom_rec_end::rec_frag(sig, h->Const_0));
-                crate::dom_rec_conv::sr_ok_of(sig, h->Const_0, h->Const_1, pr);
-                crate::iota_sr::iota_sr(sig, g, m, t);
-                let n = crate::beta_model::rec_result(sig.ienv, m);
-                let d1 = get(sig, eq(g, n, n, t));
-                let ij = eq(g, m, n, t);
-                let ip = seq![dm, d1];
-                assert(prems(ip, seq![eq(g, m, m, t), eq(g, n, n, t)]));
-                valid_node(sig, Rule::Iota, ij, ip);
-                mk_d(sig, node(Rule::Iota, ij, ip));
+                sr_iota(sig, g, m, t);
             } else {
                 // the major of a recursor application, reduced in place
                 assert(crate::ti_hred::rec_major(sig, m));

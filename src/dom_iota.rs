@@ -658,10 +658,11 @@ pub proof fn rec_field_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, 
 pub proof fn major_bnd(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_rec_ty::rshape(sig, rid).np == 0,
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
     ensures
         ds[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int] is Bot
-            || crate::dom_lift::tbl_canon(sig, crate::dom_rec_ty::rshape(sig, rid).ind,
+            || crate::dom_lift::tbl_canon(sig, crate::dom_rec_ty::rshape(sig, rid).ind, Seq::empty(),
                 ds[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int]),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -684,7 +685,8 @@ pub proof fn major_bnd(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs:
     if !(dm is Bot) {
         let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
         crate::dom_lift::canon_is_tbl(sig, sh.ind, us2, ws);
-        crate::dom_lift::tbl_canon_le(sig, sh.ind, dm, crate::dom_code::canon_code(sig, sh.ind, us2, ws));
+        crate::dom_lift::tbl_canon_le(sig, sh.ind, ws, dm, crate::dom_code::canon_code(sig, sh.ind, us2, ws));
+        crate::dom_lift::tbl_canon_np0(sig, sh.ind, ws, Seq::empty(), dm);
     }
 }
 
@@ -1098,6 +1100,7 @@ pub proof fn rhs_body_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: Le
 pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, dsf: Seq<Cpt>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_rec_ty::rshape(sig, rid).np == 0,
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
         crate::dom_tele::chain_ok(sig, mfds(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
@@ -1505,6 +1508,7 @@ pub open spec fn cf_fields_ok(sig: Sig, rid: u64, p: int, xf: Seq<Cpt>, ak: Seq<
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
     &&& crate::dom_code::fields_typed(sig, sh.ind)
+    &&& sh.np == 0
     &&& xf.len() == sh.fields[p].len()
     &&& ak.len() == xf.len()
     &&& crate::dom_code::aw(xf)
@@ -1578,6 +1582,7 @@ pub proof fn cf_chain(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, xf: Seq<C
     let xsc = bn + xf;
     crate::dom_sound::typed_basic();
     assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_canon::bots_sparams(sig, ind, bn);
     crate::dom_canon::canon_typed(sig, ind, Seq::empty(), bn);
     assert forall|i: int| 0 <= i < tds.len() implies #[trigger] crate::dom_sound::dfit(sig, tds[i],
         crate::dom_tele::exts(bot_env(), xsc.subrange(0, i)), dsc[i], xsc[i]) by {
@@ -1629,6 +1634,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, xf: Seq<Cpt>, ak: Seq<Cpt>
     let bn = bots(np);
     let dcan = crate::dom_code::canon_code(sig, ind, Seq::empty(), bn);
     assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_canon::bots_sparams(sig, ind, bn);
     crate::dom_canon::canon_typed(sig, ind, Seq::empty(), bn);
     typed_wf(dcan, Cpt::U);
     let val = Cpt::Nd(NdKey::Con(ind, p as nat), xf);
@@ -1658,12 +1664,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, xf: Seq<Cpt>, ak: Seq<Cpt>
             crate::dom_code::fpe_aw(bn, np, k as nat);
             crate::dom_canon::closed_bound(sig, ind, Seq::empty(), pe, e, bot_env(), ak[k]);
             crate::dom_sound::typed_basic();
-            if !(cv is Bot) {
-                let h = crate::beta_model::spine_head(e);
-                crate::dom_code::cargs_wf(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
-                crate::dom_canon::canon_typed(sig, h->Const_0, crate::dom_code::lsub(sig, ind, Seq::empty(), h->Const_1),
-                    crate::dom_code::cargs(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e));
-            }
+            crate::dom_canon::ceval_typed(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
             typed_weak(xf[k], ak[k], cv);
             crate::dom_code::ceval_wf(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
             crate::dom_typing::tbl_lower(dcan);
@@ -1701,6 +1702,7 @@ pub proof fn cf_step(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, xf: Seq<Cp
     let bn = bots(np);
     let dcan = crate::dom_code::canon_code(sig, ind, Seq::empty(), bn);
     assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_canon::bots_sparams(sig, ind, bn);
     crate::dom_canon::canon_typed(sig, ind, Seq::empty(), bn);
     let dsc = cf_ds(sig, rid, p, ak);
     let xsc = bn + xf;
@@ -1794,6 +1796,7 @@ pub proof fn ind_any_mem(sig: Sig, rid: u64, from: nat, env: Env)
 pub proof fn typed_at_canon(sig: Sig, rid: u64, from: nat, env: Env, x: Cpt, d: Cpt)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_rec_ty::rshape(sig, rid).np == 0,
         sig.consts[crate::dom_rec_ty::rshape(sig, rid).ind].lps.len() == 0,
         crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, rid).ind, Seq::empty()),
         forall|i: nat| #[trigger] wf(env(i)),
@@ -1809,6 +1812,7 @@ pub proof fn typed_at_canon(sig: Sig, rid: u64, from: nat, env: Env, x: Cpt, d: 
     let (ind, np) = (sh.ind, sh.np);
     let bn = bots(np);
     assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_canon::bots_sparams(sig, ind, bn);
     crate::dom_canon::canon_typed(sig, ind, Seq::empty(), bn);
     let cb = crate::dom_code::canon_code(sig, ind, Seq::empty(), bn);
     typed_wf(x, d);
@@ -1828,6 +1832,7 @@ pub proof fn typed_at_canon(sig: Sig, rid: u64, from: nat, env: Env, x: Cpt, d: 
         assert(mem(sig, args[i], env, ws[i]));
     }
     let cw = crate::dom_code::canon_code(sig, ind, Seq::empty(), ws);
+    assert(ws.len() == 0);
     crate::dom_canon::canon_typed(sig, ind, Seq::empty(), ws);
     typed_weak(x, d, cw);
     crate::dom_canon::canon_same_table(sig, ind, Seq::empty(), Seq::empty(), ws, bn);
@@ -2116,6 +2121,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_model::sem_const(sig, sh.ctors[p], clv)
     &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
     &&& crate::dom_code::fields_typed(sig, sh.ind)
+    &&& sh.np == 0
     &&& forall|k: int| 0 <= k < sh.fields[p].len() && !isrec(sig, rid, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
         && crate::expr_model::subst_expr_levels(sh.fields[p][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[p][k]
@@ -2377,6 +2383,7 @@ pub proof fn iota_core_r2l(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: L
     let dcan = crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), bn);
     cf_val_typed(sig, rid, p, xf, ak);
     assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_canon::bots_sparams(sig, sh.ind, bn);
     crate::dom_canon::canon_typed(sig, sh.ind, Seq::empty(), bn);
     let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
     major_form(sig, rid, lv);

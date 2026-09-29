@@ -658,6 +658,34 @@ Stages, each landing through the gate:
     instances, and relating a field type at two instances needs a
     conversion between level-equivalent terms that the judgment does not
     provide as a lemma yet.
+  P1b landed (90cb8e2): typing no longer asks entries to be inductive
+  codes.
+  **P1c + P3, the design (2026-09-29).** Fields typed by parameters
+  (`List α`, `Option α`, `Prod α β`, and formers applied to them) enter
+  together with the lemmas that use them, because every closed-fragment
+  shortcut (`fq_closed`, `cf`, `closed_bound`, `con_below`) gets its
+  parameter case at once:
+  - Fragment: a field type is a direct occurrence or a simple type over the
+    parameters (`Var` of a parameter, or another former applied to simple
+    types); `fields_typed` states it typed in the parameters' context. The
+    recursor fragment keeps closed fields (`fields_plain`) until P4.
+  - Canonical bound with parameters: `tbl_canon(j, pv, a)`, entries below
+    `ceval(F, pv)`. Downward closed, monotone in `pv`.
+  - Lifting: `rel_ty(F[Q], F[Q2], c)` for `c` below `ceval(F, pv)`, by rank
+    and `F`'s size, given the parameters' relation at every typed code
+    below theirs; the `Var` case is that hypothesis, a former applied to
+    arguments recurses with the arguments' codes as the parameters'.
+  - Transfer: a parameter's code is arbitrary (a Pi code, say), so a field
+    typed by a parameter moves through that code by `incr`/`decr` at the
+    big stage, where the parameter's value is typed and related (the
+    constructor induction records parameters as it records fields); a
+    former applied to arguments moves by `con_below`, which takes the
+    transfer for its parameters as a hypothesis in place of the closed
+    fragment.
+  - Open for P4: with the table clause, the relation gives no
+    injectivity for parameters a field does not mention; the recursor's
+    Iota with parameters needs the rule instance typed, which the
+    parameters' conversion gives where fields mention them.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

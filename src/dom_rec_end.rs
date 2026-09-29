@@ -42,10 +42,25 @@ pub proof fn tm_ty(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprS
     reveal_with_fuel(con_tm, 2);
 }
 
+/// Where a value of the major's inductive is related: below its canonical
+/// table at a recursive position, below the (closed) field type's
+/// canonical code elsewhere.
+pub open spec fn fbnd(sig: Sig, ind: u64, ty: ExprSpec, rec: bool, c: Cpt) -> bool {
+    if rec {
+        crate::dom_lift::tbl_canon(sig, ind, Seq::empty(), c)
+    } else {
+        &&& le(c, crate::dom_code::ceval(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), Seq::empty(), ty))
+        &&& crate::rec_canon::simple_ty(sig, ind, ty)
+        &&& crate::dom_canon::ranked(sig, ty, crate::dom_code::rk(sig, ind))
+        &&& crate::dom_code::styped(sig, ty)
+    }
+}
+
 /// A CONSTRUCTOR ARGUMENT, projected: typed at a code its type relates
 /// to itself at, below a value its terms are constructor-related at (at
-/// that value's own code and stage).
-pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty: ExprSpec, v: Cpt, d: Cpt, n0: nat, w: Cpt, c: Cpt)
+/// that value's own code and stage), both codes bounded alike.
+pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty: ExprSpec, v: Cpt, d: Cpt, n0: nat, w: Cpt, c: Cpt,
+    ind: u64, rec: bool)
     requires
         has_type(n, v, d),
         has_type(n, d, Cpt::U),
@@ -53,9 +68,10 @@ pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty
         le(v, w),
         wf(v),
         wf(w),
+        n <= n0,
+        crate::dom_code::canon_shape(sig, ind).np == 0,
         w is Bot || (con_top(sig, n0, g, y, y2, ty, w, c) && has_type(n0, w, c) && has_type(n0, c, Cpt::U)
-            && c is Nd && c->Nd_0 is Ty && crate::dom_lift::tbl_canon(sig, c->Nd_0->Ty_0, c)
-            && (d is Bot || crate::dom_lift::tbl_canon(sig, c->Nd_0->Ty_0, d))),
+            && c is Nd && c->Nd_0 is Ty && fbnd(sig, ind, ty, rec, c) && (d is Bot || fbnd(sig, ind, ty, rec, d))),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
     ensures
         rel_tm(sig, n, g, y, y2, ty, v, d),
@@ -65,11 +81,16 @@ pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty
         return;
     }
     head_le(v, w);
-    con_tm_unfold(sig, n0, g, y, y2, ty, w, c);
     assert(v is Nd && v->Nd_0 is Con);
     crate::dom_con_rel::val_code(n, v, d);
-    crate::dom_lift::con_below(sig, n0, n, g, y, y2, ty, ty, w, v, c, d);
-    tm_ty(sig, n, g, y, y2, ty, v, d);
+    if rec {
+        crate::dom_lift::con_below(sig, n0, n, g, y, y2, ty, ty, w, v, c, d, Seq::empty());
+        tm_ty(sig, n, g, y, y2, ty, v, d);
+    } else {
+        crate::dom_lift::closed_rel(sig, n0, g, ind, ty, c);
+        tm_ty(sig, n0, g, y, y2, ty, w, c);
+        crate::dom_lift::closed_below(sig, n0, n, g, ind, ty, y, y2, w, v, c, d);
+    }
 }
 
 /// A constructor application a term reduces to is stuck and reduces to
@@ -295,9 +316,8 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, rho: crate::dom_mod
         crate::dom_model::mem(sig, crate::dom_rec_ty::rshape(sig, c).fields[j][k], rho, d),
         forall|i: nat| #[trigger] wf(rho(i)),
     ensures
-        d is Bot || (d is Nd && d->Nd_0 is Ty
-            && d->Nd_0->Ty_0 == spine_head(crate::dom_rec_ty::rshape(sig, c).fields[j][k])->Const_0
-            && crate::dom_lift::tbl_canon(sig, d->Nd_0->Ty_0, d)),
+        d is Bot || fbnd(sig, crate::dom_rec_ty::rshape(sig, c).ind, crate::dom_rec_ty::rshape(sig, c).fields[j][k],
+            crate::dom_iota::isrec(sig, c, j, k), d),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let ind = sh.ind;
@@ -313,14 +333,12 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, rho: crate::dom_mod
         assert(sh.us() =~= Seq::<LevelSpec>::empty());
         assert(spine_args(f) =~= Seq::<ExprSpec>::empty());
         let ws = crate::dom_ctor_bound::ind_bound(sig, ind, Seq::empty(), rho, d);
+        assert(ws =~= Seq::<Cpt>::empty());
         crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), ws);
-        crate::dom_lift::tbl_canon_le(sig, ind, d, crate::dom_code::canon_code(sig, ind, Seq::empty(), ws));
+        crate::dom_lift::tbl_canon_le(sig, ind, Seq::empty(), d, crate::dom_code::canon_code(sig, ind, Seq::empty(), ws));
     } else {
-        crate::dom_canon::canon_fields(sig, ind, j, k);
-        reveal(crate::dom_code::fields_typed);
-        assert(crate::dom_code::ftyped(sig, ind, j, k, Seq::empty()));
+        crate::dom_lift::field_facts(sig, ind, j, k);
         crate::dom_canon::closed_bound(sig, ind, Seq::empty(), Seq::empty(), f, rho, d);
-        crate::dom_lift::below_cf(sig, ind, j, k, d);
     }
 }
 
@@ -480,8 +498,7 @@ pub open spec fn rc_field(sig: Sig, rc: Rc, i: int) -> bool {
     &&& (rc.fsm(sig)[i] is Bot || (con_top(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i], rc.fsm(sig)[i], rc.fcode(sig, i))
         && has_type(rc.nn, rc.fsm(sig)[i], rc.fcode(sig, i)) && has_type(rc.nn, rc.fcode(sig, i), Cpt::U)
         && rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty
-        && rc.fcode(sig, i)->Nd_0->Ty_0 == spine_head(sh.fields[rc.j][i])->Const_0
-        && crate::dom_lift::tbl_canon(sig, rc.fcode(sig, i)->Nd_0->Ty_0, rc.fcode(sig, i))))
+        && fbnd(sig, sh.ind, sh.fields[rc.j][i], crate::dom_iota::isrec(sig, rc.c, rc.j, i), rc.fcode(sig, i))))
 }
 
 /// The end's context holds: the invariant at the end of the telescope, a
@@ -502,7 +519,7 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     &&& rc.fsm(sig).len() == rc.nf(sig)
     &&& rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig)
     &&& rc.ds[pre] is Nd && rc.ds[pre]->Nd_0 is Ty
-    &&& crate::dom_lift::tbl_canon(sig, sh.ind, rc.ds[pre])
+    &&& crate::dom_lift::tbl_canon(sig, sh.ind, Seq::empty(), rc.ds[pre])
     &&& tel_dom(rc.t0(sig), rc.xs, pre as nat) == rc.ind(sig)
     &&& con_tm(sig, rc.nn, rc.g, rc.xs[pre], rc.xs2[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
     &&& hred(sig, rc.xs[pre], rc.cx(sig)) && hred(sig, rc.xs2[pre], rc.cx2(sig))
@@ -661,16 +678,18 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
                     ty_of_bot(nn, fsm[i]);
                 }
                 assert(tbl(dm->Nd_1)[j]->Nd_1[i] == es[i]);
-                assert(crate::dom_lift::entry_canon(sig, sh.ind, j, i, es[i]));
+                assert(crate::dom_lift::entry_canon(sig, sh.ind, Seq::empty(), j, i, es[i]));
+                crate::dom_canon::canon_fields(sig, sh.ind, j, i);
                 crate::dom_lift::fq_closed(sig, sh.ind, ci, j, i);
+                crate::dom_lift::field_facts(sig, sh.ind, j, i);
+                assert(crate::dom_lift::cf(sig, sh.ind, Seq::empty(), j, i)
+                    == crate::dom_code::ceval(sig, crate::dom_code::rk(sig, sh.ind), sh.ind, Seq::empty(), Seq::empty(), sh.fields[j][i]));
                 tm_ty(sig, nn, g, args[i], args2[i], arg_ty(sig, cx, i as nat), fsm[i], ec);
-                assert(crate::dom_lift::entry_canon(sig, sh.ind, j, i, es[i]));
-                crate::dom_lift::below_cf(sig, sh.ind, j, i, ec);
                 assert(rc.fcode(sig, i) == ec);
             } else {
                 assert(has_type(nn, fsm[i], dm));
                 assert(tbl(dm->Nd_1)[j]->Nd_1[i] == es[i]);
-                assert(crate::dom_lift::entry_canon(sig, sh.ind, j, i, es[i]));
+                assert(crate::dom_lift::entry_canon(sig, sh.ind, Seq::empty(), j, i, es[i]));
                 assert(rc.fcode(sig, i) == dm);
                 assert(spine_head(sh.fields[j][i]) == ExprSpec::Const(sh.ind, sh.us()));
                 assert(sh.us() =~= Seq::<LevelSpec>::empty());
@@ -679,8 +698,6 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
                 assert(sh.fields[j][i] == ci);
             }
             assert(rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty);
-            assert(rc.fcode(sig, i)->Nd_0->Ty_0 == spine_head(sh.fields[rc.j][i])->Const_0);
-            assert(crate::dom_lift::tbl_canon(sig, rc.fcode(sig, i)->Nd_0->Ty_0, rc.fcode(sig, i)));
         }
     }
     rc
@@ -1096,7 +1113,7 @@ pub proof fn ih_flds(sig: Sig, rc: Rc, kf: int)
             assert(ys[i] == rc.args[kf] && ys2[i] == rc.args2[kf] && fz[i] == v);
             le_refl(v);
             crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[pre], rc.cx(sig), ci);
-            con_rel_arg(sig, rc.nn, rc.g, rc.args[kf], rc.args2[kf], ci, v, dm, rc.nn, v, rc.fcode(sig, kf));
+            con_rel_arg(sig, rc.nn, rc.g, rc.args[kf], rc.args2[kf], ci, v, dm, rc.nn, v, rc.fcode(sig, kf), crate::dom_rec_ty::rshape(sig, rc.c).ind, true);
         }
     }
 }
@@ -1463,7 +1480,8 @@ pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
     assert(crate::dom_rec_minor::fields_plain(sig, rc.c, rc.sm.0, rc.j));
     msds_at(sig, rc.c, rc.sm.0, rc.j, k as int);
     field_dom_bnd(sig, rc.c, rc.j, k as int, w.rho(k), *a->Pi_0);
-    con_rel_arg(sig, (n - 1) as nat, rc.g, rc.args[k as int], rc.args2[k as int], ta, w.wv(k), *a->Pi_0, rc.nn, w.ws[k as int], rc.fcode(sig, k as int));
+    con_rel_arg(sig, (n - 1) as nat, rc.g, rc.args[k as int], rc.args2[k as int], ta, w.wv(k), *a->Pi_0, rc.nn, w.ws[k as int], rc.fcode(sig, k as int),
+        sh.ind, crate::dom_iota::isrec(sig, rc.c, rc.j, k as int));
 }
 
 /// The motive's type at a level instance: the inductive to a sort.
@@ -1640,12 +1658,14 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     let ws0 = crate::dom_ctor_bound::ind_bound(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind, Seq::empty(), crate::dom_model::bot_env(), d0);
     if !(d0 is Bot) {
         let ind = crate::dom_rec_ty::rshape(sig, rc.c).ind;
+        assert(ws0 =~= Seq::<Cpt>::empty());
         crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), ws0);
-        crate::dom_lift::tbl_canon_le(sig, ind, d0, crate::dom_code::canon_code(sig, ind, Seq::empty(), ws0));
+        crate::dom_lift::tbl_canon_le(sig, ind, Seq::empty(), d0, crate::dom_code::canon_code(sig, ind, Seq::empty(), ws0));
     }
     crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[pre], rc.cx(sig), ci);
-    con_rel_arg(sig, k1, rc.g, x, x, ci, jw, d0, nn, wx, dm);
-    con_rel_arg(sig, k1, rc.g, rc.cx(sig), x, ci, jw, d0, nn, wx, dm);
+    let ind = crate::dom_rec_ty::rshape(sig, rc.c).ind;
+    con_rel_arg(sig, k1, rc.g, x, x, ci, jw, d0, nn, wx, dm, ind, true);
+    con_rel_arg(sig, k1, rc.g, rc.cx(sig), x, ci, jw, d0, nn, wx, dm, ind, true);
     app_tm_elim(sig, k1, rc.g, p, p2, ci, sp, pv, dp, x, x, jw);
     app_tm_elim(sig, k1, rc.g, p, p2, ci, sp, pv, dp, rc.cx(sig), x, jw);
     assert(inst(0, x, sp) == sp);

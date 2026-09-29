@@ -1,9 +1,9 @@
-//! THE LIFTING LEMMA (docs/TYPED_TARGET.md, S6 "Parameters", P2b): the
-//! type relation at canonical codes. For the fragment's closed field types
-//! a typed stuck application of an inductive is related to itself at every
-//! canonical code of the inductive at its level instance: the type clause's
-//! table relates the field types at their entries' codes, which are the
-//! field types' canonical codes one rank down.
+//! THE LIFTING LEMMA and the transfers (docs/TYPED_TARGET.md, S6
+//! "Parameters", P2b, P3): the type relation at codes below canonical
+//! tables, and the constructor clause moved between two such codes. A
+//! closed field type's entry is its canonical code one rank down; a type
+//! parameter's entry its code, where the parameters' relation (`prel`) and
+//! transfer (`ptr`) are the callers' to give.
 #[allow(unused_imports)]
 use crate::expr_model::{BinderKind, ExprSpec};
 #[allow(unused_imports)]
@@ -74,38 +74,68 @@ pub proof fn simple_head(sig: Sig, ind: u64, e: ExprSpec)
     }
 }
 
-/// The canonical code of `ind`'s constructor `p`'s field `k`, a closed
-/// simple type in the fragment (so read at no parameters).
-pub open spec fn cf(sig: Sig, ind: u64, p: int, k: int) -> Cpt {
-    ceval(sig, rk(sig, ind), ind, Seq::empty(), Seq::empty(), canon_shape(sig, ind).fields[p][k])
+
+/// The `q`-th parameter of the application of `j` a type reduces to.
+pub open spec fn pq(sig: Sig, j: u64, t: ExprSpec, q: int) -> ExprSpec {
+    spine_args(ir(sig, t, j))[q]
 }
 
-/// A table entry below the canonical one: a recursive marker only at a
-/// direct occurrence, a code only elsewhere and below the field type's
+/// The canonical code of `ind`'s constructor `p`'s field `k` at the
+/// parameters' codes `pv` (monomorphic, so at no level instance).
+pub open spec fn cf(sig: Sig, ind: u64, pv: Seq<Cpt>, p: int, k: int) -> Cpt {
+    let sh = canon_shape(sig, ind);
+    ceval(sig, rk(sig, ind), ind, Seq::empty(), fpe(pv, sh.np, k as nat), sh.fields[p][k])
+}
+
+/// A table entry below the canonical one at `pv`: a recursive marker only
+/// at a direct occurrence, a code only elsewhere and below the field's
 /// canonical code.
-pub open spec fn entry_canon(sig: Sig, j: u64, p: int, k: int, e: Cpt) -> bool {
+pub open spec fn entry_canon(sig: Sig, j: u64, pv: Seq<Cpt>, p: int, k: int, e: Cpt) -> bool {
     let sh = canon_shape(sig, j);
     &&& 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
     &&& e == crate::dom_typing::rmark() ==> crate::rec_canon::direct_occ(sh.fields[p][k], j, sh.us(), sh.np, sh.ni, k as nat)
     &&& is_centry(e) ==> !crate::rec_canon::direct_occ(sh.fields[p][k], j, sh.us(), sh.np, sh.ni, k as nat)
-        && le(ecode(e), cf(sig, j, p, k))
+        && le(ecode(e), cf(sig, j, pv, p, k))
 }
 
-/// A CODE OF `j` BELOW THE CANONICAL TABLE: its table, if any, is `j`'s
-/// canonical table (which needs `j` monomorphic with typed fields) with
-/// entries below the canonical ones.
-pub open spec fn tbl_canon(sig: Sig, j: u64, a: Cpt) -> bool {
+/// A CODE OF `j` BELOW THE CANONICAL TABLE at the parameters' codes `pv`:
+/// its table, if any, is `j`'s canonical table with entries below the
+/// canonical ones.
+pub open spec fn tbl_canon(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt) -> bool {
     &&& a is Nd && a->Nd_0 is Ty && a->Nd_0->Ty_0 == j
+    &&& pv.len() >= canon_shape(sig, j).np
     &&& tbl(a->Nd_1).len() > 0 ==> canon_ok(sig, j) && tbl(a->Nd_1).len() == canon_shape(sig, j).nmin()
     &&& forall|p: int, k: int| 0 <= p < tbl(a->Nd_1).len() && tbl(a->Nd_1)[p] is Nd && 0 <= k < tbl(a->Nd_1)[p]->Nd_1.len()
-        ==> #[trigger] entry_canon(sig, j, p, k, tbl(a->Nd_1)[p]->Nd_1[k])
+        ==> #[trigger] entry_canon(sig, j, pv, p, k, tbl(a->Nd_1)[p]->Nd_1[k])
 }
 
+/// THE PARAMETERS' RELATION: at every typed code below a type parameter's
+/// code, the two applications' parameters are related.
+pub open spec fn prel(sig: Sig, n: nat, g: Ctx, j: u64, e: ExprSpec, e2: ExprSpec, pv: Seq<Cpt>) -> bool {
+    let sh = canon_shape(sig, j);
+    forall|q: int, c: Cpt| 0 <= q < sh.np && sh.pdoms[q] is Sort && wf(c) && le(c, pv[q]) && has_type(n, c, Cpt::U)
+        ==> #[trigger] rel_ty(sig, n, g, pq(sig, j, e, q), pq(sig, j, e2, q), c)
+}
 
-/// A CANONICAL CODE IS BELOW ITS OWN TABLE.
+/// THE PARAMETERS' TRANSFER: at a type parameter, a value's relation at a
+/// code below the parameter's code moves to a lower value at another, and
+/// from one stage and type to another.
+pub open spec fn ptr(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, t: ExprSpec, t2: ExprSpec, pv: Seq<Cpt>) -> bool {
+    let sh = canon_shape(sig, j);
+    forall|q: int, y: ExprSpec, y2: ExprSpec, w: Cpt, v: Cpt, c1: Cpt, c2: Cpt|
+        #![trigger rel_tm(sig, n0, g, y, y2, pq(sig, j, t, q), w, c1), rel_tm(sig, n, g, y, y2, pq(sig, j, t2, q), v, c2)]
+        0 <= q < sh.np && sh.pdoms[q] is Sort
+        && rel_tm(sig, n0, g, y, y2, pq(sig, j, t, q), w, c1) && has_type(n0, w, c1) && has_type(n0, c1, Cpt::U) && wf(c1) && le(c1, pv[q])
+        && has_type(n, v, c2) && has_type(n, c2, Cpt::U) && wf(c2) && le(c2, pv[q]) && wf(v) && !(v is Bot) && le(v, w)
+        ==> rel_tm(sig, n, g, y, y2, pq(sig, j, t2, q), v, c2)
+}
+
+/// A CANONICAL CODE IS BELOW ITS OWN TABLE at its arguments.
 pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
+    requires
+        cs.len() >= canon_shape(sig, j).np,
     ensures
-        tbl_canon(sig, j, canon_code(sig, j, ls, cs)),
+        tbl_canon(sig, j, cs, canon_code(sig, j, ls, cs)),
 {
     let code = canon_code(sig, j, ls, cs);
     let sh = canon_shape(sig, j);
@@ -115,18 +145,14 @@ pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
         assert(ts.last() == Cpt::Nd(NdKey::Tag(2), cblocks(sig, j, ls, cs, sh.nmin())));
         assert(ls =~= Seq::<LevelSpec>::empty());
         assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
-            implies #[trigger] entry_canon(sig, j, p, k, tbl(ts)[p]->Nd_1[k]) by {
+            implies #[trigger] entry_canon(sig, j, cs, p, k, tbl(ts)[p]->Nd_1[k]) by {
             let nf = sh.fields[p].len();
             centries_at(sig, j, ls, cs, p as nat, nf);
             let e = tbl(ts)[p]->Nd_1[k];
             assert(e == centry_at(sig, j, ls, cs, p as nat, k as nat));
-            let f = sh.fields[p][k];
-            if !crate::rec_canon::direct_occ(f, j, sh.us(), sh.np, sh.ni, k as nat) {
-                crate::dom_canon::canon_fields(sig, j, p, k);
-                crate::dom_code::ceval_closed(sig, rk(sig, j), j, ls, fpe(cs, sh.np, k as nat), Seq::empty(), j, f);
-                assert(ecode(e) == cf(sig, j, p, k));
-                crate::dom_code::ceval_wf(sig, rk(sig, j), j, ls, Seq::empty(), f);
-                le_refl(cf(sig, j, p, k));
+            if !crate::rec_canon::direct_occ(sh.fields[p][k], j, sh.us(), sh.np, sh.ni, k as nat) {
+                assert(ecode(e) == cf(sig, j, cs, p, k));
+                le_refl(cf(sig, j, cs, p, k));
             }
         }
     } else {
@@ -135,15 +161,31 @@ pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
     }
 }
 
-/// BELOW THE CANONICAL TABLE IS DOWNWARD CLOSED.
-pub proof fn tbl_canon_le(sig: Sig, j: u64, a: Cpt, b: Cpt)
+/// Without parameters the canonical table reads no parameters' codes.
+pub proof fn tbl_canon_np0(sig: Sig, j: u64, pv: Seq<Cpt>, pv2: Seq<Cpt>, a: Cpt)
     requires
-        tbl_canon(sig, j, b),
+        canon_shape(sig, j).np == 0,
+        tbl_canon(sig, j, pv, a),
+    ensures
+        tbl_canon(sig, j, pv2, a),
+{
+    let ts = a->Nd_1;
+    assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
+        implies #[trigger] entry_canon(sig, j, pv2, p, k, tbl(ts)[p]->Nd_1[k]) by {
+        assert(entry_canon(sig, j, pv, p, k, tbl(ts)[p]->Nd_1[k]));
+        assert(fpe(pv, 0, k as nat) =~= fpe(pv2, 0, k as nat));
+    }
+}
+
+/// BELOW THE CANONICAL TABLE IS DOWNWARD CLOSED.
+pub proof fn tbl_canon_le(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt, b: Cpt)
+    requires
+        tbl_canon(sig, j, pv, b),
         wf(a),
         !(a is Bot),
         le(a, b),
     ensures
-        tbl_canon(sig, j, a),
+        tbl_canon(sig, j, pv, a),
 {
     head_le(a, b);
     crate::dom_sem::nd_le_inv(a->Nd_0, a->Nd_1, b);
@@ -154,20 +196,225 @@ pub proof fn tbl_canon_le(sig: Sig, j: u64, a: Cpt, b: Cpt)
         crate::dom_sem::nd_le_inv(ts.last()->Nd_0, ts.last()->Nd_1, ts2.last());
     }
     assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
-        implies #[trigger] entry_canon(sig, j, p, k, tbl(ts)[p]->Nd_1[k]) by {
+        implies #[trigger] entry_canon(sig, j, pv, p, k, tbl(ts)[p]->Nd_1[k]) by {
         crate::dom_rel_mono::tbl_entry_le(a, b, p, k);
-        assert(entry_canon(sig, j, p, k, tbl(ts2)[p]->Nd_1[k]));
+        assert(entry_canon(sig, j, pv, p, k, tbl(ts2)[p]->Nd_1[k]));
         let (e, e2) = (tbl(ts)[p]->Nd_1[k], tbl(ts2)[p]->Nd_1[k]);
         if is_centry(e) {
-            le_trans(ecode(e), ecode(e2), cf(sig, j, p, k));
+            le_trans(ecode(e), ecode(e2), cf(sig, j, pv, p, k));
         }
     }
 }
 
-/// THE LIFTING LEMMA for closed field types: two convertible stuck
-/// applications of an inductive are related at every code below its
-/// canonical table.
-pub proof fn canon_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, u: Cpt)
+/// A field of neither kind is a closed simple type: its type at any type's
+/// parameters is itself, and its canonical code reads no parameters.
+pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
+    requires
+        sig.consts[j].lps.len() == 0,
+        has_canon(sig, j),
+        0 <= p < canon_shape(sig, j).nmin(),
+        0 <= k < canon_shape(sig, j).fields[p].len(),
+        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
+            canon_shape(sig, j).ni, k as nat),
+        !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
+    ensures
+        fq(sig, j, t, p, k) == canon_shape(sig, j).fields[p][k],
+        crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
+        crate::expr_model::nlbv(canon_shape(sig, j).fields[p][k]) == 0,
+        forall|pv: Seq<Cpt>, pv2: Seq<Cpt>| #[trigger] cf(sig, j, pv, p, k) == #[trigger] cf(sig, j, pv2, p, k),
+{
+    let sh = canon_shape(sig, j);
+    let f = sh.fields[p][k];
+    crate::dom_canon::canon_fields(sig, j, p, k);
+    crate::dom_iota::simple_closed(sig, j, f);
+    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
+    let x = ir(sig, t, j);
+    crate::dom_canon::sl_none(f, spine_head(x)->Const_1);
+    crate::ti_spine::vsub_closed(f, spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed));
+    assert forall|pv: Seq<Cpt>, pv2: Seq<Cpt>| #[trigger] cf(sig, j, pv, p, k) == #[trigger] cf(sig, j, pv2, p, k) by {
+        crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(), fpe(pv, sh.np, k as nat), fpe(pv2, sh.np, k as nat), j, f);
+    }
+}
+
+/// A field typed by a type parameter: its canonical code is the
+/// parameter's code.
+pub proof fn cf_var(sig: Sig, j: u64, pv: Seq<Cpt>, p: int, k: int)
+    requires
+        0 <= p < canon_shape(sig, j).nmin(),
+        0 <= k < canon_shape(sig, j).fields[p].len(),
+        crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
+        pv.len() >= canon_shape(sig, j).np,
+    ensures ({
+        let sh = canon_shape(sig, j);
+        let q = (k + sh.np - 1 - sh.fields[p][k]->Var_0) as int;
+        &&& 0 <= q < sh.np && sh.pdoms[q] is Sort
+        &&& cf(sig, j, pv, p, k) == pv[q]
+    }),
+{
+}
+
+/// A field typed by a type parameter: its type at a type's parameters is
+/// that parameter, its canonical code the parameter's code.
+pub proof fn fq_var(sig: Sig, j: u64, t: ExprSpec, pv: Seq<Cpt>, p: int, k: int)
+    requires
+        sig.consts[j].lps.len() == 0,
+        0 <= p < canon_shape(sig, j).nmin(),
+        0 <= k < canon_shape(sig, j).fields[p].len(),
+        crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
+        spine_args(ir(sig, t, j)).len() >= canon_shape(sig, j).np,
+        pv.len() >= canon_shape(sig, j).np,
+    ensures ({
+        let sh = canon_shape(sig, j);
+        let q = (k + sh.np - 1 - sh.fields[p][k]->Var_0) as int;
+        &&& 0 <= q < sh.np && sh.pdoms[q] is Sort
+        &&& fq(sig, j, t, p, k) == pq(sig, j, t, q)
+        &&& cf(sig, j, pv, p, k) == pv[q]
+    }),
+{
+    let sh = canon_shape(sig, j);
+    let f = sh.fields[p][k];
+    let v = f->Var_0;
+    let x = ir(sig, t, j);
+    assert(crate::expr_model::subst_expr_levels(f, sig.consts[j].lps, spine_head(x)->Const_1) == f);
+    let xs = spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed);
+    crate::ti_spine::vsub_var(v, xs);
+    assert(xs[xs.len() - 1 - v] == spine_args(x)[(k + sh.np - 1 - v) as int]);
+}
+
+/// A closed simple type's arguments are typed and ranked as it is.
+pub proof fn styped_args(sig: Sig, e: ExprSpec)
+    requires
+        styped(sig, e),
+    ensures
+        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] styped(sig, spine_args(e)[i]),
+{
+    sargs_args(sig, e);
+}
+
+proof fn sargs_args(sig: Sig, e: ExprSpec)
+    requires
+        sargs_typed(sig, e),
+    ensures
+        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] styped(sig, spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        sargs_args(sig, *f);
+        let a = spine_args(e);
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] styped(sig, a[i]) by {
+            if i < a.len() - 1 {
+                assert(a[i] == spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// A CLOSED SIMPLE TYPE, typed, is related to itself at every typed code
+/// below its canonical code (the lifting lemma's closed case).
+pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
+    requires
+        crate::rec_canon::simple_ty(sig, j, r),
+        crate::dom_canon::ranked(sig, r, rk(sig, j)),
+        styped(sig, r),
+        derivable(sig, Jd::Wf(g)),
+        wf(c),
+        le(c, ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), r)),
+        c is Bot || has_type(n, c, Cpt::U),
+    ensures
+        rel_ty(sig, n, g, r, r, c),
+    decreases (rk(sig, j) + 1) as nat, 0int, crate::ti_syntax::esize(r),
+{
+    let rj = rk(sig, j);
+    let c0 = ceval(sig, rj, j, Seq::empty(), Seq::empty(), r);
+    if c is Bot {
+        ty_bot(sig, n, g, r, r);
+        return;
+    }
+    let h = spine_head(r);
+    let (kk, us) = (h->Const_0, h->Const_1);
+    simple_head(sig, j, r);
+    assert(!(r is Var));
+    crate::dom_canon::simple_facts(sig, j, r, rj);
+    if !(0 <= rk(sig, kk) < rj) {
+        head_le(c, c0);
+        assert(false);
+    }
+    let ca = cargs(sig, rj, j, Seq::empty(), Seq::empty(), r);
+    assert(sig.consts[j].lps.len() == 0 || true);
+    let us2 = lsub(sig, j, Seq::empty(), us);
+    assert(c0 == canon_code(sig, kk, us2, ca));
+    crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), Seq::empty(), r);
+    crate::dom_canon::simple_args(sig, j, r);
+    crate::dom_canon::spine_args_size(r);
+    styped_args(sig, r);
+    // the head's canonical table, at the arguments' codes
+    let sk = canon_shape(sig, kk);
+    if ca.len() < sk.np {
+        assert(!tabled(sig, kk, us2, ca));
+        assert(c0->Nd_1.last() == Cpt::Nd(NdKey::Tag(2), Seq::empty()));
+    }
+    let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
+    canon_bnd(sig, kk, us2, ca, cs, c);
+    // the type, typed, and stuck
+    crate::dom_iota::simple_closed(sig, j, r);
+    closed_typed(sig, g, r);
+    crate::ti_chain::tchain_one(sig, g, r, r);
+    iapp_self(sig, r);
+    // the parameters: the arguments, related below their codes
+    assert forall|q: int, c2: Cpt| 0 <= q < sk.np && sk.pdoms[q] is Sort && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, pq(sig, kk, r, q), pq(sig, kk, r, q), c2) by {
+        if q < ca.len() {
+            let a = spine_args(r)[q];
+            assert(ca[q] == ceval(sig, rj, j, Seq::empty(), Seq::empty(), a));
+            closed_rel(sig, n, g, j, a, c2);
+        } else {
+            assert(cs[q] == Cpt::Bot);
+            if !(c2 is Bot) {
+                head_le(c2, cs[q]);
+            }
+            ty_bot(sig, n, g, pq(sig, kk, r, q), pq(sig, kk, r, q));
+        }
+    }
+    canon_rel(sig, n, g, r, r, cs, c);
+}
+
+/// Below a canonical code: below its table at arguments padded to the
+/// parameters.
+pub proof fn canon_bnd(sig: Sig, kk: u64, us: Seq<LevelSpec>, ca: Seq<Cpt>, cs: Seq<Cpt>, c: Cpt)
+    requires
+        wf(c),
+        !(c is Bot),
+        le(c, canon_code(sig, kk, us, ca)),
+        cs == (if ca.len() >= canon_shape(sig, kk).np { ca } else { ca + Seq::new((canon_shape(sig, kk).np - ca.len()) as nat, |_i: int| Cpt::Bot) }),
+    ensures
+        tbl_canon(sig, kk, cs, c),
+        ca.len() < canon_shape(sig, kk).np ==> tbl(c->Nd_1).len() == 0,
+{
+    let sk = canon_shape(sig, kk);
+    if ca.len() >= sk.np {
+        canon_is_tbl(sig, kk, us, ca);
+        tbl_canon_le(sig, kk, ca, c, canon_code(sig, kk, us, ca));
+    } else {
+        // no table at too few arguments
+        let code = canon_code(sig, kk, us, ca);
+        assert(!tabled(sig, kk, us, ca));
+        assert(code->Nd_1.last() == Cpt::Nd(NdKey::Tag(2), Seq::empty()));
+        head_le(c, code);
+        crate::dom_sem::nd_le_inv(c->Nd_0, c->Nd_1, code);
+        let (ts, ts2) = (c->Nd_1, code->Nd_1);
+        assert(le(ts[ts.len() - 1], ts2[ts2.len() - 1]));
+        assert(ts.last() == ts[ts.len() - 1] && ts2.last() == ts2[ts2.len() - 1]);
+        if ts.last() is Nd && ts.last()->Nd_0 == NdKey::Tag(2) {
+            crate::dom_sem::nd_le_inv(ts.last()->Nd_0, ts.last()->Nd_1, ts2.last());
+        }
+        assert(tbl(ts) =~= Seq::<Cpt>::empty());
+    }
+}
+
+/// THE LIFTING LEMMA: two convertible stuck applications of an inductive
+/// are related at every typed code below its canonical table at `pv`, the
+/// parameters related below theirs.
+pub proof fn canon_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<Cpt>, u: Cpt)
     requires
         spine_head(e) is Const,
         spine_head(e2) is Const,
@@ -178,16 +425,20 @@ pub proof fn canon_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, u: C
         crate::ti_chain::tchain(sig, g, e, e2),
         derivable(sig, Jd::Wf(g)),
         wf(u),
-        u is Bot || tbl_canon(sig, spine_head(e)->Const_0, u),
+        u is Bot || (tbl_canon(sig, spine_head(e)->Const_0, pv, u) && has_type(n, u, Cpt::U)),
+        u is Bot || tbl(u->Nd_1).len() == 0 || (spine_args(e).len() >= canon_shape(sig, spine_head(e)->Const_0).np
+            && spine_args(e2).len() >= canon_shape(sig, spine_head(e)->Const_0).np),
+        prel(sig, n, g, spine_head(e)->Const_0, e, e2, pv),
     ensures
         rel_ty(sig, n, g, e, e2, u),
-    decreases ht(u), 0int,
+    decreases (rk(sig, spine_head(e)->Const_0) + 1) as nat, 2int, ht(u),
 {
     if u is Bot {
         ty_bot(sig, n, g, e, e2);
         return;
     }
     let j = spine_head(e)->Const_0;
+    let sh = canon_shape(sig, j);
     iapp_self(sig, e);
     iapp_self(sig, e2);
     tbl_lower(u);
@@ -196,15 +447,24 @@ pub proof fn canon_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, u: C
     assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
         && is_centry(tbl(ts)[p]->Nd_1[k])
         implies #[trigger] rel_ty(sig, n, g, fq(sig, j, e, p, k), fq(sig, j, e2, p, k), ecode(tbl(ts)[p]->Nd_1[k])) by {
-        assert(entry_canon(sig, j, p, k, tbl(ts)[p]->Nd_1[k]));
-        field_rel(sig, n, g, e, e2, p, k, ecode(tbl(ts)[p]->Nd_1[k]));
+        let ec = ecode(tbl(ts)[p]->Nd_1[k]);
+        assert(entry_canon(sig, j, pv, p, k, tbl(ts)[p]->Nd_1[k]));
+        assert(has_type(n, ec, Cpt::U));
+        crate::dom_canon::canon_fields(sig, j, p, k);
+        if crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) {
+            fq_var(sig, j, e, pv, p, k);
+            fq_var(sig, j, e2, pv, p, k);
+            let q = (k + sh.np - 1 - sh.fields[p][k]->Var_0) as int;
+            assert(rel_ty(sig, n, g, pq(sig, j, e, q), pq(sig, j, e2, q), ec));
+        } else {
+            field_rel(sig, n, g, e, e2, pv, p, k, ec);
+        }
     }
     ty_ind(sig, n, g, e, e2, u);
 }
 
-/// One field of the lifting lemma: the closed field type, which both sides'
-/// field types are, related at every code below its canonical code.
-proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, p: int, k: int, v: Cpt)
+/// One closed field of the lifting lemma.
+proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<Cpt>, p: int, k: int, v: Cpt)
     requires
         spine_head(e) is Const,
         spine_head(e2) is Const,
@@ -215,148 +475,86 @@ proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, p: int, 
         !crate::rec_canon::direct_occ(canon_shape(sig, spine_head(e)->Const_0).fields[p][k], spine_head(e)->Const_0,
             canon_shape(sig, spine_head(e)->Const_0).us(), canon_shape(sig, spine_head(e)->Const_0).np,
             canon_shape(sig, spine_head(e)->Const_0).ni, k as nat),
+        !crate::rec_canon::pvar_field(canon_shape(sig, spine_head(e)->Const_0).pdoms, canon_shape(sig, spine_head(e)->Const_0).np,
+            k as nat, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
         derivable(sig, Jd::Wf(g)),
         wf(v),
-        le(v, cf(sig, spine_head(e)->Const_0, p, k)),
+        le(v, cf(sig, spine_head(e)->Const_0, pv, p, k)),
+        v is Bot || has_type(n, v, Cpt::U),
     ensures
         rel_ty(sig, n, g, fq(sig, spine_head(e)->Const_0, e, p, k), fq(sig, spine_head(e)->Const_0, e2, p, k), v),
-    decreases ht(v), 1int,
+    decreases (rk(sig, spine_head(e)->Const_0) + 1) as nat, 1int, 0nat,
 {
     let j = spine_head(e)->Const_0;
     let f = canon_shape(sig, j).fields[p][k];
     fq_closed(sig, j, e, p, k);
     fq_closed(sig, j, e2, p, k);
-    if v is Bot {
-        ty_bot(sig, n, g, f, f);
-        return;
-    }
-    if cf(sig, j, p, k) is Bot {
-        head_le(v, cf(sig, j, p, k));
-    }
-    let (kk, us, ca) = field_code(sig, j, p, k);
-    head_le(v, cf(sig, j, p, k));
-    canon_is_tbl(sig, kk, us, ca);
-    tbl_canon_le(sig, kk, v, cf(sig, j, p, k));
-    field_typed(sig, g, j, p, k);
-    canon_rel(sig, n, g, f, f, v);
+    assert(cf(sig, j, pv, p, k) == cf(sig, j, Seq::empty(), p, k));
+    field_facts(sig, j, p, k);
+    closed_rel(sig, n, g, j, f, v);
 }
 
-/// A closed field type whose canonical code is not bottom: another
-/// inductive's application, its code that inductive's canonical code.
-pub proof fn field_code(sig: Sig, j: u64, p: int, k: int) -> (r: (u64, Seq<LevelSpec>, Seq<Cpt>))
-    requires
-        has_canon(sig, j),
-        sig.consts[j].lps.len() == 0,
-        0 <= p < canon_shape(sig, j).nmin(),
-        0 <= k < canon_shape(sig, j).fields[p].len(),
-        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
-            canon_shape(sig, j).ni, k as nat),
-        !(cf(sig, j, p, k) is Bot),
-    ensures
-        spine_head(canon_shape(sig, j).fields[p][k]) == ExprSpec::Const(r.0, r.1),
-        cf(sig, j, p, k) == canon_code(sig, r.0, r.1, r.2),
-        crate::rec_canon::other_former(sig, j, r.0),
-{
-    let f = canon_shape(sig, j).fields[p][k];
-    crate::dom_canon::canon_fields(sig, j, p, k);
-    let h = spine_head(f);
-    let (kk, us) = (h->Const_0, h->Const_1);
-    simple_head(sig, j, f);
-    assert(!(f is Var));
-    let r = rk(sig, j);
-    let ca = cargs(sig, r, j, Seq::empty(), Seq::empty(), f);
-    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
-    assert(lsub(sig, j, Seq::empty(), us) =~= us) by {
-        assert forall|q: int| 0 <= q < us.len() implies #[trigger] lsub(sig, j, Seq::empty(), us)[q] == us[q] by {
-            crate::dom_canon::subst_level_none(us[q], Seq::empty());
-        }
-    }
-    (kk, us, ca)
-}
-
-/// A field type of a canonical inductive is a type in every well-formed
-/// context, and its head is another inductive's.
-pub proof fn field_typed(sig: Sig, g: Ctx, j: u64, p: int, k: int)
+/// A closed field type is simple, ranked below its inductive, typed, and
+/// its canonical code at no parameters is its code.
+pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
     requires
         canon_ok(sig, j),
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
             canon_shape(sig, j).ni, k as nat),
-        derivable(sig, Jd::Wf(g)),
+        !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
     ensures
-        crate::ti_chain::tchain(sig, g, canon_shape(sig, j).fields[p][k], canon_shape(sig, j).fields[p][k]),
-        spine_head(canon_shape(sig, j).fields[p][k]) is Const,
-        !sig.ienv.recs.contains_key(spine_head(canon_shape(sig, j).fields[p][k])->Const_0),
-        !crate::ti_syntax::is_def(sig, spine_head(canon_shape(sig, j).fields[p][k])->Const_0,
-            spine_head(canon_shape(sig, j).fields[p][k])->Const_1),
+        crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
+        crate::dom_canon::ranked(sig, canon_shape(sig, j).fields[p][k], rk(sig, j)),
+        styped(sig, canon_shape(sig, j).fields[p][k]),
+        cf(sig, j, Seq::empty(), p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), canon_shape(sig, j).fields[p][k]),
 {
-    let f = canon_shape(sig, j).fields[p][k];
+    let sh = canon_shape(sig, j);
+    let f = sh.fields[p][k];
     crate::dom_canon::canon_fields(sig, j, p, k);
-    crate::dom_iota::simple_closed(sig, j, f);
-    simple_head(sig, j, f);
     reveal(fields_typed);
     let ls = Seq::<LevelSpec>::empty();
     assert(ftyped(sig, j, p, k, ls));
     assert(sig.consts[j].lps =~= Seq::<u64>::empty());
     crate::dom_canon::sl_none(f, ls);
-    closed_typed(sig, g, f);
-    crate::ti_chain::tchain_one(sig, g, f, f);
+    crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(), fpe(Seq::empty(), sh.np, k as nat), Seq::empty(), j, f);
 }
 
-/// A closed fragment field type: the declared one, at any type's
-/// parameters.
-pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
-    requires
-        sig.consts[j].lps.len() == 0,
-        has_canon(sig, j),
-        0 <= p < canon_shape(sig, j).nmin(),
-        0 <= k < canon_shape(sig, j).fields[p].len(),
-        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
-            canon_shape(sig, j).ni, k as nat),
-    ensures
-        fq(sig, j, t, p, k) == canon_shape(sig, j).fields[p][k],
-        crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
-        crate::expr_model::nlbv(canon_shape(sig, j).fields[p][k]) == 0,
-{
-    let sh = canon_shape(sig, j);
-    let f = sh.fields[p][k];
-    crate::dom_canon::canon_fields(sig, j, p, k);
-    crate::dom_iota::simple_closed(sig, j, f);
-    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
-    let x = ir(sig, t, j);
-    crate::dom_canon::sl_none(f, spine_head(x)->Const_1);
-    crate::ti_spine::vsub_closed(f, spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed));
-}
-
-/// THE CONSTRUCTOR CLAUSE MOVES BETWEEN CODES BELOW THE CANONICAL TABLE,
-/// and between stages and types, in the closed fragment: there a table's
-/// codes are canonical-bounded codes of inductives, where the clause reads
-/// only the shape, which the values' typings fix.
+/// THE CONSTRUCTOR CLAUSE MOVES between two codes below the canonical
+/// table at `pv`, between stages, and between types with the same
+/// parameters, the parameters' transfer given.
 pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec, t2: ExprSpec,
-    w: Cpt, v: Cpt, d: Cpt, d2: Cpt)
+    w: Cpt, v: Cpt, d: Cpt, d2: Cpt, pv: Seq<Cpt>)
     requires
         d is Nd && d->Nd_0 is Ty,
-        tbl_canon(sig, d->Nd_0->Ty_0, d),
-        tbl_canon(sig, d->Nd_0->Ty_0, d2),
+        tbl_canon(sig, d->Nd_0->Ty_0, pv, d),
+        tbl_canon(sig, d->Nd_0->Ty_0, pv, d2),
         con_tm(sig, n0, g, m, m2, t, w, d),
         has_type(n0, w, d),
         has_type(n, v, d2),
+        has_type(n, d2, Cpt::U),
         wf(v),
         !(v is Bot),
         le(v, w),
         derivable(sig, Jd::Wf(g)),
+        tbl(d2->Nd_1).len() > 0 ==> spine_args(ir(sig, t, d->Nd_0->Ty_0)).len() >= canon_shape(sig, d->Nd_0->Ty_0).np
+            && spine_args(ir(sig, t2, d->Nd_0->Ty_0)).len() >= canon_shape(sig, d->Nd_0->Ty_0).np,
+        ptr(sig, n0, n, g, d->Nd_0->Ty_0, t, t2, pv),
     ensures
         con_tm(sig, n, g, m, m2, t2, v, d2),
-    decreases ht(v), 0int,
+    decreases (rk(sig, d->Nd_0->Ty_0) + 1) as nat, 1int, ht(v),
 {
     let j = d->Nd_0->Ty_0;
+    let sh = canon_shape(sig, j);
     con_tm_unfold(sig, n0, g, m, m2, t, w, d);
     con_tm_unfold(sig, n, g, m, m2, t2, v, d2);
     head_le(v, w);
     let (fv, fw) = (v->Nd_1, w->Nd_1);
     crate::dom_sem::nd_le_inv(v->Nd_0, fv, w);
     parts_lower(v);
+    tbl_wf(d);
+    tbl_wf(d2);
     let (x, x2) = (cr(sig, m), cr(sig, m2));
     let p = v->Nd_0->Con_1 as int;
     let np = canon_shape(sig, v->Nd_0->Con_0).np;
@@ -370,68 +568,155 @@ pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
             assert(wf(fv[i]));
             head_le(fv[i], fw[i]);
             assert(ht(fv[i]) < ht(v));
-            assert(entry_canon(sig, j, p, i, ew[i]));
-            assert(entry_canon(sig, j, p, i, ev[i]));
+            assert(entry_canon(sig, j, pv, p, i, ew[i]));
+            assert(entry_canon(sig, j, pv, p, i, ev[i]));
             if ew[i] == crate::dom_typing::rmark() {
                 assert(ev[i] == crate::dom_typing::rmark());
                 assert(has_type(n0, fw[i], d) && has_type(n, fv[i], d2));
-                con_below(sig, n0, n, g, y, y2, t, t2, fw[i], fv[i], d, d2);
+                con_below(sig, n0, n, g, y, y2, t, t2, fw[i], fv[i], d, d2, pv);
             } else {
                 let (ec, ec2) = (ecode(ew[i]), ecode(ev[i]));
-                assert(is_centry(ew[i]) && has_type(n0, fw[i], ec));
-                assert(is_centry(ev[i]) && has_type(n, fv[i], ec2));
-                field_below(sig, n0, n, g, y, y2, t, t2, fw[i], fv[i], ec, ec2, j, p, i);
+                assert(has_type(n0, d, Cpt::U));
+                assert(is_centry(ew[i]) && has_type(n0, fw[i], ec) && has_type(n0, ec, Cpt::U));
+                assert(is_centry(ev[i]) && has_type(n, fv[i], ec2) && has_type(n, ec2, Cpt::U));
+                crate::dom_canon::canon_fields(sig, j, p, i);
+                if crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[p][i]) {
+                    // a type parameter: its transfer
+                    fq_var(sig, j, t, pv, p, i);
+                    fq_var(sig, j, t2, pv, p, i);
+                    let q = (i + sh.np - 1 - sh.fields[p][i]->Var_0) as int;
+                    assert(rel_tm(sig, n0, g, y, y2, pq(sig, j, t, q), fw[i], ec));
+                    assert(rel_tm(sig, n, g, y, y2, pq(sig, j, t2, q), fv[i], ec2));
+                } else {
+                    // a closed field: below its canonical code
+                    fq_closed(sig, j, t, p, i);
+                    fq_closed(sig, j, t2, p, i);
+                    assert(cf(sig, j, pv, p, i) == cf(sig, j, Seq::empty(), p, i));
+                    field_facts(sig, j, p, i);
+                    closed_below(sig, n0, n, g, j, sh.fields[p][i], y, y2, fw[i], fv[i], ec, ec2);
+                }
             }
         }
     }
 }
 
-/// One field of `con_below` holding a code.
-pub proof fn field_below(sig: Sig, n0: nat, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, t: ExprSpec, t2: ExprSpec,
-    fw: Cpt, fv: Cpt, ec: Cpt, ec2: Cpt, j: u64, p: int, i: int)
+/// A VALUE RELATED AT A CLOSED SIMPLE TYPE moves between two codes below
+/// the type's canonical code, and between stages.
+pub proof fn closed_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpec, y: ExprSpec, y2: ExprSpec,
+    fw: Cpt, fv: Cpt, c1: Cpt, c2: Cpt)
     requires
-        canon_ok(sig, j),
-        0 <= p < canon_shape(sig, j).nmin(),
-        0 <= i < canon_shape(sig, j).fields[p].len(),
-        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][i], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
-            canon_shape(sig, j).ni, i as nat),
-        le(ec, cf(sig, j, p, i)),
-        le(ec2, cf(sig, j, p, i)),
-        rel_tm(sig, n0, g, y, y2, fq(sig, j, t, p, i), fw, ec),
-        has_type(n0, fw, ec),
-        has_type(n, fv, ec2),
+        crate::rec_canon::simple_ty(sig, j, r),
+        crate::dom_canon::ranked(sig, r, rk(sig, j)),
+        styped(sig, r),
+        derivable(sig, Jd::Wf(g)),
+        le(c1, ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), r)),
+        le(c2, ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), r)),
+        rel_tm(sig, n0, g, y, y2, r, fw, c1),
+        has_type(n0, fw, c1),
+        has_type(n0, c1, Cpt::U),
+        has_type(n, fv, c2),
+        has_type(n, c2, Cpt::U),
         wf(fv),
         !(fv is Bot),
         le(fv, fw),
-        derivable(sig, Jd::Wf(g)),
     ensures
-        rel_tm(sig, n, g, y, y2, fq(sig, j, t2, p, i), fv, ec2),
-    decreases ht(fv), 1int,
+        rel_tm(sig, n, g, y, y2, r, fv, c2),
+    decreases (rk(sig, j) + 1) as nat, 0int, crate::ti_syntax::esize(r),
 {
-    let f = canon_shape(sig, j).fields[p][i];
-    fq_closed(sig, j, t, p, i);
-    fq_closed(sig, j, t2, p, i);
-    let c0 = cf(sig, j, p, i);
+    let rj = rk(sig, j);
+    let c0 = ceval(sig, rj, j, Seq::empty(), Seq::empty(), r);
     head_le(fv, fw);
-    if ec is Bot {
+    if c1 is Bot {
         ty_of_bot(n0, fw);
     }
-    if ec2 is Bot {
+    if c2 is Bot {
         ty_of_bot(n, fv);
     }
-    if c0 is Bot {
-        head_le(ec, c0);
+    assert(wf(c1) && wf(c2));
+    let h = spine_head(r);
+    let (kk, us) = (h->Const_0, h->Const_1);
+    simple_head(sig, j, r);
+    assert(!(r is Var));
+    crate::dom_canon::simple_facts(sig, j, r, rj);
+    if !(0 <= rk(sig, kk) < rj) {
+        head_le(c1, c0);
+        assert(false);
     }
-    let (kk, us, ca) = field_code(sig, j, p, i);
-    head_le(ec, c0);
-    canon_is_tbl(sig, kk, us, ca);
-    tbl_canon_le(sig, kk, ec, c0);
-    tbl_canon_le(sig, kk, ec2, c0);
-    field_typed(sig, g, j, p, i);
-    canon_rel(sig, n, g, f, f, ec2);
-    tm_ind(sig, n0, g, y, y2, f, fw, ec);
-    tm_ind(sig, n, g, y, y2, f, fv, ec2);
-    con_below(sig, n0, n, g, y, y2, f, f, fw, fv, ec, ec2);
+    let ca = cargs(sig, rj, j, Seq::empty(), Seq::empty(), r);
+    let us2 = lsub(sig, j, Seq::empty(), us);
+    assert(c0 == canon_code(sig, kk, us2, ca));
+    crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), Seq::empty(), r);
+    crate::dom_canon::simple_args(sig, j, r);
+    crate::dom_canon::spine_args_size(r);
+    styped_args(sig, r);
+    let sk = canon_shape(sig, kk);
+    let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
+    canon_bnd(sig, kk, us2, ca, cs, c1);
+    canon_bnd(sig, kk, us2, ca, cs, c2);
+    // the target's type relation, and the source's clause
+    closed_rel(sig, n, g, j, r, c2);
+    iapp_self(sig, r);
+    tm_ind(sig, n0, g, y, y2, r, fw, c1);
+    tm_ind(sig, n, g, y, y2, r, fv, c2);
+    // the head's parameters: the arguments, moved below their codes
+    assert forall|q: int, z: ExprSpec, z2: ExprSpec, w1: Cpt, v1: Cpt, e1: Cpt, e2: Cpt|
+        #![trigger rel_tm(sig, n0, g, z, z2, pq(sig, kk, r, q), w1, e1), rel_tm(sig, n, g, z, z2, pq(sig, kk, r, q), v1, e2)]
+        0 <= q < sk.np && sk.pdoms[q] is Sort
+        && rel_tm(sig, n0, g, z, z2, pq(sig, kk, r, q), w1, e1) && has_type(n0, w1, e1) && has_type(n0, e1, Cpt::U) && wf(e1) && le(e1, cs[q])
+        && has_type(n, v1, e2) && has_type(n, e2, Cpt::U) && wf(e2) && le(e2, cs[q]) && wf(v1) && !(v1 is Bot) && le(v1, w1)
+        implies rel_tm(sig, n, g, z, z2, pq(sig, kk, r, q), v1, e2) by {
+        if q < ca.len() {
+            let a = spine_args(r)[q];
+            assert(ca[q] == ceval(sig, rj, j, Seq::empty(), Seq::empty(), a));
+            closed_below(sig, n0, n, g, j, a, z, z2, w1, v1, e1, e2);
+        } else {
+            head_le(v1, w1);
+            assert(cs[q] == Cpt::Bot);
+            head_le(e1, cs[q]);
+            ty_of_bot(n0, w1);
+        }
+    }
+    let rsh = canon_shape(sig, kk);
+    if tbl(c2->Nd_1).len() > 0 {
+        assert(canon_ok(sig, kk));
+        crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
+        crate::dom_rec_shape::tarity_binds(rsh.pdoms + rsh.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, rsh.np + rsh.ni));
+    }
+    con_below(sig, n0, n, g, y, y2, r, r, fw, fv, c1, c2, cs);
+}
+
+/// A VALUE RELATED AT A TYPE PARAMETER moves through the parameter's code:
+/// up to it at the high stage, down to the target's code, then down to the
+/// target's stage.
+pub proof fn par_xfer(sig: Sig, n0: nat, n: nat, g: Ctx, tt: ExprSpec, pc: Cpt, y: ExprSpec, y2: ExprSpec,
+    w: Cpt, v: Cpt, c1: Cpt, c2: Cpt)
+    requires
+        n <= n0,
+        rel_ty(sig, n0, g, tt, tt, pc),
+        has_type(n0, pc, Cpt::U),
+        rel_tm(sig, n0, g, y, y2, tt, w, c1),
+        has_type(n0, w, c1),
+        has_type(n0, c1, Cpt::U),
+        le(c1, pc),
+        wf(c1),
+        has_type(n, v, c2),
+        has_type(n, c2, Cpt::U),
+        le(c2, pc),
+        wf(c2),
+        wf(v),
+        le(v, w),
+    ensures
+        rel_tm(sig, n, g, y, y2, tt, v, c2),
+{
+    crate::dom_typing::ty_weak(n0, w, c1, pc);
+    crate::dom_adeq_base::ty_up(n, n0, v, c2);
+    crate::dom_adeq_base::ty_up(n, n0, c2, Cpt::U);
+    crate::dom_typing::ty_weak(n0, v, c2, pc);
+    crate::dom_rel_mono::incr(sig, n0, g, y, y2, tt, w, c1, pc);
+    crate::dom_rel_mono::mono_tm(sig, n0, g, y, y2, tt, v, w, pc);
+    crate::dom_rel_mono::decr(sig, n0, g, y, y2, tt, v, c2, pc);
+    crate::dom_rel_mono::decr_ty(sig, n0, g, tt, tt, c2, pc);
+    crate::dom_con_rel::rel_down(sig, n, n0, g, y, y2, tt, tt, v, c2);
 }
 
 /// A derivable equation's context is well formed.
@@ -456,33 +741,6 @@ pub proof fn mem_wf_e(sig: Sig, m: ExprSpec, rho: crate::dom_model::Env, u: Cpt)
     reveal(crate::dom_model::mem);
     let w = choose|w: crate::dom_model::Wit| #[trigger] crate::dom_model::mem_w(sig, m, rho, u, w);
     crate::dom_model::mem_wf(sig, m, rho, u, w);
-}
-
-/// Below a closed field type's canonical code: below the canonical table of
-/// its head.
-pub proof fn below_cf(sig: Sig, j: u64, p: int, k: int, d: Cpt)
-    requires
-        has_canon(sig, j),
-        sig.consts[j].lps.len() == 0,
-        0 <= p < canon_shape(sig, j).nmin(),
-        0 <= k < canon_shape(sig, j).fields[p].len(),
-        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
-            canon_shape(sig, j).ni, k as nat),
-        wf(d),
-        le(d, cf(sig, j, p, k)),
-    ensures
-        d is Bot || (d is Nd && d->Nd_0 is Ty && d->Nd_0->Ty_0 == spine_head(canon_shape(sig, j).fields[p][k])->Const_0
-            && tbl_canon(sig, d->Nd_0->Ty_0, d)),
-{
-    if d is Bot {
-        return;
-    }
-    if cf(sig, j, p, k) is Bot {
-        head_le(d, cf(sig, j, p, k));
-    }
-    let (kk, us, ca) = field_code(sig, j, p, k);
-    canon_is_tbl(sig, kk, us, ca);
-    tbl_canon_le(sig, kk, d, cf(sig, j, p, k));
 }
 
 } // verus!

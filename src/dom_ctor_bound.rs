@@ -28,8 +28,10 @@ pub open spec fn fbound(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, pv: Seq
     let sh = canon_shape(sig, ind);
     if crate::rec_canon::direct_occ(sh.fields[pc as int][i], ind, sh.us(), sh.np, sh.ni, i as nat) {
         canon_code(sig, ind, ls, pv)
+    } else if pv.len() >= sh.np {
+        crate::dom_lift::cf(sig, ind, pv, pc as int, i)
     } else {
-        crate::dom_lift::cf(sig, ind, pc as int, i)
+        Cpt::Bot
     }
 }
 
@@ -65,6 +67,24 @@ pub proof fn pre_refl(pv: Seq<Cpt>)
     }
 }
 
+/// A field's bound grows with the parameters' values.
+pub proof fn fbound_mono(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, pv: Seq<Cpt>, pv2: Seq<Cpt>, i: int)
+    requires
+        pre_le(pv, pv2),
+    ensures
+        le(fbound(sig, ind, pc, ls, pv, i), fbound(sig, ind, pc, ls, pv2, i)),
+{
+    let sh = canon_shape(sig, ind);
+    if crate::rec_canon::direct_occ(sh.fields[pc as int][i], ind, sh.us(), sh.np, sh.ni, i as nat) {
+        canon_mono(sig, ind, ls, pv, pv2);
+    } else if pv.len() >= sh.np {
+        fpe_mono(pv, pv2, sh.np, i as nat);
+        ceval_mono(sig, rk(sig, ind), ind, Seq::empty(), fpe(pv, sh.np, i as nat), fpe(pv2, sh.np, i as nat), sh.fields[pc as int][i]);
+    } else {
+        le_refl(Cpt::Bot);
+    }
+}
+
 /// THE BOUND WEAKENS as the parameters' values grow.
 pub proof fn tb_mono_pv(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv: Seq<Cpt>, pv2: Seq<Cpt>, k: nat, r: nat, a: Cpt)
     requires
@@ -80,7 +100,7 @@ pub proof fn tb_mono_pv(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>
             le_trans(a, canon_code(sig, ind, ls, pv), canon_code(sig, ind, ls, pv2));
         } else {
             if k >= np {
-                le_refl(fbound(sig, ind, pc, ls, pv2, (k - np) as int));
+                fbound_mono(sig, ind, pc, ls, pv, pv2, (k - np) as int);
                 le_trans(*a->Pi_0, fbound(sig, ind, pc, ls, pv, (k - np) as int), fbound(sig, ind, pc, ls, pv2, (k - np) as int));
             }
             let f = a->Pi_1;
@@ -471,10 +491,13 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
             assert(f == crate::beta_model::spine_app(ExprSpec::Const(ind, Seq::empty()), crate::beta_model::spine_args(f)));
             assert forall|j: int| 0 <= j < pv.len() implies #[trigger] pv[j] == env((i + pv.len() - 1 - j) as nat) by {}
             var_ind_bound(sig, ind, i as nat, crate::beta_model::spine_args(f), env, pv, a0);
+        } else if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f) {
+            // a type parameter: below the parameter's value
+            crate::dom_lift::cf_var(sig, ind, pv, pc as int, i);
+            crate::dom_adeq_base::mem_var(sig, f->Var_0, env, a0);
         } else {
-            crate::dom_canon::canon_fields(sig, ind, pc as int, i);
-            reveal(fields_typed);
-            assert(ftyped(sig, ind, pc as int, i, Seq::empty()));
+            crate::dom_lift::field_facts(sig, ind, pc as int, i);
+            crate::dom_lift::fq_closed(sig, ind, f, pc as int, i);
             crate::dom_canon::closed_bound(sig, ind, Seq::empty(), Seq::empty(), f, env, a0);
         }
     }
