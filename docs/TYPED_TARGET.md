@@ -579,6 +579,38 @@ clauses, the PER, monotonicity, stability and head-expansion lemmas,
 the lifting lemma, `tf_rel`, `cf_end`). It is independent of the
 recursor stage, which can proceed on the closed fragment first.
 
+### Parameters: the design (2026-09-29, started)
+
+Goal: inductives with parameters whose fields are typed by the parameters
+or by type formers applied to them (`List A`, `Prod A B`, `Option A`,
+trees over `A`). Fields depending on earlier fields and function-typed
+fields stay out; indices and Prop come after.
+
+Stages, each landing through the gate:
+
+- **P1, codes and typing.** A table is evaluated at the code's parameter
+  codes: `ceval` takes an environment of parameter codes, and a parameter
+  variable evaluates to its code. `tyc` (entries are inductive codes)
+  goes: entries are any codes typed at `U`, as `has_type` already asks.
+  The fragment's field condition (`simple_ty`) admits parameter variables
+  and formers applied to them.
+- **P2, the relation.** At an inductive's code `Nd(Ty(I), [A_1..A_np, T])`
+  both types head-reduce to applications of `I` whose parameters `Q_j`,
+  `Q2_j` are related at `A_j` (for type parameters), and `tchain(t, t2)`.
+  The constructor clause relates field `i` with the full relation, at its
+  table code and at the field type instantiated with the *relation's*
+  type's parameters `Q` (not the value's). So the clause is staged, and
+  it recurses through the relation at a smaller code: the relation's
+  measure becomes `(n, ht(a), k)`.
+- **P3, the lemmas.** PER, monotonicity, stability, head expansion,
+  conversion, and the lifting lemma (a parameter related at `A` lifts to a
+  field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.
+- **P4, the recursor with parameters.** The recursor stage generalized
+  from `np == 0`: parameters in the telescope induction, the walk, the IH
+  instances, the Iota cores. Subject reduction for Iota with parameters
+  needs `I P ≡ I P'` to give `P ≡ P'`, which the parametric relation's
+  parameter clause provides through the fundamental theorem.
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no

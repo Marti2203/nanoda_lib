@@ -106,23 +106,29 @@ pub open spec fn centries(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>
         let entry = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
             Cpt::Nd(NdKey::Tag(1), Seq::empty())
         } else {
-            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, fpe(args, sh.np, (k - 1) as nat), e)])
         };
         centries(sig, ind, ls, args, j, (k - 1) as nat).push(entry)
     }
 }
 
-/// The code of a closed simple type written in `outer`'s constructor
-/// (levels over `outer`'s, at its instance `ls`); type formers below rank
-/// `r`.
-pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec) -> Cpt
+/// The codes a field's variables denote: the parameters', then bottom
+/// for the `k` earlier fields (the innermost last).
+pub open spec fn fpe(args: Seq<Cpt>, np: nat, k: nat) -> Seq<Cpt> {
+    args.subrange(0, np as int) + Seq::new(k, |_i: int| Cpt::Bot)
+}
+
+/// The code of a simple type written in `outer`'s constructor (levels
+/// over `outer`'s, at its instance `ls`; variable `i` denoting
+/// `pe[pe.len() - 1 - i]`); type formers below rank `r`.
+pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec) -> Cpt
     decreases r, 1int, esize(e) + 1,
 {
     match e {
-        ExprSpec::Var(_) => Cpt::Bot,
+        ExprSpec::Var(i) => if i < pe.len() { pe[pe.len() - 1 - i] } else { Cpt::Bot },
         _ => match spine_head(e) {
             ExprSpec::Const(jd, us) => if 0 <= rk(sig, jd) < r {
-                canon_code(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, e))
+                canon_code(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, pe, e))
             } else {
                 Cpt::Bot
             },
@@ -131,12 +137,12 @@ pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: Expr
     }
 }
 
-pub open spec fn cargs(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec) -> Seq<Cpt>
+pub open spec fn cargs(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec) -> Seq<Cpt>
     decreases r, 1int, esize(e),
     via cargs_decreases
 {
     match e {
-        ExprSpec::App(f, x) => cargs(sig, r, outer, ls, *f).push(ceval(sig, r, outer, ls, *x)),
+        ExprSpec::App(f, x) => cargs(sig, r, outer, ls, pe, *f).push(ceval(sig, r, outer, ls, pe, *x)),
         _ => Seq::empty(),
     }
 }
@@ -260,9 +266,11 @@ pub proof fn centries_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>,
     if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || args.len() < sh.np) {
         centries_wf(sig, ind, ls, args, j, (k - 1) as nat);
         let e = sh.fields[j as int][k - 1];
+        let pe = fpe(args, sh.np, (k - 1) as nat);
         if !direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
-            ceval_wf(sig, rk(sig, ind), ind, ls, e);
-            let c = ceval(sig, rk(sig, ind), ind, ls, e);
+            fpe_aw(args, sh.np, (k - 1) as nat);
+            ceval_wf(sig, rk(sig, ind), ind, ls, pe, e);
+            let c = ceval(sig, rk(sig, ind), ind, ls, pe, e);
             assert(wf(Cpt::Nd(NdKey::Tag(0), seq![c]))) by {
                 assert(seq![c][0] == c);
             }
@@ -270,42 +278,145 @@ pub proof fn centries_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>,
         let entry = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
             Cpt::Nd(NdKey::Tag(1), Seq::empty())
         } else {
-            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, pe, e)])
         };
         aw_push(centries(sig, ind, ls, args, j, (k - 1) as nat), entry);
     }
 }
 
-pub proof fn ceval_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec)
+pub proof fn ceval_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        aw(pe),
     ensures
-        wf(ceval(sig, r, outer, ls, e)),
+        wf(ceval(sig, r, outer, ls, pe, e)),
     decreases r, 1int, esize(e) + 1,
 {
     match e {
-        ExprSpec::Var(_) => {},
+        ExprSpec::Var(i) => {
+            if i < pe.len() {
+                assert(wf(pe[pe.len() - 1 - i]));
+            }
+        },
         _ => {
             if let ExprSpec::Const(jd, us) = spine_head(e) {
                 if 0 <= rk(sig, jd) < r {
-                    cargs_wf(sig, r, outer, ls, e);
-                    canon_wf(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, e));
+                    cargs_wf(sig, r, outer, ls, pe, e);
+                    canon_wf(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, pe, e));
                 }
             }
         },
     }
 }
 
-pub proof fn cargs_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec)
+pub proof fn cargs_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        aw(pe),
     ensures
-        aw(cargs(sig, r, outer, ls, e)),
+        aw(cargs(sig, r, outer, ls, pe, e)),
     decreases r, 1int, esize(e),
 {
     if let ExprSpec::App(f, x) = e {
         assert(esize(*f) >= 1) by {
             reveal_with_fuel(esize, 1);
         }
-        cargs_wf(sig, r, outer, ls, *f);
-        ceval_wf(sig, r, outer, ls, *x);
-        aw_push(cargs(sig, r, outer, ls, *f), ceval(sig, r, outer, ls, *x));
+        cargs_wf(sig, r, outer, ls, pe, *f);
+        ceval_wf(sig, r, outer, ls, pe, *x);
+        aw_push(cargs(sig, r, outer, ls, pe, *f), ceval(sig, r, outer, ls, pe, *x));
+    }
+}
+
+pub proof fn fpe_aw(args: Seq<Cpt>, np: nat, k: nat)
+    requires
+        aw(args),
+        np <= args.len(),
+    ensures
+        aw(fpe(args, np, k)),
+{
+    let pe = fpe(args, np, k);
+    assert forall|i: int| 0 <= i < pe.len() implies #[trigger] wf(pe[i]) by {
+        if i < np {
+            assert(pe[i] == args[i]);
+        }
+    }
+}
+
+pub proof fn fpe_mono(a1: Seq<Cpt>, a2: Seq<Cpt>, np: nat, k: nat)
+    requires
+        pre_le(a1, a2),
+        np <= a1.len(),
+    ensures
+        pre_le(fpe(a1, np, k), fpe(a2, np, k)),
+{
+    let (p1, p2) = (fpe(a1, np, k), fpe(a2, np, k));
+    assert forall|i: int| 0 <= i < p1.len() implies le(#[trigger] p1[i], p2[i]) by {
+        if i < np {
+            assert(p1[i] == a1[i] && p2[i] == a2[i]);
+        } else {
+            le_refl(Cpt::Bot);
+        }
+    }
+}
+
+/// CODES OF SIMPLE TYPES ARE MONOTONE in the variables' codes.
+pub proof fn ceval_mono(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: Seq<Cpt>, p2: Seq<Cpt>, e: ExprSpec)
+    requires
+        pre_le(p1, p2),
+    ensures
+        le(ceval(sig, r, outer, ls, p1, e), ceval(sig, r, outer, ls, p2, e)),
+    decreases r, 1int, esize(e) + 1,
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if i < p1.len() {
+                assert(le(p1[p1.len() - 1 - i], p2[p2.len() - 1 - i]));
+            } else {
+                le_refl(Cpt::Bot);
+            }
+        },
+        _ => {
+            if let ExprSpec::Const(jd, us) = spine_head(e) {
+                if 0 <= rk(sig, jd) < r {
+                    cargs_mono(sig, r, outer, ls, p1, p2, e);
+                    canon_mono(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, p1, e), cargs(sig, r, outer, ls, p2, e));
+                } else {
+                    le_refl(Cpt::Bot);
+                }
+            } else {
+                le_refl(Cpt::Bot);
+            }
+        },
+    }
+}
+
+pub proof fn cargs_mono(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: Seq<Cpt>, p2: Seq<Cpt>, e: ExprSpec)
+    requires
+        pre_le(p1, p2),
+    ensures
+        pre_le(cargs(sig, r, outer, ls, p1, e), cargs(sig, r, outer, ls, p2, e)),
+    decreases r, 1int, esize(e),
+{
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+        cargs_mono(sig, r, outer, ls, p1, p2, *f);
+        ceval_mono(sig, r, outer, ls, p1, p2, *x);
+        pre_le_push2(cargs(sig, r, outer, ls, p1, *f), cargs(sig, r, outer, ls, p2, *f), ceval(sig, r, outer, ls, p1, *x), ceval(sig, r, outer, ls, p2, *x));
+    }
+}
+
+/// Closed simple types read no variables.
+pub proof fn ceval_closed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: Seq<Cpt>, p2: Seq<Cpt>, ind: u64, e: ExprSpec)
+    requires
+        simple_ty(sig, ind, e) || simple_app(sig, ind, e),
+    ensures
+        ceval(sig, r, outer, ls, p1, e) == ceval(sig, r, outer, ls, p2, e),
+        cargs(sig, r, outer, ls, p1, e) == cargs(sig, r, outer, ls, p2, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        ceval_closed(sig, r, outer, ls, p1, p2, ind, *f);
+        ceval_closed(sig, r, outer, ls, p1, p2, ind, *x);
     }
 }
 
@@ -366,13 +477,22 @@ pub proof fn centries_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>,
     if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || a1.len() < sh.np) {
         centries_mono(sig, ind, ls, a1, a2, j, (k - 1) as nat);
         let e = sh.fields[j as int][k - 1];
-        let e1 = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
-            Cpt::Nd(NdKey::Tag(1), Seq::empty())
+        let (p1, p2) = (fpe(a1, sh.np, (k - 1) as nat), fpe(a2, sh.np, (k - 1) as nat));
+        let (c1, c2) = (ceval(sig, rk(sig, ind), ind, ls, p1, e), ceval(sig, rk(sig, ind), ind, ls, p2, e));
+        let (e1, e2) = if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            (Cpt::Nd(NdKey::Tag(1), Seq::empty()), Cpt::Nd(NdKey::Tag(1), Seq::empty()))
         } else {
-            Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+            (Cpt::Nd(NdKey::Tag(0), seq![c1]), Cpt::Nd(NdKey::Tag(0), seq![c2]))
         };
-        le_refl(e1);
-        pre_le_push2(centries(sig, ind, ls, a1, j, (k - 1) as nat), centries(sig, ind, ls, a2, j, (k - 1) as nat), e1, e1);
+        if direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            le_refl(e1);
+        } else {
+            fpe_mono(a1, a2, sh.np, (k - 1) as nat);
+            ceval_mono(sig, rk(sig, ind), ind, ls, p1, p2, e);
+            assert(pre_le(seq![c1], seq![c2]));
+            nd_le(NdKey::Tag(0), seq![c1], seq![c2]);
+        }
+        pre_le_push2(centries(sig, ind, ls, a1, j, (k - 1) as nat), centries(sig, ind, ls, a2, j, (k - 1) as nat), e1, e2);
     }
 }
 
@@ -462,48 +582,48 @@ pub proof fn centries_lv(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelS
     let sh = canon_shape(sig, ind);
     if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || args.len() < sh.np) {
         centries_lv(sig, ind, ls, ls2, args, j, (k - 1) as nat);
-        ceval_lv(sig, rk(sig, ind), ind, ls, ls2, sh.fields[j as int][k - 1]);
+        ceval_lv(sig, rk(sig, ind), ind, ls, ls2, fpe(args, sh.np, (k - 1) as nat), sh.fields[j as int][k - 1]);
     }
 }
 
-pub proof fn ceval_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec)
+pub proof fn ceval_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
     requires
         crate::conv_cr::levs_eq(ls, ls2),
         ls.len() == sig.consts[outer].lps.len(),
     ensures
-        ceval(sig, r, outer, ls, e) == ceval(sig, r, outer, ls2, e),
+        ceval(sig, r, outer, ls, pe, e) == ceval(sig, r, outer, ls2, pe, e),
     decreases r, 1int, esize(e) + 1,
 {
     if !(e is Var) {
         if let ExprSpec::Const(jd, us) = spine_head(e) {
             if 0 <= rk(sig, jd) < r {
-                cargs_lv(sig, r, outer, ls, ls2, e);
+                cargs_lv(sig, r, outer, ls, ls2, pe, e);
                 lsub_lv(sig, outer, ls, ls2, us);
-                canon_lv(sig, jd, lsub(sig, outer, ls, us), lsub(sig, outer, ls2, us), cargs(sig, r, outer, ls, e));
+                canon_lv(sig, jd, lsub(sig, outer, ls, us), lsub(sig, outer, ls2, us), cargs(sig, r, outer, ls, pe, e));
             }
         }
     }
 }
 
-pub proof fn cargs_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec)
+pub proof fn cargs_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
     requires
         crate::conv_cr::levs_eq(ls, ls2),
         ls.len() == sig.consts[outer].lps.len(),
     ensures
-        cargs(sig, r, outer, ls, e) == cargs(sig, r, outer, ls2, e),
+        cargs(sig, r, outer, ls, pe, e) == cargs(sig, r, outer, ls2, pe, e),
     decreases r, 1int, esize(e),
 {
     if let ExprSpec::App(f, x) = e {
         assert(esize(*f) >= 1) by {
             reveal_with_fuel(esize, 1);
         }
-        cargs_lv(sig, r, outer, ls, ls2, *f);
-        ceval_lv(sig, r, outer, ls, ls2, *x);
+        cargs_lv(sig, r, outer, ls, ls2, pe, *f);
+        ceval_lv(sig, r, outer, ls, ls2, pe, *x);
     }
 }
 
 #[via_fn]
-proof fn cargs_decreases(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec) {
+proof fn cargs_decreases(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec) {
     if let ExprSpec::App(f, x) = e {
         assert(esize(*f) >= 1) by {
             reveal_with_fuel(esize, 1);
@@ -513,13 +633,13 @@ proof fn cargs_decreases(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: Ex
 
 /// A table entry: the recursive marker at a direct occurrence, else the
 /// field type's code.
-pub open spec fn centry_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>, j: nat, i: nat) -> Cpt {
+pub open spec fn centry_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat, i: nat) -> Cpt {
     let sh = canon_shape(sig, ind);
     let e = sh.fields[j as int][i as int];
     if direct_occ(e, ind, sh.us(), sh.np, sh.ni, i) {
         Cpt::Nd(NdKey::Tag(1), Seq::empty())
     } else {
-        Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, e)])
+        Cpt::Nd(NdKey::Tag(0), seq![ceval(sig, rk(sig, ind), ind, ls, fpe(args, sh.np, i), e)])
     }
 }
 
@@ -532,15 +652,15 @@ pub proof fn centries_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>,
         args.len() >= canon_shape(sig, ind).np,
     ensures
         centries(sig, ind, ls, args, j, k).len() == k,
-        forall|i: int| 0 <= i < k ==> #[trigger] centries(sig, ind, ls, args, j, k)[i] == centry_at(sig, ind, ls, j, i as nat),
+        forall|i: int| 0 <= i < k ==> #[trigger] centries(sig, ind, ls, args, j, k)[i] == centry_at(sig, ind, ls, args, j, i as nat),
     decreases k,
 {
     if k > 0 {
         centries_at(sig, ind, ls, args, j, (k - 1) as nat);
         let prev = centries(sig, ind, ls, args, j, (k - 1) as nat);
         let cur = centries(sig, ind, ls, args, j, k);
-        assert(cur == prev.push(centry_at(sig, ind, ls, j, (k - 1) as nat)));
-        assert forall|i: int| 0 <= i < k implies #[trigger] cur[i] == centry_at(sig, ind, ls, j, i as nat) by {
+        assert(cur == prev.push(centry_at(sig, ind, ls, args, j, (k - 1) as nat)));
+        assert forall|i: int| 0 <= i < k implies #[trigger] cur[i] == centry_at(sig, ind, ls, args, j, i as nat) by {
             if i < k - 1 {
                 assert(cur[i] == prev[i]);
             }
@@ -596,7 +716,7 @@ pub proof fn canon_rmark(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>,
     assert(crate::dom_typing::tbl(ts) == blocks);
     cblocks_at(sig, ind, ls, args, sh.nmin());
     centries_at(sig, ind, ls, args, p, sh.fields[p as int].len());
-    assert(centries(sig, ind, ls, args, p, sh.fields[p as int].len())[k as int] == centry_at(sig, ind, ls, p, k));
+    assert(centries(sig, ind, ls, args, p, sh.fields[p as int].len())[k as int] == centry_at(sig, ind, ls, args, p, k));
 }
 
 } // verus!

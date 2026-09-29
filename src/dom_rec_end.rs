@@ -582,6 +582,7 @@ pub open spec fn walk_of(sig: Sig, rc: Rc) -> crate::dom_rec_walk::Wk {
 }
 
 /// The walk's lengths and its values' facts.
+#[verifier::spinoff_prover]
 pub proof fn walk_facts(sig: Sig, rc: Rc)
     requires
         rec_ctx(sig, rc),

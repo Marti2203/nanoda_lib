@@ -91,16 +91,16 @@ pub proof fn subst_level_none(l: LevelSpec, vs: Seq<LevelSpec>)
 }
 
 /// The code arguments of a spine are its arguments' codes.
-pub proof fn cargs_spine(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, e: ExprSpec)
+pub proof fn cargs_spine(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
     ensures
-        cargs(sig, r, outer, ls, e) == Seq::new(spine_args(e).len(), |i: int| ceval(sig, r, outer, ls, spine_args(e)[i])),
+        cargs(sig, r, outer, ls, pe, e) == Seq::new(spine_args(e).len(), |i: int| ceval(sig, r, outer, ls, pe, spine_args(e)[i])),
     decreases e,
 {
     if let ExprSpec::App(f, x) = e {
-        cargs_spine(sig, r, outer, ls, *f);
-        assert(cargs(sig, r, outer, ls, e) =~= Seq::new(spine_args(e).len(), |i: int| ceval(sig, r, outer, ls, spine_args(e)[i])));
+        cargs_spine(sig, r, outer, ls, pe, *f);
+        assert(cargs(sig, r, outer, ls, pe, e) =~= Seq::new(spine_args(e).len(), |i: int| ceval(sig, r, outer, ls, pe, spine_args(e)[i])));
     } else {
-        assert(cargs(sig, r, outer, ls, e) =~= Seq::new(spine_args(e).len(), |i: int| ceval(sig, r, outer, ls, spine_args(e)[i])));
+        assert(cargs(sig, r, outer, ls, pe, e) =~= Seq::new(spine_args(e).len(), |i: int| ceval(sig, r, outer, ls, pe, spine_args(e)[i])));
     }
 }
 
@@ -119,15 +119,16 @@ pub proof fn tbody_sl(t: ExprSpec, k: nat, ks: Seq<u64>, vs: Seq<LevelSpec>)
 }
 
 /// A MEMBER OF A CLOSED SIMPLE TYPE lies below its canonical code.
-pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, e: ExprSpec, rho: Env, d: Cpt)
+pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec, rho: Env, d: Cpt)
     requires
+        aw(pe),
         simple_ty(sig, ind, e),
         ranked(sig, e, rk(sig, ind)),
         sig.consts[ind].lps.len() == 0,
         mem(sig, e, rho, d),
         forall|i: nat| #[trigger] wf(rho(i)),
     ensures
-        le(d, ceval(sig, rk(sig, ind), ind, ls, e)),
+        le(d, ceval(sig, rk(sig, ind), ind, ls, pe, e)),
     decreases esize(e),
 {
     let r = rk(sig, ind);
@@ -137,17 +138,17 @@ pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, e: ExprSpec, r
     let args = spine_args(e);
     crate::beta_model::spine_recompose(e);
     assert(!(e is Var));
-    let code = ceval(sig, r, ind, ls, e);
-    assert(code == canon_code(sig, j, lsub(sig, ind, ls, us), cargs(sig, r, ind, ls, e)));
+    let code = ceval(sig, r, ind, ls, pe, e);
+    assert(code == canon_code(sig, j, lsub(sig, ind, ls, us), cargs(sig, r, ind, ls, pe, e)));
     assert(lsub(sig, ind, ls, us) =~= us) by {
         assert forall|i: int| 0 <= i < us.len() implies #[trigger] lsub(sig, ind, ls, us)[i] == us[i] by {
             assert(sig.consts[ind].lps =~= Seq::<u64>::empty());
             subst_level_none(us[i], ls);
         }
     }
-    let ca = cargs(sig, r, ind, ls, e);
-    cargs_spine(sig, r, ind, ls, e);
-    cargs_wf(sig, r, ind, ls, e);
+    let ca = cargs(sig, r, ind, ls, pe, e);
+    cargs_spine(sig, r, ind, ls, pe, e);
+    cargs_wf(sig, r, ind, ls, pe, e);
     canon_wf(sig, j, us, ca);
     if !sem_const(sig, j, us) {
         crate::dom_bound::nonsem_bot(sig, j, us, rho);
@@ -164,7 +165,7 @@ pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, e: ExprSpec, r
     spine_args_size(e);
     assert forall|i: int| 0 <= i < ws.len() implies le(#[trigger] ws[i], ca[i]) by {
         assert(crate::dom_model::mem(sig, args[i], rho, ws[i]));
-        closed_bound(sig, ind, ls, args[i], rho, ws[i]);
+        closed_bound(sig, ind, ls, pe, args[i], rho, ws[i]);
     }
     canon_mono(sig, j, us, ws, ca);
     le_trans(d, canon_code(sig, j, us, ws), code);
@@ -196,10 +197,12 @@ pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
         cblocks_at(sig, ind, ls, args, sh.nmin());
         centries_at(sig, ind, ls, args, j as nat, sh.fields[j].len());
         let en = crate::dom_typing::tbl(ts)[j]->Nd_1[k];
-        assert(en == centry_at(sig, ind, ls, j as nat, k as nat));
+        assert(en == centry_at(sig, ind, ls, args, j as nat, k as nat));
         let e = sh.fields[j][k];
+        let pe = fpe(args, sh.np, k as nat);
         assert(!crate::rec_canon::direct_occ(e, ind, sh.us(), sh.np, sh.ni, k as nat));
-        let v = ceval(sig, rk(sig, ind), ind, ls, e);
+        canon_fields(sig, ind, j, k);
+        let v = ceval(sig, rk(sig, ind), ind, ls, pe, e);
         assert(crate::dom_typing::ecode(en) == v);
         crate::dom_sound::typed_basic();
         if !(v is Bot) {
@@ -207,8 +210,9 @@ pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
             let h = spine_head(e);
             let (jd, us) = (h->Const_0, h->Const_1);
             assert(0 <= rk(sig, jd) < rk(sig, ind));
-            cargs_wf(sig, rk(sig, ind), ind, ls, e);
-            canon_typed(sig, jd, lsub(sig, ind, ls, us), cargs(sig, rk(sig, ind), ind, ls, e));
+            fpe_aw(args, sh.np, k as nat);
+            cargs_wf(sig, rk(sig, ind), ind, ls, pe, e);
+            canon_typed(sig, jd, lsub(sig, ind, ls, us), cargs(sig, rk(sig, ind), ind, ls, pe, e));
         }
         typed_up(v, Cpt::U, n);
     }
@@ -351,6 +355,25 @@ pub proof fn sl_none(e: ExprSpec, vs: Seq<LevelSpec>)
     }
 }
 
+/// A canonical shape's fields are direct occurrences or closed simple
+/// types.
+pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
+    requires
+        has_canon(sig, ind),
+        0 <= j < canon_shape(sig, ind).nmin(),
+        0 <= k < canon_shape(sig, ind).fields[j].len(),
+    ensures ({
+        let sh = canon_shape(sig, ind);
+        crate::rec_canon::direct_occ(sh.fields[j][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+            || crate::rec_canon::simple_ty(sig, ind, sh.fields[j][k])
+    }),
+{
+    let rid = canon_rec(sig, ind);
+    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
+    let sh = canon_shape(sig, ind);
+    assert(sh.ctors[j] == sh.ctors[j]);
+}
+
 /// A universe-monomorphic inductive's canonical codes at equally many
 /// arguments share their key and table.
 pub proof fn canon_same_table(sig: Sig, ind: u64, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>)
@@ -376,6 +399,12 @@ pub proof fn canon_same_table(sig: Sig, ind: u64, l1: Seq<LevelSpec>, l2: Seq<Le
             let nf = sh.fields[p].len();
             centries_at(sig, ind, l1, a1, p as nat, nf);
             centries_at(sig, ind, l2, a2, p as nat, nf);
+            assert forall|k: int| 0 <= k < nf implies #[trigger] centries(sig, ind, l1, a1, p as nat, nf)[k] == centries(sig, ind, l2, a2, p as nat, nf)[k] by {
+                canon_fields(sig, ind, p, k);
+                if !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat) {
+                    ceval_closed(sig, rk(sig, ind), ind, l1, fpe(a1, sh.np, k as nat), fpe(a2, sh.np, k as nat), ind, sh.fields[p][k]);
+                }
+            }
             assert(centries(sig, ind, l1, a1, p as nat, nf) =~= centries(sig, ind, l2, a2, p as nat, nf));
         }
         assert(cblocks(sig, ind, l1, a1, sh.nmin()) =~= cblocks(sig, ind, l2, a2, sh.nmin()));

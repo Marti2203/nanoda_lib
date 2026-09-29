@@ -1600,24 +1600,26 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, xf: Seq<Cpt>, ak: Seq<Cpt>
     assert forall|k: int| 0 <= k < nf implies (#[trigger] xf[k]) is Bot
         || (es[k] == crate::dom_typing::rmark() && has_type(n, xf[k], dcan))
         || (crate::dom_typing::is_centry(es[k]) && has_type(n, xf[k], crate::dom_typing::ecode(es[k]))) by {
-        assert(es[k] == crate::dom_code::centry_at(sig, ind, Seq::empty(), p as nat, k as nat));
+        assert(es[k] == crate::dom_code::centry_at(sig, ind, Seq::empty(), bn, p as nat, k as nat));
         assert(ht(xf[k]) < ht(val));
         if isrec(sig, rid, p, k) {
             typed_up(xf[k], dcan, n);
         } else {
             let e = sh.fields[p][k];
-            let cv = crate::dom_code::ceval(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), e);
+            let pe = crate::dom_code::fpe(bn, np, k as nat);
+            let cv = crate::dom_code::ceval(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
             assert(crate::dom_typing::ecode(es[k]) == cv);
-            crate::dom_canon::closed_bound(sig, ind, Seq::empty(), e, bot_env(), ak[k]);
+            crate::dom_code::fpe_aw(bn, np, k as nat);
+            crate::dom_canon::closed_bound(sig, ind, Seq::empty(), pe, e, bot_env(), ak[k]);
             crate::dom_sound::typed_basic();
             if !(cv is Bot) {
                 let h = crate::beta_model::spine_head(e);
-                crate::dom_code::cargs_wf(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), e);
+                crate::dom_code::cargs_wf(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
                 crate::dom_canon::canon_typed(sig, h->Const_0, crate::dom_code::lsub(sig, ind, Seq::empty(), h->Const_1),
-                    crate::dom_code::cargs(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), e));
+                    crate::dom_code::cargs(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e));
             }
             typed_weak(xf[k], ak[k], cv);
-            crate::dom_code::ceval_wf(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), e);
+            crate::dom_code::ceval_wf(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
             crate::dom_typing::tbl_lower(dcan);
             typed_up(xf[k], cv, n);
         }
