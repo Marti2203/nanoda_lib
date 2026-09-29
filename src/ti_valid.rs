@@ -117,7 +117,7 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
 /// Without recursors nothing is a recursor redex.
 pub proof fn iota_dead(sig: Sig, m: ExprSpec)
     requires
-        iota_ok(sig),
+        crate::ti_syntax::no_recs(sig),
     ensures
         !crate::beta_model::rec_ready(sig.ienv, m),
 {

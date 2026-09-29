@@ -156,8 +156,8 @@ pub open spec fn ctor_pos(sig: Sig, ind: u64, c: u64) -> int {
 }
 
 /// The code function a semantic constant approximates: a constructor's, a
-/// recursor's (only bottom, until its typing is in: docs/TYPED_TARGET.md,
-/// "S6.4c/d plan"), or a type former's.
+/// recursor's where the model interprets it (`rec_hyps`, otherwise only
+/// bottom), or a type former's.
 pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -> bool {
     let t = crate::ti_syntax::dty_at(sig, c, ls);
     if sig.ienv.ctor_ind.contains_key(c) {
@@ -165,7 +165,7 @@ pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -
         v is Bot || (ctor_of(sig, ind, c)
             && cf_fun(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v))
     } else if sig.ienv.recs.contains_key(c) {
-        v is Bot
+        v is Bot || (crate::dom_rec_end::rec_hyps(sig, c) && rf_fun(sig, c, t, Seq::empty(), v))
     } else {
         tf_fun(sig, c, ls, t, Seq::empty(), v)
     }

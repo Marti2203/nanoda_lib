@@ -552,4 +552,22 @@ pub proof fn psub_rec(t: Sub, env: crate::expr_arena_bridge::EnvSpec, sp: ExprSp
     }
 }
 
+/// Substitution keeps a recursor redex firing: ready, and its major of
+/// the constructor's exact arity.
+pub proof fn psub_fire(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)
+    requires
+        crate::ti_hred::rec_fire(sig, sp),
+    ensures
+        crate::ti_hred::rec_fire(sig, psub(sp, t)),
+        psub(crate::beta_model::rec_result(sig.ienv, sp), t) == crate::beta_model::rec_result(sig.ienv, psub(sp, t)),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    psub_rec(t, sig.ienv, sp);
+    psub_spine_const(t, sp);
+    let rd = sig.ienv.recs[spine_head(sp)->Const_0];
+    let major = spine_args(sp)[rd.major_idx as int];
+    psub_spine_const(t, major);
+    assert(spsub(spine_args(sp), t)[rd.major_idx as int] == psub(major, t));
+}
+
 } // verus!

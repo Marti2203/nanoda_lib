@@ -282,7 +282,7 @@ proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
         forall|c2: int| 0 <= c2 <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c2), m_denv(ef, c2)),
         0 <= c <= ef.declars_keys().len(),
     ensures
-        crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
+        crate::ti_syntax::no_recs(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
 {
     assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
 }

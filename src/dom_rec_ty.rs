@@ -62,10 +62,11 @@ pub open spec fn minor_body(km: nat, c: u64, us: Seq<LevelSpec>, pvars: Seq<Expr
 }
 
 /// THE MINOR'S OUTPUT IS TYPED BELOW THE MOTIVE AT THE VALUE.
-pub proof fn minor_out(sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<ExprSpec>, km: nat, c: u64, us: Seq<LevelSpec>,
+pub proof fn minor_out(ss: Sig, sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<ExprSpec>, km: nat, c: u64, us: Seq<LevelSpec>,
     pvars: Seq<ExprSpec>, l: LevelSpec, rho: Env, d: Cpt, xn: Cpt, fs: Seq<Cpt>, hs: Seq<Cpt>) -> (e: Cpt)
     requires
-        derivable(sig, eq(g, binds(BinderKind::Pi, fds + ihs, minor_body(km, c, us, pvars, fds.len(), ihs.len())),
+        crate::dom_sound::sound_oracle(ss, sig),
+        derivable(ss, eq(g, binds(BinderKind::Pi, fds + ihs, minor_body(km, c, us, pvars, fds.len(), ihs.len())),
             binds(BinderKind::Pi, fds + ihs, minor_body(km, c, us, pvars, fds.len(), ihs.len())), sort(l))),
         fits_env(sig, g, rho),
         mem(sig, binds(BinderKind::Pi, fds + ihs, minor_body(km, c, us, pvars, fds.len(), ihs.len())), rho, d),
@@ -101,7 +102,7 @@ pub proof fn minor_out(sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<ExprSpec>,
         }
     }
     let body = minor_body(km, c, us, pvars, nf, nr);
-    let (ws2, e, _l2, _dcs) = tele_apps(sig, g, fds + ihs, body, l, rho, d, xn, ws);
+    let (ws2, e, _l2, _dcs) = tele_apps(ss, sig, g, fds + ihs, body, l, rho, d, xn, ws);
     let rho2 = exts(rho, ws2);
     let args = pvars + crate::rec_canon::vars(nr, nf);
     let wa = motive_bound(sig, km, c, us, args, rho2, e);
@@ -368,10 +369,11 @@ pub proof fn spine_const_nonbind(c: u64, us: Seq<LevelSpec>, args: Seq<ExprSpec>
 
 /// THE MINOR'S OUTPUT, for the recursor at a chain of inputs.
 #[verifier::spinoff_prover]
-pub proof fn rec_minor(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (e: Cpt)
+pub proof fn rec_minor(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (e: Cpt)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_scope(sig, rid),
-        derivable(sig, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
+        derivable(ss, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
         forall|i: nat| #[trigger] wf(rho0(i)),
         crate::dom_tele::chain_ok(sig, rtds(sig, rid, ls), rho0, ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
@@ -410,7 +412,7 @@ pub proof fn rec_minor(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho
     let km = (p + nf + nr) as nat;
     let pvars = vars((1 + p + nf + nr) as nat, np);
     // its typing context, and the chain's environment there
-    let li = crate::dom_tele::tele_prefix(sig, Seq::empty(), tds, rbody(sig, rid), l, rho0, ds, xs, mi);
+    let li = crate::dom_tele::tele_prefix(ss, sig, Seq::empty(), tds, rbody(sig, rid), l, rho0, ds, xs, mi);
     let g = Seq::<ExprSpec>::empty() + tds.subrange(0, mi);
     let rho = crate::dom_tele::exts(rho0, xs.subrange(0, mi));
     assert(crate::dom_sound::dfit(sig, tds[mi], crate::dom_tele::exts(rho0, xs.subrange(0, mi)), ds[mi], xs[mi]));
@@ -428,7 +430,7 @@ pub proof fn rec_minor(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho
         assert(wf(xs[xs.len() - 1]));
     }
     crate::dom_rec::rec_ihs_wf(sig, rid, xs, nf);
-    let e = minor_out(sig, g, f2, i2, km, c, us2, pvars, li, rho, ds[mi], minor, fs, hs);
+    let e = minor_out(ss, sig, g, f2, i2, km, c, us2, pvars, li, rho, ds[mi], minor, fs, hs);
     exts_at(rho0, xs.subrange(0, mi), p as nat);
     assert(v == Cpt::Nd(NdKey::Con(ind, p as nat), fs));
     e
@@ -436,10 +438,11 @@ pub proof fn rec_minor(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho
 
 /// THE MOTIVE AT THE MAJOR is a type, in the recursor type's body.
 #[verifier::spinoff_prover]
-pub proof fn rec_motive(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>)
+pub proof fn rec_motive(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_scope(sig, rid),
-        derivable(sig, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
+        derivable(ss, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
         forall|i: nat| #[trigger] wf(rho0(i)),
         crate::dom_tele::chain_ok(sig, rtds(sig, rid, ls), rho0, ds, xs),
     ensures
@@ -467,7 +470,7 @@ pub proof fn rec_motive(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rh
     assert(crate::expr_model::subst_expr_levels(sh.motive_ty(lm), rd.uparams, ls)
         == ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(crate::expr_model::subst_expr_levels(ExprSpec::Sort(lm), rd.uparams, ls))));
     assert(tds[np as int] == pi(ta, ExprSpec::Sort(lm2)));
-    let li = crate::dom_tele::tele_prefix(sig, Seq::empty(), tds, rbody(sig, rid), l, rho0, ds, xs, np as int);
+    let li = crate::dom_tele::tele_prefix(ss, sig, Seq::empty(), tds, rbody(sig, rid), l, rho0, ds, xs, np as int);
     let g = Seq::<ExprSpec>::empty() + tds.subrange(0, np as int);
     let rho = crate::dom_tele::exts(rho0, xs.subrange(0, np as int));
     assert(crate::dom_sound::dfit(sig, tds[np as int], rho, ds[np as int], xm));
@@ -476,7 +479,7 @@ pub proof fn rec_motive(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rh
         typed_wf(xs[i], ds[i]);
     }
     assert(wf(xs[xs.len() - 1]));
-    let (w2, r1, _l2, _a0) = crate::dom_tele::tele_step(sig, g, ta, ExprSpec::Sort(lm2), li, rho, ds[np as int], xm, v);
+    let (w2, r1, _l2, _a0) = crate::dom_tele::tele_step(ss, sig, g, ta, ExprSpec::Sort(lm2), li, rho, ds[np as int], xm, v);
     reveal(mem);
     let wr = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Sort(lm2), ext(rho, w2), r1, w);
     assert(r1 is Bot || r1 == sortc(lm2));
@@ -505,10 +508,11 @@ pub proof fn rec_motive(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rh
 /// typed at a member of the recursor's type, approximates the code
 /// function, and applied along the chain gives at least that value.
 #[verifier::spinoff_prover]
-pub proof fn rec_step(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Cpt, Cpt))
+pub proof fn rec_step(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Cpt, Cpt))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_scope(sig, rid),
-        derivable(sig, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
+        derivable(ss, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
         forall|i: nat| #[trigger] wf(rho0(i)),
         crate::dom_tele::chain_ok(sig, rtds(sig, rid, ls), rho0, ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
@@ -521,8 +525,8 @@ pub proof fn rec_step(sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0
 {
     let np = rshape(sig, rid).np;
     let rv = crate::dom_rec::recval(sig, rid, xs);
-    let e = rec_minor(sig, rid, ls, l, rho0, ds, xs);
-    rec_motive(sig, rid, ls, l, rho0, ds, xs);
+    let e = rec_minor(ss, sig, rid, ls, l, rho0, ds, xs);
+    rec_motive(ss, sig, rid, ls, l, rho0, ds, xs);
     let tv = app(xs[np as int], xs.last());
     typed_weak(rv, e, tv);
     rec_ty_split(sig, rid, ls);

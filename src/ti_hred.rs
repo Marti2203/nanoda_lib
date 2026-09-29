@@ -21,15 +21,17 @@ pub open spec fn rec_major(sig: Sig, t: ExprSpec) -> bool {
 }
 
 /// The major premise of a recursor redex has its constructor's exact
-/// arity: parameters and fields. The kernel does not check it; a typed
-/// major has it (docs/TYPED_TARGET.md, S6.4c/d plan).
+/// arity (parameters and fields) and as many universe levels as the
+/// constructor declares. The kernel does not check either; a typed major
+/// has both (docs/TYPED_TARGET.md, S6.4c/d plan and "The landing").
 pub open spec fn rec_arity(sig: Sig, t: ExprSpec) -> bool {
     let rd = sig.ienv.recs[crate::beta_model::spine_head(t)->Const_0];
     let major = crate::beta_model::spine_args(t)[rd.major_idx as int];
     let cid = crate::beta_model::spine_head(major)->Const_0;
     match crate::beta_model::find_rule(rd.rules, cid) {
         Some(ri) => sig.ienv.ctor_np.contains_key(cid)
-            && crate::beta_model::spine_args(major).len() == sig.ienv.ctor_np[cid] as nat + rd.rules[ri].nfields,
+            && crate::beta_model::spine_args(major).len() == sig.ienv.ctor_np[cid] as nat + rd.rules[ri].nfields
+            && sig.consts.contains_key(cid) && crate::beta_model::spine_head(major)->Const_1.len() == sig.consts[cid].lps.len(),
         None => false,
     }
 }

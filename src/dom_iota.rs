@@ -323,12 +323,13 @@ pub proof fn ctor_ty_split(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>)
 /// constructor's position is the constructor's, and its fields lie below
 /// projections of the arguments typed along the constructor's type.
 #[verifier::spinoff_prover]
-pub proof fn iota_major(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, lc: LevelSpec, cargs: Seq<ExprSpec>, rho: Env, wmaj: Cpt, x: Cpt)
+pub proof fn iota_major(ss: Sig, sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, lc: LevelSpec, cargs: Seq<ExprSpec>, rho: Env, wmaj: Cpt, x: Cpt)
     -> (r: (Seq<Cpt>, Seq<Cpt>))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         crate::dom_rec_ty::rec_scope(sig, rid),
         0 <= p < crate::dom_rec_ty::rshape(sig, rid).nmin(),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(),
             crate::ti_syntax::dty_at(sig, crate::dom_rec_ty::rshape(sig, rid).ctors[p], clv),
             crate::ti_syntax::dty_at(sig, crate::dom_rec_ty::rshape(sig, rid).ctors[p], clv), crate::ti_syntax::sort(lc))),
         forall|i: nat| #[trigger] wf(rho(i)),
@@ -409,7 +410,7 @@ pub proof fn iota_major(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, lc: Lev
     }
     assert(cargs.len() == np + nf);
     // along the constructor's type
-    let (cws2, _e, _l2, dcs) = crate::dom_tele::tele_apps(sig, Seq::empty(), tds, body, lc, bot_env(), ac, vc, cws);
+    let (cws2, _e, _l2, dcs) = crate::dom_tele::tele_apps(ss, sig, Seq::empty(), tds, body, lc, bot_env(), ac, vc, cws);
     assert(crate::dom_sound::fits_env(sig, Seq::empty(), bot_env()));
     cf_apps(ind, p as nat, np, tds, body, Seq::empty(), 0, vc, cws2);
     let node = Cpt::Nd(NdKey::Con(ind, p as nat), cacc(Seq::empty(), cws2, 0, np));
@@ -700,8 +701,30 @@ pub open spec fn rsem(sig: Sig, rid: u64, ls: Seq<LevelSpec>, u: Cpt, a: Cpt, v:
 
 pub open spec fn rec_wired(sig: Sig) -> bool {
     forall|rid: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt|
-        crate::dom_rec_ty::rec_scope(sig, rid) && crate::dom_model::sem_const(sig, rid, ls) ==>
+        crate::dom_rec_end::rec_hyps(sig, rid) && crate::dom_model::sem_const(sig, rid, ls) ==>
         (#[trigger] mem(sig, ExprSpec::Const(rid, ls), rho, u) == (u is Bot || exists|a: Cpt, v: Cpt| #[trigger] rsem(sig, rid, ls, u, a, v)))
+}
+
+/// The model interprets its recursors so: bottom, or below a typed
+/// approximation of the code function.
+pub proof fn rec_wired_holds(sig: Sig)
+    ensures
+        rec_wired(sig),
+{
+    assert forall|rid: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt|
+        crate::dom_rec_end::rec_hyps(sig, rid) && crate::dom_model::sem_const(sig, rid, ls) implies
+        (#[trigger] mem(sig, ExprSpec::Const(rid, ls), rho, u) == (u is Bot || exists|a: Cpt, v: Cpt| #[trigger] rsem(sig, rid, ls, u, a, v))) by {
+        crate::dom_sem::mem_sem(sig, rid, ls, rho, u);
+        assert forall|a: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, rid, ls, u, a, v) == rsem(sig, rid, ls, u, a, v) by {}
+        if exists|a: Cpt, v: Cpt| #[trigger] rsem(sig, rid, ls, u, a, v) {
+            let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] rsem(sig, rid, ls, u, a, v);
+            assert(crate::dom_sem::sem_mem(sig, rid, ls, u, a, v));
+        }
+        if exists|a: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, rid, ls, u, a, v) {
+            let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, rid, ls, u, a, v);
+            assert(rsem(sig, rid, ls, u, a, v));
+        }
+    }
 }
 
 /// Variable members: a value is a member of a variable holding it.
@@ -719,12 +742,14 @@ pub proof fn var_mem(sig: Sig, i: nat, env: Env)
 /// THE RECURSIVE CALL at a recursive field, under the rule's lambda
 /// environment, holds the recursor's value there.
 #[verifier::spinoff_prover]
-pub proof fn ih_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, r: int)
+pub proof fn ih_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, r: int)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
@@ -786,7 +811,7 @@ pub proof fn ih_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Se
         assert(ih.subrange(0, i) =~= xs.subrange(0, i));
         if i < pre { assert(ih[i] == xs[i] && ds2[i] == ds[i]); } else { assert(ih[i] == f && ds2[i] == ds[i]); }
     }
-    let (a, sa) = crate::dom_rec_ty::rec_step(sig, rid, lv, l, bot_env(), ds2, ih);
+    let (a, sa) = crate::dom_rec_ty::rec_step(ss, sig, rid, lv, l, bot_env(), ds2, ih);
     typed_wf(sa, a);
     le_refl(sa);
     assert(rsem(sig, rid, lv, sa, a, sa));
@@ -846,10 +871,11 @@ pub open spec fn isrec(sig: Sig, rid: u64, p: int, k: int) -> bool {
 /// THE MINOR'S FIELDS: recursive ones pass, typed at the major's code;
 /// the others are projected onto the minor's inputs.
 #[verifier::spinoff_prover]
-pub proof fn minor_mix(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Seq<Cpt>, Seq<Cpt>))
+pub proof fn minor_mix(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Seq<Cpt>, Seq<Cpt>))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         crate::dom_rec_ty::rec_scope(sig, rid),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
@@ -890,7 +916,7 @@ pub proof fn minor_mix(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds:
     let body = crate::dom_rec_ty::minor_body((p + nf + nr) as nat, sh.ctors[p], us2,
         crate::rec_canon::vars((1 + p + nf + nr) as nat, np), nf, nr);
     crate::dom_rec_shape::binds_concat(BinderKind::Pi, f2, i2, body);
-    let li = crate::dom_tele::tele_prefix(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), ds, xs, mi as int);
+    let li = crate::dom_tele::tele_prefix(ss, sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), ds, xs, mi as int);
     let g = Seq::<ExprSpec>::empty() + tds.subrange(0, mi as int);
     let rho = crate::dom_tele::exts(bot_env(), xs.subrange(0, mi as int));
     assert(crate::dom_sound::dfit(sig, tds[mi as int], rho, ds[mi as int], xs[mi as int]));
@@ -921,7 +947,7 @@ pub proof fn minor_mix(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds:
             crate::dom_tele::bot_typed(dm);
         }
     }
-    let (xf, dsf) = crate::dom_tele::tele_mix(sig, g, f2, crate::rec_canon::binds(BinderKind::Pi, i2, body), li, rho,
+    let (xf, dsf) = crate::dom_tele::tele_mix(ss, sig, g, f2, crate::rec_canon::binds(BinderKind::Pi, i2, body), li, rho,
         ds[mi as int], xs[mi as int], fs, fit, axs);
     assert forall|k: int| 0 <= k < fs.len() && isrec(sig, rid, p, k) implies #[trigger] xf[k] == fs[k] by {
         assert(fit[k]);
@@ -933,12 +959,14 @@ pub proof fn minor_mix(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds:
 /// THE RULE'S BODY holds the recursor's value, under the lambda
 /// environment of the head inputs and the minor's field inputs.
 #[verifier::spinoff_prover]
-pub proof fn rhs_body_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>)
+pub proof fn rhs_body_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
@@ -1008,7 +1036,7 @@ pub proof fn rhs_body_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, 
             assert(args[i] == ihterm(sig, rid, lv, p, r));
             assert(isrec(sig, rid, p, k as int));
             assert(xf[k as int] == fs[k as int]);
-            ih_mem(sig, rid, lv, l, ds, xs, xf, r);
+            ih_mem(ss, sig, rid, lv, l, ds, xs, xf, r);
             assert(wsx[i] == hs[r]);
             crate::dom_rec::rec_ihs_wf(sig, rid, xs, nf);
         }
@@ -1100,13 +1128,15 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
 /// to the head inputs and field inputs below the major's fields gives at
 /// least the recursor's value.
 #[verifier::spinoff_prover]
-pub proof fn iota_rhs_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Cpt, Seq<Cpt>))
+pub proof fn iota_rhs_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (r: (Cpt, Seq<Cpt>))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
         lv.len() == sig.ienv.recs[rid].uparams.len(),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
@@ -1129,8 +1159,8 @@ pub proof fn iota_rhs_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, 
     let x = xs.last();
     let p = x->Nd_0->Con_1 as int;
     let fs = x->Nd_1;
-    let (xf, dsf) = minor_mix(sig, rid, lv, l, ds, xs);
-    rhs_body_mem(sig, rid, lv, l, ds, xs, xf);
+    let (xf, dsf) = minor_mix(ss, sig, rid, lv, l, ds, xs);
+    rhs_body_mem(ss, sig, rid, lv, l, ds, xs, xf);
     rule_chain(sig, rid, lv, ds, xs, xf, dsf);
     let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
     let dl = ds.subrange(0, pre) + dsf;
@@ -1160,17 +1190,19 @@ pub proof fn iota_rhs_mem(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, 
 /// applied up to its major, a constructor application, is a member of the
 /// rule applied to the head arguments and the fields.
 #[verifier::spinoff_prover]
-pub proof fn iota_core_l2r(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ri: int, clv: Seq<LevelSpec>, lc: LevelSpec,
+pub proof fn iota_core_l2r(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, ri: int, clv: Seq<LevelSpec>, lc: LevelSpec,
     a0: Seq<ExprSpec>, cargs: Seq<ExprSpec>, rho: Env, u0: Cpt)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
         lv.len() == sig.ienv.recs[rid].uparams.len(),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         0 <= ri < sig.ienv.recs[rid].rules.len(),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(),
             crate::ti_syntax::dty_at(sig, sig.ienv.recs[rid].rules[ri].ctor_id, clv),
             crate::ti_syntax::dty_at(sig, sig.ienv.recs[rid].rules[ri].ctor_id, clv), crate::ti_syntax::sort(lc))),
         crate::expr_model::nlbv(sig.ienv.recs[rid].rules[ri].rhs) == 0,
@@ -1216,7 +1248,7 @@ pub proof fn iota_core_l2r(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec,
         assert(mem(sig, a0[i], rho, ws[i]));
     }
     assert(crate::dom_sound::fits_env(sig, Seq::empty(), bot_env()));
-    let (ws2, _e, _l2, dcs) = crate::dom_tele::tele_apps(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), a, v, ws);
+    let (ws2, _e, _l2, dcs) = crate::dom_tele::tele_apps(ss, sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), a, v, ws);
     assert(crate::dom_tele::chain_ok(sig, tds, bot_env(), dcs, ws2));
     crate::dom_rec_ty::rf_apps(sig, rid, tds, crate::dom_rec_ty::rbody(sig, rid), Seq::empty(), v, ws2);
     assert(Seq::<Cpt>::empty() + ws2 =~= ws2);
@@ -1241,12 +1273,12 @@ pub proof fn iota_core_l2r(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec,
     assert(ws2[pre] == x);
     assert(crate::dom_sound::dfit(sig, tds[pre], crate::dom_tele::exts(bot_env(), ws2.subrange(0, pre)), dcs[pre], ws2[pre]));
     typed_wf(x, dcs[pre]);
-    let (cws2, _cds) = iota_major(sig, rid, ri, clv, lc, cargs, rho, ws[pre], x);
+    let (cws2, _cds) = iota_major(ss, sig, rid, ri, clv, lc, cargs, rho, ws[pre], x);
     let p = x->Nd_0->Con_1 as int;
     assert(p == ri);
     assert(fargs =~= cargs.subrange(np as int, cargs.len() as int));
     // the rule's member
-    let (lc2, xl) = iota_rhs_mem(sig, rid, lv, l, dcs, ws2);
+    let (lc2, xl) = iota_rhs_mem(ss, sig, rid, lv, l, dcs, ws2);
     crate::dom_model::mem_closed_env(sig, body, rho, lc2);
     let fl = a0.subrange(0, pre) + fargs;
     assert forall|i: int| 0 <= i < fl.len() implies #[trigger] mem(sig, fl[i], rho, xl[i]) && wf(xl[i]) by {
@@ -1765,12 +1797,14 @@ pub proof fn typed_at_canon(sig: Sig, rid: u64, from: nat, env: Env, x: Cpt, d: 
 /// A RECURSOR CALL OVER VARIABLES: its members lie below the code
 /// function at the variables' values.
 #[verifier::spinoff_prover]
-pub proof fn ih_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, args: Seq<ExprSpec>, env: Env, vals: Seq<Cpt>, u: Cpt)
+pub proof fn ih_bound(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, args: Seq<ExprSpec>, env: Env, vals: Seq<Cpt>, u: Cpt)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         args.len() == crate::dom_rec_ty::rtds(sig, rid, lv).len(),
         vals.len() == args.len(),
@@ -1800,7 +1834,7 @@ pub proof fn ih_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, args
     let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
     crate::dom_rec_ty::rec_ty_split(sig, rid, lv);
     assert(crate::dom_sound::fits_env(sig, Seq::empty(), bot_env()));
-    let (ws2, _e, _l2, _dcs) = crate::dom_tele::tele_apps(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), a, v, ws);
+    let (ws2, _e, _l2, _dcs) = crate::dom_tele::tele_apps(ss, sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rid), l, bot_env(), a, v, ws);
     crate::dom_rec_ty::rf_apps(sig, rid, tds, crate::dom_rec_ty::rbody(sig, rid), Seq::empty(), v, ws2);
     assert(Seq::<Cpt>::empty() + ws2 =~= ws2);
     assert forall|i: int| 0 <= i < ws.len() implies le(#[trigger] ws[i], ws[i]) by {
@@ -1885,12 +1919,14 @@ pub proof fn rebuilt_facts(sig: Sig, rid: u64, p: int, xs: Seq<Cpt>)
 
 /// ONE ARGUMENT of the body: below what it holds at most.
 #[verifier::spinoff_prover]
-pub proof fn body_arg_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, xs: Seq<Cpt>, i: int, w: Cpt)
+pub proof fn body_arg_bound(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, xs: Seq<Cpt>, i: int, w: Cpt)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         0 <= p < crate::dom_rec_ty::rshape(sig, rid).nmin(),
         xs.len() == crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()
@@ -1941,7 +1977,7 @@ pub proof fn body_arg_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec
             if j < pre { assert(ih[j] == xs[j]); } else { assert(ih[j] == xf[k as int]); }
         }
         assert(iargs.len() == crate::dom_rec_ty::rtds(sig, rid, lv).len());
-        ih_bound(sig, rid, lv, l, iargs, env, ih, w);
+        ih_bound(ss, sig, rid, lv, l, iargs, env, ih, w);
         assert(x.last()->Nd_1 == xf);
         assert(top[i] == crate::dom_rec::rec_ihs(sig, rid, x, nf)[r]);
     }
@@ -1950,12 +1986,14 @@ pub proof fn body_arg_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec
 /// THE RULE'S BODY: its members lie below the code function at the head
 /// inputs and the major rebuilt from the field inputs.
 #[verifier::spinoff_prover]
-pub proof fn body_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, xs: Seq<Cpt>, y: Cpt)
+pub proof fn body_bound(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, xs: Seq<Cpt>, y: Cpt)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_model::sem_const(sig, rid, lv),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         0 <= p < crate::dom_rec_ty::rshape(sig, rid).nmin(),
         xs.len() == crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()
@@ -1989,7 +2027,7 @@ pub proof fn body_bound(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p:
     let full = body_top(sig, rid, p, xs);
     assert forall|i: int| 0 <= i < wb.len() implies le(#[trigger] wb[i], full[i]) by {
         assert(mem(sig, args[i], env, wb[i]));
-        body_arg_bound(sig, rid, lv, l, p, xs, i, wb[i]);
+        body_arg_bound(ss, sig, rid, lv, l, p, xs, i, wb[i]);
     }
     assert(full == xf + hs);
     assert(xs.len() - 1 - v0 == mi);
@@ -2034,6 +2072,81 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
         && crate::expr_model::subst_expr_levels(sh.fields[p][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[p][k]
 }
 
+/// A closed field's input: typed at a member of its closed type.
+#[verifier::spinoff_prover]
+pub proof fn r2l_closed_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
+    requires
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+        0 <= k < crate::dom_rec_ty::rshape(sig, rid).fields[p].len(),
+        !isrec(sig, rid, p, k),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let i = (sh.np + 1 + sh.nmin() + k) as int;
+        &&& mem(sig, sh.fields[p][k], bot_env(), ds[i]) && typed(ds[i], Cpt::U) && typed(xs[i], ds[i])
+        &&& crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
+    let ff = ftds(sig, rid, lv, p);
+    let i = pre + k;
+    let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, i));
+    assert(crate::dom_sound::dfit(sig, tl[i], env, ds[i], xs[i]));
+    assert(tl[i] == ff[k]);
+    let f = sh.fields[p][k];
+    assert(crate::rec_canon::simple_ty(sig, sh.ind, f));
+    simple_closed(sig, sh.ind, f);
+    crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
+    assert(ff[k] == f);
+    crate::dom_model::mem_closed_env(sig, f, env, ds[i]);
+    crate::dom_model::mem_closed_env(sig, f, bot_env(), ds[i]);
+}
+
+/// A recursive field's input: typed at the inductive's canonical code.
+#[verifier::spinoff_prover]
+pub proof fn r2l_rec_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
+    requires
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+        0 <= k < crate::dom_rec_ty::rshape(sig, rid).fields[p].len(),
+        isrec(sig, rid, p, k),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        typed(xs[(sh.np + 1 + sh.nmin() + k) as int], crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), bots(sh.np)))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
+    let ff = ftds(sig, rid, lv, p);
+    let i = pre + k;
+    let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, i));
+    assert(sh.us() =~= Seq::<LevelSpec>::empty());
+    assert(crate::dom_sound::dfit(sig, tl[i], env, ds[i], xs[i]));
+    assert(tl[i] == ff[k]);
+    crate::dom_rec_shape::occ_form(sh, p, k, (1 + nmin) as nat, rd.uparams, lv);
+    assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
+    assert((k as nat + (1 + nmin) as nat) == (k + 1 + nmin) as nat);
+    assert forall|j: nat| #[trigger] wf(env(j)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, i), j);
+        if j < i {
+            assert(crate::dom_sound::dfit(sig, tl[i - 1 - j], crate::dom_tele::exts(bot_env(), xs.subrange(0, i - 1 - j)), ds[i - 1 - j], xs[i - 1 - j]));
+            typed_wf(xs[i - 1 - j], ds[i - 1 - j]);
+            assert(xs.subrange(0, i)[i - 1 - j] == xs[i - 1 - j]);
+        }
+    }
+    typed_at_canon(sig, rid, (k + 1 + nmin) as nat, env, xs[i], ds[i]);
+}
+
 /// THE FIELD INPUTS of a typed chain along the rule's binders are what the
 /// constructor step needs.
 #[verifier::spinoff_prover]
@@ -2052,15 +2165,11 @@ pub proof fn r2l_fields(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     let rd = sig.ienv.recs[rid];
     let (np, nmin) = (sh.np, sh.nmin());
     let pre = (np + 1 + nmin) as int;
-    let nf = sh.fields[p].len();
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     assert(sh.fields[p].len() == rd.rules[p].nfields);
     let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
-    let ff = ftds(sig, rid, lv, p);
     let xf = xs.subrange(pre, xs.len() as int);
     let ak = ds.subrange(pre, ds.len() as int);
-    let bn = bots(np);
-    assert(sh.us() =~= Seq::<LevelSpec>::empty());
     assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
         assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
         typed_wf(xs[i], ds[i]);
@@ -2071,31 +2180,13 @@ pub proof fn r2l_fields(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     assert forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) implies
         mem(sig, sh.fields[p][k], bot_env(), #[trigger] ak[k]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
         && crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind)) by {
-        let i = pre + k;
-        let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, i));
-        assert(crate::dom_sound::dfit(sig, tl[i], env, ds[i], xs[i]));
-        assert(tl[i] == ff[k] && ak[k] == ds[i] && xf[k] == xs[i]);
-        let f = sh.fields[p][k];
-        assert(crate::rec_canon::simple_ty(sig, sh.ind, f));
-        simple_closed(sig, sh.ind, f);
-        crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
-        assert(ff[k] == f);
-        crate::dom_model::mem_closed_env(sig, f, env, ak[k]);
-        crate::dom_model::mem_closed_env(sig, f, bot_env(), ak[k]);
+        r2l_closed_field(sig, rid, lv, p, clv, ds, xs, k);
+        assert(ak[k] == ds[pre + k] && xf[k] == xs[pre + k]);
     }
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
-        typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), bn)) by {
-        let i = pre + k;
-        let env = crate::dom_tele::exts(bot_env(), xs.subrange(0, i));
-        assert(crate::dom_sound::dfit(sig, tl[i], env, ds[i], xs[i]));
-        assert(tl[i] == ff[k] && xf[k] == xs[i]);
-        crate::dom_rec_shape::occ_form(sh, p, k, (1 + nmin) as nat, rd.uparams, lv);
-        assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
-        assert((k as nat + (1 + nmin) as nat) == (k + 1 + nmin) as nat);
-        assert forall|j: nat| #[trigger] wf(env(j)) by {
-            crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, i), j);
-        }
-        typed_at_canon(sig, rid, (k + 1 + nmin) as nat, env, xs[i], ds[i]);
+        typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), bots(np))) by {
+        r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
+        assert(xf[k] == xs[pre + k]);
     }
 }
 
@@ -2149,15 +2240,17 @@ pub proof fn r2l_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<
 /// recursor applied up to its major, a constructor application of exact
 /// arity.
 #[verifier::spinoff_prover]
-pub proof fn iota_core_r2l(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, clv: Seq<LevelSpec>,
+pub proof fn iota_core_r2l(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, clv: Seq<LevelSpec>,
     g: crate::ti_syntax::Ctx, tb: ExprSpec, a0: Seq<ExprSpec>, cargs: Seq<ExprSpec>, rho: Env, r: Cpt)
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         rec_wired(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
             crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l))),
         crate::expr_model::nlbv(sig.ienv.recs[rid].rules[p].rhs) == 0,
-        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g,
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(g,
             crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[p].rhs, sig.ienv.recs[rid].uparams, lv),
             crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[p].rhs, sig.ienv.recs[rid].uparams, lv), tb)),
         forall|i: nat| #[trigger] wf(rho(i)),
@@ -2189,8 +2282,8 @@ pub proof fn iota_core_r2l(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec,
         assert(mem(sig, (heads + fargs)[i], rho, wl[i]));
     }
     // the rule's lambda, walked
-    let (xs, ds, y) = crate::dom_tele::lam_apps(sig, g, tl, rule_body(sig, rid, lv, p), tb, bot_env(), hb, wl);
-    body_bound(sig, rid, lv, l, p, xs, y);
+    let (xs, ds, y) = crate::dom_tele::lam_apps(ss, sig, g, tl, rule_body(sig, rid, lv, p), tb, bot_env(), hb, wl);
+    body_bound(ss, sig, rid, lv, l, p, xs, y);
     let x = rebuilt(sig, rid, p, xs);
     rebuilt_facts(sig, rid, p, xs);
     // the major
@@ -2230,7 +2323,7 @@ pub proof fn iota_core_r2l(sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec,
             assert(x[i] == maj && dsx[i] == dcan);
         }
     }
-    let (ar, sr) = crate::dom_rec_ty::rec_step(sig, rid, lv, l, bot_env(), dsx, x);
+    let (ar, sr) = crate::dom_rec_ty::rec_step(ss, sig, rid, lv, l, bot_env(), dsx, x);
     typed_wf(sr, ar);
     le_refl(sr);
     assert(rsem(sig, rid, lv, sr, ar, sr));

@@ -474,36 +474,51 @@ they are rebuilt from the heads and the argument pairs (`spine_build2`).
 The pieces: `dom_rec_red` (the reduction), `dom_rec_minor` (the minor's
 type after its arguments), `dom_rec_walk` (the walk), `dom_rec_end`.
 
-#### The landing: proposal (2026-09-29, needs a decision)
+#### The landing (2026-09-29, option (a))
 
-What is left of the recursor stage lands together: the real `iota_ok`, the
-recursor branch of `code_ok`, the sound and adequate Iota case, and the
-adequacy of the recursor constant. Two design points:
+The recursor stage is in the judgment and the model:
 
-1. **Where the typing facts live.** Subject reduction for iota
-   (`iota_sr`) needs each rule's right-hand side typed at its rule type
-   (`sr_ok`). If `iota_ok` states that, then `valid` (Iota's premise) needs
-   `iota_ok`, which needs `derivable`, which needs `valid`: a cycle. Two
-   ways out:
-   - (a) **`iota_ok` stays syntactic** (`rec_hyps` minus `hsr`: scope, no
-     parameters or levels, constructors not recursors, well-formed rules,
-     plain fields). The typing facts go into a separate hypothesis that the
-     model assumes, `sig_sr(sig) := iota_ok(sig) ==> hsr(sig)`. It holds
-     trivially outside the fragment, and inside it `ti_sr::sr` gives it
-     from `sig_wf` plus the rules' typings, which S6.6 establishes on the
-     kernel side. No change to `valid`. Recommended.
-   - (b) `iota_ok` states the typings in the recursor-stripped signature,
-     and `valid` decreases on the number of recursors first. It is
-     self-contained, but it changes the judgment's core definition and
-     every lemma about signature extension.
-2. **Gating the recursor's denotation.** `code_ok` for a recursor becomes
-   `rf_fun` where `rec_hyps(sig, c)` holds, and bottom elsewhere. Adequacy
-   of a nonempty recursor denotation then has `rec_hyps`, so `rf_rel`
-   applies. Soundness of Iota's right-in-left direction needs the
-   denotation nonempty, so it has `rec_hyps`: from `iota_ok` (the rule's
-   premise) and `hsr` (from `sig_sr`). So `sound`, `adeq` and
-   `fundamental` gain the requirement `sig_sr(sig)`, which is vacuous for
-   signatures outside the fragment.
+- **`iota_ok` is syntactic**: every recursor is in the fragment
+  `dom_rec_end::rec_frag` (canonical, in scope, no parameters or levels,
+  constructors that are not recursors, well-formed rules, closed
+  level-invariant fields). The old meaning, no recursors at all, is
+  `no_recs`, which the kernel side keeps (`kh_hyp` implies it).
+- **The Iota rule fires at exact arity and exact levels**: `rec_arity` also
+  asks that the major's constructor carry as many universe levels as it
+  declares. The kernel does not check either condition; a typed major has
+  both, and S6.6 derives them.
+- **The model's hypothesis** is `sig_sr(sig) := iota_ok ∧ ¬no_recs ⟹
+  sig_rec`, where `sig_rec` is subject reduction (`hsr`) plus each
+  recursor's model facts (`rec_model`): semantic constants, a non-Prop
+  inductive, ranked fields, and the recursor's type, the constructors'
+  types and the rules' right-hand sides typed in the **recursor-stripped
+  signature** (`ti_strip::strip`). `sound`, `adeq` and `fundamental` take
+  `sig_sr`; it is vacuous without recursors, so the kernel side is
+  unaffected.
+- **Recursors are interpreted** where `rec_hyps` (= `sig_rec` ∧ `rec_frag`)
+  holds: `code_ok` is then `rf_fun`, and `rec_wired` is a theorem
+  (`dom_iota::rec_wired_holds`).
+- **Soundness is well-founded** by Iota-freeness first:
+  `sound` decreases on `(inode(d), d)`. In the Iota case, derivations of
+  the stripped signature have no Iota node (`ti_strip::strip_valid`), so
+  soundness can use them. The telescope lemmas take a syntax signature
+  `ss` and a soundness oracle `sound_oracle(ss, sig)` instead of calling
+  `sound`. Ordinary callers pass `ss = sig` with the oracle from the
+  theorem (`sound_all`). The Iota cores pass `ss = strip(sig)` with the
+  oracle built in `sound`'s Iota case.
+- **Iota soundness** (`dom_iota_sound::sound_iota`) is the two core
+  directions plus congruence of membership under the extra arguments.
+  **Iota adequacy** (`dom_adeq::adeq_iota`) is head expansion over one
+  firing step (`ti_hred_rec::fire_hstep`). **The recursor constant's
+  adequacy** (`dom_rec_adeq::rec_adeq_core`) is the telescope induction
+  started at no arguments.
+
+Open, for S6.6: discharging `sig_sr` for kernel signatures with recursors.
+`hsr` would come from `ti_sr::sr`, whose Iota case is `iota_sr`, but `sr`
+and `uniq` use injectivity from the model, which assumes `sig_sr`. That
+circle needs an Iota-free stratum (as soundness has) or syntactic
+injectivity. The model's typings in the stripped signature need the
+kernel's checks of the recursor and its rules.
 
 ### Open: parameters of any type (analysis 2026-09-28)
 

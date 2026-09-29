@@ -678,7 +678,7 @@ pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
 pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
     requires
         crate::ti_sr::sig_wf(jsig(dty, denv, Map::empty())),
-        crate::ti_syntax::iota_ok(jsig(dty, denv, Map::empty())),
+        crate::ti_syntax::no_recs(jsig(dty, denv, Map::empty())),
     ensures
         crate::ti_valid::sig_ext(jsig(dty, denv, Map::empty()), jsig(dty, denv, lctx)),
 {
@@ -701,7 +701,7 @@ pub proof fn kh_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map
         frag_ok(dty, denv, lctx),
         lev_ok(jsig(dty, denv, lctx)),
         crate::conv_frag::cr_env(denv),
-        iota_ok(jsig(dty, denv, lctx)),
+        crate::ti_syntax::no_recs(jsig(dty, denv, lctx)),
 {
     assert(crate::kclaims::frag_env(dty, denv));
     let s0 = jsig(dty, denv, Map::empty());

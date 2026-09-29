@@ -104,6 +104,8 @@ pub mod dom_rec_red;
 pub mod dom_rec_minor;
 pub mod dom_rec_walk;
 pub mod dom_rec_end;
+pub mod dom_iota_sound;
+pub mod ti_strip;
 pub mod ti_meta;
 pub mod ti_sub;
 pub mod ti_subst;

@@ -157,6 +157,50 @@ pub open spec fn pswap(sig: Sig, ps: Seq<Deriv>, x: nat, y: nat) -> Seq<Deriv> {
     Seq::new(ps.len(), |k: int| pick(sig_swap(sig, x, y), jswap(concl(ps[k]), x, y)))
 }
 
+/// The Iota instance, swapped.
+#[verifier::spinoff_prover]
+proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
+    requires
+        sig_fv_free(sig),
+        step_ok(sig, r, j, ps),
+        r is Iota,
+        forall|k: int| 0 <= k < ps.len() ==> concl(#[trigger] pswap(sig, ps, x, y)[k]) == jswap(concl(ps[k]), x, y),
+    ensures
+        step_ok(sig_swap(sig, x, y), r, jswap(j, x, y), pswap(sig, ps, x, y)),
+{
+    let s2 = sig_swap(sig, x, y);
+    let qs = pswap(sig, ps, x, y);
+    assert(qs.len() == ps.len());
+    crate::swap_model::fswap_fire(sig, j->Eq_1, x, y);
+    crate::dom_rec_end::frag_congr(sig, s2);
+    assert(crate::ti_hred::rec_fire(s2, crate::swap_model::fswap(j->Eq_1, x, y)));
+    assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+    assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+}
+
+/// The Iota instance, closed.
+#[verifier::spinoff_prover]
+proof fn step_close_iota(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        close_ok(sig, k, a),
+        step_ok(sig_with(sig, k, a), r, j, ps),
+        r is Iota,
+        forall|i: int| 0 <= i < ps.len() ==> concl(#[trigger] pclose(sig, k, a, ps)[i]) == jclose(k, a, concl(ps[i])),
+    ensures
+        step_ok(sig, r, jclose(k, a, j), pclose(sig, k, a, ps)),
+{
+    let s1 = sig_with(sig, k, a);
+    let qs = pclose(sig, k, a, ps);
+    assert(qs.len() == ps.len());
+    assert(crate::ti_hred::rec_fire(sig, j->Eq_1) == crate::ti_hred::rec_fire(s1, j->Eq_1));
+    assert(crate::beta_model::rec_result(sig.ienv, j->Eq_1) == crate::beta_model::rec_result(s1.ienv, j->Eq_1));
+    crate::fclose::fclose_fire(k, j->Eq_0.len(), sig, j->Eq_1);
+    crate::fclose::fclose_rec(k, j->Eq_0.len(), sig.ienv, j->Eq_1);
+    crate::dom_rec_end::frag_congr(sig, s1);
+    assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+    assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+}
+
 /// One rule instance, swapped.
 #[verifier::spinoff_prover]
 proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
@@ -320,12 +364,7 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             }
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
-        Rule::Iota => {
-            crate::swap_model::fswap_rec(sig.ienv, j->Eq_1, x, y);
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
+        Rule::Iota => step_swap_iota(sig, r, j, ps, x, y),
         Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;
             let ls = j->Eq_1->Const_1;
@@ -478,10 +517,7 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
     } else if r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta {
         step_close_bind(sig, k, a, r, j, ps);
     } else if r is Iota {
-        let qs = pclose(sig, k, a, ps);
-        crate::fclose::fclose_rec(k, j->Eq_0.len(), sig.ienv, j->Eq_1);
-        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
-        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+        step_close_iota(sig, k, a, r, j, ps);
     } else {
         step_close_cst(sig, k, a, r, j, ps);
     }

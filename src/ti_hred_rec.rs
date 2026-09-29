@@ -255,4 +255,54 @@ pub proof fn const_spine_stuck(sig: Sig, y: ExprSpec)
     }
 }
 
+/// A FIRING REDEX takes one head step to its rule instance, with or
+/// without extra arguments.
+pub proof fn fire_hstep(sig: Sig, t: ExprSpec)
+    requires
+        rec_fire(sig, t),
+        !crate::ti_syntax::is_def(sig, spine_head(t)->Const_0, spine_head(t)->Const_1),
+    ensures
+        hstep(sig, t) == Some(crate::beta_model::rec_result(sig.ienv, t)),
+    decreases spine_args(t).len(),
+{
+    let h = spine_head(t);
+    let (rid, lv) = (h->Const_0, h->Const_1);
+    let args = spine_args(t);
+    let rd = sig.ienv.recs[rid];
+    crate::beta_model::spine_recompose(t);
+    crate::beta_model::spine_destruct_app(h, args);
+    let n = args.len() - 1;
+    let init = args.subrange(0, n);
+    let f = spine_app(h, init);
+    crate::dom_bound::spine_push(h, args);
+    crate::beta_model::spine_destruct_app(h, init);
+    assert(t == ExprSpec::App(Box::new(f), Box::new(args[n])));
+    if n == rd.major_idx {
+        rec_prefix_stuck(sig, rid, lv, init);
+        if init.len() > 0 {
+            crate::dom_bound::spine_push(h, init);
+        }
+    } else {
+        assert(init[rd.major_idx as int] == args[rd.major_idx as int]);
+        assert(rec_fire(sig, f));
+        fire_hstep(sig, f);
+        if init.len() > 0 {
+            crate::dom_bound::spine_push(h, init);
+        }
+        let major = args[rd.major_idx as int];
+        let cid = spine_head(major)->Const_0;
+        let ri = crate::beta_model::find_rule(rd.rules, cid)->Some_0;
+        let rule = rd.rules[ri];
+        let cargs = spine_args(major);
+        let body = crate::expr_model::subst_expr_levels(rule.rhs, rd.uparams, lv);
+        let core = spine_app(spine_app(body, args.subrange(0, crate::beta_model::rec_prefix(rd) as int)),
+            cargs.subrange((cargs.len() - rule.nfields) as int, cargs.len() as int));
+        let ex = args.subrange((rd.major_idx + 1) as int, args.len() as int);
+        let exf = init.subrange((rd.major_idx + 1) as int, init.len() as int);
+        assert(init.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= args.subrange(0, crate::beta_model::rec_prefix(rd) as int));
+        assert(ex.subrange(0, ex.len() - 1) =~= exf);
+        crate::dom_bound::spine_push(core, ex);
+    }
+}
+
 } // verus!

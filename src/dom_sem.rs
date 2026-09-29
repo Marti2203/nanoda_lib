@@ -497,6 +497,7 @@ pub proof fn code_lveq(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>
         let ind = sig.ienv.ctor_ind[c];
         cf_lveq(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t1, t2, Seq::empty(), 0, v);
     }
+    crate::dom_rec::rf_lveq(sig, c, t1, t2, Seq::empty(), v);
     tf_lveq(sig, c, ls, ls2, t1, t2, Seq::empty(), v);
 }
 
@@ -529,7 +530,10 @@ pub proof fn code_compat(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, 
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
         cf_compat(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), Seq::empty(), 0, v1, v2);
-    } else if !sig.ienv.recs.contains_key(c) {
+    } else if sig.ienv.recs.contains_key(c) {
+        assert(pre_ok(Seq::<Cpt>::empty(), Seq::<Cpt>::empty()));
+        crate::dom_rec::rf_compat(sig, c, t, Seq::empty(), Seq::empty(), v1, v2);
+    } else {
         tf_compat(sig, c, ls, t, Seq::empty(), Seq::empty(), v1, v2);
     }
 }
@@ -551,7 +555,9 @@ pub proof fn code_join(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, v2
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
         cf_join(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v1, v2);
-    } else if !sig.ienv.recs.contains_key(c) {
+    } else if sig.ienv.recs.contains_key(c) {
+        crate::dom_rec::rf_join(sig, c, t, Seq::empty(), v1, v2);
+    } else {
         tf_join(sig, c, ls, t, Seq::empty(), v1, v2);
     }
 }

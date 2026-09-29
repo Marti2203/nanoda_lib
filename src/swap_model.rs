@@ -1009,4 +1009,20 @@ pub open spec fn dty_fv_free(dty: Map<u64, (Seq<u64>, ExprSpec)>) -> bool {
     forall|c: u64| #[trigger] dty.contains_key(c) ==> !has_fv(dty[c].1)
 }
 
+/// Swapping locals keeps a recursor redex firing.
+pub proof fn fswap_fire(sig: crate::ti_syntax::Sig, s: ExprSpec, x: nat, y: nat)
+    requires
+        crate::ti_hred::rec_fire(sig, s),
+    ensures
+        crate::ti_hred::rec_fire(sig, fswap(s, x, y)),
+        fswap(rec_result(sig.ienv, s), x, y) == rec_result(sig.ienv, fswap(s, x, y)),
+{
+    fswap_rec(sig.ienv, s, x, y);
+    fswap_spine(s, x, y);
+    let rd = sig.ienv.recs[spine_head(s)->Const_0];
+    let major = spine_args(s)[rd.major_idx as int];
+    fswap_spine(major, x, y);
+    assert(sswap(spine_args(s), x, y)[rd.major_idx as int] == fswap(major, x, y));
+}
+
 } // verus!

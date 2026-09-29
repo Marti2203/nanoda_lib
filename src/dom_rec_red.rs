@@ -130,6 +130,7 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec
     requires
         rec_scope(sig, rid),
         rshape(sig, rid).np == 0,
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         lv.len() == sig.ienv.recs[rid].uparams.len(),
         !crate::ti_syntax::is_def(sig, rid, lv),
         forall|p: int| 0 <= p < rshape(sig, rid).nmin() ==> !sig.ienv.recs.contains_key(#[trigger] rshape(sig, rid).ctors[p]),

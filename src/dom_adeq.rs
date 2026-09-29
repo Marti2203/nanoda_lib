@@ -188,6 +188,7 @@ pub open spec fn adeq_ens(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub, n: nat, 
 /// THEOREM 2.35 (ADEQUACY).
 pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
     ensures
         adeq_ens(sig, d, dl, s, s2, n, u, a),
@@ -209,10 +210,7 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstAx(_) | Rule::Local(_) => adeq_leaf(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstDef(_) | Rule::Delta(_) => adeq_def(sig, d, rho, dl, s, s2, n, u, a),
-        Rule::Iota => {
-            valid_prems(sig, d);
-            crate::ti_valid::iota_dead(sig, concl(d)->Eq_1);
-        },
+        Rule::Iota => adeq_iota(sig, d, rho, dl, s, s2, n, u, a),
         _ => {},
     }
 }
@@ -222,6 +220,7 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
 /// witness when the sort is Prop).
 pub proof fn adeq_type(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_3 is Sort,
@@ -267,6 +266,7 @@ pub proof fn adeq_type(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n
 /// A type premise's adequacy, as the facts relatedness extension needs.
 proof fn ty_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         0 <= k < d->Node_2.len(),
         concl(d->Node_2[k]) is Eq,
@@ -317,6 +317,7 @@ proof fn ty_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: S
 /// left side, both images from the left side.
 proof fn tm_adeq_of(sig: Sig, d: Deriv, k: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, v: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         0 <= k < d->Node_2.len(),
         concl(d->Node_2[k]) is Eq,
@@ -401,6 +402,7 @@ proof fn adeq_univ(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
 #[verifier::spinoff_prover]
 proof fn adeq_sym(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Sym,
     ensures
@@ -422,6 +424,7 @@ proof fn adeq_sym(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
 #[verifier::spinoff_prover]
 proof fn adeq_trans(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Trans,
     ensures
@@ -445,6 +448,7 @@ proof fn adeq_trans(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: n
 #[verifier::spinoff_prover]
 proof fn adeq_conv(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Conv,
     ensures
@@ -469,6 +473,7 @@ proof fn adeq_conv(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
 #[verifier::spinoff_prover]
 proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Irr,
     ensures
@@ -505,6 +510,7 @@ proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
 proof fn pi_rel(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, ta2: ExprSpec, tb: ExprSpec, tb2: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         0 <= kb < d->Node_2.len(),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb2, sort(l2)),
@@ -570,6 +576,7 @@ proof fn pi_cod(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
     ta: ExprSpec, ta2: ExprSpec, tb: ExprSpec, tb2: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt,
     m: ExprSpec, m2: ExprSpec, v: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         0 <= kb < d->Node_2.len(),
         concl(d->Node_2[kb]) == eq(g.push(ta), tb, tb2, sort(l2)),
@@ -651,6 +658,7 @@ proof fn pi_cod(sig: Sig, d: Deriv, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
 #[verifier::spinoff_prover]
 proof fn adeq_pi(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is PiCong,
     ensures
@@ -702,6 +710,7 @@ proof fn lam_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, ta2: ExprSpec, tb: ExprSpec, bd: ExprSpec, bd2: ExprSpec, l1: LevelSpec, l2: LevelSpec,
     n: nat, u: Cpt, a: Cpt, y: ExprSpec, y2: ExprSpec, w: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         d->Node_0 == Rule::LamCong(l1, l2),
         concl(d) == eq(g, lam(ta, bd), lam(ta2, bd2), pi(ta, tb)),
@@ -813,6 +822,7 @@ proof fn lam_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
 #[verifier::spinoff_prover]
 proof fn adeq_lam(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is LamCong,
     ensures
@@ -869,6 +879,7 @@ proof fn adeq_lam(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
 proof fn app_ty(sig: Sig, d: Deriv, kx: int, kd: int, kb: int, rho: Env, dl: Ctx, s: Sub, s2: Sub,
     g: Ctx, ta: ExprSpec, tb: ExprSpec, xx: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         0 <= kx < d->Node_2.len(),
         0 <= kd < d->Node_2.len(),
@@ -912,6 +923,7 @@ proof fn app_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx
     ta: ExprSpec, tb: ExprSpec, f: ExprSpec, x0: ExprSpec, f2: ExprSpec, x2: ExprSpec,
     l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         d->Node_0 == Rule::AppCong(l1, l2),
         concl(d) == eq(g, sapp(f, x0), sapp(f2, x2), inst(0, x0, tb)),
@@ -992,6 +1004,7 @@ proof fn app_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx
 #[verifier::spinoff_prover]
 proof fn adeq_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is AppCong,
     ensures
@@ -1024,6 +1037,7 @@ proof fn adeq_app(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
 proof fn beta_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx,
     ta: ExprSpec, bd: ExprSpec, tb: ExprSpec, xx: ExprSpec, l1: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         d->Node_0 == Rule::Beta(l1, l2),
         concl(d) == eq(g, sapp(lam(ta, bd), xx), inst(0, xx, bd), inst(0, xx, tb)),
@@ -1076,6 +1090,7 @@ proof fn beta_main(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ct
 #[verifier::spinoff_prover]
 proof fn adeq_beta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Beta,
     ensures
@@ -1101,6 +1116,7 @@ proof fn adeq_beta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
 proof fn eta_app_rel(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: Ctx, m: ExprSpec, m2: ExprSpec,
     ta: ExprSpec, tb: ExprSpec, l: LevelSpec, l2: LevelSpec, n: nat, u: Cpt, a: Cpt, y: ExprSpec, y2: ExprSpec, w: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         d->Node_0 == Rule::Eta(l, l2),
         concl(d) == eq(g, m, m2, pi(ta, tb)),
@@ -1170,6 +1186,7 @@ proof fn eta_app_rel(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, g: 
 #[verifier::spinoff_prover]
 proof fn adeq_eta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Eta,
     ensures
@@ -1223,11 +1240,78 @@ proof fn adeq_eta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     }
 }
 
+/// AT A RECURSOR: its members relate the two instances by the recursor's
+/// telescope induction (`dom_rec_adeq::rec_adeq_core`).
+#[verifier::spinoff_prover]
+proof fn adeq_rec(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt, av: Cpt, v: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is ConstAx,
+        concl(d)->Eq_1 is Const,
+        crate::dom_model::sem_const(sig, concl(d)->Eq_1->Const_0, concl(d)->Eq_1->Const_1),
+        sig.ienv.recs.contains_key(concl(d)->Eq_1->Const_0),
+        !(u is Bot),
+        crate::dom_sem::sem_mem(sig, concl(d)->Eq_1->Const_0, concl(d)->Eq_1->Const_1, u, av, v),
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 17int,
+{
+    use crate::ti_subst::psub_closed;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let (c, ls) = (m->Const_0, m->Const_1);
+    let ls2 = m2->Const_1;
+    let l = rule->ConstAx_0;
+    let t2 = concl(ps[1])->Eq_2;
+    psub_closed(t, s);
+    psub_closed(t, s2);
+    psub_closed(m, s);
+    psub_closed(m2, s2);
+    psub_closed(t2, s2);
+    related_left(sig, g, rho, dl, s, s2);
+    reveal(spair);
+    crate::ti_sub::d_sub(sig, d, dl, s, s2);
+    crate::ti_sub::d_sub(sig, ps[1], dl, s, s2);
+    // the recursor is interpreted
+    typed_wf(v, av);
+    head_le(u, v);
+    assert(crate::dom_rec_end::rec_hyps(sig, c));
+    assert(crate::dom_rec_end::rec_model(sig, c));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), t));
+    let l0 = choose|l0: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), t, t, sort(l0)));
+    let d0 = crate::ti_sub::get(crate::ti_strip::strip(sig), eq(Seq::empty(), t, t, sort(l0)));
+    crate::ti_strip::strip_valid(sig, d0);
+    crate::ti_meta::mk_d(sig, d0);
+    // the type's denotation is join-closed
+    crate::dom_sound::sound(sig, ps[1], rho);
+    crate::dom_model::mem_closed_env(sig, t, rho, av);
+    jc_elim(sig, t, rho, a, av);
+    let ab = join(a, av);
+    crate::dom_model::mem_closed_env(sig, t, rho, ab);
+    let nn = n + crate::dom_compact::ht(a) + crate::dom_compact::ht(av) + crate::dom_compact::ht(v) + crate::dom_compact::ht(u) + 2;
+    typed_down(a, Cpt::U, n);
+    typed_wf(a, Cpt::U);
+    typed_wf(av, Cpt::U);
+    typed_join(a, av, Cpt::U);
+    crate::dom_compact::ht_join(a, av);
+    typed_up(ab, Cpt::U, nn);
+    typed_up(a, Cpt::U, nn);
+    adeq_type(sig, ps[1], rho, dl, s, s2, nn, ab);
+    adeq_type(sig, ps[1], rho, dl, s, s2, nn, a);
+    crate::dom_rec_adeq::rec_adeq_core(sig, nn, n, dl, c, ls, ls2, l, l0, u, a, av, v);
+    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    symm_ty(sig, n, dl, t, t2, a);
+    trans_ty(sig, n, dl, t, t2, t, a);
+}
+
 /// AXIOMS AND LOCALS: their only element is bottom; the type premise
 /// relates the (closed) type.
 #[verifier::spinoff_prover]
 proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is ConstAx || d->Node_0 is Local,
     ensures
@@ -1258,7 +1342,7 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
                     return;
                 }
                 if sig.ienv.recs.contains_key(c) {
-                    head_le(u, v);
+                    adeq_rec(sig, d, rho, dl, s, s2, n, u, a, av, v);
                     return;
                 }
                 // a type former's approximation, related down its telescope
@@ -1284,6 +1368,7 @@ proof fn adeq_leaf(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
 #[verifier::spinoff_prover]
 proof fn adeq_def(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is ConstDef || d->Node_0 is Delta,
     ensures
@@ -1349,11 +1434,47 @@ proof fn adeq_def(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     }
 }
 
+/// IOTA: the redex head-reduces to its rule instance, which has the same
+/// members (soundness) and which the premise relates.
+#[verifier::spinoff_prover]
+proof fn adeq_iota(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is Iota,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    // the rule instance has the same members
+    crate::dom_sound::sound(sig, d, rho);
+    assert(mem(sig, m2, rho, u));
+    adeq(sig, ps[1], rho, dl, s, s2, n, u, a);
+    // one head step, typed
+    related_left(sig, g, rho, dl, s, s2);
+    reveal(spair);
+    crate::ti_sub::d_sub(sig, d, dl, s, s);
+    crate::ti_sub::d_sub(sig, ps[1], dl, s, s2);
+    dsym(sig, dl, psub(m2, s), psub(m2, s2), psub(t, s));
+    crate::ti_subst::psub_fire(s, sig, m);
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_subst::psub_spine_const(s, m);
+    crate::ti_hred_rec::fire_hstep(sig, psub(m, s));
+    crate::ti_hred::hred_step(sig, psub(m, s));
+    hred_refl(sig, psub(m2, s2));
+    expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
+}
+
 /// ZETA: the `let` head-reduces to its body's instance, which the premise
 /// relates.
 #[verifier::spinoff_prover]
 proof fn adeq_zeta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is Zeta,
     ensures
@@ -1386,6 +1507,7 @@ proof fn adeq_zeta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
 #[verifier::spinoff_prover]
 proof fn adeq_ctor(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt, av: Cpt, v: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
         d->Node_0 is ConstAx,
         concl(d)->Eq_1 is Const,

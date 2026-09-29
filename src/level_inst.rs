@@ -898,4 +898,21 @@ pub proof fn elp_in_spine(h: ExprSpec, args: Seq<ExprSpec>, us: Seq<u64>)
     }
 }
 
+/// Level instantiation keeps a recursor redex firing.
+pub proof fn li_fire(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        env_lp_ok(sig.ienv),
+        crate::ti_hred::rec_fire(sig, sp),
+    ensures
+        crate::ti_hred::rec_fire(sig, subst_expr_levels(sp, ks, vs)),
+        subst_expr_levels(rec_result(sig.ienv, sp), ks, vs) == rec_result(sig.ienv, subst_expr_levels(sp, ks, vs)),
+{
+    li_rec(sig.ienv, sp, ks, vs);
+    li_spine_const(sp, ks, vs);
+    let rd = sig.ienv.recs[spine_head(sp)->Const_0];
+    let major = spine_args(sp)[rd.major_idx as int];
+    li_spine_const(major, ks, vs);
+    assert(sli(spine_args(sp), ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
+}
+
 } // verus!

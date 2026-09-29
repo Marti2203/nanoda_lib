@@ -24,7 +24,7 @@ use crate::dom_rel_mono::{decr_ty, mono_tm, decr};
 #[cfg(verus_only)]
 use crate::ti_chain::{tchain, tchain_refl, tchain_sym, tchain_trans, tchain_one, conv_chain};
 #[cfg(verus_only)]
-use crate::dom_con_rel::{trest, trest_push, tel_dom_trest, rp_pi, ty_later, rel_up, fld_ok, flds_ok, fld_push, flds_diag_l, flds_diag_r,
+use crate::dom_con_rel::{trest, trest_push, tel_dom_trest, rp_pi, ty_later, rel_up, rel_down, fld_ok, flds_ok, fld_push, flds_diag_l, flds_diag_r,
     sa_push, pi_dom_typed, typed_facts_wf};
 #[cfg(verus_only)]
 use crate::ti_syntax::{Ctx, Sig, derivable, eq, pi};
@@ -155,6 +155,7 @@ pub proof fn rf_sem_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Lev
     ensures
         rf_sem(sig, c, sm, xs.len() + 1, (r - 1) as nat, cod(a, w), ds.push(*a->Pi_0), fs.push(w)),
 {
+    crate::dom_sound::sound_all(sig);
     let tds = crate::dom_rec_ty::rtds(sig, c, sm.0);
     let body = crate::dom_rec_ty::rbody(sig, c);
     let k = xs.len() as int;
@@ -178,7 +179,7 @@ pub proof fn rf_sem_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Lev
     typed_down(d0, Cpt::U, k1);
     typed_down(w, d0, k1);
     crate::dom_tele::pi_dom_mem(sig, sa, sb, rho, a);
-    crate::dom_tele::tele_step_fit(sig, g0, sa, sb, li, rho, a, u, w, d0);
+    crate::dom_tele::tele_step_fit(sig, sig, g0, sa, sb, li, rho, a, u, w, d0);
     crate::dom_tele::chain_push(sig, tds.subrange(0, k), bot_env(), ds, fs, sa, d0, w);
     assert(tds.subrange(0, k).push(sa) =~= tds.subrange(0, k + 1));
     crate::dom_tele::exts_push(bot_env(), fs, w);
@@ -457,5 +458,114 @@ pub proof fn rf_diag_r(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Level
     conv_tm(sig, k1, g, sapp(m2, x), sapp(m2, x2), inst(0, x, tb2), inst(0, x, tb), v, b);
 }
 
+
+/// A Pi telescope over an application.
+pub proof fn rtshape_binds(ds: Seq<ExprSpec>, b: ExprSpec)
+    requires
+        b is App,
+    ensures
+        rtshape(crate::rec_canon::binds(BinderKind::Pi, ds, b), ds.len()),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        rtshape_binds(ds.drop_first(), b);
+    }
+}
+
+/// ADEQUACY AT THE RECURSOR CONSTANT: a member of its denotation relates
+/// two level instances of it, by the telescope induction at the join of
+/// adequacy's code and the member's witness code.
+#[verifier::spinoff_prover]
+pub proof fn rec_adeq_core(sig: Sig, nn: nat, n: nat, dl: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, l: LevelSpec,
+    l0: LevelSpec, u: Cpt, a: Cpt, av: Cpt, v: Cpt)
+    requires
+        crate::dom_rec_end::rec_hyps(sig, c),
+        crate::dom_model::sem_const(sig, c, ls),
+        sig.ienv.recs.contains_key(c),
+        crate::conv_cr::levs_eq(ls, ls2),
+        !(u is Bot),
+        wf(u),
+        le(u, v),
+        typed(av, Cpt::U),
+        typed(v, av),
+        crate::dom_model::code_ok(sig, c, ls, av, v),
+        has_type(n, u, a),
+        has_type(n, a, Cpt::U),
+        compat(a, av),
+        nn == n + ht(a) + ht(av) + ht(v) + ht(u) + 2,
+        rel_ty(sig, nn, dl, crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2), join(a, av)),
+        rel_ty(sig, nn, dl, crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2), a),
+        derivable(sig, eq(dl, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2), crate::ti_syntax::dty_at(sig, c, ls))),
+        derivable(sig, eq(dl, crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2), crate::ti_syntax::sort(l))),
+        derivable(sig, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::sort(l0))),
+        crate::dom_model::mem(sig, crate::ti_syntax::dty_at(sig, c, ls), bot_env(), join(a, av)),
+    ensures
+        rel_tm(sig, n, dl, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2), crate::ti_syntax::dty_at(sig, c, ls), u, a),
+{
+    let (t0, t02) = (crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2));
+    let (m, m2) = (ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2));
+    let ab = join(a, av);
+    head_le(u, v);
+    // the joined type element and the approximation, typed at it
+    typed_down(a, Cpt::U, n);
+    typed_wf(a, Cpt::U);
+    typed_wf(av, Cpt::U);
+    typed_wf(v, av);
+    typed_join(a, av, Cpt::U);
+    crate::dom_compact::join_ub(a, av);
+    crate::dom_compact::ht_join(a, av);
+    typed_weak(v, av, ab);
+    typed_wf(ab, Cpt::U);
+    typed_up(ab, Cpt::U, nn);
+    typed_up(v, ab, nn);
+    typed_up(a, Cpt::U, nn);
+    // the recursor's type: its telescope ends in an application
+    crate::dom_rec_ty::rec_ty_split(sig, c, ls);
+    crate::dom_rec_ty::rec_ty_split(sig, c, ls2);
+    let r = crate::dom_rec_ty::rtds(sig, c, ls).len();
+    crate::dom_iota::major_form(sig, c, ls);
+    crate::dom_iota::major_form(sig, c, ls2);
+    rtshape_binds(crate::dom_rec_ty::rtds(sig, c, ls), crate::dom_rec_ty::rbody(sig, c));
+    rtshape_binds(crate::dom_rec_ty::rtds(sig, c, ls2), crate::dom_rec_ty::rbody(sig, c));
+    assert(rf_fun(sig, c, t0, Seq::empty(), v));
+    // the types and the two instances
+    symm_ty(sig, nn, dl, t0, t02, ab);
+    trans_ty(sig, nn, dl, t0, t02, t0, ab);
+    trans_ty(sig, nn, dl, t02, t0, t02, ab);
+    crate::dom_adeq_syn::dsym(sig, dl, m, m2, t0);
+    let dt = crate::ti_sub::get(sig, eq(dl, t0, t02, crate::ti_syntax::sort(l)));
+    crate::ti_sub::mk_t(sig, dt, l);
+    tchain_one(sig, dl, t0, t02);
+    conv_chain(sig, dl, m2, m2, t0, t02);
+    // the invariant at no arguments
+    let xs: Seq<ExprSpec> = Seq::empty();
+    let e: Seq<Cpt> = Seq::empty();
+    let sm = (ls, l0);
+    assert(trest(t0, xs) == t0);
+    assert(trest(t02, xs) == t02);
+    assert(spine_app(m, xs) == m);
+    assert(spine_app(m2, xs) == m2);
+    assert(flds_ok(sig, nn, dl, t0, t02, xs, xs, e, e, 0));
+    let tds = crate::dom_rec_ty::rtds(sig, c, ls);
+    assert(tds.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+    assert(tds.subrange(0, tds.len() as int) =~= tds);
+    assert(crate::dom_tele::exts(bot_env(), e) == bot_env());
+    assert(crate::dom_tele::chain_ok(sig, tds.subrange(0, 0), bot_env(), e, e));
+    assert(rf_sem(sig, c, sm, 0, r, ab, e, e));
+    assert(rf_heads(sig, dl, c, ls, ls2));
+    assert(rf_inv(sig, nn, nn, dl, c, sm, ls, ls2, r, xs, xs, ab, e, e, v));
+    rf_rel(sig, nn, nn, dl, c, sm, ls, ls2, r, xs, xs, ab, e, e, v);
+    // down to the member, adequacy's code, and its stage
+    typed_down(u, a, n);
+    typed_wf(u, a);
+    typed_weak(u, a, ab);
+    typed_up(u, ab, nn);
+    ty_later(n, nn, u, a);
+    mono_tm(sig, nn, dl, m, m2, t0, u, v, ab);
+    decr(sig, nn, dl, m, m2, t0, u, a, ab);
+    symm_ty(sig, nn, dl, t0, t02, a);
+    trans_ty(sig, nn, dl, t0, t02, t0, a);
+    rel_down(sig, n, nn, dl, m, m2, t0, t0, u, a);
+}
 
 } // verus!

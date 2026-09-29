@@ -102,6 +102,7 @@ pub proof fn rule_ty_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
 #[verifier::spinoff_prover]
 pub proof fn sr_heads(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, th: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         rec_scope(sig, rid),
         rshape(sig, rid).np == 0,
         a0.len() == rshape(sig, rid).nmin() + 2,
@@ -143,6 +144,7 @@ pub proof fn sr_heads(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<Ex
 #[verifier::spinoff_prover]
 pub proof fn sr_major(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, cargs: Seq<ExprSpec>, tm: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         rec_scope(sig, rid),
         rshape(sig, rid).np == 0,
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
@@ -195,6 +197,7 @@ pub proof fn sr_major(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, c
 #[verifier::spinoff_prover]
 pub proof fn sr_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         sr_ok(sig, rid, lv, p),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         heads.len() == rshape(sig, rid).nmin() + 1,
@@ -302,6 +305,7 @@ pub open spec fn fired_rule(sig: Sig, m: ExprSpec) -> int {
 #[verifier::spinoff_prover]
 pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, m, m, t)),
         crate::ti_hred::rec_fire(sig, m),
         sr_ok(sig, spine_head(m)->Const_0, spine_head(m)->Const_1, fired_rule(sig, m)),

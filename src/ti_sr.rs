@@ -119,6 +119,7 @@ pub proof fn pi_chain_cod(sig: Sig, g: Ctx, a: ExprSpec, l1: LevelSpec, c1: Expr
 /// UNIQUENESS OF TYPES: two typings of a term have chained types.
 pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, m, m, ta)),
         derivable(sig, eq(g, m, m, tb)),
     ensures
@@ -243,7 +244,7 @@ pub proof fn wk_closed(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
 pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
         sig_wf(sig),
-        crate::ti_syntax::iota_ok(sig),
+        crate::ti_syntax::no_recs(sig),
         derivable(sig, eq(g, m, m, t)),
         crate::ti_hred::hstep(sig, m) is Some,
     ensures

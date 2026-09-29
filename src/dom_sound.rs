@@ -1920,19 +1920,64 @@ pub proof fn sound_eta(sig: Sig, ta: ExprSpec, tb: ExprSpec, m: ExprSpec, n: Exp
     }
 }
 
+/// Soundness at `sig` of the derivations of a syntax signature `ss`, one
+/// derivation and environment at a time.
+pub open spec fn sound_at(ss: Sig, sig: Sig, d: Deriv, rho: Env) -> bool {
+    valid(ss, d) && concl(d) is Eq && fits_env(sig, concl(d)->Eq_0, rho)
+        ==> sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho)
+}
+
+/// A SOUNDNESS ORACLE: every derivation of `ss` is sound at `sig`. The
+/// telescope lemmas take it instead of calling `sound`, so soundness's
+/// Iota case can hand them the recursor-stripped signature's derivations.
+#[verifier::opaque]
+pub open spec fn sound_oracle(ss: Sig, sig: Sig) -> bool {
+    forall|d: Deriv, rho: Env| #[trigger] sound_at(ss, sig, d, rho)
+}
+
+pub proof fn oracle_use(ss: Sig, sig: Sig, d: Deriv, rho: Env)
+    requires
+        sound_oracle(ss, sig),
+        valid(ss, d),
+        concl(d) is Eq,
+        fits_env(sig, concl(d)->Eq_0, rho),
+    ensures
+        sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
+{
+    reveal(sound_oracle);
+    assert(sound_at(ss, sig, d, rho));
+}
+
+/// The soundness theorem, as an oracle.
+pub proof fn sound_all(sig: Sig)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+    ensures
+        sound_oracle(sig, sig),
+{
+    reveal(sound_oracle);
+    assert forall|d: Deriv, rho: Env| #[trigger] sound_at(sig, sig, d, rho) by {
+        if valid(sig, d) && concl(d) is Eq && fits_env(sig, concl(d)->Eq_0, rho) {
+            sound(sig, d, rho);
+        }
+    }
+}
+
 /// SOUNDNESS OF THE MODEL (the paper's Theorem 2.31): under a fitting
 /// environment, a derivation's sides denote the same join-closed set,
 /// typed within its type.
 pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 1int,
+    decreases crate::ti_strip::inode(d), d, 1int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -1973,7 +2018,21 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
-        Rule::Iota => crate::ti_valid::iota_dead(sig, m),
+        Rule::Iota => {
+            sound(sig, ps[0], rho);
+            // the recursor-stripped signature's derivations have no Iota node
+            let ss = crate::ti_strip::strip(sig);
+            reveal(sound_oracle);
+            assert forall|d2: Deriv, rho2: Env| #[trigger] sound_at(ss, sig, d2, rho2) by {
+                if valid(ss, d2) && concl(d2) is Eq && fits_env(sig, concl(d2)->Eq_0, rho2) {
+                    crate::ti_strip::strip_valid(sig, d2);
+                    sound(sig, d2, rho2);
+                }
+            }
+            crate::ti_meta::mk_d(sig, ps[0]);
+            crate::ti_meta::mk_d(sig, ps[1]);
+            crate::dom_iota_sound::sound_iota(sig, g, m, a, rho);
+        },
         _ => {},
     }
 }
@@ -1981,15 +2040,17 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_pi_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is PiCong,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2021,15 +2082,17 @@ proof fn sound_pi_d(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_lam_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is LamCong,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2062,15 +2125,17 @@ proof fn sound_lam_d(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_app_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is AppCong,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2100,15 +2165,17 @@ proof fn sound_app_d(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_beta_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is Beta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2134,15 +2201,17 @@ proof fn sound_beta_d(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_eta_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is Eta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2191,15 +2260,17 @@ pub proof fn sound_bot_only(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, rho
 #[verifier::spinoff_prover]
 proof fn sound_leaf_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is ConstAx || d->Node_0 is Local,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let m = j->Eq_1;
     let n = j->Eq_2;
@@ -2238,15 +2309,17 @@ proof fn sound_leaf_d(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_def_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is ConstDef || d->Node_0 is Delta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2305,15 +2378,17 @@ proof fn sound_def_d(sig: Sig, d: Deriv, rho: Env)
 #[verifier::spinoff_prover]
 proof fn sound_zeta_d(sig: Sig, d: Deriv, rho: Env)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         fits_env(sig, concl(d)->Eq_0, rho),
         d->Node_0 is Zeta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases d, 0int,
+    decreases crate::ti_strip::inode(d), d, 0int,
 {
     valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;

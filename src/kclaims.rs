@@ -1959,6 +1959,7 @@ pub proof fn tt_eta_lam(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: M
 /// A judgment conversion at the left side's given type.
 pub proof fn jconv_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, t: ExprSpec)
     requires
+        crate::kclaims::frag_env(dty, denv),
         jconv(dty, denv, d, x, y),
         typed(dty, denv, d, x, t),
     ensures
@@ -1986,6 +1987,7 @@ pub proof fn jconv_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: M
 
 pub proof fn jconv_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
     requires
+        crate::kclaims::frag_env(dty, denv),
         jconv(dty, denv, d, x, y),
         jconv(dty, denv, d, y, z),
     ensures
@@ -2043,6 +2045,7 @@ pub proof fn cw_of_ceq(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Ma
 /// Application congruence for judgment conversions.
 pub proof fn app_jconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
     requires
+        crate::kclaims::frag_env(dty, denv),
         rtyped(dty, denv, d, ExprSpec::App(Box::new(f1), Box::new(a1))),
         jconv(dty, denv, d, f1, f2),
         jconv(dty, denv, d, a1, a2),
@@ -2121,6 +2124,7 @@ pub proof fn type_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
 /// A typing moves along a conversion of its type that the kernel claims.
 pub proof fn typed_move(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t0: ExprSpec, t1: ExprSpec) -> (l: LevelSpec)
     requires
+        crate::kclaims::frag_env(dty, denv),
         typed(dty, denv, d, e, t0),
         is_type(dty, denv, d, t0),
         jconv(dty, denv, d, t0, t1),
@@ -2472,6 +2476,7 @@ pub proof fn spine_parts(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
 /// convert (judgment form).
 pub proof fn spine_jconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, h1: ExprSpec, h2: ExprSpec, a1: Seq<ExprSpec>, a2: Seq<ExprSpec>)
     requires
+        crate::kclaims::frag_env(dty, denv),
         a1.len() == a2.len(),
         rtyped(dty, denv, d, spine_app(h1, a1)),
         jconv(dty, denv, d, h1, h2),

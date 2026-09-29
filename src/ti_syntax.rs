@@ -53,11 +53,16 @@ pub open spec fn is_zero(l: LevelSpec) -> bool {
 /// A context: its entries, the last one innermost (`Var 0`).
 pub type Ctx = Seq<ExprSpec>;
 
-/// What the model needs of the signature's recursors to interpret them.
-/// For now that there are none: interpreting recursors is stage S6.4 of
-/// docs/TYPED_TARGET.md.
-pub open spec fn iota_ok(sig: Sig) -> bool {
+/// The signature has no recursors.
+pub open spec fn no_recs(sig: Sig) -> bool {
     sig.ienv.recs == Map::<u64, crate::expr_arena_bridge::RecDataSpec>::empty()
+}
+
+/// What the model needs of the signature's recursors to interpret them:
+/// each is in the fragment `dom_rec_end::rec_frag` (docs/TYPED_TARGET.md,
+/// "The landing"). Syntactic, so the Iota rule can ask it.
+pub open spec fn iota_ok(sig: Sig) -> bool {
+    forall|rid: u64| #[trigger] sig.ienv.recs.contains_key(rid) ==> crate::dom_rec_end::rec_frag(sig, rid)
 }
 
 /// A declared constant: its universe parameters, its type, and its value

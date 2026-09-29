@@ -168,19 +168,161 @@ pub proof fn tel_dom_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i:
     crate::dom_rec_minor::vsub_pi_dom(ds[i], crate::rec_canon::binds(BinderKind::Pi, ds.subrange(i + 1, ds.len() as int), b), xi);
 }
 
-/// WHAT THE RECURSOR'S END ASSUMES of the signature: subject reduction,
+/// WHAT THE RECURSOR'S END ASSUMES of the signature: subject reduction and
 /// the recursor in scope over an inductive without parameters or levels,
 /// its constructors neither recursors nor definitions, its rules well
 /// formed, and its fields closed and level-invariant.
 pub open spec fn rec_hyps(sig: Sig, c: u64) -> bool {
+    sig_rec(sig) && rec_frag(sig, c)
+}
+
+/// A closed type: typed in the empty context.
+pub open spec fn ty_closed(sig: Sig, t: ExprSpec) -> bool {
+    exists|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)))
+}
+
+/// Rule `p`'s right-hand side at a level instance is typed in the empty
+/// context, without recursors.
+pub open spec fn rhs_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> bool {
+    let rd = sig.ienv.recs[c];
+    let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
+    exists|tb: ExprSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), body, body, tb))
+}
+
+/// What the model assumes of each recursor beyond the syntactic fragment:
+/// the constants involved are semantic, the recursor's and constructors'
+/// types and the rules' right-hand sides are typed without recursors (so
+/// without Iota: soundness's Iota case uses their soundness), the inductive
+/// is not a proposition, and its closed fields are ranked below it.
+pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
+    let rd = sig.ienv.recs[c];
+    &&& forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() ==>
+        #[trigger] crate::dom_model::sem_const(sig, c, lv) && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv))
+    &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
+    &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::dom_model::sem_const(sig, #[trigger] sh.ctors[p], Seq::empty())
+        && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty()))
+    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rhs_typed(sig, c, lv, p)
+    &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
+        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+}
+
+/// THE MODEL'S HYPOTHESIS on a signature with recursors (docs/TYPED_TARGET.md,
+/// "The landing", option (a)): subject reduction, and every recursor's
+/// model facts.
+pub open spec fn sig_rec(sig: Sig) -> bool {
     &&& crate::ti_hred_rec::hsr(sig)
+    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_model(sig, c)
+}
+
+/// The hypothesis soundness and adequacy take: vacuous without recursors
+/// or outside the fragment.
+pub open spec fn sig_sr(sig: Sig) -> bool {
+    crate::ti_syntax::iota_ok(sig) && !crate::ti_syntax::no_recs(sig) ==> sig_rec(sig)
+}
+
+/// The syntactic part: the recursors the model interprets.
+pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
     &&& crate::dom_rec_ty::rec_scope(sig, c)
     &&& sh.np == 0
     &&& sig.consts[sh.ind].lps.len() == 0
     &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
     &&& forall|lv: Seq<LevelSpec>, p: int| 0 <= p < sh.nmin() ==> #[trigger] crate::dom_rec_minor::fields_plain(sig, c, lv, p)
+}
+
+/// Closed simple types read only the constants.
+pub proof fn simple_congr(s1: Sig, s2: Sig, ind: u64, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+    ensures
+        crate::rec_canon::simple_ty(s1, ind, e) == crate::rec_canon::simple_ty(s2, ind, e),
+        crate::rec_canon::simple_app(s1, ind, e) == crate::rec_canon::simple_app(s2, ind, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        simple_congr(s1, s2, ind, *f);
+        simple_congr(s1, s2, ind, *x);
+    }
+}
+
+/// The canonical recursor reads only the constants and the tables.
+pub proof fn canon_congr(s1: Sig, s2: Sig, c: u64)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::rec_canon::rec_canon(s1, c) == crate::rec_canon::rec_canon(s2, c),
+{
+    let rd = s1.ienv.recs[c];
+    let ind = crate::rec_canon::rec_ind(s1, c);
+    assert(ind == crate::rec_canon::rec_ind(s2, c));
+    let sh = crate::rec_canon::shape_of(s1, rd, ind);
+    assert(sh == crate::rec_canon::shape_of(s2, rd, ind));
+    assert(crate::rec_canon::elim_level(s1, c, ind) == crate::rec_canon::elim_level(s2, c, ind));
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+        crate::rec_canon::simple_ty(s1, ind, #[trigger] sh.fields[j][k]) == crate::rec_canon::simple_ty(s2, ind, sh.fields[j][k]) by {
+        simple_congr(s1, s2, ind, sh.fields[j][k]);
+    }
+}
+
+/// One direction of the scope's congruence.
+pub proof fn scope_dir(s1: Sig, s2: Sig, c: u64)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+        crate::dom_rec_ty::rec_scope(s1, c),
+    ensures
+        crate::dom_rec_ty::rec_scope(s2, c),
+{
+    canon_congr(s1, s2, c);
+    assert(crate::rec_canon::rec_ind(s1, c) == crate::rec_canon::rec_ind(s2, c));
+    assert(crate::dom_rec_ty::rshape(s1, c) == crate::dom_rec_ty::rshape(s2, c));
+    assert forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(s2, r2)
+        && crate::rec_canon::rec_ind(s2, r2) == crate::rec_canon::rec_ind(s2, c) implies r2 == c by {
+        canon_congr(s1, s2, r2);
+        assert(crate::rec_canon::rec_ind(s1, r2) == crate::rec_canon::rec_ind(s2, r2));
+        assert(crate::rec_canon::rec_canon(s1, r2));
+    }
+}
+
+/// One direction of the fragment's congruence.
+pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+        rec_frag(s1, c),
+    ensures
+        rec_frag(s2, c),
+{
+    scope_dir(s1, s2, c);
+    let sh = crate::dom_rec_ty::rshape(s1, c);
+    assert(sh == crate::dom_rec_ty::rshape(s2, c));
+    assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
+    assert forall|lv: Seq<LevelSpec>, p: int| 0 <= p < sh.nmin() implies #[trigger] crate::dom_rec_minor::fields_plain(s2, c, lv, p) by {
+        assert(crate::dom_rec_minor::fields_plain(s1, c, lv, p));
+    }
+}
+
+/// The fragment reads only the constants and the inductive tables.
+pub proof fn frag_congr(s1: Sig, s2: Sig)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::ti_syntax::iota_ok(s1) == crate::ti_syntax::iota_ok(s2),
+        forall|c: u64| #[trigger] rec_frag(s1, c) == rec_frag(s2, c),
+{
+    assert forall|c: u64| #[trigger] rec_frag(s1, c) == rec_frag(s2, c) by {
+        if rec_frag(s1, c) {
+            frag_dir(s1, s2, c);
+        }
+        if rec_frag(s2, c) {
+            frag_dir(s2, s1, c);
+        }
+    }
 }
 
 /// The end's context: the induction's arguments, the major's constructor
@@ -323,8 +465,13 @@ pub proof fn major_side(sig: Sig, g: Ctx, c: u64, j: int, x: ExprSpec)
     crate::ti_hred_rec::sr_hred(sig, g, x, cx, ci);
     crate::dom_adeq_syn::dsym(sig, g, x, cx, ci);
     crate::beta_model::spine_recompose(cx);
-    let clv = spine_head(cx)->Const_1;
-    crate::iota_sr::sr_major(sig, g, c, j, clv, spine_args(cx), ci);
+    let (h, clv) = (spine_head(cx), spine_head(cx)->Const_1);
+    // the constructor's levels, from its own typing: none, as the inductive's
+    let th = crate::dom_iota::spine_gen(sig, g, h, spine_args(cx), ci);
+    crate::ti_spine::const_typed(sig, g, h->Const_0, clv, th);
+    crate::dom_rec_ty::scope_ctor(sig, c, j);
+    assert(sig.consts[h->Const_0].lps == sig.consts[sh.ind].lps);
+    assert(clv =~= Seq::<LevelSpec>::empty());
 }
 
 /// THE END'S CONTEXT from the invariant at the end of the telescope.
@@ -473,6 +620,7 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     ensures
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), 0),
 {
+    crate::dom_sound::sound_all(sig);
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let mi = 1 + rc.j;
@@ -500,7 +648,7 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     assert(crate::dom_rec_adeq::rf_sem(sig, rc.c, sem, rc.xs.len(), 0, rc.a, rc.ds, rc.fs));
     assert(tds.subrange(0, rc.xs.len() as int) =~= tds);
     crate::dom_rec_ty::rec_ty_split(sig, rc.c, sem.0);
-    let li = crate::dom_tele::tele_prefix(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rc.c), sem.1,
+    let li = crate::dom_tele::tele_prefix(sig, sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rc.c), sem.1,
         crate::dom_model::bot_env(), rc.ds, rc.fs, mi);
     let (ds_m, body_m) = crate::dom_rec_minor::minor_split(sig, rc.c, sem.0, rc.j);
     assert(crate::ti_gen::typ(sig, w.g0, tds[mi], li));
@@ -1214,6 +1362,7 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
         &&& rel_ty(sig, k1, rc.g, ExprSpec::App(Box::new(p), Box::new(rc.cx(sig))), ExprSpec::App(Box::new(p), Box::new(x)), top)
     }),
 {
+    crate::dom_sound::sound_all(sig);
     let pre = rc.pre(sig);
     let (t0, t02) = (rc.t0(sig), rc.t02(sig));
     let (p, p2, x, x2) = (rc.xs[0], rc.xs2[0], rc.xs[pre], rc.xs2[pre]);
@@ -1263,11 +1412,11 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     crate::dom_model::typed_down(jw, d0, k1);
     crate::dom_model::typed_down(d0, Cpt::U, k1);
     crate::dom_rec_ty::rec_ty_split(sig, rc.c, rc.sm.0);
-    let l0 = crate::dom_tele::tele_prefix(sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rc.c), rc.sm.1,
+    let l0 = crate::dom_tele::tele_prefix(sig, sig, Seq::empty(), tds, crate::dom_rec_ty::rbody(sig, rc.c), rc.sm.1,
         crate::dom_model::bot_env(), rc.ds, rc.fs, 0);
     assert(Seq::<ExprSpec>::empty() + tds.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
     assert(crate::dom_sound::fits_env(sig, Seq::empty(), crate::dom_model::bot_env()));
-    crate::dom_tele::tele_step_fit(sig, Seq::empty(), sa, sb, l0, crate::dom_model::bot_env(), dp, pv, jw, d0);
+    crate::dom_tele::tele_step_fit(sig, sig, Seq::empty(), sa, sb, l0, crate::dom_model::bot_env(), dp, pv, jw, d0);
     let ls_ = sb->Sort_0;
     reveal(crate::dom_model::mem);
     let kw = choose|w: crate::dom_model::Wit| #[trigger] crate::dom_model::mem_w(sig, sb, crate::dom_model::ext(crate::dom_model::bot_env(), jw), kc, w);
@@ -1434,6 +1583,7 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
 
 /// The walk, argument by argument: fields by the major's relation,
 /// recursive calls by the induction.
+#[verifier::spinoff_prover]
 pub proof fn walk_run(sig: Sig, rc: Rc, k: nat, h: nat)
     requires
         rec_ctx(sig, rc),

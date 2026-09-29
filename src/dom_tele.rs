@@ -57,26 +57,28 @@ pub proof fn pi_dom_type(a: Cpt)
 
 /// The body of a derivable Pi type is join-closed under every fitting
 /// extension, from its derivation's soundness.
-pub proof fn pi_body_jc(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l2: LevelSpec, rho: Env)
+pub proof fn pi_body_jc(ss: Sig, sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l2: LevelSpec, rho: Env)
     requires
-        typ(sig, g.push(ta), tb, l2),
+        crate::dom_sound::sound_oracle(ss, sig),
+        typ(ss, g.push(ta), tb, l2),
         fits_env(sig, g, rho),
     ensures
         body_jc(sig, ta, tb, rho),
 {
-    let d = crate::ti_sub::get(sig, eq(g.push(ta), tb, tb, sort(l2)));
+    let d = crate::ti_sub::get(ss, eq(g.push(ta), tb, tb, sort(l2)));
     assert forall|x: Cpt, a: Cpt| #[trigger] dfit(sig, ta, rho, a, x) implies jc(sig, tb, ext(rho, x)) by {
         fits_ext(sig, g, rho, ta, a, x);
-        sound(sig, d, ext(rho, x));
+        crate::dom_sound::oracle_use(ss, sig, d, ext(rho, x));
     }
 }
 
 /// ONE STEP: the argument's projection, the codomain there, and the
 /// extended environment.
-pub proof fn tele_step(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, w: Cpt)
+pub proof fn tele_step(ss: Sig, sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, w: Cpt)
     -> (r: (Cpt, Cpt, LevelSpec, Cpt))
     requires
-        derivable(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l))),
+        crate::dom_sound::sound_oracle(ss, sig),
+        derivable(ss, eq(g, pi(ta, tb), pi(ta, tb), sort(l))),
         fits_env(sig, g, rho),
         mem(sig, pi(ta, tb), rho, d),
         typed(d, Cpt::U),
@@ -90,13 +92,13 @@ pub proof fn tele_step(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpe
         typed(r.1, Cpt::U),
         mem(sig, tb, ext(rho, r.0), r.1),
         fits_env(sig, g.push(ta), ext(rho, r.0)),
-        typ(sig, g.push(ta), tb, r.2),
+        typ(ss, g.push(ta), tb, r.2),
         dfit(sig, ta, rho, r.3, r.0),
 {
-    let dd = crate::ti_sub::get(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
-    gen(sig, dd);
+    let dd = crate::ti_sub::get(ss, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
+    gen(ss, dd);
     let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(ta, tb, l1, l2)
-        && typ(sig, g, ta, l1) && typ(sig, g.push(ta), tb, l2) && crate::ti_chain::tchain(sig, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
+        && typ(ss, g, ta, l1) && typ(ss, g.push(ta), tb, l2) && crate::ti_chain::tchain(ss, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
     typed_wf(u, d);
     typed_wf(d, Cpt::U);
     typed_basic();
@@ -149,7 +151,7 @@ pub proof fn tele_step(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpe
         assert(app(u, w) == Cpt::Bot && app(u, w2) == Cpt::Bot);
     }
     // the codomain, in the body's denotation
-    pi_body_jc(sig, g, ta, tb, l2, rho);
+    pi_body_jc(ss, sig, g, ta, tb, l2, rho);
     cod_in_body(sig, ta, tb, rho, d, w2, a0);
     crate::dom_proj::app_typed_at(n, u, d, w2);
     typed_down(app(u, w2), cod(d, w2), (n - 1) as nat);
@@ -193,11 +195,12 @@ pub proof fn apps_front(u: Cpt, ws: Seq<Cpt>)
 
 /// THROUGH A TELESCOPE: the arguments' projections, the codomain after
 /// all of them, and the extended environment.
-pub proof fn tele_apps(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, ws: Seq<Cpt>)
+pub proof fn tele_apps(ss: Sig, sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, ws: Seq<Cpt>)
     -> (r: (Seq<Cpt>, Cpt, LevelSpec, Seq<Cpt>))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         ws.len() == ds.len(),
-        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, body), crate::rec_canon::binds(BinderKind::Pi, ds, body), sort(l))),
+        derivable(ss, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, body), crate::rec_canon::binds(BinderKind::Pi, ds, body), sort(l))),
         fits_env(sig, g, rho),
         mem(sig, crate::rec_canon::binds(BinderKind::Pi, ds, body), rho, d),
         typed(d, Cpt::U),
@@ -212,7 +215,7 @@ pub proof fn tele_apps(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: L
         typed(r.1, Cpt::U),
         mem(sig, body, exts(rho, r.0), r.1),
         fits_env(sig, g + ds, exts(rho, r.0)),
-        typ(sig, g + ds, body, r.2),
+        typ(ss, g + ds, body, r.2),
         r.3.len() == ds.len(),
         forall|i: int| 0 <= i < ds.len() ==> #[trigger] dfit(sig, ds[i], exts(rho, r.0.subrange(0, i)), r.3[i], r.0[i]),
     decreases ds.len(),
@@ -225,14 +228,14 @@ pub proof fn tele_apps(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: L
     let (ta, rest) = (ds[0], ds.drop_first());
     let tb = crate::rec_canon::binds(BinderKind::Pi, rest, body);
     assert(crate::rec_canon::binds(BinderKind::Pi, ds, body) == pi(ta, tb));
-    let (w2, d2, l2, a0) = tele_step(sig, g, ta, tb, l, rho, d, u, ws[0]);
+    let (w2, d2, l2, a0) = tele_step(ss, sig, g, ta, tb, l, rho, d, u, ws[0]);
     assert(wf(ws[0]));
     let u2 = app(u, ws[0]);
     let wr = ws.drop_first();
     assert forall|i: int| 0 <= i < wr.len() implies #[trigger] wf(wr[i]) by {
         assert(wr[i] == ws[i + 1]);
     }
-    let (ws2r, e, l3, dsr) = tele_apps(sig, g.push(ta), rest, body, l2, ext(rho, w2), d2, u2, wr);
+    let (ws2r, e, l3, dsr) = tele_apps(ss, sig, g.push(ta), rest, body, l2, ext(rho, w2), d2, u2, wr);
     let dcs = seq![a0] + dsr;
     let ws2 = seq![w2] + ws2r;
     assert(ws2[0] == w2 && ws2.drop_first() =~= ws2r);
@@ -432,25 +435,25 @@ pub proof fn lamchain_typed(ds: Seq<Cpt>, xs: Seq<Cpt>, c: Cpt, out: Cpt)
 
 /// ALONG A CHAIN, each domain is typed in its prefix context, where the
 /// chain's environment fits.
-pub proof fn tele_prefix(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env,
+pub proof fn tele_prefix(ss: Sig, sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env,
     ds: Seq<Cpt>, xs: Seq<Cpt>, i: int) -> (li: LevelSpec)
     requires
-        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, tds, body), crate::rec_canon::binds(BinderKind::Pi, tds, body), sort(l))),
+        derivable(ss, eq(g, crate::rec_canon::binds(BinderKind::Pi, tds, body), crate::rec_canon::binds(BinderKind::Pi, tds, body), sort(l))),
         fits_env(sig, g, rho),
         chain_ok(sig, tds, rho, ds, xs),
         0 <= i < tds.len(),
     ensures
-        typ(sig, g + tds.subrange(0, i), tds[i], li),
+        typ(ss, g + tds.subrange(0, i), tds[i], li),
         fits_env(sig, g + tds.subrange(0, i), exts(rho, xs.subrange(0, i))),
     decreases i,
 {
     let (ta, rest) = (tds[0], tds.drop_first());
     let tb = crate::rec_canon::binds(BinderKind::Pi, rest, body);
     assert(crate::rec_canon::binds(BinderKind::Pi, tds, body) == pi(ta, tb));
-    let dd = crate::ti_sub::get(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
-    gen(sig, dd);
+    let dd = crate::ti_sub::get(ss, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
+    gen(ss, dd);
     let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(ta, tb, l1, l2)
-        && typ(sig, g, ta, l1) && typ(sig, g.push(ta), tb, l2) && crate::ti_chain::tchain(sig, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
+        && typ(ss, g, ta, l1) && typ(ss, g.push(ta), tb, l2) && crate::ti_chain::tchain(ss, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
     if i == 0 {
         assert(g + tds.subrange(0, 0) =~= g);
         assert(xs.subrange(0, 0) =~= Seq::<Cpt>::empty());
@@ -458,7 +461,7 @@ pub proof fn tele_prefix(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, l
     }
     chain_ok_rest(sig, tds, rho, ds, xs);
     fits_ext(sig, g, rho, ta, ds[0], xs[0]);
-    let li = tele_prefix(sig, g.push(ta), rest, body, l2, ext(rho, xs[0]), ds.drop_first(), xs.drop_first(), i - 1);
+    let li = tele_prefix(ss, sig, g.push(ta), rest, body, l2, ext(rho, xs[0]), ds.drop_first(), xs.drop_first(), i - 1);
     assert(g.push(ta) + rest.subrange(0, i - 1) =~= g + tds.subrange(0, i));
     assert(rest[i - 1] == tds[i]);
     let pre = xs.subrange(0, i);
@@ -553,10 +556,11 @@ pub proof fn lamchain_mem(sig: Sig, tds: Seq<ExprSpec>, body: ExprSpec, rho: Env
 }
 
 /// ONE STEP AT A FITTING ARGUMENT: no projection needed.
-pub proof fn tele_step_fit(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, w: Cpt, ax: Cpt)
+pub proof fn tele_step_fit(ss: Sig, sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt, w: Cpt, ax: Cpt)
     -> (l2: LevelSpec)
     requires
-        derivable(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l))),
+        crate::dom_sound::sound_oracle(ss, sig),
+        derivable(ss, eq(g, pi(ta, tb), pi(ta, tb), sort(l))),
         fits_env(sig, g, rho),
         mem(sig, pi(ta, tb), rho, d),
         typed(d, Cpt::U),
@@ -567,12 +571,12 @@ pub proof fn tele_step_fit(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: Leve
         typed(cod(d, w), Cpt::U),
         mem(sig, tb, ext(rho, w), cod(d, w)),
         fits_env(sig, g.push(ta), ext(rho, w)),
-        typ(sig, g.push(ta), tb, l2),
+        typ(ss, g.push(ta), tb, l2),
 {
-    let dd = crate::ti_sub::get(sig, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
-    gen(sig, dd);
+    let dd = crate::ti_sub::get(ss, eq(g, pi(ta, tb), pi(ta, tb), sort(l)));
+    gen(ss, dd);
     let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(ta, tb, l1, l2)
-        && typ(sig, g, ta, l1) && typ(sig, g.push(ta), tb, l2) && crate::ti_chain::tchain(sig, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
+        && typ(ss, g, ta, l1) && typ(ss, g.push(ta), tb, l2) && crate::ti_chain::tchain(ss, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
     typed_wf(u, d);
     typed_wf(d, Cpt::U);
     typed_wf(w, ax);
@@ -597,7 +601,7 @@ pub proof fn tele_step_fit(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: Leve
         },
     };
     head_le(d, gen_);
-    pi_body_jc(sig, g, ta, tb, l2, rho);
+    pi_body_jc(ss, sig, g, ta, tb, l2, rho);
     cod_in_body(sig, ta, tb, rho, d, w, ax);
     let n = cstage(u, d) + cstage(d, Cpt::U) + 2;
     typed_up(u, d, n);
@@ -611,13 +615,14 @@ pub proof fn tele_step_fit(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: Leve
 /// THROUGH A TELESCOPE, MIXED: arguments marked `fit` are typed at the
 /// given domain members whatever the earlier values, and pass unchanged;
 /// the others are projected.
-pub proof fn tele_mix(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt,
+pub proof fn tele_mix(ss: Sig, sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: LevelSpec, rho: Env, d: Cpt, u: Cpt,
     ws: Seq<Cpt>, fit: Seq<bool>, axs: Seq<Cpt>) -> (r: (Seq<Cpt>, Seq<Cpt>))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         ws.len() == ds.len(),
         fit.len() == ds.len(),
         axs.len() == ds.len(),
-        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, body), crate::rec_canon::binds(BinderKind::Pi, ds, body), sort(l))),
+        derivable(ss, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, body), crate::rec_canon::binds(BinderKind::Pi, ds, body), sort(l))),
         fits_env(sig, g, rho),
         mem(sig, crate::rec_canon::binds(BinderKind::Pi, ds, body), rho, d),
         typed(d, Cpt::U),
@@ -645,11 +650,11 @@ pub proof fn tele_mix(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: Le
     assert(wf(w0));
     let (x0, d2, l2, a0) = if fit[0] {
         assert(dfit(sig, ds[0], exts(rho, Seq::<Cpt>::empty()), axs[0], ws[0]));
-        let l2 = tele_step_fit(sig, g, ta, tb, l, rho, d, u, w0, axs[0]);
+        let l2 = tele_step_fit(ss, sig, g, ta, tb, l, rho, d, u, w0, axs[0]);
         le_refl(w0);
         (w0, cod(d, w0), l2, axs[0])
     } else {
-        let (w2, dd, l2, a0) = tele_step(sig, g, ta, tb, l, rho, d, u, w0);
+        let (w2, dd, l2, a0) = tele_step(ss, sig, g, ta, tb, l, rho, d, u, w0);
         (w2, dd, l2, a0)
     };
     let u2 = app(u, w0);
@@ -665,7 +670,7 @@ pub proof fn tele_mix(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: Le
         assert(v2[0] == x0 && v2.drop_first() =~= vals);
         assert(dfit(sig, ds[i + 1], exts(rho, v2), axs[i + 1], ws[i + 1]));
     }
-    let (xr, dr) = tele_mix(sig, g.push(ta), rest, body, l2, rho2, d2, u2, wr, fr, ar);
+    let (xr, dr) = tele_mix(ss, sig, g.push(ta), rest, body, l2, rho2, d2, u2, wr, fr, ar);
     let xs2 = seq![x0] + xr;
     let dcs = seq![a0] + dr;
     assert(xs2[0] == x0 && xs2.drop_first() =~= xr);
@@ -703,10 +708,11 @@ pub proof fn tele_mix(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, body: ExprSpec, l: Le
 /// of the generator's inputs below the argument, which is typed at the
 /// domain member.
 #[verifier::spinoff_prover]
-pub proof fn lam_step(sig: Sig, g: Ctx, ta: ExprSpec, b: ExprSpec, t: ExprSpec, rho: Env, lu: Cpt, w: Cpt)
+pub proof fn lam_step(ss: Sig, sig: Sig, g: Ctx, ta: ExprSpec, b: ExprSpec, t: ExprSpec, rho: Env, lu: Cpt, w: Cpt)
     -> (r: (Cpt, Cpt, Cpt, ExprSpec))
     requires
-        derivable(sig, eq(g, ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), t)),
+        crate::dom_sound::sound_oracle(ss, sig),
+        derivable(ss, eq(g, ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), t)),
         fits_env(sig, g, rho),
         mem(sig, ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b)), rho, lu),
         wf(w),
@@ -717,18 +723,18 @@ pub proof fn lam_step(sig: Sig, g: Ctx, ta: ExprSpec, b: ExprSpec, t: ExprSpec, 
         le(app(lu, w), r.1),
         mem(sig, b, ext(rho, r.0), r.1),
         fits_env(sig, g.push(ta), ext(rho, r.0)),
-        derivable(sig, eq(g.push(ta), b, b, r.3)),
+        derivable(ss, eq(g.push(ta), b, b, r.3)),
 {
     let lm = ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(b));
-    let dd = crate::ti_sub::get(sig, eq(g, lm, lm, t));
-    gen(sig, dd);
+    let dd = crate::ti_sub::get(ss, eq(g, lm, lm, t));
+    gen(ss, dd);
     let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, b, l1, l2)
-        && typ(sig, g, ta, l1) && derivable(sig, eq(g.push(ta), b, b, bt)) && typ(sig, g.push(ta), bt, l2)
-        && crate::ti_chain::tchain(sig, g, t, pi(ta, bt));
-    let db = crate::ti_sub::get(sig, eq(g.push(ta), b, b, bt));
+        && typ(ss, g, ta, l1) && derivable(ss, eq(g.push(ta), b, b, bt)) && typ(ss, g.push(ta), bt, l2)
+        && crate::ti_chain::tchain(ss, g, t, pi(ta, bt));
+    let db = crate::ti_sub::get(ss, eq(g.push(ta), b, b, bt));
     assert forall|x: Cpt, a: Cpt| #[trigger] dfit(sig, ta, rho, a, x) implies jc(sig, b, ext(rho, x)) by {
         fits_ext(sig, g, rho, ta, a, x);
-        sound(sig, db, ext(rho, x));
+        crate::dom_sound::oracle_use(ss, sig, db, ext(rho, x));
     }
     typed_basic();
     reveal(mem);
@@ -827,11 +833,12 @@ pub proof fn lam_step(sig: Sig, g: Ctx, ta: ExprSpec, b: ExprSpec, t: ExprSpec, 
 
 /// THROUGH A LAMBDA TELESCOPE: a member applied to any arguments lies below
 /// a member of the body under the environment of typed inputs below them.
-pub proof fn lam_apps(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, t: ExprSpec, rho: Env, lu: Cpt, ws: Seq<Cpt>)
+pub proof fn lam_apps(ss: Sig, sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, t: ExprSpec, rho: Env, lu: Cpt, ws: Seq<Cpt>)
     -> (r: (Seq<Cpt>, Seq<Cpt>, Cpt))
     requires
+        crate::dom_sound::sound_oracle(ss, sig),
         ws.len() == tds.len(),
-        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Lam, tds, body), crate::rec_canon::binds(BinderKind::Lam, tds, body), t)),
+        derivable(ss, eq(g, crate::rec_canon::binds(BinderKind::Lam, tds, body), crate::rec_canon::binds(BinderKind::Lam, tds, body), t)),
         fits_env(sig, g, rho),
         mem(sig, crate::rec_canon::binds(BinderKind::Lam, tds, body), rho, lu),
         crate::dom_code::aw(ws),
@@ -859,12 +866,12 @@ pub proof fn lam_apps(sig: Sig, g: Ctx, tds: Seq<ExprSpec>, body: ExprSpec, t: E
     assert(lb == ExprSpec::Bind(BinderKind::Lam, Box::new(ta), Box::new(tb)));
     let w0 = ws[0];
     assert(wf(w0));
-    let (x0, y0, a0, bt) = lam_step(sig, g, ta, tb, t, rho, lu, w0);
+    let (x0, y0, a0, bt) = lam_step(ss, sig, g, ta, tb, t, rho, lu, w0);
     let wr = ws.drop_first();
     assert forall|i: int| 0 <= i < wr.len() implies #[trigger] wf(wr[i]) by {
         assert(wr[i] == ws[i + 1]);
     }
-    let (xr, dr, y) = lam_apps(sig, g.push(ta), rest, body, bt, ext(rho, x0), y0, wr);
+    let (xr, dr, y) = lam_apps(ss, sig, g.push(ta), rest, body, bt, ext(rho, x0), y0, wr);
     let xs = seq![x0] + xr;
     let dcs = seq![a0] + dr;
     assert(xs[0] == x0 && xs.drop_first() =~= xr);

@@ -159,6 +159,7 @@ pub proof fn walk_at(sig: Sig, w: Wk, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn walk_step(sig: Sig, w: Wk, k: nat)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         walk_inv(sig, w, k),
         k < w.ys.len(),
         !(w.u(k) is Bot),
@@ -168,6 +169,7 @@ pub proof fn walk_step(sig: Sig, w: Wk, k: nat)
     ensures
         walk_inv(sig, w, k + 1),
 {
+    crate::dom_sound::sound_all(sig);
     let (u, a, n) = (w.u(k), w.a(k), w.n(k));
     let (m, m2, t, t2) = (w.m(k), w.m2(k), w.t(k), w.t2(k));
     let (ta, tb, ta2, tb2) = (*t->Bind_1, *t->Bind_2, *t2->Bind_1, *t2->Bind_2);
@@ -227,7 +229,7 @@ pub proof fn walk_step(sig: Sig, w: Wk, k: nat)
     typed_down(a, Cpt::U, n);
     typed_down(wv, d0, k1);
     typed_down(d0, Cpt::U, k1);
-    crate::dom_tele::tele_step_fit(sig, gk, w.sds[k as int], sb, li, w.rho(k), a, u, wv, d0);
+    crate::dom_tele::tele_step_fit(sig, sig, gk, w.sds[k as int], sb, li, w.rho(k), a, u, wv, d0);
     crate::dom_tele::exts_push(w.rho0, w.wp(k), wv);
     assert(gk.push(w.sds[k as int]) =~= w.g0 + w.sds.subrange(0, k as int + 1));
     assert(w.srest(k + 1) == sb);

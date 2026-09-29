@@ -61,6 +61,7 @@ pub proof fn pi_typed_of(sig: Sig, g: Ctx, f: ExprSpec, a: ExprSpec, b: ExprSpec
 /// at the instantiated body.
 pub proof fn spine_ty(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, h, h, t0)),
         derivable(sig, eq(g, spine_app(h, xs), spine_app(h, xs), t)),
         forall|i: int| 0 <= i < xs.len() ==> #[trigger] is_pi(trest(t0, xs.subrange(0, i))),
@@ -337,6 +338,7 @@ pub proof fn const_typed(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, t: ExprSp
 /// to the same type.
 pub proof fn retype_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, h1, h1, ty)),
         derivable(sig, eq(g, h2, h2, ty)),
         derivable(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t)),

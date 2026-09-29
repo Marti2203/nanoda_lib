@@ -126,6 +126,7 @@ pub proof fn ext_bot(sig: Sig, e: ExprSpec, a: Cpt)
 /// well-formed extension `dl` of `g`.
 pub proof fn wk_related(sig: Sig, g: Ctx, dl: Ctx, k: nat, w: Deriv)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, w),
         concl(w) == Jd::Wf(dl),
         dl.len() == g.len() + k,
@@ -203,6 +204,7 @@ pub proof fn wk_zero(e: ExprSpec)
 /// denotations, and so is its type.
 pub proof fn fundamental(sig: Sig, d: Deriv, n: nat, u: Cpt, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         mem(sig, concl(d)->Eq_3, bot_env(), a),
@@ -253,6 +255,7 @@ pub proof fn mem_pi0(sig: Sig, ta: ExprSpec, tb: ExprSpec)
 /// the Pi's denotation.
 proof fn pi_code_rel(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec) -> (r: (nat, Cpt))
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_1 == pi(ta, tb),
@@ -283,6 +286,7 @@ proof fn pi_code_rel(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec) -> (r: (nat
 /// by type conversions, and codomains joined under the left domain.
 pub proof fn pi_inj(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec, ta2: ExprSpec, tb2: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_1 == pi(ta, tb),
@@ -301,6 +305,7 @@ pub proof fn pi_inj(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec, ta2: ExprSpe
 /// A Pi never converts with a sort.
 pub proof fn pi_not_sort(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec, l: LevelSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_1 == pi(ta, tb),
@@ -319,6 +324,7 @@ pub proof fn pi_not_sort(sig: Sig, d: Deriv, ta: ExprSpec, tb: ExprSpec, l: Leve
 /// SORT INJECTIVITY: convertible sorts have equivalent levels.
 pub proof fn sort_inj(sig: Sig, d: Deriv, l1: LevelSpec, l2: LevelSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_1 == sort(l1),
@@ -361,6 +367,7 @@ pub proof fn sort_inj(sig: Sig, d: Deriv, l1: LevelSpec, l2: LevelSpec)
 /// related at every U-typed element of the left one's bottom denotation.
 pub proof fn fundamental_type(sig: Sig, d: Deriv, n: nat, a: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         valid(sig, d),
         concl(d) is Eq,
         concl(d)->Eq_3 is Sort,
@@ -383,6 +390,7 @@ pub proof fn fundamental_type(sig: Sig, d: Deriv, n: nat, a: Cpt)
 /// type to each.
 proof fn chain_rel(sig: Sig, g: Ctx, ch: Seq<ExprSpec>, k: int, n: nat, v: Cpt)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         crate::ti_chain::chain_ok(sig, g, ch),
         1 <= k < ch.len(),
         mem(sig, ch[0], bot_env(), v),
@@ -427,6 +435,7 @@ proof fn pi0_type()
 /// PI INJECTIVITY, for chains of type conversions.
 pub proof fn pi_inj_chain(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, ta2: ExprSpec, tb2: ExprSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         tchain(sig, g, pi(ta, tb), pi(ta2, tb2)),
     ensures
         tchain(sig, g, ta, ta2),
@@ -450,6 +459,7 @@ pub proof fn pi_inj_chain(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, ta2: Exp
 /// A Pi never chains to a sort.
 pub proof fn pi_not_sort_chain(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: LevelSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         tchain(sig, g, pi(ta, tb), sort(l)),
     ensures
         false,
@@ -468,6 +478,7 @@ pub proof fn pi_not_sort_chain(sig: Sig, g: Ctx, ta: ExprSpec, tb: ExprSpec, l: 
 /// SORT INJECTIVITY, for chains of type conversions.
 pub proof fn sort_inj_chain(sig: Sig, g: Ctx, l1: LevelSpec, l2: LevelSpec)
     requires
+        crate::dom_rec_end::sig_sr(sig),
         tchain(sig, g, sort(l1), sort(l2)),
     ensures
         crate::conv_cr::lev_eq(l1, l2),

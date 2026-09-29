@@ -1022,7 +1022,7 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[0], dl, s, s);
     d_sub(sig, ps[1], dl, s, s);
     d_sub(sig, ps[1], dl, s, s2);
-    crate::ti_subst::psub_rec(s, sig.ienv, m);
+    crate::ti_subst::psub_fire(s, sig, m);
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let bj = eq(dl, psub(m, s), psub(n, s), psub(a, s));

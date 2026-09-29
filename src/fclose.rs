@@ -508,4 +508,20 @@ pub proof fn pstep_star_inst_arg(env: EnvSpec, j: nat, a: ExprSpec, a2: ExprSpec
     assert(ch2[ch2.len() - 1] == inst(j, a2, e));
 }
 
+/// Closing a local keeps a recursor redex firing.
+pub proof fn fclose_fire(k: nat, c: nat, sig: crate::ti_syntax::Sig, sp: ExprSpec)
+    requires
+        env_fv_free(sig.ienv),
+        crate::ti_hred::rec_fire(sig, sp),
+    ensures
+        crate::ti_hred::rec_fire(sig, fclose(k, c, sp)),
+{
+    fclose_rec(k, c, sig.ienv, sp);
+    fclose_spine_const(k, c, sp);
+    let rd = sig.ienv.recs[spine_head(sp)->Const_0];
+    let major = spine_args(sp)[rd.major_idx as int];
+    fclose_spine_const(k, c, major);
+    assert(sclose(k, c, spine_args(sp))[rd.major_idx as int] == fclose(k, c, major));
+}
+
 } // verus!

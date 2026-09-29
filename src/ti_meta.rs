@@ -774,7 +774,7 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let q = rn(r);
     let d0 = d_ren(sig, ps[0], w, dl, r);
     let d1 = d_ren(sig, ps[1], w, dl, r);
-    crate::ti_subst::psub_rec(q, sig.ienv, m);
+    crate::ti_subst::psub_fire(q, sig, m);
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
     let ps2 = seq![d0, d1];
     assert(prems(ps2, seq![
