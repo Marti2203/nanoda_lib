@@ -42,6 +42,48 @@ pub proof fn closed_typed(sig: Sig, g: Ctx, e: ExprSpec)
     reveal(crate::ti_sub::tconvd);
 }
 
+/// A typed application of a canonical former, within its telescope, has
+/// its arguments typed at the telescope's domains; without level
+/// parameters, its type parameters at their declared sorts.
+pub proof fn former_args_typed(sig: Sig, g: Ctx, j: u64, us: Seq<LevelSpec>, xs: Seq<ExprSpec>, th: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        has_canon(sig, j),
+        xs.len() <= canon_shape(sig, j).np + canon_shape(sig, j).ni,
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(j, us), xs), spine_app(ExprSpec::Const(j, us), xs), th)),
+    ensures
+        sig.consts[j].lps.len() == 0 ==> forall|q: int| 0 <= q < xs.len() && q < canon_shape(sig, j).np
+            && canon_shape(sig, j).pdoms[q] is Sort ==> derivable(sig, eq(g, #[trigger] xs[q], xs[q], canon_shape(sig, j).pdoms[q])),
+{
+    let sh = canon_shape(sig, j);
+    let h = ExprSpec::Const(j, us);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, j);
+    let thc = crate::dom_iota::spine_gen(sig, g, h, xs, th);
+    crate::ti_spine::const_typed(sig, g, j, us, thc);
+    let lps = sig.consts[j].lps;
+    let tb0 = crate::rec_canon::tbody(sig.consts[j].ty, sh.np + sh.ni);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, tb0, lps, us);
+    let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, us);
+    let b = crate::expr_model::subst_expr_levels(tb0, lps, us);
+    let tr = crate::rec_canon::binds(BinderKind::Pi, ds, b);
+    assert(crate::ti_syntax::dty_at(sig, j, us) == tr);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tr, xs.subrange(0, i))) by {
+        crate::ti_spine::tel_next(ds, b, xs, i);
+    }
+    crate::ti_spine::spine_ty(sig, g, h, tr, xs, th);
+    if lps.len() == 0 {
+        assert(lps =~= Seq::<u64>::empty());
+        assert forall|q: int| 0 <= q < xs.len() && q < sh.np && sh.pdoms[q] is Sort
+            implies derivable(sig, eq(g, #[trigger] xs[q], xs[q], sh.pdoms[q])) by {
+            crate::ti_spine::tel_next(ds, b, xs, q);
+            assert(ds[q] == crate::expr_model::subst_expr_levels((sh.pdoms + sh.idoms)[q], lps, us));
+            crate::dom_canon::sl_none(sh.pdoms[q], us);
+            crate::ti_spine::vsub_closed(sh.pdoms[q], xs.subrange(0, q));
+            assert(derivable(sig, eq(g, xs[q], xs[q], crate::ti_spine::sdom(tr, xs, q))));
+        }
+    }
+}
+
 /// A constant's spine, stuck, is its own reduct and an application of it.
 pub proof fn iapp_self(sig: Sig, e: ExprSpec)
     requires
@@ -376,12 +418,18 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
         }
     }
     if has_canon(sig, kk) {
-        // fully applied: its parameters convert with themselves
+        // fully applied and typed: its parameters are equal to themselves
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
         assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
-            implies #[trigger] crate::ti_chain::tchain(sig, g, spine_args(r)[q], spine_args(r)[q]) by {
-            crate::ti_chain::tchain_refl(sig, g, spine_args(r)[q]);
+            implies #[trigger] crate::dom_rel::peq(sig, g, kk, q, spine_args(r)[q], spine_args(r)[q]) by {
+            let x = spine_args(r)[q];
+            crate::ti_chain::tchain_refl(sig, g, x);
+            if sig.consts[kk].lps.len() == 0 {
+                crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), x, x, sk.pdoms[q]));
+                crate::dom_iota::simple_closed(sig, j, x);
+                crate::ti_sr::wk_closed(sig, g, x, x, sk.pdoms[q]);
+            }
         }
     }
     canon_rel(sig, n, g, r, r, cs, c);

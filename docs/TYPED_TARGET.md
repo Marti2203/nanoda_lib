@@ -715,6 +715,19 @@ Stages, each landing through the gate:
   code is a value, below which only bottom is a type, so the relation
   says nothing of it; P4b needs the recursor's value parameters handled
   another way, or kept out of the fragment.
+  **P4a' (typed parameter equality).** A `tchain` may pass through
+  different universes, and Iota's subject reduction needs the congruence
+  `ctor ps fs ≡ ctor ps' fs`, i.e. each type parameter equal *at its
+  declared sort*. `pconv` therefore records `peq`: the chain and, when
+  the inductive has no level parameters, `derivable(eq(g, a_q, a2_q,
+  pdoms[q]))`. `tf_rel` gets it from the argument's conversion at the
+  domain; the reflexive case in `closed_rel` cannot invert the typing of
+  the closed type (spine inversion goes through uniqueness, which goes
+  through Pi injectivity, i.e. through the fundamental lemma: a cycle), so
+  `styped` gains `sdoms_typed`, a static signature fact: in a closed field
+  type, a canonical former's type parameters are typed at their declared
+  sorts in the stripped signature. The kernel port certifies it with
+  `former_args_typed` (spine inversion, outside the cycle).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

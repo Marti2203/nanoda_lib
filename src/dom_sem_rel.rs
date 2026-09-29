@@ -192,7 +192,7 @@ pub open spec fn tf_prel(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p:
 pub open spec fn tf_pconv(sig: Sig, g: Ctx, c: u64, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>) -> bool {
     let sh = crate::dom_code::canon_shape(sig, c);
     forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
-        ==> #[trigger] tchain(sig, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
+        ==> #[trigger] crate::dom_rel::peq(sig, g, c, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
 }
 
 /// Where the former has canonical tables, the type is its telescope's
@@ -265,26 +265,34 @@ pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Ex
             assert(derivable(sig, eq(g, x, x2, sort(l))));
             reveal(crate::ti_sub::tconvd);
             tchain_one(sig, g, x, x2);
+            if lps.len() == 0 {
+                assert(lps =~= Seq::<u64>::empty());
+                crate::dom_canon::sl_none(sh.pdoms[k], ls);
+            }
+            assert(crate::dom_rel::peq(sig, g, c, k, x, x2));
+            crate::dom_rel::peq_symm(sig, g, c, k, x, x2);
         }
         let p2 = p.push(w);
         assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] tchain(sig, g, a1.push(x)[q], a2.push(x2)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, c, q, a1.push(x)[q], a2.push(x2)[q]) by {
             if q < p.len() {
-                assert(tchain(sig, g, a1[q], a2[q]));
+                assert(crate::dom_rel::peq(sig, g, c, q, a1[q], a2[q]));
                 assert(a1.push(x)[q] == a1[q] && a2.push(x2)[q] == a2[q]);
             }
         }
         assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] tchain(sig, g, a1.push(x)[q], a1.push(x2)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, c, q, a1.push(x)[q], a1.push(x2)[q]) by {
             if q < p.len() {
-                tchain_refl(sig, g, a1[q]);
+                assert(crate::dom_rel::peq(sig, g, c, q, a1[q], a2[q]));
+                crate::dom_rel::peq_symm(sig, g, c, q, a1[q], a2[q]);
                 assert(a1.push(x)[q] == a1[q] && a1.push(x2)[q] == a1[q]);
             }
         }
         assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] tchain(sig, g, a2.push(x)[q], a2.push(x2)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, c, q, a2.push(x)[q], a2.push(x2)[q]) by {
             if q < p.len() {
-                tchain_refl(sig, g, a2[q]);
+                assert(crate::dom_rel::peq(sig, g, c, q, a1[q], a2[q]));
+                crate::dom_rel::peq_symm(sig, g, c, q, a1[q], a2[q]);
                 assert(a2.push(x)[q] == a2[q] && a2.push(x2)[q] == a2[q]);
             }
         }

@@ -60,11 +60,22 @@ pub open spec fn ftyped(sig: Sig, ind: u64, p: int, k: int, ls: Seq<LevelSpec>) 
     styped(sig, crate::expr_model::subst_expr_levels(canon_shape(sig, ind).fields[p][k], sig.consts[ind].lps, ls))
 }
 
-/// A closed type typed without recursors, and so its arguments.
+/// A closed type typed without recursors, and so its arguments, its type
+/// parameters at their declared sorts.
 pub open spec fn styped(sig: Sig, e: ExprSpec) -> bool
     decreases e, 1int,
 {
-    crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), e) && sargs_typed(sig, e)
+    crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), e) && sargs_typed(sig, e) && sdoms_typed(sig, e)
+}
+
+/// The type parameters of a canonical former without level parameters, in
+/// a closed type, are typed at their declared sorts.
+pub open spec fn sdoms_typed(sig: Sig, e: ExprSpec) -> bool {
+    let (h, a) = (spine_head(e), spine_args(e));
+    let sh = canon_shape(sig, h->Const_0);
+    h is Const && has_canon(sig, h->Const_0) && sig.consts[h->Const_0].lps.len() == 0 ==>
+        forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
+            ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q], sh.pdoms[q]))
 }
 
 pub open spec fn sargs_typed(sig: Sig, e: ExprSpec) -> bool

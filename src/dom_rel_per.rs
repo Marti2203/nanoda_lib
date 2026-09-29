@@ -344,9 +344,8 @@ pub proof fn pconv_symm(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec)
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] tchain(sig, g, a2[q], a[q]) by {
-            assert(tchain(sig, g, a[q], a2[q]));
-            tchain_sym(sig, g, a[q], a2[q]);
+            implies #[trigger] peq(sig, g, ind, q, a2[q], a[q]) by {
+            peq_symm(sig, g, ind, q, a[q], a2[q]);
         }
     }
 }
@@ -363,10 +362,8 @@ pub proof fn pconv_trans(sig: Sig, g: Ctx, ind: u64, t1: ExprSpec, t2: ExprSpec,
         crate::beta_model::spine_args(ir(sig, t3, ind)));
     if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] tchain(sig, g, a1[q], a3[q]) by {
-            assert(tchain(sig, g, a1[q], a2[q]));
-            assert(tchain(sig, g, a2[q], a3[q]));
-            tchain_trans(sig, g, a1[q], a2[q], a3[q]);
+            implies #[trigger] peq(sig, g, ind, q, a1[q], a3[q]) by {
+            peq_trans(sig, g, ind, q, a1[q], a2[q], a3[q]);
         }
     }
 }

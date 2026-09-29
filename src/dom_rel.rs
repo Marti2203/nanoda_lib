@@ -128,14 +128,50 @@ pub open spec fn fq(sig: Sig, ind: u64, t: ExprSpec, p: int, k: int) -> ExprSpec
     crate::ti_spine::vsub(f, crate::beta_model::spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed))
 }
 
+/// Type parameter `q` of `ind` at `x` and `y`: they convert as types, and
+/// without level parameters are equal at the declared sort.
+pub open spec fn peq(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprSpec) -> bool {
+    &&& tchain(sig, g, x, y)
+    &&& sig.consts[ind].lps.len() == 0 ==> derivable(sig, eq(g, x, y, crate::dom_code::canon_shape(sig, ind).pdoms[q]))
+}
+
+pub proof fn peq_symm(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprSpec)
+    requires
+        peq(sig, g, ind, q, x, y),
+    ensures
+        peq(sig, g, ind, q, y, x),
+        peq(sig, g, ind, q, x, x),
+        peq(sig, g, ind, q, y, y),
+{
+    crate::ti_chain::tchain_sym(sig, g, x, y);
+    crate::ti_chain::tchain_refl(sig, g, x);
+    crate::ti_chain::tchain_refl(sig, g, y);
+    if sig.consts[ind].lps.len() == 0 {
+        crate::dom_adeq_syn::dsym(sig, g, x, y, crate::dom_code::canon_shape(sig, ind).pdoms[q]);
+    }
+}
+
+pub proof fn peq_trans(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+    requires
+        peq(sig, g, ind, q, x, y),
+        peq(sig, g, ind, q, y, z),
+    ensures
+        peq(sig, g, ind, q, x, z),
+{
+    crate::ti_chain::tchain_trans(sig, g, x, y, z);
+    if sig.consts[ind].lps.len() == 0 {
+        crate::dom_adeq_syn::dtrans(sig, g, x, y, z, crate::dom_code::canon_shape(sig, ind).pdoms[q]);
+    }
+}
+
 /// THE TYPE PARAMETERS CONVERT: of a canonical inductive, the applications
-/// two types reduce to are applied past the parameters, with convertible
-/// type parameters. What injectivity of the inductive reads back.
+/// two types reduce to are applied past the parameters, with equal type
+/// parameters. What injectivity of the inductive reads back.
 pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) -> bool {
     let sh = crate::dom_code::canon_shape(sig, ind);
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() >= sh.np
-        && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] tchain(sig, g, a[q], a2[q])
+        && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, q, a[q], a2[q])
 }
 
 /// Marker trigger for the clauses' quantifiers (a same-group call inside a
