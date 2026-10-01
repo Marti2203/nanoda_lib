@@ -495,6 +495,13 @@ impl Rc {
     pub open spec fn ind2(self, sig: Sig) -> ExprSpec {
         spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, self.c).ind, Seq::empty()), self.xs2.subrange(0, self.np(sig)))
     }
+    /// The major's constructor at the recursor's parameters, on each side.
+    pub open spec fn cxr(self, sig: Sig) -> ExprSpec {
+        spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.xs.subrange(0, self.np(sig)) + self.args)
+    }
+    pub open spec fn cxr2(self, sig: Sig) -> ExprSpec {
+        spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.xs2.subrange(0, self.np(sig)) + self.args2)
+    }
     /// Field `i`'s type at the recursor's parameters and the earlier fields.
     pub open spec fn fty(self, sig: Sig, i: int) -> ExprSpec {
         crate::ti_spine::vsub(crate::dom_rec_ty::rshape(sig, self.c).fields[self.j][i], self.xs.subrange(0, self.np(sig)) + self.args.subrange(0, i))
@@ -879,7 +886,7 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
 pub open spec fn walk_of(sig: Sig, rc: Rc) -> crate::dom_rec_walk::Wk {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let pre = rc.pre(sig);
-    let mi = 1 + rc.j;
+    let mi = rc.np(sig) + 1 + rc.j;
     let tds = crate::dom_rec_ty::rtds(sig, rc.c, rc.sm.0);
     let g0 = Seq::<ExprSpec>::empty() + tds.subrange(0, mi);
     let d = tds[mi];
@@ -951,7 +958,10 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
         assert(w.ws[nf + r] == hs[r]);
     }
     assert(rc.fs.last() == rc.wx(sig));
-    crate::dom_rec_ty::apps_concat(rc.fs[1 + rc.j], fsm, hs);
+    let rd = sig.ienv.recs[rc.c];
+    assert(rd.num_params == sh.np && rd.num_motives == 1);
+    assert(rc.fs[(rd.num_params + rd.num_motives + rc.j) as int] == rc.fs[rc.np(sig) + 1 + rc.j]);
+    crate::dom_rec_ty::apps_concat(rc.fs[rc.np(sig) + 1 + rc.j], fsm, hs);
 }
 
 /// THE WALK STARTS at the minor's own relation and membership.
@@ -965,7 +975,7 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     crate::dom_sound::sound_all(sig);
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
-    let mi = 1 + rc.j;
+    let mi = rc.np(sig) + 1 + rc.j;
     let (t0, t02) = (rc.t0(sig), rc.t02(sig));
     let tds = crate::dom_rec_ty::rtds(sig, rc.c, rc.sm.0);
     walk_facts(sig, rc);
@@ -1104,18 +1114,19 @@ pub proof fn walk_shape(sig: Sig, rc: Rc, k: nat)
         let nf = rc.nf(sig);
         let (t, t2) = (w.t(k), w.t2(k));
         &&& t is Bind && t->Bind_0 == BinderKind::Pi && t2 is Bind && t2->Bind_0 == BinderKind::Pi
-        &&& k < nf ==> *t->Bind_1 == sh.fields[rc.j][k as int] && *t2->Bind_1 == sh.fields[rc.j][k as int]
+        &&& k < nf ==> *t->Bind_1 == rc.fty(sig, k as int) && *t2->Bind_1 == crate::ti_spine::vsub(sh.fields[rc.j][k as int],
+                rc.xs2.subrange(0, rc.np(sig)) + rc.args2.subrange(0, k as int))
         &&& k >= nf ==> {
             let kf = sh.rposj(rc.j)[k - nf] as int;
-            &&& *t->Bind_1 == ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.args[kf]))
-            &&& *t2->Bind_1 == ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.args2[kf]))
+            &&& *t->Bind_1 == ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.args[kf]))
+            &&& *t2->Bind_1 == ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.args2[kf]))
         }
     }),
 {
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let nf = rc.nf(sig);
-    let mi = 1 + rc.j;
+    let mi = rc.np(sig) + 1 + rc.j;
     walk_facts(sig, rc);
     crate::dom_iota::major_form(sig, rc.c, rc.ls);
     crate::dom_iota::major_form(sig, rc.c, rc.ls2);
@@ -1124,6 +1135,14 @@ pub proof fn walk_shape(sig: Sig, rc: Rc, k: nat)
     assert(fields_ok_at(sig, rc.c, rc.ls, rc.j) && fields_ok_at(sig, rc.c, rc.ls2, rc.j));
     crate::dom_rec_minor::minor_dom(sig, rc.c, rc.ls, rc.j, rc.xs.subrange(0, mi), w.ys, k as int);
     crate::dom_rec_minor::minor_dom(sig, rc.c, rc.ls2, rc.j, rc.xs2.subrange(0, mi), w.ys2, k as int);
+    assert(rc.xs.subrange(0, mi).subrange(0, rc.np(sig)) =~= rc.xs.subrange(0, rc.np(sig)));
+    assert(rc.xs2.subrange(0, mi).subrange(0, rc.np(sig)) =~= rc.xs2.subrange(0, rc.np(sig)));
+    assert(rc.xs.subrange(0, mi)[rc.np(sig)] == rc.xs[rc.np(sig)]);
+    assert(rc.xs2.subrange(0, mi)[rc.np(sig)] == rc.xs2[rc.np(sig)]);
+    if k < nf {
+        assert(w.ys.subrange(0, k as int) =~= rc.args.subrange(0, k as int));
+        assert(w.ys2.subrange(0, k as int) =~= rc.args2.subrange(0, k as int));
+    }
     if k >= nf {
         crate::dom_rec_ty::rec_pos_facts(sh.fields[rc.j], sh.ind, sh.us(), sh.np, sh.ni, nf);
         let kf = sh.rposj(rc.j)[k - nf] as int;
@@ -1140,12 +1159,12 @@ pub proof fn walk_end_ty(sig: Sig, rc: Rc)
         rec_ctx(sig, rc),
     ensures ({
         let w = walk_of(sig, rc);
-        &&& w.t(w.ys.len()) == ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.cx(sig)))
-        &&& w.t2(w.ys.len()) == ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.cx2(sig)))
+        &&& w.t(w.ys.len()) == ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.cxr(sig)))
+        &&& w.t2(w.ys.len()) == ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.cxr2(sig)))
     }),
 {
     let w = walk_of(sig, rc);
-    let mi = 1 + rc.j;
+    let mi = rc.np(sig) + 1 + rc.j;
     let nf = rc.nf(sig);
     walk_facts(sig, rc);
     crate::dom_iota::major_form(sig, rc.c, rc.ls);
@@ -1158,6 +1177,10 @@ pub proof fn walk_end_ty(sig: Sig, rc: Rc)
     assert(w.ys2.subrange(0, w.ys2.len() as int) =~= w.ys2);
     assert(w.ys.subrange(0, nf as int) =~= rc.args);
     assert(w.ys2.subrange(0, nf as int) =~= rc.args2);
+    assert(rc.xs.subrange(0, mi).subrange(0, rc.np(sig)) =~= rc.xs.subrange(0, rc.np(sig)));
+    assert(rc.xs2.subrange(0, mi).subrange(0, rc.np(sig)) =~= rc.xs2.subrange(0, rc.np(sig)));
+    assert(rc.xs.subrange(0, mi)[rc.np(sig)] == rc.xs[rc.np(sig)]);
+    assert(rc.xs2.subrange(0, mi)[rc.np(sig)] == rc.xs2[rc.np(sig)]);
 }
 
 /// The fragment's field facts at a level instance.
@@ -1205,8 +1228,8 @@ pub proof fn ih_der(sig: Sig, rc: Rc, kf: int)
     ensures ({
         let (ys, ys2) = (ih_xs(sig, rc, kf), ih_xs2(sig, rc, kf));
         let (h, h2) = (ExprSpec::Const(rc.c, rc.ls), ExprSpec::Const(rc.c, rc.ls2));
-        &&& trest(rc.t0(sig), ys) == ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.args[kf]))
-        &&& trest(rc.t02(sig), ys2) == ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.args2[kf]))
+        &&& trest(rc.t0(sig), ys) == ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.args[kf]))
+        &&& trest(rc.t02(sig), ys2) == ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.args2[kf]))
         &&& derivable(sig, eq(rc.g, spine_app(h, ys), spine_app(h2, ys2), trest(rc.t0(sig), ys)))
         &&& derivable(sig, eq(rc.g, spine_app(h2, ys2), spine_app(h2, ys2), trest(rc.t02(sig), ys2)))
     }),
@@ -1404,7 +1427,7 @@ pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let nf = rc.nf(sig);
     let pre = rc.pre(sig);
-    let mi = 1 + rc.j;
+    let mi = rc.np(sig) + 1 + rc.j;
     let q = k - nf;
     walk_facts(sig, rc);
     crate::dom_rec_minor::msds_ih(sig, rc.c, rc.sm.0, rc.j, q);
@@ -1421,22 +1444,22 @@ pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
     crate::dom_rec_ty::exts_at(w.rho0, w.wp(k), ia);
     crate::dom_rec_ty::exts_at(w.rho0, w.wp(k), ib);
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), rc.fs.subrange(0, mi), rc.j as nat);
-    assert(rho(ia) == rc.fs[0]);
+    assert(rho(ia) == rc.fs[rc.np(sig)]);
     assert(rho(ib) == w.wp(k)[kf]);
     assert(w.wsk(k)[kf] == w.ws[kf]);
     assert(le(w.wp(k)[kf], rc.fsm(sig)[kf]));
-    assert(wf(rc.fs[0]));
+    assert(wf(rc.fs[rc.np(sig)]));
     assert(wf(w.wp(k)[kf]));
     app_var_le(sig, ia, ib, rho, d);
-    le_refl(rc.fs[0]);
-    crate::dom_sound::app_mono(rc.fs[0], rc.fs[0], w.wp(k)[kf], rc.fsm(sig)[kf]);
-    le_trans(d, app(rc.fs[0], w.wp(k)[kf]), app(rc.fs[0], rc.fsm(sig)[kf]));
+    le_refl(rc.fs[rc.np(sig)]);
+    crate::dom_sound::app_mono(rc.fs[rc.np(sig)], rc.fs[rc.np(sig)], w.wp(k)[kf], rc.fsm(sig)[kf]);
+    le_trans(d, app(rc.fs[rc.np(sig)], w.wp(k)[kf]), app(rc.fs[rc.np(sig)], rc.fsm(sig)[kf]));
     let env = crate::dom_tele::exts(crate::dom_model::bot_env(), fz);
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), fz, pre as nat);
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), fz, 0);
-    crate::dom_sound::app_wf(rc.fs[0], rc.fsm(sig)[kf]);
-    crate::dom_rec_ty::app_var_mem(sig, pre as nat, 0, env);
-    crate::dom_model::mem_down_e(sig, crate::dom_rec_ty::rbody(sig, rc.c), env, app(rc.fs[0], rc.fsm(sig)[kf]), d);
+    crate::dom_sound::app_wf(rc.fs[rc.np(sig)], rc.fsm(sig)[kf]);
+    crate::dom_rec_ty::app_var_mem(sig, (crate::dom_rec_ty::rshape(sig, rc.c).nmin() + 1) as nat, 0, env);
+    crate::dom_model::mem_down_e(sig, crate::dom_rec_ty::rbody(sig, rc.c), env, app(rc.fs[rc.np(sig)], rc.fsm(sig)[kf]), d);
 }
 
 /// THE RECURSIVE CALL AT THE WALK'S `k`-th argument satisfies the
@@ -1602,15 +1625,19 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
     ensures ({
         let w = walk_of(sig, rc);
         &&& wf(w.a(w.ys.len()))
-        &&& le(w.a(w.ys.len()), app(rc.fs[0], rc.wx(sig)))
+        &&& le(w.a(w.ys.len()), app(rc.fs[rc.np(sig)], rc.wx(sig)))
     }),
 {
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let rd = sig.ienv.recs[rc.c];
+    // the constructor's value over variables without parameters: the
+    // recursor fragment has none until its tables take theirs
+    assert(rec_frag(sig, rc.c));
+    assert(rc.np(sig) == 0);
     let (nf, nr) = (rc.nf(sig), sh.rposj(rc.j).len());
     let l = w.ys.len();
-    let mi = 1 + rc.j;
+    let mi = rc.np(sig) + 1 + rc.j;
     let e = w.a(l);
     let rho = w.rho(l);
     walk_facts(sig, rc);
@@ -1627,7 +1654,7 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
     assert(w.wp(l).len() == l);
     crate::dom_rec_ty::exts_at(w.rho0, w.wp(l), ia);
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), rc.fs.subrange(0, mi), rc.j as nat);
-    assert(rho(ia) == rc.fs[0]);
+    assert(rho(ia) == rc.fs[rc.np(sig)]);
     let fsm = rc.fsm(sig);
     assert forall|i: int| 0 <= i < fsm.len() implies #[trigger] wf(fsm[i]) && le(rho((nr + fsm.len() - 1 - i) as nat), fsm[i]) by {
         crate::dom_rec_ty::exts_at(w.rho0, w.wp(l), (nr + fsm.len() - 1 - i) as nat);
@@ -1649,10 +1676,10 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
             assert(crate::dom_rec::all_wf(rc.fs)) by {
                 assert(crate::dom_con_rel::flds_ok(sig, rc.nn, rc.g, rc.t0(sig), rc.t02(sig), rc.xs, rc.xs2, rc.ds, rc.fs, 0));
             }
-            assert(wf(rc.fs[0]) && wf(wx));
+            assert(wf(rc.fs[rc.np(sig)]) && wf(wx));
             crate::dom_model::mem_wf(sig, spine_app(cj, vs), rho, ux, *w2);
-            crate::dom_sound::app_mono(uf, rc.fs[0], ux, wx);
-            le_trans(e, app(uf, ux), app(rc.fs[0], wx));
+            crate::dom_sound::app_mono(uf, rc.fs[rc.np(sig)], ux, wx);
+            le_trans(e, app(uf, ux), app(rc.fs[rc.np(sig)], wx));
         },
         _ => {
             assert(false);
@@ -1749,8 +1776,8 @@ pub proof fn goal_code(sig: Sig, rc: Rc)
         rec_ctx(sig, rc),
     ensures
         wf(rc.a),
-        le(rc.a, app(rc.fs[0], rc.wx(sig))),
-        wf(rc.fs[0]) && wf(rc.wx(sig)),
+        le(rc.a, app(rc.fs[rc.np(sig)], rc.wx(sig))),
+        wf(rc.fs[rc.np(sig)]) && wf(rc.wx(sig)),
 {
     let pre = rc.pre(sig);
     let tds = crate::dom_rec_ty::rtds(sig, rc.c, rc.sm.0);
@@ -1761,8 +1788,8 @@ pub proof fn goal_code(sig: Sig, rc: Rc)
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), rc.fs, pre as nat);
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), rc.fs, 0);
     assert(crate::dom_con_rel::flds_ok(sig, rc.nn, rc.g, rc.t0(sig), rc.t02(sig), rc.xs, rc.xs2, rc.ds, rc.fs, 0));
-    assert(wf(rc.fs[0]) && wf(rc.fs[pre]));
-    app_var_le(sig, pre as nat, 0, env, rc.a);
+    assert(wf(rc.fs[rc.np(sig)]) && wf(rc.fs[pre]));
+    app_var_le(sig, (crate::dom_rec_ty::rshape(sig, rc.c).nmin() + 1) as nat, 0, env, rc.a);
 }
 
 /// THE MOTIVE AT THE MAJOR: its value there is a type, above the goal's
@@ -1773,9 +1800,9 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     requires
         rec_ctx(sig, rc),
     ensures ({
-        let top = app(rc.fs[0], rc.wx(sig));
+        let top = app(rc.fs[rc.np(sig)], rc.wx(sig));
         let k1 = (rc.nn - 1) as nat;
-        let (p, x) = (rc.xs[0], rc.xs[rc.pre(sig)]);
+        let (p, x) = (rc.xs[rc.np(sig)], rc.xs[rc.pre(sig)]);
         &&& rc.nn >= 1
         &&& wf(top) && le(rc.a, top)
         &&& has_type(k1, top, Cpt::U)
@@ -1784,10 +1811,14 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     }),
 {
     crate::dom_sound::sound_all(sig);
+    // the motive's domain is read in the empty environment: the
+    // recursor fragment has no parameters until its tables take theirs
+    assert(rec_frag(sig, rc.c));
+    assert(rc.np(sig) == 0);
     let pre = rc.pre(sig);
     let (t0, t02) = (rc.t0(sig), rc.t02(sig));
-    let (p, p2, x, x2) = (rc.xs[0], rc.xs2[0], rc.xs[pre], rc.xs2[pre]);
-    let (pv, dp, wx) = (rc.fs[0], rc.ds[0], rc.wx(sig));
+    let (p, p2, x, x2) = (rc.xs[rc.np(sig)], rc.xs2[rc.np(sig)], rc.xs[pre], rc.xs2[pre]);
+    let (pv, dp, wx) = (rc.fs[rc.np(sig)], rc.ds[rc.np(sig)], rc.wx(sig));
     let top = app(pv, wx);
     let ci = rc.ind(sig);
     let nn = rc.nn;
@@ -1975,8 +2006,8 @@ pub proof fn sides_ty(sig: Sig, rc: Rc)
         rec_ctx(sig, rc),
     ensures ({
         let pre = rc.pre(sig);
-        crate::ti_chain::tchain(sig, rc.g, ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.xs2[pre])),
-            ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre])))
+        crate::ti_chain::tchain(sig, rc.g, ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.xs2[pre])),
+            ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.xs[pre])))
     }),
 {
     let pre = rc.pre(sig);
@@ -1991,7 +2022,7 @@ pub proof fn sides_ty(sig: Sig, rc: Rc)
     let mt = crate::dom_rec_ty::rtds(sig, rc.c, rc.ls)[0];
     let so = *mt->Bind_2;
     assert(mt == pi(ci, so));
-    let (p, p2, x, x2) = (rc.xs[0], rc.xs2[0], rc.xs[pre], rc.xs2[pre]);
+    let (p, p2, x, x2) = (rc.xs[rc.np(sig)], rc.xs2[rc.np(sig)], rc.xs[pre], rc.xs2[pre]);
     crate::dom_adeq_syn::dsym(sig, rc.g, p, p2, mt);
     crate::ti_spine::pi_typed_of(sig, rc.g, p, ci, so);
     crate::ti_chain::tchain_refl(sig, rc.g, mt);
@@ -2111,7 +2142,7 @@ pub proof fn rec_reds(sig: Sig, rc: Rc)
     rec_red_left(sig, rc);
     rec_red_right(sig, rc);
     sides_ty(sig, rc);
-    let (t, t2) = (ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre])), ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.xs2[pre])));
+    let (t, t2) = (ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.xs[pre])), ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.xs2[pre])));
     crate::ti_chain::conv_chain(sig, rc.g, rc.m2(), w.m2(l), t2, t);
 }
 
@@ -2132,7 +2163,7 @@ pub proof fn rec_close(sig: Sig, rc: Rc)
     let (te, t) = (w.t(l), rc.t(sig));
     let (ve, e, ne) = (w.u(l), w.a(l), w.n(l));
     let (u, a, n) = (rc.u, rc.a, rc.n);
-    let top = app(rc.fs[0], rc.wx(sig));
+    let top = app(rc.fs[rc.np(sig)], rc.wx(sig));
     walk_facts(sig, rc);
     walk_end_ty(sig, rc);
     walk_end_code(sig, rc);

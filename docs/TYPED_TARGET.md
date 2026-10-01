@@ -796,8 +796,17 @@ Stages, each landing through the gate:
   model never calls injectivity). The fragment gains `pdoms_lv` (the
   parameters' domains are level-invariant). The walk down the minor
   (`walk_of`, `walk_shape`, `ih_code`, `motive_top`, `sides_ty`, ...)
-  still indexes as `np == 0`; a parameter-typed field is still closed off
-  by `rec_frag` in `rc_field_intro`.
+  is done in P4b-2e; a parameter-typed field is still closed off by
+  `rec_frag` in `rc_field_intro`.
+  **P4b-2e: the walk down the minor with parameters.** `walk_of` and its
+  lemmas place the minor at `np + 1 + j` and the motive at `np`;
+  `walk_shape` types the fields at the recursor's parameters on each side,
+  `walk_end_ty` ends at the motive at the constructor at the recursor's
+  parameters (`cxr`). The sites still reading `np == 0` from `rec_frag`
+  are explicit: `rc_field_intro` (parameter-typed fields), `motive_top`
+  (the motive's domain in the empty environment; also relates `cx`
+  where the walk ends at `cxr`), `walk_end_code` (the constructor's value
+  over variables without parameters). They are group B's.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.
