@@ -830,7 +830,20 @@ Stages, each landing through the gate:
   constructor at the recursor's parameters, from the major's own, with
   `field_ty_chain` between the two field-type instances; `cxr_typed`).
   Left at `np == 0`: parameter-typed fields (`rc_field_intro`,
-  `field_dom_bnd`) and `walk_end_code`.
+  `field_dom_bnd`) and `walk_end_code` — done in P4b-2h.
+  **P4b-2h: the end of the recursor's telescope holds with type
+  parameters.** `ctor_mem_le` takes the constructor over parameter
+  variables then field variables (its code function skips the
+  parameters), so `walk_end_code` is general. Parameter-typed fields get
+  their own case in `rc_field` (related at their type, the parameter, at a
+  code below the parameter's value), read from the constructor clause's
+  entry in `rc_field_intro`, bounded by the parameter's value in
+  `field_dom_bnd`, and moved by `par_xfer` in `field_arg_par` (with
+  `rc_par`, factored out of `rc_ptr`). `field_arg` splits into
+  `field_arg_ctx` (the stated context `fa_ctx`) and the two branches.
+  dom_rec_end no longer reads `np == 0`; what still does: `rec_frag`
+  itself (and `fields_plain`, which needs only its level-invariance half
+  now), and dom_iota's constructor/right-to-left Iota chains.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

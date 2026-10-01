@@ -325,7 +325,8 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, s: nat, rho: crate:
         forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, c).np
             ==> #[trigger] le(rho((k + s + crate::dom_rec_ty::rshape(sig, c).np - 1 - q) as nat), pv[q]),
     ensures
-        d is Bot || fbnd(sig, crate::dom_rec_ty::rshape(sig, c).ind, pv, crate::dom_rec_ty::rshape(sig, c).fields[j][k],
+        d is Bot || (pvar_at(sig, c, j, k) ==> le(d, pv[pidx(sig, c, j, k)]) && wf(d)),
+        d is Bot || pvar_at(sig, c, j, k) || fbnd(sig, crate::dom_rec_ty::rshape(sig, c).ind, pv, crate::dom_rec_ty::rshape(sig, c).fields[j][k],
             crate::dom_iota::isrec(sig, c, j, k), d),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
@@ -364,10 +365,13 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, s: nat, rho: crate:
         crate::dom_lift::field_facts(sig, ind, j, k);
         crate::dom_canon::closed_bound(sig, ind, Seq::empty(), Seq::empty(), f, rho, d);
     } else {
-        // a parameter-typed field: none while the recursor fragment has no
-        // parameters (its code is the parameter's, not a canonical table)
-        assert(rec_frag(sig, c));
-        assert(false);
+        // a parameter-typed field: below its parameter's value
+        let v = f->Var_0;
+        let q = pidx(sig, c, j, k);
+        assert(lf == ExprSpec::Var(v + s));
+        crate::dom_adeq_base::mem_var(sig, v + s, rho, d);
+        assert((v + s) as nat == (k + s + np - 1 - q) as nat);
+        le_trans(d, rho(v + s), pv[q]);
     }
 }
 
@@ -544,16 +548,37 @@ impl Rc {
     pub open spec fn t(self, sig: Sig) -> ExprSpec { trest(self.t0(sig), self.xs) }
 }
 
+/// Field `i` of rule `j` is typed by a type parameter.
+pub open spec fn pvar_at(sig: Sig, c: u64, j: int, i: int) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[j][i])
+}
+
+/// The parameter a parameter-typed field is typed by.
+pub open spec fn pidx(sig: Sig, c: u64, j: int, i: int) -> int {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    (i + sh.np - 1 - sh.fields[j][i]->Var_0) as int
+}
+
 /// A field pair of the major: derivably equal at its type at the
-/// recursor's parameters, and constructor-related where the value has the
-/// field.
+/// recursor's parameters; where the value has the field, related at its
+/// code below its parameter's value if it is typed by a type parameter,
+/// else constructor-related.
 pub open spec fn rc_field(sig: Sig, rc: Rc, i: int) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     &&& derivable(sig, eq(rc.g, rc.args[i], rc.args2[i], rc.fty(sig, i)))
-    &&& (rc.fsm(sig)[i] is Bot || (con_top(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], rc.fty(sig, i), rc.fsm(sig)[i], rc.fcode(sig, i))
+    &&& (rc.fsm(sig)[i] is Bot || pvar_at(sig, rc.c, rc.j, i) || (con_top(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], rc.fty(sig, i), rc.fsm(sig)[i], rc.fcode(sig, i))
         && has_type(rc.nn, rc.fsm(sig)[i], rc.fcode(sig, i)) && has_type(rc.nn, rc.fcode(sig, i), Cpt::U)
         && rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty
         && fbnd(sig, sh.ind, rc.pv(sig), sh.fields[rc.j][i], crate::dom_iota::isrec(sig, rc.c, rc.j, i), rc.fcode(sig, i))))
+    &&& (pvar_at(sig, rc.c, rc.j, i) && !(rc.fsm(sig)[i] is Bot) ==> {
+        let (q, e) = (pidx(sig, rc.c, rc.j, i), rc.fcode(sig, i));
+        &&& 0 <= q < sh.np && sh.pdoms[q] is Sort
+        &&& rel_tm(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], rc.fty(sig, i), rc.fsm(sig)[i], e)
+        &&& has_type(rc.nn, rc.fsm(sig)[i], e) && has_type(rc.nn, e, Cpt::U) && wf(e)
+        &&& le(e, rc.pv(sig)[q])
+        &&& rc.fty(sig, i) == rc.xs[q]
+    })
 }
 
 /// The end's context holds: the invariant at the end of the telescope, a
@@ -720,10 +745,23 @@ proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
     assert(tbl(dm->Nd_1)[p]->Nd_1[i] == es[i]);
     assert(crate::dom_lift::entry_canon(sig, ind, rc.pv(sig), p, i, es[i]));
     if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f) {
-        // a parameter-typed field: none while the recursor fragment has no
-        // parameters (its tables take the parameters' codes next)
-        assert(rec_frag(sig, rc.c));
-        assert(false);
+        // a parameter-typed field: related at the parameter's code
+        let pv = rc.pv(sig);
+        let q = pidx(sig, rc.c, j, i);
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, Seq::empty()), ps);
+        crate::dom_lift::iapp_self(sig, ci);
+        crate::dom_lift::fq_var(sig, ind, ci, pv, p, i);
+        let v = f->Var_0;
+        crate::ti_spine::vsub_var(v, ps + rc.args.subrange(0, i));
+        assert((ps + rc.args.subrange(0, i))[np + i - 1 - v] == rc.xs[q]);
+        assert(rc.fty(sig, i) == rc.xs[q]);
+        assert(crate::dom_lift::pq(sig, ind, ci, q) == rc.xs[q]);
+        assert(es[i] != crate::dom_typing::rmark());
+        let ec = ecode(es[i]);
+        assert(is_centry(es[i]) && has_type(nn, fsm[i], ec) && has_type(nn, ec, Cpt::U));
+        crate::dom_con_rel::typed_facts_wf(nn, fsm[i], ec);
+        assert(rc.fcode(sig, i) == ec);
+        return;
     }
     if es[i] != crate::dom_typing::rmark() {
         let ec = ecode(es[i]);
@@ -1045,6 +1083,38 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     assert(crate::dom_sound::dfit(sig, tds[mi], crate::dom_tele::exts(crate::dom_model::bot_env(), rc.fs.subrange(0, mi)), d, v));
 }
 
+/// A RECURSOR'S PARAMETER is related to itself at its value, a type
+/// (unless the value is bottom).
+pub proof fn rc_par(sig: Sig, rc: Rc, q: int)
+    requires
+        rec_ctx(sig, rc),
+        0 <= q < rc.np(sig),
+    ensures
+        rc.fs[q] is Bot || (rel_ty(sig, rc.nn, rc.g, rc.xs[q], rc.xs[q], rc.fs[q]) && has_type(rc.nn, rc.fs[q], Cpt::U)),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let (nn, g) = (rc.nn, rc.g);
+    let (t0, t02) = (rc.t0(sig), rc.t02(sig));
+    let (x, x2, d, w0) = (rc.xs[q], rc.xs2[q], rc.ds[q], rc.fs[q]);
+    assert(rec_frag(sig, rc.c));
+    assert(crate::dom_rec_minor::pdoms_lv(sig, rc.c, rc.ls));
+    assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, q));
+    crate::dom_rec_minor::head_pdom(sig, rc.c, rc.ls, rc.xs, q);
+    let l = sh.pdoms[q]->Sort_0;
+    let ty2 = tel_dom(t02, rc.xs2, q as nat);
+    crate::dom_con_rel::sort_code(sig, nn, g, l, ty2, d);
+    if d is Bot {
+        ty_of_bot(nn, w0);
+        return;
+    }
+    crate::dom_rel::tm_sort(sig, nn, g, x, x2, ExprSpec::Sort(l), w0);
+    if d is Prop {
+        crate::dom_typing::prop_is_type(nn, w0);
+    }
+    crate::dom_rel_per::symm_ty(sig, nn, g, x, x2, w0);
+    crate::dom_rel_per::trans_ty(sig, nn, g, x, x2, x, w0);
+}
+
 /// THE RECURSOR'S PARAMETERS TRANSFER: each is related to itself at its
 /// value, a type, so a relation at a code below that value moves between
 /// stages (`ptr`); and the major's type's parameters convert (`pconv`).
@@ -1081,16 +1151,11 @@ pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
         && rel_tm(sig, nn, g, y, y2, crate::dom_lift::pq(sig, ind, ci, q), w, c1) && has_type(nn, w, c1) && has_type(nn, c1, Cpt::U) && wf(c1) && le(c1, pv[q])
         && has_type(n, v, c2) && has_type(n, c2, Cpt::U) && wf(c2) && le(c2, pv[q]) && wf(v) && !(v is Bot) && le(v, w)
         implies rel_tm(sig, n, g, y, y2, crate::dom_lift::pq(sig, ind, ci, q), v, c2) by {
-        let (x, x2, d, w0) = (rc.xs[q], rc.xs2[q], rc.ds[q], rc.fs[q]);
+        let (x, w0) = (rc.xs[q], rc.fs[q]);
         assert(crate::dom_lift::pq(sig, ind, ci, q) == x);
         assert(pv[q] == w0);
-        assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, q));
-        crate::dom_rec_minor::head_pdom(sig, rc.c, rc.ls, rc.xs, q);
-        let l = sh.pdoms[q]->Sort_0;
-        let ty2 = tel_dom(t02, rc.xs2, q as nat);
-        crate::dom_con_rel::sort_code(sig, nn, g, l, ty2, d);
-        if d is Bot {
-            ty_of_bot(nn, w0);
+        rc_par(sig, rc, q);
+        if w0 is Bot {
             if !(c1 is Bot) {
                 head_le(c1, w0);
             }
@@ -1098,12 +1163,6 @@ pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
             head_le(v, w);
             assert(false);
         }
-        crate::dom_rel::tm_sort(sig, nn, g, x, x2, ExprSpec::Sort(l), w0);
-        if d is Prop {
-            crate::dom_typing::prop_is_type(nn, w0);
-        }
-        crate::dom_rel_per::symm_ty(sig, nn, g, x, x2, w0);
-        crate::dom_rel_per::trans_ty(sig, nn, g, x, x2, x, w0);
         crate::dom_lift::par_xfer(sig, nn, n, g, x, w0, y, y2, w, v, c1, c2);
     }
 }
@@ -1752,38 +1811,41 @@ pub proof fn var_arg_le(sig: Sig, from: nat, n: nat, rho: crate::dom_model::Env,
     crate::dom_adeq_base::mem_var(sig, (from + n - 1 - i) as nat, rho, v);
 }
 
-/// A CONSTRUCTOR OVER VARIABLES denotes at most the constructor value over
-/// bounds on the variables.
+/// A CONSTRUCTOR OVER VARIABLES, its parameters' then its fields', denotes
+/// at most the constructor value over bounds on the fields' variables.
 #[verifier::spinoff_prover]
-pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, from: nat, rho: crate::dom_model::Env, ux: Cpt, bnd: Seq<Cpt>)
+pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, pa: nat, from: nat, rho: crate::dom_model::Env, ux: Cpt, bnd: Seq<Cpt>)
     requires
         rec_hyps(sig, c),
         0 <= j < crate::dom_rec_ty::rshape(sig, c).nmin(),
         bnd.len() == crate::dom_rec_ty::rshape(sig, c).fields[j].len(),
         forall|i: int| 0 <= i < bnd.len() ==> #[trigger] wf(bnd[i]) && le(rho((from + bnd.len() - 1 - i) as nat), bnd[i]),
         crate::dom_model::mem(sig, spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ctors[j], Seq::empty()),
-            crate::rec_canon::vars(from, bnd.len())), rho, ux),
+            crate::rec_canon::vars(pa, crate::dom_rec_ty::rshape(sig, c).np) + crate::rec_canon::vars(from, bnd.len())), rho, ux),
     ensures
         le(ux, Cpt::Nd(NdKey::Con(crate::dom_rec_ty::rshape(sig, c).ind, j as nat), bnd)),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
+    let np = sh.np;
     let cj = sh.ctors[j];
     let h = ExprSpec::Const(cj, Seq::empty());
-    let args = crate::rec_canon::vars(from, bnd.len());
+    let args = crate::rec_canon::vars(pa, np) + crate::rec_canon::vars(from, bnd.len());
     let top = Cpt::Nd(NdKey::Con(sh.ind, j as nat), bnd);
     let (hc, vs) = crate::dom_bound::spine_mem(sig, h, args, rho, ux);
     assert(crate::dom_bound::args_w(sig, args, rho, vs));
     assert forall|i: int| 0 <= i < vs.len() implies #[trigger] wf(vs[i]) by {
         crate::dom_bound::args_w_at(sig, args, rho, vs, i);
     }
-    assert forall|i: int| 0 <= i < vs.len() implies #[trigger] le(vs[i], bnd[i]) by {
-        crate::dom_bound::args_w_at(sig, args, rho, vs, i);
-        var_arg_le(sig, from, bnd.len(), rho, i, vs[i]);
+    let fv = vs.subrange(np as int, vs.len() as int);
+    assert forall|i: int| 0 <= i < fv.len() implies #[trigger] le(fv[i], bnd[i]) by {
+        crate::dom_bound::args_w_at(sig, args, rho, vs, np + i);
+        assert(args[np + i] == crate::rec_canon::vars(from, bnd.len())[i]);
+        var_arg_le(sig, from, bnd.len(), rho, i, vs[np + i]);
         assert(wf(bnd[i]));
-        le_trans(vs[i], rho((from + bnd.len() - 1 - i) as nat), bnd[i]);
+        le_trans(vs[np + i], rho((from + bnd.len() - 1 - i) as nat), bnd[i]);
     }
-    crate::dom_sem::nd_le(NdKey::Con(sh.ind, j as nat), vs, bnd);
-    let mid = Cpt::Nd(NdKey::Con(sh.ind, j as nat), vs);
+    crate::dom_sem::nd_le(NdKey::Con(sh.ind, j as nat), fv, bnd);
+    let mid = Cpt::Nd(NdKey::Con(sh.ind, j as nat), fv);
     crate::dom_rec_ty::scope_ctor(sig, c, j);
     reveal(crate::dom_model::mem);
     let wit = choose|wit: crate::dom_model::Wit| #[trigger] crate::dom_model::mem_w(sig, h, rho, hc, wit);
@@ -1812,12 +1874,10 @@ pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, from: nat, rho: crate::dom_mo
     }
     crate::dom_iota::ctor_ty_split(sig, c, j, Seq::empty());
     crate::dom_iota::ctor_plain(sig, c, j, Seq::empty());
-    assert(sh.pdoms =~= Seq::<ExprSpec>::empty());
-    assert(sh.pdoms + sh.fields[j] =~= sh.fields[j]);
     let body = crate::dom_iota::cbody(sig, c, j, Seq::empty());
     assert(crate::dom_code::aw(vs));
-    crate::dom_iota::cf_apps(sh.ind, j as nat, 0, sh.fields[j], body, Seq::empty(), 0, v, vs);
-    assert(crate::dom_iota::cacc(Seq::empty(), vs, 0, 0) =~= vs);
+    crate::dom_iota::cf_apps(sh.ind, j as nat, np, sh.pdoms + sh.fields[j], body, Seq::empty(), 0, v, vs);
+    assert(crate::dom_iota::cacc(Seq::empty(), vs, 0, np) =~= fv);
     le_refl(Cpt::Bot);
     assert(crate::dom_rec::all_wf(vs));
     assert(crate::dom_sem::pre_le(vs, vs)) by {
@@ -1844,10 +1904,6 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let rd = sig.ienv.recs[rc.c];
-    // the constructor's value over variables without parameters: the
-    // recursor fragment has none until its tables take theirs
-    assert(rec_frag(sig, rc.c));
-    assert(rc.np(sig) == 0);
     let (nf, nr) = (rc.nf(sig), sh.rposj(rc.j).len());
     let l = w.ys.len();
     let mi = rc.np(sig) + 1 + rc.j;
@@ -1859,8 +1915,8 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
     crate::dom_iota::major_form(sig, rc.c, rc.sm.0);
     assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, rc.sm.0) =~= Seq::<LevelSpec>::empty());
     let ia = (rc.j + nf + nr) as nat;
-    let vs = crate::rec_canon::vars(nr, nf);
-    assert(crate::rec_canon::vars((1 + rc.j + nf + nr) as nat, 0) + vs =~= vs);
+    let pa = (1 + rc.j + nf + nr) as nat;
+    let vs = crate::rec_canon::vars(pa, sh.np) + crate::rec_canon::vars(nr, nf);
     let cj = ExprSpec::Const(sh.ctors[rc.j], Seq::empty());
     assert(w.sbody == ExprSpec::App(Box::new(ExprSpec::Var(ia)), Box::new(spine_app(cj, vs))));
     // the parts
@@ -1882,7 +1938,7 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
             assert(crate::dom_model::mem_w(sig, ExprSpec::Var(ia), rho, uf, *w1));
             assert(crate::dom_model::mem_w(sig, spine_app(cj, vs), rho, ux, *w2));
             assert(crate::dom_model::mem(sig, spine_app(cj, vs), rho, ux));
-            ctor_mem_le(sig, rc.c, rc.j, nr, rho, ux, fsm);
+            ctor_mem_le(sig, rc.c, rc.j, pa, nr, rho, ux, fsm);
             let wx = rc.wx(sig);
             assert(wx == Cpt::Nd(NdKey::Con(sh.ind, rc.j as nat), fsm));
             crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
@@ -1900,16 +1956,39 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
     }
 }
 
-/// A FIELD ARGUMENT of the walk is related.
+/// What relating the walk's field argument needs: its domain's code and
+/// the walk's value there, typed, the domain related to itself, the
+/// value below the major's field, and the domain's code bounded.
+pub open spec fn fa_ctx(sig: Sig, rc: Rc, k: nat) -> bool {
+    let w = walk_of(sig, rc);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let (a, n, t) = (w.a(k), w.n(k), w.t(k));
+    let (ta, dd, wv) = (*t->Bind_1, *a->Pi_0, w.wv(k));
+    let ki = k as int;
+    &&& rec_ctx(sig, rc)
+    &&& k < rc.nf(sig)
+    &&& n >= 1 && (n - 1) as nat <= rc.nn
+    &&& has_type((n - 1) as nat, wv, dd) && has_type((n - 1) as nat, dd, Cpt::U) && wf(wv) && wf(dd)
+    &&& rel_ty(sig, (n - 1) as nat, rc.g, ta, ta, dd)
+    &&& le(wv, rc.fsm(sig)[ki]) && wf(rc.fsm(sig)[ki])
+    &&& ta == rc.fty(sig, ki)
+    &&& w.ys[ki] == rc.args[ki] && w.ys2[ki] == rc.args2[ki]
+    &&& dd is Bot || (pvar_at(sig, rc.c, rc.j, ki) ==> le(dd, rc.pv(sig)[pidx(sig, rc.c, rc.j, ki)]) && wf(dd))
+    &&& dd is Bot || pvar_at(sig, rc.c, rc.j, ki) || fbnd(sig, sh.ind, rc.pv(sig), sh.fields[rc.j][ki], crate::dom_iota::isrec(sig, rc.c, rc.j, ki), dd)
+    &&& derivable(sig, crate::ti_syntax::Jd::Wf(rc.g))
+    &&& rc_field(sig, rc, ki)
+}
+
+/// The walk's field argument's context.
 #[verifier::spinoff_prover]
-pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
+pub proof fn field_arg_ctx(sig: Sig, rc: Rc, k: nat)
     requires
         rec_ctx(sig, rc),
         k < rc.nf(sig),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
     ensures
-        crate::dom_rec_walk::walk_arg(sig, walk_of(sig, rc), k),
+        fa_ctx(sig, rc, k),
 {
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
@@ -1923,10 +2002,6 @@ pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
     crate::dom_adeq_base::rp_pi(sig, ta, tb);
     ty_pi(sig, n, rc.g, t, t, a);
     assert(rc_field(sig, rc, k as int));
-    // the walk's field types are the closed declared ones
-    assert(crate::dom_rec_minor::fields_plain(sig, rc.c, rc.sm.0, rc.j));
-    crate::ti_spine::vsub_closed(sh.fields[rc.j][k as int], rc.xs.subrange(0, rc.np(sig)) + rc.args.subrange(0, k as int));
-    assert(rc.fty(sig, k as int) == sh.fields[rc.j][k as int]);
     assert(w.ys[k as int] == rc.args[k as int] && w.ys2[k as int] == rc.args2[k as int]);
     assert(w.ws[k as int] == rc.fsm(sig)[k as int]);
     crate::dom_con_rel::pi_dom_typed(n, a);
@@ -1953,12 +2028,94 @@ pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
         le_refl(rc.fs[q]);
     }
     field_dom_bnd(sig, rc.c, rc.j, k as int, (1 + rc.j) as nat, w.rho(k), *a->Pi_0, pv);
+}
+
+/// A FIELD ARGUMENT of the walk is related.
+pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
+    requires
+        rec_ctx(sig, rc),
+        k < rc.nf(sig),
+        crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
+        !(walk_of(sig, rc).u(k) is Bot),
+    ensures
+        crate::dom_rec_walk::walk_arg(sig, walk_of(sig, rc), k),
+{
+    field_arg_ctx(sig, rc, k);
+    if pvar_at(sig, rc.c, rc.j, k as int) {
+        field_arg_par(sig, rc, k);
+    } else {
+        field_arg_con(sig, rc, k);
+    }
+}
+
+/// A parameter-typed field argument: moved through its parameter's value.
+#[verifier::spinoff_prover]
+pub proof fn field_arg_par(sig: Sig, rc: Rc, k: nat)
+    requires
+        fa_ctx(sig, rc, k),
+        pvar_at(sig, rc.c, rc.j, k as int),
+    ensures
+        crate::dom_rec_walk::walk_arg(sig, walk_of(sig, rc), k),
+{
+    let w = walk_of(sig, rc);
+    let (a, n, t) = (w.a(k), w.n(k), w.t(k));
+    let (ta, dd, wv) = (*t->Bind_1, *a->Pi_0, w.wv(k));
+    let (y, y2) = (rc.args[k as int], rc.args2[k as int]);
+    let pv = rc.pv(sig);
+    if wv is Bot {
+        crate::dom_rel_per::bot_tm(sig, (n - 1) as nat, rc.g, y, y2, ta, dd);
+        return;
+    }
+    let fk = rc.fsm(sig)[k as int];
+    head_le(wv, fk);
+    let q = pidx(sig, rc.c, rc.j, k as int);
+    let e = rc.fcode(sig, k as int);
+    rc_par(sig, rc, q);
+    if rc.fs[q] is Bot {
+        assert(pv[q] == rc.fs[q]);
+        if !(e is Bot) {
+            head_le(e, pv[q]);
+        }
+        ty_of_bot(rc.nn, fk);
+        assert(false);
+    }
+    assert(pv[q] == rc.fs[q]);
+    if dd is Bot {
+        ty_of_bot((n - 1) as nat, wv);
+    }
+    crate::dom_lift::par_xfer(sig, rc.nn, (n - 1) as nat, rc.g, rc.xs[q], pv[q], y, y2, fk, wv, e, dd);
+}
+
+/// A field argument of the major's inductive or a closed type:
+/// constructor-related, moved below its canonical code.
+#[verifier::spinoff_prover]
+pub proof fn field_arg_con(sig: Sig, rc: Rc, k: nat)
+    requires
+        fa_ctx(sig, rc, k),
+        !pvar_at(sig, rc.c, rc.j, k as int),
+    ensures
+        crate::dom_rec_walk::walk_arg(sig, walk_of(sig, rc), k),
+{
+    let w = walk_of(sig, rc);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let (a, n, t) = (w.a(k), w.n(k), w.t(k));
+    let (ta, dd, wv) = (*t->Bind_1, *a->Pi_0, w.wv(k));
     if crate::dom_iota::isrec(sig, rc.c, rc.j, k as int) {
         rc_ptr(sig, rc, (n - 1) as nat);
         rc_fty_rec(sig, rc, k as int);
+    } else {
+        // a closed field: its type at the parameters is itself
+        let f = sh.fields[rc.j][k as int];
+        crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
+        crate::dom_canon::canon_fields(sig, sh.ind, rc.j, k as int);
+        crate::dom_iota::simple_closed(sig, sh.ind, f);
+        crate::ti_spine::vsub_closed(f, rc.xs.subrange(0, rc.np(sig)) + rc.args.subrange(0, k as int));
     }
-    con_rel_arg(sig, (n - 1) as nat, rc.g, rc.args[k as int], rc.args2[k as int], ta, w.wv(k), *a->Pi_0, rc.nn, w.ws[k as int], rc.fcode(sig, k as int),
-        sh.ind, crate::dom_iota::isrec(sig, rc.c, rc.j, k as int), pv);
+    assert(w.ws[k as int] == rc.fsm(sig)[k as int]) by {
+        walk_facts(sig, rc);
+    }
+    con_rel_arg(sig, (n - 1) as nat, rc.g, rc.args[k as int], rc.args2[k as int], ta, wv, dd, rc.nn, w.ws[k as int], rc.fcode(sig, k as int),
+        sh.ind, crate::dom_iota::isrec(sig, rc.c, rc.j, k as int), rc.pv(sig));
 }
 
 /// The motive's type at a level instance: the inductive to a sort.
