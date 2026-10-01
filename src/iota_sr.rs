@@ -303,6 +303,60 @@ pub proof fn ind_cong(sig: Sig, g: Ctx, rid: u64, ps: Seq<ExprSpec>, ps2: Seq<Ex
     crate::ti_chain::tchain_one(sig, g, spine_app(ci, ps), spine_app(ci, ps2));
 }
 
+/// A field's type at two parameter lists equal at their sorts: the two
+/// instances chain (model-safe: congruence only).
+pub proof fn field_ty_chain(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int, th: ExprSpec)
+    requires
+        rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        0 <= p < rshape(sig, rid).nmin(),
+        ps.len() == rshape(sig, rid).np,
+        ps2.len() == rshape(sig, rid).np,
+        fs.len() == rshape(sig, rid).fields[p].len(),
+        0 <= k < fs.len(),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q])),
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps), th)),
+    ensures
+        tchain(sig, g, crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k)),
+            crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps2 + fs.subrange(0, k))),
+{
+    let sh = rshape(sig, rid);
+    let np = sh.np;
+    let f = sh.fields[p][k];
+    let (xs, xs2) = (ps + fs.subrange(0, k), ps2 + fs.subrange(0, k));
+    ind_cong(sig, g, rid, ps, ps2, th);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
+        crate::beta_model::spine_recompose(f);
+        assert(sh.us() =~= Seq::<LevelSpec>::empty());
+        assert(crate::beta_model::spine_args(f) =~= vars(k as nat, np));
+        crate::dom_iota::vars_vidx(k as nat, np);
+        vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), xs);
+        vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), xs2);
+        assert(Seq::new(np, |i: int| xs[xs.len() - 1 - crate::dom_iota::vidx(k as nat, np)[i]]) =~= ps);
+        assert(Seq::new(np, |i: int| xs2[xs2.len() - 1 - crate::dom_iota::vidx(k as nat, np)[i]]) =~= ps2);
+    } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
+        crate::dom_iota::simple_closed(sig, sh.ind, f);
+        vsub_closed(f, xs);
+        vsub_closed(f, xs2);
+        crate::ti_chain::tchain_refl(sig, g, f);
+    } else {
+        let v = f->Var_0;
+        let q = (np + k - 1 - v) as int;
+        vsub_var(v, xs);
+        vsub_var(v, xs2);
+        assert(xs[xs.len() - 1 - v] == ps[q] && xs2[xs2.len() - 1 - v] == ps2[q]);
+        let l = sh.pdoms[q]->Sort_0;
+        assert(derivable(sig, eq(g, ps[q], ps2[q], crate::ti_syntax::sort(l))));
+        reveal(crate::ti_sub::tconvd);
+        crate::ti_chain::tchain_one(sig, g, ps[q], ps2[q]);
+    }
+}
+
 /// A pair at a field's type at one parameter list is one at it at
 /// another equal at the sorts (model-safe: no injectivity).
 pub proof fn field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int, th: ExprSpec,

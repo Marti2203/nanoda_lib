@@ -819,6 +819,18 @@ Stages, each landing through the gate:
   explicit `np == 0` sites: `rc_field_intro` and `field_dom_bnd`
   (parameter-typed fields), `ih_flds`/`field_arg` (the parameters'
   transfer `ptr`), `motive_top`, `walk_end_code`.
+  **P4b-2g: the parameters' transfer and the motive with parameters.**
+  `rc_ptr` gives `ptr` and `pconv` for the major's type from the telescope
+  invariant (each parameter is related at its value's code, a sort's, so
+  to itself at its value, and `par_xfer` moves it), used by `ih_flds`,
+  `field_arg` and `motive_top`. `motive_top` reads the motive's domain in
+  the parameters' environment (bounded at `pv` by `ind_bound` +
+  `tbl_canon_mono`), types it with `iota_sr::motive_at`, and relates the
+  walk's end `cxr` to the major (`cxr_con`: the constructor clause for the
+  constructor at the recursor's parameters, from the major's own, with
+  `field_ty_chain` between the two field-type instances; `cxr_typed`).
+  Left at `np == 0`: parameter-typed fields (`rc_field_intro`,
+  `field_dom_bnd`) and `walk_end_code`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.
