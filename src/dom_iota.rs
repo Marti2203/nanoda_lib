@@ -563,7 +563,9 @@ pub proof fn major_code(sig: Sig, rid: u64, lv: Seq<LevelSpec>, env: Env, d: Cpt
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
         d is Bot || ((crate::dom_code::canon_ok(sig, sh.ind) ==> crate::dom_code::tabled(sig, sh.ind, us2, ws))
-            && le(d, crate::dom_code::canon_code(sig, sh.ind, us2, ws)))
+            && le(d, crate::dom_code::canon_code(sig, sh.ind, us2, ws))
+            && ws.len() == sh.np && crate::dom_code::aw(ws)
+            && forall|q: int| 0 <= q < sh.np ==> #[trigger] le(ws[q], env((1 + sh.nmin() + sh.np - 1 - q) as nat)))
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -590,6 +592,13 @@ pub proof fn major_code(sig: Sig, rid: u64, lv: Seq<LevelSpec>, env: Env, d: Cpt
     tbody_binds(pd2, b2);
     let ws = crate::dom_bound::tf_spine(sig, ind, us2, args, env, d);
     assert(b2 is Sort);
+    assert forall|q: int| 0 <= q < sh.np implies #[trigger] le(ws[q], env((1 + sh.nmin() + sh.np - 1 - q) as nat)) by {
+        crate::dom_bound::args_w_at(sig, args, env, ws, q);
+        crate::dom_rec_end::var_arg_le(sig, 1 + sh.nmin(), sh.np, env, q, ws[q]);
+    }
+    assert forall|q: int| 0 <= q < ws.len() implies #[trigger] wf(ws[q]) by {
+        crate::dom_bound::args_w_at(sig, args, env, ws, q);
+    }
     ws
 }
 
@@ -658,11 +667,10 @@ pub proof fn rec_field_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, 
 pub proof fn major_bnd(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        crate::dom_rec_ty::rshape(sig, rid).np == 0,
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
     ensures
         ds[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int] is Bot
-            || crate::dom_lift::tbl_canon(sig, crate::dom_rec_ty::rshape(sig, rid).ind, Seq::empty(),
+            || crate::dom_lift::tbl_canon(sig, crate::dom_rec_ty::rshape(sig, rid).ind, xs.subrange(0, crate::dom_rec_ty::rshape(sig, rid).np as int),
                 ds[(crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int]),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -686,7 +694,16 @@ pub proof fn major_bnd(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs:
         let us2 = crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv);
         crate::dom_lift::canon_is_tbl(sig, sh.ind, us2, ws);
         crate::dom_lift::tbl_canon_le(sig, sh.ind, ws, dm, crate::dom_code::canon_code(sig, sh.ind, us2, ws));
-        crate::dom_lift::tbl_canon_np0(sig, sh.ind, ws, Seq::empty(), dm);
+        // the parameters' codes lie below their values
+        let pv = xs.subrange(0, sh.np as int);
+        assert forall|q: int| 0 <= q < sh.np implies le(#[trigger] ws[q], pv[q]) by {
+            crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre as int), (1 + sh.nmin() + sh.np - 1 - q) as nat);
+        }
+        assert forall|q: int| 0 <= q < pv.len() implies #[trigger] wf(pv[q]) by {
+            assert(wf(env((pre - 1 - q) as nat)));
+            crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre as int), (pre - 1 - q) as nat);
+        }
+        crate::dom_lift::tbl_canon_mono(sig, sh.ind, ws, pv, dm);
     }
 }
 

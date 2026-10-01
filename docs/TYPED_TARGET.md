@@ -807,6 +807,18 @@ Stages, each landing through the gate:
   (the motive's domain in the empty environment; also relates `cx`
   where the walk ends at `cxr`), `walk_end_code` (the constructor's value
   over variables without parameters). They are group B's.
+  **P4b-2f: the major's table at the parameters' codes.** `major_bnd`
+  states the major's domain code below the canonical table at the
+  parameters' values (`xs<np`), through `major_code`'s parameter codes
+  (members of the parameter variables, so below their values) and the new
+  `tbl_canon_mono`; `tbl_canon_np0` is gone. `rec_ctx` keeps the table at
+  `Rc::pv` (the parameters' values), `fbnd`/`con_rel_arg` take `pv` (the
+  recursive case passes it to `con_below` with its `ptr`/`pconv`
+  premises), `field_dom_bnd` bounds the minor's lifted field binder at
+  `pv`, and `msds_at` states the binder as the lifted field. Remaining
+  explicit `np == 0` sites: `rc_field_intro` and `field_dom_bnd`
+  (parameter-typed fields), `ih_flds`/`field_arg` (the parameters'
+  transfer `ptr`), `motive_top`, `walk_end_code`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

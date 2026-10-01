@@ -203,19 +203,28 @@ pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
     }
 }
 
-/// Without parameters the canonical table reads no parameters' codes.
-pub proof fn tbl_canon_np0(sig: Sig, j: u64, pv: Seq<Cpt>, pv2: Seq<Cpt>, a: Cpt)
+/// THE CANONICAL TABLE GROWS with the parameters' codes.
+pub proof fn tbl_canon_mono(sig: Sig, j: u64, pv: Seq<Cpt>, pv2: Seq<Cpt>, a: Cpt)
     requires
-        canon_shape(sig, j).np == 0,
         tbl_canon(sig, j, pv, a),
+        crate::dom_sem::pre_le(pv, pv2),
+        aw(pv2),
     ensures
         tbl_canon(sig, j, pv2, a),
 {
+    let sh = canon_shape(sig, j);
     let ts = a->Nd_1;
     assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
         implies #[trigger] entry_canon(sig, j, pv2, p, k, tbl(ts)[p]->Nd_1[k]) by {
-        assert(entry_canon(sig, j, pv, p, k, tbl(ts)[p]->Nd_1[k]));
-        assert(fpe(pv, 0, k as nat) =~= fpe(pv2, 0, k as nat));
+        let e = tbl(ts)[p]->Nd_1[k];
+        assert(entry_canon(sig, j, pv, p, k, e));
+        if is_centry(e) {
+            crate::dom_code::fpe_mono(pv, pv2, sh.np, k as nat);
+            crate::dom_code::ceval_mono(sig, rk(sig, j), j, Seq::empty(), fpe(pv, sh.np, k as nat), fpe(pv2, sh.np, k as nat), sh.fields[p][k]);
+            crate::dom_code::fpe_aw(pv2, sh.np, k as nat);
+            crate::dom_code::ceval_wf(sig, rk(sig, j), j, Seq::empty(), fpe(pv2, sh.np, k as nat), sh.fields[p][k]);
+            le_trans(ecode(e), cf(sig, j, pv, p, k), cf(sig, j, pv2, p, k));
+        }
     }
 }
 
