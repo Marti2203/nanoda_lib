@@ -1117,7 +1117,7 @@ pub proof fn rhs_body_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: Le
 pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, dsf: Seq<Cpt>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        crate::dom_rec_ty::rshape(sig, rid).np == 0,
+        sig.consts[crate::dom_rec_ty::rshape(sig, rid).ind].lps.len() == 0,
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
         crate::dom_tele::chain_ok(sig, mfds(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
@@ -1175,7 +1175,25 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
                     assert(xl[q] == xs[q]);
                 }
                 var_spine_transfer(sig, ExprSpec::Const(sh.ind, us2), v1, v2, e1, e2, dsf[k]);
+            } else if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, sh.fields[p][k]) {
+                // a parameter-typed field: the same parameter's value in both
+                let v = sh.fields[p][k]->Var_0;
+                let q = (np + k - 1 - v) as int;
+                let (i1, i2) = ((v + 1 + p) as nat, (v + 1 + nmin) as nat);
+                assert(crate::subst_algebra::lift((1 + p) as nat, k as nat, sh.fields[p][k]) == ExprSpec::Var(i1));
+                assert(crate::subst_algebra::lift((1 + nmin) as nat, k as nat, sh.fields[p][k]) == ExprSpec::Var(i2));
+                assert(mf[k] == ExprSpec::Var(i1));
+                assert(ff[k] == ExprSpec::Var(i2));
+                crate::dom_rec_ty::exts_at(rho, xf.subrange(0, k), i1);
+                crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, mi), (i1 - k) as nat);
+                crate::dom_rec_ty::exts_at(bot_env(), xl.subrange(0, i), i2);
+                assert(xl[q] == xs[q]);
+                assert(e1(i1) == e2(i2));
+                crate::dom_adeq_base::mem_var(sig, i1, e1, dsf[k]);
+                crate::dom_adeq_base::mem_var(sig, i2, e2, dsf[k]);
             } else {
+                crate::dom_rec_ty::scope_ctor(sig, rid, p);
+                crate::dom_canon::canon_fields(sig, sh.ind, p, k);
                 assert(crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]));
                 simple_closed(sig, sh.ind, sh.fields[p][k]);
                 crate::subst_algebra::lift_closed((1 + p) as nat, k as nat, sh.fields[p][k]);
