@@ -351,6 +351,7 @@ pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
     &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
     &&& forall|lv: Seq<LevelSpec>, p: int| 0 <= p < sh.nmin() ==> #[trigger] crate::dom_rec_minor::fields_plain(sig, c, lv, p)
+    &&& forall|lv: Seq<LevelSpec>| #[trigger] crate::dom_rec_minor::pdoms_lv(sig, c, lv)
 }
 
 /// Closed simple types read only the constants.
@@ -425,6 +426,9 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     assert forall|lv: Seq<LevelSpec>, p: int| 0 <= p < sh.nmin() implies #[trigger] crate::dom_rec_minor::fields_plain(s2, c, lv, p) by {
         assert(crate::dom_rec_minor::fields_plain(s1, c, lv, p));
     }
+    assert forall|lv: Seq<LevelSpec>| #[trigger] crate::dom_rec_minor::pdoms_lv(s2, c, lv) by {
+        assert(crate::dom_rec_minor::pdoms_lv(s1, c, lv));
+    }
 }
 
 /// The fragment reads only the constants and the inductive tables.
@@ -463,12 +467,15 @@ pub ghost struct Rc {
     pub fs: Seq<Cpt>,
     pub u: Cpt,
     pub j: int,
+    pub pargs: Seq<ExprSpec>,
+    pub pargs2: Seq<ExprSpec>,
     pub args: Seq<ExprSpec>,
     pub args2: Seq<ExprSpec>,
 }
 
 impl Rc {
-    pub open spec fn pre(self, sig: Sig) -> int { (crate::dom_rec_ty::rshape(sig, self.c).nmin() + 1) as int }
+    pub open spec fn np(self, sig: Sig) -> int { crate::dom_rec_ty::rshape(sig, self.c).np as int }
+    pub open spec fn pre(self, sig: Sig) -> int { (crate::dom_rec_ty::rshape(sig, self.c).np + crate::dom_rec_ty::rshape(sig, self.c).nmin() + 1) as int }
     pub open spec fn wx(self, sig: Sig) -> Cpt { self.fs[self.pre(sig)] }
     pub open spec fn fsm(self, sig: Sig) -> Seq<Cpt> { self.wx(sig)->Nd_1 }
     pub open spec fn dm(self, sig: Sig) -> Cpt { self.ds[self.pre(sig)] }
@@ -480,9 +487,18 @@ impl Rc {
     }
     pub open spec fn nf(self, sig: Sig) -> nat { crate::dom_rec_ty::rshape(sig, self.c).fields[self.j].len() }
     pub open spec fn cid(self, sig: Sig) -> u64 { crate::dom_rec_ty::rshape(sig, self.c).ctors[self.j] }
-    pub open spec fn cx(self, sig: Sig) -> ExprSpec { spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.args) }
-    pub open spec fn cx2(self, sig: Sig) -> ExprSpec { spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.args2) }
-    pub open spec fn ind(self, sig: Sig) -> ExprSpec { ExprSpec::Const(crate::dom_rec_ty::rshape(sig, self.c).ind, Seq::empty()) }
+    pub open spec fn cx(self, sig: Sig) -> ExprSpec { spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.pargs + self.args) }
+    pub open spec fn cx2(self, sig: Sig) -> ExprSpec { spine_app(ExprSpec::Const(self.cid(sig), Seq::empty()), self.pargs2 + self.args2) }
+    pub open spec fn ind(self, sig: Sig) -> ExprSpec {
+        spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, self.c).ind, Seq::empty()), self.xs.subrange(0, self.np(sig)))
+    }
+    pub open spec fn ind2(self, sig: Sig) -> ExprSpec {
+        spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, self.c).ind, Seq::empty()), self.xs2.subrange(0, self.np(sig)))
+    }
+    /// Field `i`'s type at the recursor's parameters and the earlier fields.
+    pub open spec fn fty(self, sig: Sig, i: int) -> ExprSpec {
+        crate::ti_spine::vsub(crate::dom_rec_ty::rshape(sig, self.c).fields[self.j][i], self.xs.subrange(0, self.np(sig)) + self.args.subrange(0, i))
+    }
     pub open spec fn t0(self, sig: Sig) -> ExprSpec { crate::ti_syntax::dty_at(sig, self.c, self.ls) }
     pub open spec fn t02(self, sig: Sig) -> ExprSpec { crate::ti_syntax::dty_at(sig, self.c, self.ls2) }
     pub open spec fn m(self) -> ExprSpec { spine_app(ExprSpec::Const(self.c, self.ls), self.xs) }
@@ -490,12 +506,13 @@ impl Rc {
     pub open spec fn t(self, sig: Sig) -> ExprSpec { trest(self.t0(sig), self.xs) }
 }
 
-/// A field pair of the major: derivably equal at its closed type, and
-/// constructor-related where the value has the field.
+/// A field pair of the major: derivably equal at its type at the
+/// recursor's parameters, and constructor-related where the value has the
+/// field.
 pub open spec fn rc_field(sig: Sig, rc: Rc, i: int) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
-    &&& derivable(sig, eq(rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i]))
-    &&& (rc.fsm(sig)[i] is Bot || (con_top(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], sh.fields[rc.j][i], rc.fsm(sig)[i], rc.fcode(sig, i))
+    &&& derivable(sig, eq(rc.g, rc.args[i], rc.args2[i], rc.fty(sig, i)))
+    &&& (rc.fsm(sig)[i] is Bot || (con_top(sig, rc.nn, rc.g, rc.args[i], rc.args2[i], rc.fty(sig, i), rc.fsm(sig)[i], rc.fcode(sig, i))
         && has_type(rc.nn, rc.fsm(sig)[i], rc.fcode(sig, i)) && has_type(rc.nn, rc.fcode(sig, i), Cpt::U)
         && rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty
         && fbnd(sig, sh.ind, sh.fields[rc.j][i], crate::dom_iota::isrec(sig, rc.c, rc.j, i), rc.fcode(sig, i))))
@@ -511,21 +528,27 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     &&& crate::dom_rec_adeq::rf_inv(sig, rc.nn, rc.n, rc.g, rc.c, rc.sm, rc.ls, rc.ls2, 0, rc.xs, rc.xs2, rc.a, rc.ds, rc.fs, rc.u)
     &&& !(rc.u is Bot) && !(rc.a is Bot)
     &&& rc.xs.len() == pre + 1 && rc.fs.len() == pre + 1 && rc.ds.len() == pre + 1
-    &&& rc.t(sig) == ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre]))
+    &&& rc.t(sig) == ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.xs[pre]))
+    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& crate::dom_rec::rec_ok(sig, rc.c, rc.fs)
     &&& le(rc.u, crate::dom_rec::recval(sig, rc.c, rc.fs))
     &&& 0 <= rc.j < sh.nmin()
     &&& rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(sh.ind, rc.j as nat)
     &&& rc.fsm(sig).len() == rc.nf(sig)
     &&& rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig)
+    &&& rc.pargs.len() == sh.np && rc.pargs2.len() == sh.np
     &&& rc.ds[pre] is Nd && rc.ds[pre]->Nd_0 is Ty
     &&& crate::dom_lift::tbl_canon(sig, sh.ind, Seq::empty(), rc.ds[pre])
     &&& tel_dom(rc.t0(sig), rc.xs, pre as nat) == rc.ind(sig)
+    &&& tel_dom(rc.t02(sig), rc.xs2, pre as nat) == rc.ind2(sig)
     &&& con_tm(sig, rc.nn, rc.g, rc.xs[pre], rc.xs2[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
     &&& hred(sig, rc.xs[pre], rc.cx(sig)) && hred(sig, rc.xs2[pre], rc.cx2(sig))
     &&& cr(sig, rc.xs[pre]) == rc.cx(sig) && ctor_red(sig, rc.xs[pre])
     &&& derivable(sig, eq(rc.g, rc.xs[pre], rc.cx(sig), rc.ind(sig)))
     &&& derivable(sig, eq(rc.g, rc.xs2[pre], rc.cx2(sig), rc.ind(sig)))
+    &&& derivable(sig, eq(rc.g, rc.xs2[pre], rc.cx2(sig), rc.ind2(sig)))
+    &&& forall|q: int| 0 <= q < sh.np ==> derivable(sig, eq(rc.g, #[trigger] rc.xs[q], rc.pargs[q], sh.pdoms[q]))
+        && derivable(sig, eq(rc.g, rc.xs2[q], rc.pargs2[q], sh.pdoms[q]))
     &&& forall|i: int| 0 <= i < rc.nf(sig) ==> #[trigger] rc_field(sig, rc, i)
 }
 
@@ -563,46 +586,153 @@ pub proof fn major_dom(sig: Sig, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>)
     }
 }
 
-/// A constructor's `i`-th argument type is its field's closed type.
-pub proof fn ctor_arg_ty(sig: Sig, c: u64, j: int, args: Seq<ExprSpec>, i: int)
+/// A constructor's argument after the parameters: its field's type at the
+/// parameters and the earlier fields.
+pub proof fn ctor_arg_ty(sig: Sig, c: u64, j: int, pargs: Seq<ExprSpec>, args: Seq<ExprSpec>, i: int)
     requires
         rec_hyps(sig, c),
         0 <= j < crate::dom_rec_ty::rshape(sig, c).nmin(),
         0 <= i < crate::dom_rec_ty::rshape(sig, c).fields[j].len(),
+        pargs.len() == crate::dom_rec_ty::rshape(sig, c).np,
         i <= args.len(),
     ensures
-        arg_ty(sig, spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ctors[j], Seq::empty()), args), i as nat)
-            == crate::dom_rec_ty::rshape(sig, c).fields[j][i],
+        arg_ty(sig, spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ctors[j], Seq::empty()), pargs + args),
+            (crate::dom_rec_ty::rshape(sig, c).np + i) as nat)
+            == crate::ti_spine::vsub(crate::dom_rec_ty::rshape(sig, c).fields[j][i], pargs + args.subrange(0, i)),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
+    let np = sh.np;
     let h = ExprSpec::Const(sh.ctors[j], Seq::empty());
-    crate::beta_model::spine_destruct_app(h, args);
+    let all = pargs + args;
+    crate::beta_model::spine_destruct_app(h, all);
     crate::dom_iota::ctor_ty_split(sig, c, j, Seq::empty());
     crate::dom_iota::ctor_plain(sig, c, j, Seq::empty());
-    assert(sh.pdoms =~= Seq::<ExprSpec>::empty());
-    assert(sh.pdoms + sh.fields[j] =~= sh.fields[j]);
-    tel_dom_binds(sh.fields[j], crate::dom_iota::cbody(sig, c, j, Seq::empty()), args, i);
-    assert(crate::dom_rec_minor::fields_plain(sig, c, Seq::empty(), j));
-    assert(crate::expr_model::nlbv(sh.fields[j][i]) == 0);
-    crate::ti_spine::vsub_closed(sh.fields[j][i], args.subrange(0, i));
+    tel_dom_binds(sh.pdoms + sh.fields[j], crate::dom_iota::cbody(sig, c, j, Seq::empty()), all, np + i);
+    assert((sh.pdoms + sh.fields[j])[np + i] == sh.fields[j][i]);
+    assert(all.subrange(0, np + i) =~= pargs + args.subrange(0, i));
+}
+
+/// A MAJOR'S FIELD PAIR as the end's context states it: derivably equal at
+/// its type at the recursor's parameters, and constructor-related there
+/// where the value has the field.
+#[verifier::spinoff_prover]
+proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
+    requires
+        rec_hyps(sig, rc.c),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, rc.c).np ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rc.c).pdoms[q]) is Sort,
+        0 <= rc.j < crate::dom_rec_ty::rshape(sig, rc.c).nmin(),
+        0 <= i < rc.nf(sig),
+        rc.xs.len() == rc.pre(sig) + 1 && rc.fs.len() == rc.pre(sig) + 1 && rc.ds.len() == rc.pre(sig) + 1,
+        rc.pargs.len() == rc.np(sig) && rc.pargs2.len() == rc.np(sig),
+        rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig),
+        dm == rc.ds[rc.pre(sig)],
+        dm is Nd && dm->Nd_0 is Ty,
+        rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.j as nat),
+        rc.fsm(sig).len() == rc.nf(sig),
+        has_type(rc.nn, rc.wx(sig), dm),
+        has_type(rc.nn, dm, Cpt::U),
+        crate::dom_lift::tbl_canon(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind, Seq::empty(), dm),
+        es == cblock(rc.wx(sig), dm),
+        con_field(sig, rc.nn, rc.g, rc.cx(sig), rc.cx2(sig), rc.ind(sig), rc.fsm(sig), es, rc.np(sig) as nat, rc.j, dm, i),
+        derivable(sig, eq(rc.g, rc.xs[rc.pre(sig)], rc.cx(sig), rc.ind(sig))),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, rc.c).np ==> derivable(sig, eq(rc.g, #[trigger] rc.xs[q], rc.pargs[q],
+            crate::dom_rec_ty::rshape(sig, rc.c).pdoms[q])),
+    ensures
+        rc_field(sig, rc, i),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let (np, j) = (sh.np, rc.j);
+    let (g, nn) = (rc.g, rc.nn);
+    let pre = rc.pre(sig);
+    let f = sh.fields[j][i];
+    let ps = rc.xs.subrange(0, np as int);
+    let ci = rc.ind(sig);
+    let (cx, cx2) = (rc.cx(sig), rc.cx2(sig));
+    let (all, all2) = (rc.pargs + rc.args, rc.pargs2 + rc.args2);
+    let (y, y2) = (rc.args[i], rc.args2[i]);
+    let fsm = rc.fsm(sig);
+    crate::dom_rec_ty::scope_ctor(sig, rc.c, j);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rc.c);
+    rec_canon_ok(sig, rc.c);
+    // the argument's declared type, moved to the recursor's parameters
+    ctor_arg_ty(sig, rc.c, j, rc.pargs, rc.args, i);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ctors[j], Seq::empty()), all);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ctors[j], Seq::empty()), all2);
+    assert(all[np + i] == y && all2[np + i] == y2);
+    let ti = arg_ty(sig, cx, (np + i) as nat);
+    let dx = crate::ti_sub::get(sig, eq(g, rc.xs[pre], cx, ci));
+    crate::ti_valid::d_ty(sig, dx);
+    reveal(crate::ti_sub::tconvd);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, ci, ci, crate::ti_syntax::sort(l)));
+    let th = crate::ti_syntax::sort(l);
+    assert(ps.len() == np);
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], rc.pargs[q], sh.pdoms[q])) by {
+        assert(ps[q] == rc.xs[q]);
+    }
+    crate::iota_sr::field_conv(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, th, y, y2);
+    crate::dom_rec_minor::field_vsub_pre(sig, rc.c, j, i, ps, rc.args.subrange(0, i), rc.args.subrange(0, i));
+    assert(rc.fty(sig, i) == crate::ti_spine::vsub(f, ps + rc.args.subrange(0, i)));
+    if fsm[i] is Bot {
+        return;
+    }
+    let p = j;
+    let ind = sh.ind;
+    crate::dom_canon::canon_fields(sig, ind, p, i);
+    tbl_wf(dm);
+    assert(tbl(dm->Nd_1)[p]->Nd_1[i] == es[i]);
+    assert(crate::dom_lift::entry_canon(sig, ind, Seq::empty(), p, i, es[i]));
+    if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f) {
+        // a parameter-typed field: none while the recursor fragment has no
+        // parameters (its tables take the parameters' codes next)
+        assert(rec_frag(sig, rc.c));
+        assert(false);
+    }
+    if es[i] != crate::dom_typing::rmark() {
+        let ec = ecode(es[i]);
+        assert(is_centry(es[i]) && has_type(nn, fsm[i], ec) && has_type(nn, ec, Cpt::U));
+        if ec is Bot {
+            ty_of_bot(nn, fsm[i]);
+        }
+        crate::dom_lift::fq_closed(sig, ind, ci, p, i);
+        crate::dom_lift::field_facts(sig, ind, p, i);
+        crate::ti_spine::vsub_closed(f, ps + rc.args.subrange(0, i));
+        assert(crate::dom_lift::cf(sig, ind, Seq::empty(), p, i)
+            == crate::dom_code::ceval(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), Seq::empty(), f));
+        tm_ty(sig, nn, g, y, y2, f, fsm[i], ec);
+        assert(rc.fcode(sig, i) == ec);
+    } else {
+        assert(has_type(nn, fsm[i], dm));
+        assert(rc.fcode(sig, i) == dm);
+        // a recursive field's type is the major's
+        crate::dom_rec_minor::field_vsub_pre(sig, rc.c, j, i, ps, rc.args.subrange(0, i), Seq::new(i as nat, |_q: int| ExprSpec::Closed));
+        assert(crate::rec_canon::direct_occ(f, ind, sh.us(), np, sh.ni, i as nat));
+        crate::beta_model::spine_recompose(f);
+        assert(sh.us() =~= Seq::<LevelSpec>::empty());
+        assert(spine_args(f) =~= crate::rec_canon::vars(i as nat, np));
+        crate::dom_iota::vars_vidx(i as nat, np);
+        let xa = ps + rc.args.subrange(0, i);
+        crate::ti_spine::vsub_spine_vars(ExprSpec::Const(ind, Seq::empty()), crate::dom_iota::vidx(i as nat, np), xa);
+        assert(Seq::new(np, |q: int| xa[xa.len() - 1 - crate::dom_iota::vidx(i as nat, np)[q]]) =~= ps);
+        assert(rc.fty(sig, i) == ci);
+        let (z, z2) = (cr(sig, y), cr(sig, y2));
+        crate::iota_sr::field_conv(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, th, y, z);
+        crate::iota_sr::field_conv(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, th, y2, z2);
+    }
+    assert(rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty);
 }
 
 /// ONE SIDE'S MAJOR: it reduces to its constructor at no levels, derivably.
-pub proof fn major_side(sig: Sig, g: Ctx, c: u64, j: int, x: ExprSpec)
+pub proof fn major_side(sig: Sig, g: Ctx, c: u64, j: int, x: ExprSpec, ci: ExprSpec)
     requires
         rec_hyps(sig, c),
         0 <= j < crate::dom_rec_ty::rshape(sig, c).nmin(),
-        derivable(sig, eq(g, x, x, ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()))),
-        derivable(sig, eq(g, x, cr(sig, x), ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()))),
+        derivable(sig, eq(g, x, cr(sig, x), ci)),
         ctor_red(sig, x),
         spine_head(cr(sig, x))->Const_0 == crate::dom_rec_ty::rshape(sig, c).ctors[j],
-        spine_args(cr(sig, x)).len() == crate::dom_rec_ty::rshape(sig, c).fields[j].len(),
     ensures
         cr(sig, x) == spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ctors[j], Seq::empty()), spine_args(cr(sig, x))),
-        derivable(sig, eq(g, x, cr(sig, x), ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()))),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
-    let ci = ExprSpec::Const(sh.ind, Seq::empty());
     let cx = cr(sig, x);
     crate::dom_adeq_syn::dsym(sig, g, x, cx, ci);
     crate::beta_model::spine_recompose(cx);
@@ -613,6 +743,50 @@ pub proof fn major_side(sig: Sig, g: Ctx, c: u64, j: int, x: ExprSpec)
     crate::dom_rec_ty::scope_ctor(sig, c, j);
     assert(sig.consts[h->Const_0].lps == sig.consts[sh.ind].lps);
     assert(clv =~= Seq::<LevelSpec>::empty());
+}
+
+/// The major's constructor parameters are the recursor's, at their sorts.
+proof fn major_pars(sig: Sig, nn: nat, g: Ctx, c: u64, t0: ExprSpec, t02: ExprSpec, xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>,
+    ds: Seq<Cpt>, fs: Seq<Cpt>, lv: Seq<LevelSpec>, cx: ExprSpec, ci: ExprSpec)
+    requires
+        rec_hyps(sig, c),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, c).np ==> (#[trigger] crate::dom_rec_ty::rshape(sig, c).pdoms[q]) is Sort,
+        t0 == crate::ti_syntax::dty_at(sig, c, lv),
+        xs.len() > crate::dom_rec_ty::rshape(sig, c).np,
+        crate::dom_con_rel::flds_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0),
+        ci == spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()), xs.subrange(0, crate::dom_rec_ty::rshape(sig, c).np as int)),
+        crate::dom_rel::cpar(sig, g, crate::dom_rec_ty::rshape(sig, c).ind, cx, ci),
+        spine_args(cx).len() >= crate::dom_rec_ty::rshape(sig, c).np,
+    ensures
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] xs[q], spine_args(cx)[q],
+            crate::dom_rec_ty::rshape(sig, c).pdoms[q])),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] xs2[q], spine_args(cx)[q],
+            crate::dom_rec_ty::rshape(sig, c).pdoms[q])),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let np = sh.np;
+    let ind = sh.ind;
+    let ps = xs.subrange(0, np as int);
+    crate::dom_rec_ty::scope_ctor_ind(sig, c);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, Seq::empty()), ps);
+    crate::dom_lift::iapp_self(sig, ci);
+    assert(pdoms_lv_at(sig, c, lv));
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] xs[q], spine_args(cx)[q], sh.pdoms[q]))
+        && derivable(sig, eq(g, xs2[q], spine_args(cx)[q], sh.pdoms[q])) by {
+        assert(sh.pdoms[q] is Sort);
+        assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(cx)[q], spine_args(ci)[q]));
+        assert(spine_args(ci)[q] == xs[q]);
+        crate::dom_adeq_syn::dsym(sig, g, spine_args(cx)[q], xs[q], sh.pdoms[q]);
+        assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, q));
+        crate::dom_rec_minor::head_pdom(sig, c, lv, xs, q);
+        assert(derivable(sig, eq(g, xs[q], xs2[q], sh.pdoms[q])));
+        crate::dom_adeq_syn::dsym(sig, g, xs[q], xs2[q], sh.pdoms[q]);
+        crate::dom_adeq_syn::dtrans(sig, g, xs2[q], xs[q], spine_args(cx)[q], sh.pdoms[q]);
+    }
+}
+
+pub open spec fn pdoms_lv_at(sig: Sig, c: u64, lv: Seq<LevelSpec>) -> bool {
+    crate::dom_rec_minor::pdoms_lv(sig, c, lv)
 }
 
 /// THE END'S CONTEXT from the invariant at the end of the telescope.
@@ -631,7 +805,8 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
-    let pre = (sh.nmin() + 1) as int;
+    let np = sh.np;
+    let pre = (np + sh.nmin() + 1) as int;
     let (t0, t02) = (crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2));
     crate::dom_iota::major_form(sig, c, sm.0);
     crate::dom_iota::major_form(sig, c, ls);
@@ -650,7 +825,9 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     crate::dom_rec_ty::scope_ctor(sig, c, j);
     // the major
     major_dom(sig, c, ls, xs);
-    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    major_dom(sig, c, ls2, xs2);
+    let ci = spine_app(ExprSpec::Const(sh.ind, Seq::empty()), xs.subrange(0, np as int));
+    let ci2 = spine_app(ExprSpec::Const(sh.ind, Seq::empty()), xs2.subrange(0, np as int));
     assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, pre));
     let (x, x2, dm) = (xs[pre], xs2[pre], ds[pre]);
     assert(has_type(nn, wx, dm));
@@ -659,13 +836,29 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     con_tm_unfold(sig, nn, g, x, x2, ci, wx, dm);
     let (cx, cx2) = (cr(sig, x), cr(sig, x2));
     let fsm = wx->Nd_1;
-    assert(crate::dom_code::canon_shape(sig, sh.ind).np == 0);
+    assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
     crate::dom_adeq_syn::dsym(sig, g, x, x2, ci);
-    major_side(sig, g, c, j, x);
-    major_side(sig, g, c, j, x2);
-    let (args, args2) = (spine_args(cx), spine_args(cx2));
-    let rc = Rc { nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u, j, args, args2 };
+    major_side(sig, g, c, j, x, ci);
+    major_side(sig, g, c, j, x2, ci);
+    // the right side's major at its own type
+    crate::dom_rel::ty_ind(sig, nn, g, ci, ci2, dm);
+    crate::ti_chain::conv_chain(sig, g, x2, cx2, ci, ci2);
+    let (all, all2) = (spine_args(cx), spine_args(cx2));
+    let (pargs, pargs2) = (all.subrange(0, np as int), all2.subrange(0, np as int));
+    let (args, args2) = (all.subrange(np as int, all.len() as int), all2.subrange(np as int, all2.len() as int));
+    assert(pargs + args =~= all);
+    assert(pargs2 + args2 =~= all2);
+    let rc = Rc { nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u, j, pargs, pargs2, args, args2 };
     assert(rc.cx(sig) == cx && rc.cx2(sig) == cx2);
+    assert(rc.ind(sig) == ci && rc.ind2(sig) == ci2);
+    // the constructor's parameters are the recursor's
+    assert(crate::dom_rec_adeq::rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u));
+    major_pars(sig, nn, g, c, t0, t02, xs, xs2, ds, fs, ls, cx, ci);
+    major_pars(sig, nn, g, c, t0, t02, xs, xs2, ds, fs, ls, cx2, ci);
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] xs[q], pargs[q], sh.pdoms[q]))
+        && derivable(sig, eq(g, xs2[q], pargs2[q], sh.pdoms[q])) by {
+        assert(pargs[q] == all[q] && pargs2[q] == all2[q]);
+    }
     let es = cblock(wx, dm);
     assert(has_type(nn, dm, Cpt::U));
     // the major's code below the canonical table, and so each field's
@@ -676,38 +869,7 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     rec_canon_ok(sig, c);
     tbl_wf(dm);
     assert forall|i: int| 0 <= i < rc.nf(sig) implies #[trigger] rc_field(sig, rc, i) by {
-        assert(con_field(sig, nn, g, cx, cx2, ci, fsm, es, 0, j, dm, i));
-        ctor_arg_ty(sig, c, j, args, i);
-        assert(args[0 + i] == args[i]);
-        if !(fsm[i] is Bot) {
-            if es[i] != crate::dom_typing::rmark() {
-                let ec = ecode(es[i]);
-                assert(is_centry(es[i]) && has_type(nn, fsm[i], ec) && has_type(nn, ec, Cpt::U));
-                if ec is Bot {
-                    ty_of_bot(nn, fsm[i]);
-                }
-                assert(tbl(dm->Nd_1)[j]->Nd_1[i] == es[i]);
-                assert(crate::dom_lift::entry_canon(sig, sh.ind, Seq::empty(), j, i, es[i]));
-                crate::dom_canon::canon_fields(sig, sh.ind, j, i);
-                crate::dom_lift::fq_closed(sig, sh.ind, ci, j, i);
-                crate::dom_lift::field_facts(sig, sh.ind, j, i);
-                assert(crate::dom_lift::cf(sig, sh.ind, Seq::empty(), j, i)
-                    == crate::dom_code::ceval(sig, crate::dom_code::rk(sig, sh.ind), sh.ind, Seq::empty(), Seq::empty(), sh.fields[j][i]));
-                tm_ty(sig, nn, g, args[i], args2[i], arg_ty(sig, cx, i as nat), fsm[i], ec);
-                assert(rc.fcode(sig, i) == ec);
-            } else {
-                assert(has_type(nn, fsm[i], dm));
-                assert(tbl(dm->Nd_1)[j]->Nd_1[i] == es[i]);
-                assert(crate::dom_lift::entry_canon(sig, sh.ind, Seq::empty(), j, i, es[i]));
-                assert(rc.fcode(sig, i) == dm);
-                assert(spine_head(sh.fields[j][i]) == ExprSpec::Const(sh.ind, sh.us()));
-                assert(sh.us() =~= Seq::<LevelSpec>::empty());
-                crate::beta_model::spine_recompose(sh.fields[j][i]);
-                assert(spine_args(sh.fields[j][i]) =~= Seq::<ExprSpec>::empty());
-                assert(sh.fields[j][i] == ci);
-            }
-            assert(rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty);
-        }
+        rc_field_intro(sig, rc, i, dm, es);
     }
     rc
 }
@@ -841,25 +1003,66 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     assert(crate::dom_sound::dfit(sig, tds[mi], crate::dom_tele::exts(crate::dom_model::bot_env(), rc.fs.subrange(0, mi)), d, v));
 }
 
-/// A recursive field without parameters, levels or indices is the
-/// inductive itself.
-pub proof fn rec_field_ind(sig: Sig, c: u64, j: int, k: int)
+/// A recursive field's type, at the recursor's parameters, is the
+/// major's.
+pub proof fn rc_fty_rec(sig: Sig, rc: Rc, kf: int)
     requires
-        rec_hyps(sig, c),
-        0 <= j < crate::dom_rec_ty::rshape(sig, c).nmin(),
-        0 <= k < crate::dom_rec_ty::rshape(sig, c).fields[j].len(),
-        crate::dom_iota::isrec(sig, c, j, k),
+        rec_ctx(sig, rc),
+        0 <= kf < rc.nf(sig),
+        crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
     ensures
-        crate::dom_rec_ty::rshape(sig, c).fields[j][k] == ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty()),
+        rc.fty(sig, kf) == rc.ind(sig),
 {
-    let sh = crate::dom_rec_ty::rshape(sig, c);
-    let rd = sig.ienv.recs[c];
-    crate::dom_rec_shape::occ_form(sh, j, k, 0, rd.uparams, Seq::empty());
-    crate::subst_algebra::lift_zero(k as nat, sh.fields[j][k]);
-    crate::dom_iota::major_form(sig, c, Seq::empty());
-    assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, Seq::empty()) =~= Seq::<LevelSpec>::empty());
-    assert(crate::rec_canon::vars(k as nat + 0, 0) =~= Seq::<ExprSpec>::empty());
-    assert(crate::dom_rec_minor::fields_plain(sig, c, Seq::empty(), j));
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let np = sh.np;
+    let f = sh.fields[rc.j][kf];
+    let ps = rc.xs.subrange(0, np as int);
+    let ind = sh.ind;
+    crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+    crate::beta_model::spine_recompose(f);
+    assert(sh.us() =~= Seq::<LevelSpec>::empty());
+    assert(spine_args(f) =~= crate::rec_canon::vars(kf as nat, np));
+    crate::dom_iota::vars_vidx(kf as nat, np);
+    let xa = ps + rc.args.subrange(0, kf);
+    crate::ti_spine::vsub_spine_vars(ExprSpec::Const(ind, Seq::empty()), crate::dom_iota::vidx(kf as nat, np), xa);
+    assert(Seq::new(np, |q: int| xa[xa.len() - 1 - crate::dom_iota::vidx(kf as nat, np)[q]]) =~= ps);
+}
+
+/// The right side's field, at its own parameters and earlier fields.
+#[verifier::spinoff_prover]
+pub proof fn rc_args2_typed(sig: Sig, rc: Rc, k: int)
+    requires
+        rec_ctx(sig, rc),
+        0 <= k < rc.nf(sig),
+    ensures
+        derivable(sig, eq(rc.g, rc.args2[k], rc.args2[k], crate::ti_spine::vsub(crate::dom_rec_ty::rshape(sig, rc.c).fields[rc.j][k],
+            rc.xs2.subrange(0, rc.np(sig)) + rc.args2.subrange(0, k)))),
+        derivable(sig, eq(rc.g, rc.args[k], rc.args[k], rc.fty(sig, k))),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let np = sh.np;
+    let pre = rc.pre(sig);
+    let (ps, ps2) = (rc.xs.subrange(0, np as int), rc.xs2.subrange(0, np as int));
+    let (t0, t02) = (rc.t0(sig), rc.t02(sig));
+    assert(rc_field(sig, rc, k));
+    crate::dom_adeq_syn::dsym(sig, rc.g, rc.args[k], rc.args2[k], rc.fty(sig, k));
+    crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
+    crate::dom_rec_minor::field_vsub_pre(sig, rc.c, rc.j, k, ps, rc.args.subrange(0, k), rc.args2.subrange(0, k));
+    // the right side's parameters equal the left's at their sorts
+    assert(rec_frag(sig, rc.c));
+    assert(crate::dom_rec_minor::pdoms_lv(sig, rc.c, rc.ls));
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(rc.g, #[trigger] ps2[q], ps[q], sh.pdoms[q])) by {
+        assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, q));
+        crate::dom_rec_minor::head_pdom(sig, rc.c, rc.ls, rc.xs, q);
+        crate::dom_adeq_syn::dsym(sig, rc.g, rc.xs[q], rc.xs2[q], sh.pdoms[q]);
+        assert(ps[q] == rc.xs[q] && ps2[q] == rc.xs2[q]);
+    }
+    let dx = crate::ti_sub::get(sig, eq(rc.g, rc.xs2[pre], rc.cx2(sig), rc.ind2(sig)));
+    crate::ti_valid::d_ty(sig, dx);
+    reveal(crate::ti_sub::tconvd);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(rc.g, rc.ind2(sig), rc.ind2(sig), crate::ti_syntax::sort(l)));
+    crate::iota_sr::field_conv(sig, rc.g, rc.c, rc.j, ps2, ps, rc.args2, k, crate::ti_syntax::sort(l), rc.args2[k], rc.args2[k]);
 }
 
 /// The recursor's type after fewer arguments than its binders is a Pi.
@@ -1018,7 +1221,7 @@ pub proof fn ih_der(sig: Sig, rc: Rc, kf: int)
     crate::dom_iota::major_form(sig, rc.c, rc.ls2);
     crate::dom_rec_minor::rec_tend(sig, rc.c, rc.ls, ys);
     crate::dom_rec_minor::rec_tend(sig, rc.c, rc.ls2, ys2);
-    rec_field_ind(sig, rc.c, rc.j, kf);
+    rc_fty_rec(sig, rc, kf);
     assert(rc_field(sig, rc, kf));
     let (y, y2) = (rc.args[kf], rc.args2[kf]);
     crate::dom_adeq_syn::dsym(sig, rc.g, y, y2, ci);
@@ -1106,7 +1309,7 @@ pub proof fn ih_flds(sig: Sig, rc: Rc, kf: int)
     let (v, dm) = (rc.fsm(sig)[kf], rc.ds[pre]);
     let ci = rc.ind(sig);
     ih_field(sig, rc, kf);
-    rec_field_ind(sig, rc.c, rc.j, kf);
+    rc_fty_rec(sig, rc, kf);
     assert(rc_field(sig, rc, kf));
     assert forall|i: int| 0 <= i < fz.len() implies #[trigger] wf(fz[i]) by {
         if i < pre {
@@ -1480,6 +1683,10 @@ pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
     crate::dom_adeq_base::rp_pi(sig, ta, tb);
     ty_pi(sig, n, rc.g, t, t, a);
     assert(rc_field(sig, rc, k as int));
+    // the walk's field types are the closed declared ones
+    assert(crate::dom_rec_minor::fields_plain(sig, rc.c, rc.sm.0, rc.j));
+    crate::ti_spine::vsub_closed(sh.fields[rc.j][k as int], rc.xs.subrange(0, rc.np(sig)) + rc.args.subrange(0, k as int));
+    assert(rc.fty(sig, k as int) == sh.fields[rc.j][k as int]);
     assert(w.ys[k as int] == rc.args[k as int] && w.ys2[k as int] == rc.args2[k as int]);
     assert(w.ws[k as int] == rc.fsm(sig)[k as int]);
     crate::dom_con_rel::pi_dom_typed(n, a);
@@ -1732,8 +1939,10 @@ pub proof fn reds_typed(sig: Sig, rc: Rc)
         let (heads, heads2) = (rc.xs.subrange(0, pre), rc.xs2.subrange(0, pre));
         &&& forall|i: int| 0 <= i < heads.len() ==> derivable(sig, eq(rc.g, #[trigger] heads[i], heads[i], tel_dom(rc.t0(sig), heads, i as nat)))
         &&& forall|i: int| 0 <= i < heads2.len() ==> derivable(sig, eq(rc.g, #[trigger] heads2[i], heads2[i], tel_dom(rc.t02(sig), heads2, i as nat)))
-        &&& forall|k: int| 0 <= k < rc.args.len() ==> derivable(sig, eq(rc.g, #[trigger] rc.args[k], rc.args[k], sh.fields[rc.j][k]))
-        &&& forall|k: int| 0 <= k < rc.args2.len() ==> derivable(sig, eq(rc.g, #[trigger] rc.args2[k], rc.args2[k], sh.fields[rc.j][k]))
+        &&& forall|k: int| 0 <= k < rc.args.len() ==> derivable(sig, eq(rc.g, #[trigger] rc.args[k], rc.args[k],
+                crate::ti_spine::vsub(sh.fields[rc.j][k], heads.subrange(0, rc.np(sig)) + rc.args.subrange(0, k))))
+        &&& forall|k: int| 0 <= k < rc.args2.len() ==> derivable(sig, eq(rc.g, #[trigger] rc.args2[k], rc.args2[k],
+                crate::ti_spine::vsub(sh.fields[rc.j][k], heads2.subrange(0, rc.np(sig)) + rc.args2.subrange(0, k))))
     }),
 {
     let pre = rc.pre(sig);
@@ -1747,13 +1956,15 @@ pub proof fn reds_typed(sig: Sig, rc: Rc)
     assert forall|i: int| 0 <= i < heads2.len() implies derivable(sig, eq(rc.g, #[trigger] heads2[i], heads2[i], tel_dom(rc.t02(sig), heads2, i as nat))) by {
         head_typed_at(sig, rc, i);
     }
-    assert forall|k: int| 0 <= k < rc.args.len() implies derivable(sig, eq(rc.g, #[trigger] rc.args[k], rc.args[k], sh.fields[rc.j][k])) by {
-        assert(rc_field(sig, rc, k));
-        crate::dom_adeq_syn::dsym(sig, rc.g, rc.args[k], rc.args2[k], sh.fields[rc.j][k]);
+    assert(heads.subrange(0, rc.np(sig)) =~= rc.xs.subrange(0, rc.np(sig)));
+    assert(heads2.subrange(0, rc.np(sig)) =~= rc.xs2.subrange(0, rc.np(sig)));
+    assert forall|k: int| 0 <= k < rc.args.len() implies derivable(sig, eq(rc.g, #[trigger] rc.args[k], rc.args[k],
+        crate::ti_spine::vsub(sh.fields[rc.j][k], heads.subrange(0, rc.np(sig)) + rc.args.subrange(0, k)))) by {
+        rc_args2_typed(sig, rc, k);
     }
-    assert forall|k: int| 0 <= k < rc.args2.len() implies derivable(sig, eq(rc.g, #[trigger] rc.args2[k], rc.args2[k], sh.fields[rc.j][k])) by {
-        assert(rc_field(sig, rc, k));
-        crate::dom_adeq_syn::dsym(sig, rc.g, rc.args[k], rc.args2[k], sh.fields[rc.j][k]);
+    assert forall|k: int| 0 <= k < rc.args2.len() implies derivable(sig, eq(rc.g, #[trigger] rc.args2[k], rc.args2[k],
+        crate::ti_spine::vsub(sh.fields[rc.j][k], heads2.subrange(0, rc.np(sig)) + rc.args2.subrange(0, k)))) by {
+        rc_args2_typed(sig, rc, k);
     }
 }
 
@@ -1824,7 +2035,7 @@ pub proof fn rec_red_left(sig: Sig, rc: Rc)
         let l = w.ys.len();
         let pre = rc.pre(sig);
         &&& hred(sig, rc.m(), w.m(l))
-        &&& derivable(sig, eq(rc.g, rc.m(), w.m(l), ExprSpec::App(Box::new(rc.xs[0]), Box::new(rc.xs[pre]))))
+        &&& derivable(sig, eq(rc.g, rc.m(), w.m(l), ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.xs[pre]))))
     }),
 {
     let w = walk_of(sig, rc);
@@ -1833,18 +2044,18 @@ pub proof fn rec_red_left(sig: Sig, rc: Rc)
     rc_levels(sig, rc);
     let heads = rc.xs.subrange(0, pre);
     assert(heads.push(rc.xs[pre]) =~= rc.xs);
-    assert(Seq::<ExprSpec>::empty() + rc.args =~= rc.args);
-    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls, heads, rc.xs[pre], rc.j, Seq::empty(), rc.args);
+    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.pargs, rc.args);
     assert(w.ysk(l) =~= w.ys);
-    assert(heads[1 + rc.j] == rc.xs[1 + rc.j]);
+    let np = rc.np(sig);
+    assert(heads[np + 1 + rc.j] == rc.xs[np + 1 + rc.j]);
     reds_typed(sig, rc);
-    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
-    assert(sh.np == 0);
-    assert(heads.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
-    assert(spine_app(rc.ind(sig), Seq::<ExprSpec>::empty()) == rc.ind(sig));
-    crate::dom_rec_conv::plain_args(sig, rc.g, rc.c, rc.ls, rc.j, heads, rc.args);
-    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls, heads, rc.xs[pre], rc.j, Seq::empty(), rc.args);
-    assert(heads[0] == rc.xs[0]);
+    assert(heads.subrange(0, np) =~= rc.xs.subrange(0, np));
+    assert(spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, rc.c).ind, Seq::empty()), heads.subrange(0, np)) == rc.ind(sig));
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(rc.g, #[trigger] heads[q], rc.pargs[q], crate::dom_rec_ty::rshape(sig, rc.c).pdoms[q])) by {
+        assert(heads[q] == rc.xs[q]);
+    }
+    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls, heads, rc.xs[pre], rc.j, rc.pargs, rc.args);
+    assert(heads[np] == rc.xs[np]);
 }
 
 /// THE RIGHT REDEX: the redex reduces to the walk's application, and converts with
@@ -1858,7 +2069,7 @@ pub proof fn rec_red_right(sig: Sig, rc: Rc)
         let l = w.ys.len();
         let pre = rc.pre(sig);
         &&& hred(sig, rc.m2(), w.m2(l))
-        &&& derivable(sig, eq(rc.g, rc.m2(), w.m2(l), ExprSpec::App(Box::new(rc.xs2[0]), Box::new(rc.xs2[pre]))))
+        &&& derivable(sig, eq(rc.g, rc.m2(), w.m2(l), ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.xs2[pre]))))
     }),
 {
     let w = walk_of(sig, rc);
@@ -1867,18 +2078,18 @@ pub proof fn rec_red_right(sig: Sig, rc: Rc)
     rc_levels(sig, rc);
     let heads = rc.xs2.subrange(0, pre);
     assert(heads.push(rc.xs2[pre]) =~= rc.xs2);
-    assert(Seq::<ExprSpec>::empty() + rc.args2 =~= rc.args2);
-    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, Seq::empty(), rc.args2);
+    crate::dom_rec_red::rec_red(sig, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, rc.pargs2, rc.args2);
     assert(w.ys2k(l) =~= w.ys2);
-    assert(heads[1 + rc.j] == rc.xs2[1 + rc.j]);
+    let np = rc.np(sig);
+    assert(heads[np + 1 + rc.j] == rc.xs2[np + 1 + rc.j]);
     reds_typed(sig, rc);
-    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
-    assert(sh.np == 0);
-    assert(heads.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
-    assert(spine_app(rc.ind(sig), Seq::<ExprSpec>::empty()) == rc.ind(sig));
-    crate::dom_rec_conv::plain_args(sig, rc.g, rc.c, rc.ls2, rc.j, heads, rc.args2);
-    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, Seq::empty(), rc.args2);
-    assert(heads[0] == rc.xs2[0]);
+    assert(heads.subrange(0, np) =~= rc.xs2.subrange(0, np));
+    assert(spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, rc.c).ind, Seq::empty()), heads.subrange(0, np)) == rc.ind2(sig));
+    assert forall|q: int| 0 <= q < np implies derivable(sig, eq(rc.g, #[trigger] heads[q], rc.pargs2[q], crate::dom_rec_ty::rshape(sig, rc.c).pdoms[q])) by {
+        assert(heads[q] == rc.xs2[q]);
+    }
+    crate::dom_rec_conv::rec_conv_side(sig, rc.g, rc.c, rc.ls2, heads, rc.xs2[pre], rc.j, rc.pargs2, rc.args2);
+    assert(heads[np] == rc.xs2[np]);
 }
 
 /// The redexes reduce to the walk's applications, typed.

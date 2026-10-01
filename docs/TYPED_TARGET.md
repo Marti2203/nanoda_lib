@@ -786,6 +786,18 @@ Stages, each landing through the gate:
   their sorts — what `cpar` will supply — and converts the rule instance's
   type through `iota_sr::sr_result`. `major_dom`/`motive_form` state the
   inductive at the parameters.
+  **P4b-2d: the end's context with parameters.** `Rc` carries the major
+  constructor's own parameter arguments (`pargs`, `pargs2`); `pre`, the
+  major's type `I xs<np` (`ind`, `ind2`) and the fields' types at the
+  recursor's parameters (`fty`) are stated at `np`. `rec_ctx_intro` gets
+  `xs[q] ≡ pargs[q]` from `cpar` (`major_pars`) and each field from the
+  relation moved to the recursor's parameters (`rc_field_intro`, through
+  `iota_sr::field_conv`, which builds `I ps ≡ I ps'` by congruence, so the
+  model never calls injectivity). The fragment gains `pdoms_lv` (the
+  parameters' domains are level-invariant). The walk down the minor
+  (`walk_of`, `walk_shape`, `ih_code`, `motive_top`, `sides_ty`, ...)
+  still indexes as `np == 0`; a parameter-typed field is still closed off
+  by `rec_frag` in `rc_field_intro`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

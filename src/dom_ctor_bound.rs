@@ -435,6 +435,7 @@ proof fn var_ind_bound(sig: Sig, ind: u64, from: nat, args: Seq<ExprSpec>, env: 
 }
 
 /// A MEMBER OF A CONSTRUCTOR'S TYPE, `k` binders in, is bounded.
+#[verifier::spinoff_prover]
 pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::Env, pv: Seq<Cpt>, a: Cpt)
     requires
         canon_ok(sig, ind),

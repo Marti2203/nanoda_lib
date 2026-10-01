@@ -197,11 +197,12 @@ pub proof fn sr_major(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, c
     }
 }
 
-/// A field's type at the major's parameters converts to its type at the
-/// recursor's, the two parameter lists being equal at their sorts and the
+/// A pair at a field's type at the major's parameters is one at its type
+/// at the recursor's, the two parameter lists being equal at their sorts and the
 /// two inductive applications chained.
 #[verifier::spinoff_prover]
-proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int)
+proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int,
+    y: ExprSpec, y2: ExprSpec)
     requires
         rec_scope(sig, rid),
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
@@ -213,9 +214,9 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
         tchain(sig, g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
             spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps2)),
         forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q])),
-        derivable(sig, eq(g, fs[k], fs[k], crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps2 + fs.subrange(0, k)))),
+        derivable(sig, eq(g, y, y2, crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps2 + fs.subrange(0, k)))),
     ensures
-        derivable(sig, eq(g, fs[k], fs[k], crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k)))),
+        derivable(sig, eq(g, y, y2, crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k)))),
 {
     let sh = rshape(sig, rid);
     let np = sh.np;
@@ -234,7 +235,7 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
         assert(Seq::new(np, |i: int| xs[xs.len() - 1 - crate::dom_iota::vidx(k as nat, np)[i]]) =~= ps);
         assert(Seq::new(np, |i: int| xs2[xs2.len() - 1 - crate::dom_iota::vidx(k as nat, np)[i]]) =~= ps2);
         crate::ti_chain::tchain_sym(sig, g, spine_app(ci, ps), spine_app(ci, ps2));
-        crate::ti_chain::conv_chain(sig, g, fs[k], fs[k], spine_app(ci, ps2), spine_app(ci, ps));
+        crate::ti_chain::conv_chain(sig, g, y, y2, spine_app(ci, ps2), spine_app(ci, ps));
     } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
         crate::dom_iota::simple_closed(sig, sh.ind, f);
         vsub_closed(f, xs);
@@ -251,8 +252,79 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
         assert(derivable(sig, eq(g, ps2[q], ps[q], crate::ti_syntax::sort(l))));
         reveal(crate::ti_sub::tconvd);
         crate::ti_chain::tchain_one(sig, g, ps2[q], ps[q]);
-        crate::ti_chain::conv_chain(sig, g, fs[k], fs[k], ps2[q], ps[q]);
+        crate::ti_chain::conv_chain(sig, g, y, y2, ps2[q], ps[q]);
     }
+}
+
+/// The inductive at two parameter lists equal at their sorts converts,
+/// by congruence (no uniqueness of types).
+pub proof fn ind_cong(sig: Sig, g: Ctx, rid: u64, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, th: ExprSpec)
+    requires
+        rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        ps.len() == rshape(sig, rid).np,
+        ps2.len() == rshape(sig, rid).np,
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q])),
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps), th)),
+    ensures
+        tchain(sig, g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps2)),
+{
+    let sh = rshape(sig, rid);
+    let np = sh.np;
+    let ci = ExprSpec::Const(sh.ind, Seq::empty());
+    let thc = crate::dom_iota::spine_gen(sig, g, ci, ps, th);
+    const_typed(sig, g, sh.ind, Seq::empty(), thc);
+    assert(rec_scope(sig, rid));
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    let lps = sig.consts[sh.ind].lps;
+    assert(lps =~= Seq::<u64>::empty());
+    assert(sh.idoms =~= Seq::<ExprSpec>::empty());
+    assert(sh.pdoms + sh.idoms =~= sh.pdoms);
+    let b = crate::rec_canon::tbody(sig.consts[sh.ind].ty, sh.np + sh.ni);
+    crate::dom_canon::sl_none(sig.consts[sh.ind].ty, Seq::empty());
+    let tc = binds(BinderKind::Pi, sh.pdoms, b);
+    assert(dty_at(sig, sh.ind, Seq::empty()) == tc);
+    assert forall|i: int| 0 <= i < ps.len() implies #[trigger] is_pi(trest(tc, ps.subrange(0, i))) by {
+        tel_next(sh.pdoms, b, ps, i);
+    }
+    assert forall|i: int| 0 <= i < ps.len() implies derivable(sig, eq(g, #[trigger] ps[i], ps2[i], sdom(tc, ps, i))) by {
+        tel_next(sh.pdoms, b, ps, i);
+        vsub_closed(sh.pdoms[i], ps.subrange(0, i));
+    }
+    spine_cong(sig, g, ci, tc, ps, ps2);
+    trest_binds(sh.pdoms, b, ps);
+    let l = b->Sort_0;
+    vsub_closed(b, ps);
+    assert(derivable(sig, eq(g, spine_app(ci, ps), spine_app(ci, ps2), crate::ti_syntax::sort(l))));
+    reveal(crate::ti_sub::tconvd);
+    crate::ti_chain::tchain_one(sig, g, spine_app(ci, ps), spine_app(ci, ps2));
+}
+
+/// A pair at a field's type at one parameter list is one at it at
+/// another equal at the sorts (model-safe: no injectivity).
+pub proof fn field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int, th: ExprSpec,
+    y: ExprSpec, y2: ExprSpec)
+    requires
+        rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        0 <= p < rshape(sig, rid).nmin(),
+        ps.len() == rshape(sig, rid).np,
+        ps2.len() == rshape(sig, rid).np,
+        fs.len() == rshape(sig, rid).fields[p].len(),
+        0 <= k < fs.len(),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q])),
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps),
+            spine_app(ExprSpec::Const(rshape(sig, rid).ind, Seq::empty()), ps), th)),
+        derivable(sig, eq(g, y, y2, crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps2 + fs.subrange(0, k)))),
+    ensures
+        derivable(sig, eq(g, y, y2, crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k)))),
+{
+    ind_cong(sig, g, rid, ps, ps2, th);
+    sr_field_conv(sig, g, rid, p, ps, ps2, fs, k, y, y2);
 }
 
 /// THE RULE'S SPINE over the head arguments and the fields: typed at the
@@ -580,7 +652,7 @@ proof fn sr_inj_fields(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ca
         assert((sh.pdoms + sh.fields[p])[np + k] == sh.fields[p][k]);
         assert(derivable(sig, eq(g, cargs[np + k], cargs[np + k],
             crate::ti_spine::vsub((sh.pdoms + sh.fields[p])[np + k], cargs.subrange(0, np + k)))));
-        sr_field_conv(sig, g, rid, p, ps, ps2, fs, k);
+        sr_field_conv(sig, g, rid, p, ps, ps2, fs, k, fs[k], fs[k]);
     }
 }
 

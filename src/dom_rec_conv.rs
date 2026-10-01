@@ -174,24 +174,6 @@ pub proof fn rule_beta(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, j: int, hea
     crate::dom_rec_red::rule_vsub(sig, c, lv, j, heads, args);
 }
 
-/// Closed fields typed at their types are typed at their instances.
-pub proof fn plain_args(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, j: int, heads: Seq<ExprSpec>, args: Seq<ExprSpec>)
-    requires
-        crate::dom_rec_minor::fields_plain(sig, c, lv, j),
-        0 <= j < rshape(sig, c).nmin(),
-        args.len() == rshape(sig, c).fields[j].len(),
-        forall|k: int| 0 <= k < args.len() ==> derivable(sig, eq(g, #[trigger] args[k], args[k], rshape(sig, c).fields[j][k])),
-    ensures
-        forall|k: int| 0 <= k < args.len() ==> derivable(sig, eq(g, #[trigger] args[k], args[k],
-            crate::ti_spine::vsub(rshape(sig, c).fields[j][k], heads.subrange(0, rshape(sig, c).np as int) + args.subrange(0, k)))),
-{
-    let sh = rshape(sig, c);
-    assert forall|k: int| 0 <= k < args.len() implies derivable(sig, eq(g, #[trigger] args[k], args[k],
-        crate::ti_spine::vsub(sh.fields[j][k], heads.subrange(0, sh.np as int) + args.subrange(0, k)))) by {
-        crate::ti_spine::vsub_closed(sh.fields[j][k], heads.subrange(0, sh.np as int) + args.subrange(0, k));
-    }
-}
-
 /// THE REDEX CONVERTS WITH ITS REDUCT, one side: the recursor applied up
 /// to a major that reduces to a constructor application converts, at the
 /// motive at the major, with the minor at the fields and the recursive

@@ -169,11 +169,85 @@ pub proof fn field_vsub(sig: Sig, rid: u64, p: int, k: int, s: nat, a: Seq<ExprS
     }
 }
 
+/// A field type reads only the parameters: substituting it, the earlier
+/// fields' values do not matter.
+pub proof fn field_vsub_pre(sig: Sig, rid: u64, p: int, k: int, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        0 <= p < rshape(sig, rid).nmin(),
+        0 <= k < rshape(sig, rid).fields[p].len(),
+        a.len() == rshape(sig, rid).np,
+        b.len() == k,
+        c.len() == k,
+    ensures
+        vsub(rshape(sig, rid).fields[p][k], a + b) == vsub(rshape(sig, rid).fields[p][k], a + c),
+{
+    let sh = rshape(sig, rid);
+    let np = sh.np;
+    let f = sh.fields[p][k];
+    let (xs, ys) = (a + b, a + c);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
+        crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+        crate::beta_model::spine_recompose(f);
+        assert(sh.us() =~= Seq::<LevelSpec>::empty());
+        assert(crate::beta_model::spine_args(f) =~= crate::rec_canon::vars(k as nat, np));
+        crate::dom_iota::vars_vidx(k as nat, np);
+        crate::ti_spine::vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), xs);
+        crate::ti_spine::vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), ys);
+        assert(Seq::new(np, |q: int| xs[xs.len() - 1 - crate::dom_iota::vidx(k as nat, np)[q]]) =~= a);
+        assert(Seq::new(np, |q: int| ys[ys.len() - 1 - crate::dom_iota::vidx(k as nat, np)[q]]) =~= a);
+    } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
+        crate::dom_iota::simple_closed(sig, sh.ind, f);
+        crate::ti_spine::vsub_closed(f, xs);
+        crate::ti_spine::vsub_closed(f, ys);
+    } else {
+        let v = f->Var_0;
+        crate::ti_spine::vsub_var(v, xs);
+        crate::ti_spine::vsub_var(v, ys);
+        assert(xs[xs.len() - 1 - v] == a[np + k - 1 - v]);
+        assert(ys[ys.len() - 1 - v] == a[np + k - 1 - v]);
+    }
+}
+
 /// Rule `j`'s field types are level-invariant.
 pub open spec fn fields_lv(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> bool {
     let sh = rshape(sig, rid);
     forall|k: int| 0 <= k < sh.fields[j].len() ==>
         crate::expr_model::subst_expr_levels(#[trigger] sh.fields[j][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[j][k]
+}
+
+/// The parameters' domains are level-invariant.
+pub open spec fn pdoms_lv(sig: Sig, rid: u64, lv: Seq<LevelSpec>) -> bool {
+    let sh = rshape(sig, rid);
+    forall|q: int| 0 <= q < sh.np ==>
+        crate::expr_model::subst_expr_levels(#[trigger] sh.pdoms[q], sig.ienv.recs[rid].uparams, lv) == sh.pdoms[q]
+}
+
+/// A parameter's declared domain in the recursor's telescope: its sort.
+pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        pdoms_lv(sig, rid, lv),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        0 <= q < rshape(sig, rid).np,
+        q <= xs.len(),
+    ensures
+        crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat) == rshape(sig, rid).pdoms[q],
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
+    crate::dom_iota::major_form(sig, rid, lv);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(sh.pdoms.len() == sh.np);
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + sh.nmin(), sh.np));
+    assert((sh.head_doms(lm) + seq![major])[q] == sh.pdoms[q]);
+    rec_dom(sig, rid, lv, xs, q);
+    crate::ti_spine::vsub_closed(sh.pdoms[q], xs.subrange(0, q));
 }
 
 /// The fragment's field facts for rule `j`: closed and level-invariant.

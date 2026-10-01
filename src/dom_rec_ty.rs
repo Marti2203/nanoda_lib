@@ -360,6 +360,29 @@ pub proof fn scope_ctor(sig: Sig, rid: u64, p: int)
     assert(0 <= p2 < sh.nmin() && sh.ctors[p2] == c);
 }
 
+/// The inductive of a recursor in scope: canonical, of the recursor's
+/// shape, an axiom, neither a constructor nor a recursor.
+pub proof fn scope_ctor_ind(sig: Sig, rid: u64)
+    requires
+        rec_scope(sig, rid),
+    ensures ({
+        let sh = rshape(sig, rid);
+        &&& crate::dom_code::has_canon(sig, sh.ind)
+        &&& crate::dom_code::canon_shape(sig, sh.ind) == sh
+        &&& sig.consts.contains_key(sh.ind) && sig.consts[sh.ind].val is None
+        &&& !sig.ienv.ctor_ind.contains_key(sh.ind) && !sig.ienv.recs.contains_key(sh.ind)
+    }),
+{
+    let sh = rshape(sig, rid);
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    assert(sh.ind == ind);
+    assert(crate::dom_code::has_canon(sig, ind));
+    let r2 = crate::dom_code::canon_rec(sig, ind);
+    assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
+    assert(r2 == rid);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+}
+
 /// A constructor application is not a binder.
 pub proof fn spine_const_nonbind(c: u64, us: Seq<LevelSpec>, args: Seq<ExprSpec>)
     ensures
