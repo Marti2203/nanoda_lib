@@ -58,6 +58,7 @@ pub mod inductive;
 pub mod jkernel;
 pub mod rec_canon;
 pub mod ti_locals;
+pub mod ti_ls2;
 pub mod kbind;
 pub mod ti_zsize;
 pub mod ti_level;

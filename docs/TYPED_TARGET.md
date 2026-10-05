@@ -936,6 +936,40 @@ Stages, each landing through the gate:
   **Parameters: done for type parameters and monomorphic formers over
   them.** Open: value parameters; universe polymorphism (`Option.{u}`,
   `List.{u}` — most real formers).
+  **Universe polymorphism, the design (2026-10-05, not started).** 42
+  `lps.len() == 0` sites over 12 modules. What exists: `ceval`/`lsub`
+  already evaluate codes at a level instance; the judgment's constant
+  rules relate level-equivalent instances (`levs_eq` in
+  `ConstAx`/`ConstDef`); `ti_level::d_ls` instantiates a derivation at one
+  instance. Steps:
+  - U1, metatheory: `d_ls2`, the pair form of `d_ls` — a derivation in
+    the level parameters gives `e[vs] ≡ e[vs2] : T[vs]` for pointwise
+    level-equivalent `vs`, `vs2` (by the constant rules' `levs_eq` and
+    `Univ`), the level analogue of `d_sub` over an `spair`.
+  - U2, codes: `canon_ok` and `tabled` drop `lps == 0`; tables at an
+    instance evaluate fields at it (`centries` already passes `ls`);
+    `canon_code` must be the same at level-equivalent instances (its key
+    carries `is_prop_at`, which can differ: `Sort u` is Prop at `u = 0`,
+    so restrict to inductives whose sort is never Prop — `Sort (u+1)`,
+    `Type u` — until the Prop stage).
+  - U3, the relation: `peq` asks the derivable equation only without
+    level parameters; with them it gets the instance's domain
+    (`pdoms[q][ls]`), and `pconv` the instances' level equivalence; the
+    lifting/transfer lemmas take `ps_inst` composed with `d_ls2`.
+  - U4, the recursor: `rec_frag` drops `ind lps empty`; the motive's
+    extra universe and `elim_level` instance the rule bodies at
+    `lv = motive :: ind's`; `fields_lv` becomes "fields at the ind's part
+    of `lv`".
+  The first concrete obstacle is U2's code identity across equivalent
+  instances, which the relation (two sides at `ls`, `ls2`) needs.
+  **U1 landed (ti_ls2):** `d_ls2` over `lpair` (the level analogue of
+  `spair`: variables typed at their types' first instance, those types
+  converting to the second). The computation rules (Beta, Zeta, Iota,
+  Eta, Irr, Delta) need no rebuilding: each has a premise `n ≡ n : a`, so
+  the node's first instance (`ls_move`: `d_ls`, then into `dl` by `d_sub`
+  at the identity pair) chains with that premise's pair. Congruences
+  mirror `d_sub`; the constant rules are rebuilt at the two instances
+  (`lls_pair`). `ls_pair_nil` is the closed-term corollary.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.
