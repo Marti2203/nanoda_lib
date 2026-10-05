@@ -1531,7 +1531,7 @@ pub open spec fn cf_fields_ok(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq
     &&& 0 <= p < sh.nmin()
     &&& sig.consts[sh.ind].lps.len() == 0
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
-    &&& crate::dom_code::never_prop(sig, sh.ind)
+    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& crate::dom_tele::chain_ok(sig, sh.pdoms, bot_env(), dps, pv)
     &&& xf.len() == sh.fields[p].len()
@@ -2260,7 +2260,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_model::sem_const(sig, rid, lv)
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& crate::dom_model::sem_const(sig, sh.ctors[p], clv)
-    &&& crate::dom_code::never_prop(sig, sh.ind)
+    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& crate::dom_rec_minor::pdoms_lv(sig, rid, lv)
@@ -2578,6 +2578,72 @@ pub proof fn r2l_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<
 /// IOTA, RIGHT IN LEFT, without extra arguments: a member of the rule
 /// applied to the head arguments and the fields is a member of the
 /// recursor applied up to its major, a constructor application of exact
+/// THE REBUILT INPUTS FIT the recursor's telescope: the heads as walked,
+/// the rebuilt major at the canonical code at the parameters' values.
+#[verifier::spinoff_prover]
+pub proof fn r2l_fit(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        crate::dom_rec_end::rec_hyps(sig, rid),
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = (sh.np + 1 + sh.nmin()) as int;
+        let x = rebuilt(sig, rid, p, xs);
+        let dsx = ds.subrange(0, pre).push(crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), xs.subrange(0, sh.np as int)));
+        let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+        &&& x.len() == tds.len() && dsx.len() == tds.len()
+        &&& forall|i: int| 0 <= i < tds.len() ==> #[trigger] crate::dom_sound::dfit(sig, tds[i],
+            crate::dom_tele::exts(bot_env(), x.subrange(0, i)), dsx[i], x[i])
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
+    r2l_fields(sig, rid, lv, p, clv, ds, xs);
+    let xf = xs.subrange(pre, xs.len() as int);
+    let ak = ds.subrange(pre, ds.len() as int);
+    let (dps, pv) = (ds.subrange(0, np as int), xs.subrange(0, np as int));
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
+        assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+        typed_wf(xs[i], ds[i]);
+    }
+    rebuilt_facts(sig, rid, p, xs);
+    let x = rebuilt(sig, rid, p, xs);
+    let maj = Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf);
+    let dcan = crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), pv);
+    cf_val_typed(sig, rid, p, dps, pv, xf, ak);
+    let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
+    major_form(sig, rid, lv);
+    assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
+    let dsx = ds.subrange(0, pre).push(dcan);
+    let envm = crate::dom_tele::exts(bot_env(), xs.subrange(0, pre));
+    assert forall|j: nat| #[trigger] wf(envm(j)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre), j);
+    }
+    assert forall|q: int| 0 <= q < np implies #[trigger] le(pv[q], envm((1 + nmin + np - 1 - q) as nat)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre), (1 + nmin + np - 1 - q) as nat);
+        assert(xs.subrange(0, pre)[q] == pv[q]);
+        assert(wf(envm((1 + nmin + np - 1 - q) as nat)));
+        le_refl(pv[q]);
+    }
+    ind_pv_mem(sig, rid, (1 + nmin) as nat, envm, dps, pv);
+    assert forall|i: int| 0 <= i < tds.len() implies #[trigger] crate::dom_sound::dfit(sig, tds[i],
+        crate::dom_tele::exts(bot_env(), x.subrange(0, i)), dsx[i], x[i]) by {
+        assert(x.subrange(0, i) =~= xs.subrange(0, i));
+        if i < pre {
+            assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+            assert(tl[i] == tds[i] && dsx[i] == ds[i] && x[i] == xs[i]);
+        } else {
+            assert(x[i] == maj && dsx[i] == dcan);
+        }
+    }
+}
+
 /// arity.
 #[verifier::spinoff_prover]
 pub proof fn iota_core_r2l(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelSpec, p: int, clv: Seq<LevelSpec>,
@@ -2651,32 +2717,9 @@ pub proof fn iota_core_r2l(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: L
     let maj = Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf);
     // the recursor's step at the rebuilt inputs
     let dcan = crate::dom_code::canon_code(sig, sh.ind, Seq::empty(), pv);
-    cf_val_typed(sig, rid, p, dps, pv, xf, ak);
     let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
-    major_form(sig, rid, lv);
-    assert(crate::level_model::subst_levels_spec(sh.us(), rd.uparams, lv) =~= Seq::<LevelSpec>::empty());
     let dsx = ds.subrange(0, pre).push(dcan);
-    let envm = crate::dom_tele::exts(bot_env(), xs.subrange(0, pre));
-    assert forall|j: nat| #[trigger] wf(envm(j)) by {
-        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre), j);
-    }
-    assert forall|q: int| 0 <= q < np implies #[trigger] le(pv[q], envm((1 + nmin + np - 1 - q) as nat)) by {
-        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, pre), (1 + nmin + np - 1 - q) as nat);
-        assert(xs.subrange(0, pre)[q] == pv[q]);
-        assert(wf(envm((1 + nmin + np - 1 - q) as nat)));
-        le_refl(pv[q]);
-    }
-    ind_pv_mem(sig, rid, (1 + nmin) as nat, envm, dps, pv);
-    assert forall|i: int| 0 <= i < tds.len() implies #[trigger] crate::dom_sound::dfit(sig, tds[i],
-        crate::dom_tele::exts(bot_env(), x.subrange(0, i)), dsx[i], x[i]) by {
-        assert(x.subrange(0, i) =~= xs.subrange(0, i));
-        if i < pre {
-            assert(crate::dom_sound::dfit(sig, tl[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
-            assert(tl[i] == tds[i] && dsx[i] == ds[i] && x[i] == xs[i]);
-        } else {
-            assert(x[i] == maj && dsx[i] == dcan);
-        }
-    }
+    r2l_fit(sig, rid, lv, p, clv, ds, xs);
     let (ar, sr) = crate::dom_rec_ty::rec_step(ss, sig, rid, lv, l, bot_env(), dsx, x);
     typed_wf(sr, ar);
     le_refl(sr);

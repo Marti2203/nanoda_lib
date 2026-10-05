@@ -251,6 +251,7 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
         #[trigger] crate::dom_model::sem_const(sig, c, lv) && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv))
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& crate::dom_code::never_prop(sig, sh.ind)
+    &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::dom_model::sem_const(sig, #[trigger] sh.ctors[p], Seq::empty())
         && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)

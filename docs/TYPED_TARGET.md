@@ -981,6 +981,16 @@ Stages, each landing through the gate:
   without their level instance (`ctor_field_ty`, `pvar_ty`, `direct_ty`,
   `ctor_result`, `fq_closed`, `field_facts`, `tb_mem`, …); U3 generalizes
   them to the instance (`subst_expr_levels(F, lps, ls)`, as `fq` reads).
+  **U3a: level-blind codes.** A code reads its instance only through
+  nested formers' Prop flags and table length checks, so when every
+  former in a field is never-Prop or monomorphic (`former_blind`,
+  `blind_ty`, `fields_blind`, now in `canon_ok`, `rec_model`, `r2l_ok`,
+  `cf_fields_ok`), codes at ANY two instances of the same length are
+  equal (`canon_blind`, `ceval_blind` & co). So `cf`, `tbl_canon` and
+  `entry_canon` keep their instance-free signatures; U3b only carries
+  the instance on the term side (`subst_expr_levels(F, lps, ls)` where
+  `sl_none` gave `F`). Split for resource limits: `ftds_vsub` out of
+  `sr_rule_arg`, `r2l_fit` out of `iota_core_r2l`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

@@ -496,6 +496,74 @@ pub proof fn sr_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
     assert(Seq::new(vs.len(), |i: int| xs[xs.len() - 1 - vs[i]]) =~= heads.subrange(0, np as int) + cargs);
 }
 
+/// A field's binder in the rule's telescope, instantiated along the
+/// heads and earlier fields, is the field type at the parameters.
+#[verifier::spinoff_prover]
+proof fn ftds_vsub(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>, k: int)
+    requires
+        sr_ok(sig, rid, lv, p),
+        heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
+        0 <= k < rshape(sig, rid).fields[p].len(),
+        k <= cargs.len(),
+    ensures
+        crate::ti_spine::vsub(crate::dom_iota::ftds(sig, rid, lv, p)[k], (heads + cargs).subrange(0, (heads.len() + k) as int))
+            == crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], heads.subrange(0, rshape(sig, rid).np as int) + cargs.subrange(0, k)),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + nmin + 1) as int;
+    let ff = crate::dom_iota::ftds(sig, rid, lv, p);
+    let xs = heads + cargs;
+    let f = sh.fields[p][k];
+    let ys = heads.subrange(0, np as int) + cargs.subrange(0, k);
+    let xk = xs.subrange(0, pre + k);
+    assert(xk.len() == pre + k);
+    assert(sh.us() =~= Seq::<LevelSpec>::empty());
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    let ks = rd.uparams;
+    if crate::dom_iota::isrec(sig, rid, p, k) {
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
+        crate::beta_model::spine_recompose(f);
+        assert(crate::beta_model::spine_args(f) =~= vars(k as nat, np));
+        let lf = crate::subst_algebra::lift(1 + nmin, k as nat, f);
+        crate::subst_algebra::lift_spine_app(1 + nmin, k as nat, ci, vars(k as nat, np));
+        assert(crate::subst_algebra::slift(1 + nmin, k as nat, vars(k as nat, np)) =~= vars(k as nat + 1 + nmin, np));
+        crate::dom_rec_shape::sl_spine(ci, vars(k as nat + 1 + nmin, np), ks, lv);
+        crate::dom_rec_shape::sl_vars(k as nat + 1 + nmin, np, ks, lv);
+        assert(crate::level_model::subst_levels_spec(Seq::<LevelSpec>::empty(), ks, lv) =~= Seq::<LevelSpec>::empty());
+        assert(ff[k] == spine_app(ci, vars(k as nat + 1 + nmin, np)));
+        crate::dom_iota::vars_vidx(k as nat + 1 + nmin, np);
+        crate::dom_iota::vars_vidx(k as nat, np);
+        vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat + 1 + nmin, np), xk);
+        vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), ys);
+        assert(Seq::new(np, |q: int| xk[xk.len() - 1 - crate::dom_iota::vidx(k as nat + 1 + nmin, np)[q]]) =~= heads.subrange(0, np as int));
+        assert(Seq::new(np, |q: int| ys[ys.len() - 1 - crate::dom_iota::vidx(k as nat, np)[q]]) =~= heads.subrange(0, np as int));
+    } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
+        crate::dom_iota::simple_closed(sig, sh.ind, f);
+        crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
+        assert(ff[k] == f);
+        vsub_closed(f, xk);
+        vsub_closed(f, ys);
+    } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
+        crate::dom_rec_minor::field_vsub(sig, rid, p, k, (1 + nmin) as nat, heads.subrange(0, np as int),
+            heads.subrange(np as int, pre), cargs.subrange(0, k));
+        assert(heads.subrange(0, np as int) + heads.subrange(np as int, pre) + cargs.subrange(0, k) =~= xk);
+        crate::ti_level::ls_lift(1 + nmin, k as nat, f, ks, lv);
+        assert(sh.field_at(p, k, 1 + nmin) == crate::subst_algebra::lift(1 + nmin, k as nat, f));
+        assert(ff[k] == crate::subst_algebra::lift(1 + nmin, k as nat, f));
+    } else {
+        let v = f->Var_0;
+        assert(crate::subst_algebra::lift(1 + nmin, k as nat, f) == ExprSpec::Var(v + 1 + nmin));
+        assert(ff[k] == ExprSpec::Var(v + 1 + nmin));
+        vsub_var(v + 1 + nmin, xk);
+        vsub_var(v, ys);
+        assert(xk[xk.len() - 1 - (v + 1 + nmin)] == heads[np + k - 1 - v]);
+        assert(ys[ys.len() - 1 - v] == heads[np + k - 1 - v]);
+    }
+}
+
 /// One argument of the rule's spine, at its domain.
 #[verifier::spinoff_prover]
 proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>, i: int)
@@ -540,46 +608,7 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
         assert(xk.len() == pre + k);
         crate::dom_rec_ty::scope_ctor(sig, rid, p);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-        let ks = rd.uparams;
-        if crate::dom_iota::isrec(sig, rid, p, k) {
-            let ci = ExprSpec::Const(sh.ind, Seq::empty());
-            crate::beta_model::spine_recompose(f);
-            assert(crate::beta_model::spine_args(f) =~= vars(k as nat, np));
-            let lf = crate::subst_algebra::lift(1 + nmin, k as nat, f);
-            crate::subst_algebra::lift_spine_app(1 + nmin, k as nat, ci, vars(k as nat, np));
-            assert(crate::subst_algebra::slift(1 + nmin, k as nat, vars(k as nat, np)) =~= vars(k as nat + 1 + nmin, np));
-            crate::dom_rec_shape::sl_spine(ci, vars(k as nat + 1 + nmin, np), ks, lv);
-            crate::dom_rec_shape::sl_vars(k as nat + 1 + nmin, np, ks, lv);
-            assert(crate::level_model::subst_levels_spec(Seq::<LevelSpec>::empty(), ks, lv) =~= Seq::<LevelSpec>::empty());
-            assert(ff[k] == spine_app(ci, vars(k as nat + 1 + nmin, np)));
-            crate::dom_iota::vars_vidx(k as nat + 1 + nmin, np);
-            crate::dom_iota::vars_vidx(k as nat, np);
-            vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat + 1 + nmin, np), xk);
-            vsub_spine_vars(ci, crate::dom_iota::vidx(k as nat, np), ys);
-            assert(Seq::new(np, |q: int| xk[xk.len() - 1 - crate::dom_iota::vidx(k as nat + 1 + nmin, np)[q]]) =~= heads.subrange(0, np as int));
-            assert(Seq::new(np, |q: int| ys[ys.len() - 1 - crate::dom_iota::vidx(k as nat, np)[q]]) =~= heads.subrange(0, np as int));
-        } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
-            crate::dom_iota::simple_closed(sig, sh.ind, f);
-            crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
-            assert(ff[k] == f);
-            vsub_closed(f, xk);
-            vsub_closed(f, ys);
-        } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
-            crate::dom_rec_minor::field_vsub(sig, rid, p, k, (1 + nmin) as nat, heads.subrange(0, np as int),
-                heads.subrange(np as int, pre), cargs.subrange(0, k));
-            assert(heads.subrange(0, np as int) + heads.subrange(np as int, pre) + cargs.subrange(0, k) =~= xk);
-            crate::ti_level::ls_lift(1 + nmin, k as nat, f, ks, lv);
-            assert(sh.field_at(p, k, 1 + nmin) == crate::subst_algebra::lift(1 + nmin, k as nat, f));
-            assert(ff[k] == crate::subst_algebra::lift(1 + nmin, k as nat, f));
-        } else {
-            let v = f->Var_0;
-            assert(crate::subst_algebra::lift(1 + nmin, k as nat, f) == ExprSpec::Var(v + 1 + nmin));
-            assert(ff[k] == ExprSpec::Var(v + 1 + nmin));
-            vsub_var(v + 1 + nmin, xk);
-            vsub_var(v, ys);
-            assert(xk[xk.len() - 1 - (v + 1 + nmin)] == heads[np + k - 1 - v]);
-            assert(ys[ys.len() - 1 - v] == heads[np + k - 1 - v]);
-        }
+        ftds_vsub(sig, rid, lv, p, heads, cargs, k);
         assert(derivable(sig, eq(g, cargs[k], cargs[k], crate::ti_spine::vsub(f, ys))));
     }
 }

@@ -119,6 +119,7 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
     rk(sig, ind) >= 0 && has_canon(sig, ind) && sig.consts[ind].lps.len() == 0 && never_prop(sig, ind) && fields_typed(sig, ind)
+        && fields_blind(sig, ind)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
 
@@ -547,6 +548,132 @@ pub proof fn never_prop_not(sig: Sig, ind: u64, ls: Seq<LevelSpec>)
         let rho = Map::<nat, nat>::empty();
         crate::level_model::subst_level_spec_interp(l0, lps, ls, rho);
         assert(crate::level_model::interp(l0, crate::level_model::subst_env(rho, lps, ls)) > 0);
+    }
+}
+
+/// A former whose codes ignore its level instance: never Prop, or without
+/// level parameters (docs/TYPED_TARGET.md, "Universe polymorphism", U3).
+pub open spec fn former_blind(sig: Sig, j: u64) -> bool {
+    never_prop(sig, j) || sig.consts[j].lps.len() == 0
+}
+
+/// Every constant a type mentions is `former_blind`.
+pub open spec fn blind_ty(sig: Sig, e: ExprSpec) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => blind_ty(sig, *f) && blind_ty(sig, *x),
+        ExprSpec::Const(j, _) => former_blind(sig, j),
+        _ => true,
+    }
+}
+
+/// `ind`'s non-recursive field types are `blind_ty`.
+pub open spec fn fields_blind(sig: Sig, ind: u64) -> bool {
+    let sh = canon_shape(sig, ind);
+    forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat) ==> #[trigger] blind_ty(sig, sh.fields[p][k])
+}
+
+/// A blind type's head is a blind former.
+pub proof fn blind_head(sig: Sig, e: ExprSpec)
+    requires
+        blind_ty(sig, e),
+        spine_head(e) is Const,
+    ensures
+        former_blind(sig, spine_head(e)->Const_0),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        blind_head(sig, *f);
+    }
+}
+
+/// A BLIND FORMER'S CODES ignore its instance (of the right length).
+pub proof fn canon_blind(sig: Sig, j: u64, u1: Seq<LevelSpec>, u2: Seq<LevelSpec>, a: Seq<Cpt>)
+    requires
+        former_blind(sig, j),
+        u1.len() == u2.len(),
+    ensures
+        canon_code(sig, j, u1, a) == canon_code(sig, j, u2, a),
+    decreases rk(sig, j) + 1, 0int, 0int,
+{
+    if never_prop(sig, j) {
+        never_prop_not(sig, j, u1);
+        never_prop_not(sig, j, u2);
+    } else if u1.len() == 0 {
+        assert(u1 =~= u2);
+    }
+    if tabled(sig, j, u1, a) {
+        cblocks_blind(sig, j, u1, u2, a, canon_shape(sig, j).nmin());
+    }
+}
+
+pub proof fn cblocks_blind(sig: Sig, ind: u64, u1: Seq<LevelSpec>, u2: Seq<LevelSpec>, a: Seq<Cpt>, j: nat)
+    requires
+        fields_blind(sig, ind),
+        u1.len() == u2.len(),
+    ensures
+        cblocks(sig, ind, u1, a, j) == cblocks(sig, ind, u2, a, j),
+    decreases rk(sig, ind), 3int, j,
+{
+    let sh = canon_shape(sig, ind);
+    if !(j == 0 || j > sh.nmin() || rk(sig, ind) < 0) {
+        cblocks_blind(sig, ind, u1, u2, a, (j - 1) as nat);
+        centries_blind(sig, ind, u1, u2, a, (j - 1) as nat, sh.fields[j - 1].len());
+    }
+}
+
+pub proof fn centries_blind(sig: Sig, ind: u64, u1: Seq<LevelSpec>, u2: Seq<LevelSpec>, a: Seq<Cpt>, j: nat, k: nat)
+    requires
+        fields_blind(sig, ind),
+        u1.len() == u2.len(),
+    ensures
+        centries(sig, ind, u1, a, j, k) == centries(sig, ind, u2, a, j, k),
+    decreases rk(sig, ind), 2int, k,
+{
+    let sh = canon_shape(sig, ind);
+    if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || a.len() < sh.np) {
+        centries_blind(sig, ind, u1, u2, a, j, (k - 1) as nat);
+        let e = sh.fields[j as int][k - 1];
+        if !direct_occ(e, ind, sh.us(), sh.np, sh.ni, (k - 1) as nat) {
+            assert(blind_ty(sig, e));
+            ceval_blind(sig, rk(sig, ind), ind, u1, u2, fpe(a, sh.np, (k - 1) as nat), e);
+        }
+    }
+}
+
+pub proof fn ceval_blind(sig: Sig, r: int, outer: u64, u1: Seq<LevelSpec>, u2: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        blind_ty(sig, e),
+    ensures
+        ceval(sig, r, outer, u1, pe, e) == ceval(sig, r, outer, u2, pe, e),
+    decreases r, 1int, esize(e) + 1,
+{
+    if !(e is Var) {
+        if let ExprSpec::Const(jd, us) = spine_head(e) {
+            if 0 <= rk(sig, jd) < r {
+                cargs_blind(sig, r, outer, u1, u2, pe, e);
+                blind_head(sig, e);
+                canon_blind(sig, jd, lsub(sig, outer, u1, us), lsub(sig, outer, u2, us), cargs(sig, r, outer, u1, pe, e));
+            }
+        }
+    }
+}
+
+pub proof fn cargs_blind(sig: Sig, r: int, outer: u64, u1: Seq<LevelSpec>, u2: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        blind_ty(sig, e),
+    ensures
+        cargs(sig, r, outer, u1, pe, e) == cargs(sig, r, outer, u2, pe, e),
+    decreases r, 1int, esize(e),
+{
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+        cargs_blind(sig, r, outer, u1, u2, pe, *f);
+        ceval_blind(sig, r, outer, u1, u2, pe, *x);
     }
 }
 
