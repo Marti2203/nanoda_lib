@@ -87,6 +87,7 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
         crate::dom_sound::sound_oracle(crate::ti_strip::strip(sig), sig),
         crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_fire(sig, m),
+        crate::ti_syntax::iota_lv(sig, m),
         derivable(sig, eq(g, m, m, t)),
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
         forall|i: nat| #[trigger] wf(rho(i)),
@@ -131,10 +132,18 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(a0 + extra =~= args);
     crate::dom_iota::spine_concat(h, a0, extra);
     let x1 = spine_app(h, a0);
-    // the major's constructor has no levels
-    assert(sig.consts[sh.ind].lps.len() == 0);
+    // the major's constructor's instance is the recursor's, up to
+    // equivalence (Iota's level condition)
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape(sig, sh.ind, p);
     assert(sig.consts[cid].lps == sig.consts[sh.ind].lps);
-    assert(clv =~= Seq::<LevelSpec>::empty());
+    assert(clv.len() == sig.consts[sh.ind].lps.len());
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    reveal(crate::ti_syntax::iota_lv);
+    assert(crate::conv_cr::levs_eq(us, clv));
+    crate::dom_rec_ty::rec_lps_sub(sig, rid);
+    crate::dom_rec_end::rec_model_at(sig, rid, us);
+    crate::dom_rec_end::rec_model_at(sig, rid, clv);
     // the rule's side
     let heads = a0.subrange(0, pre);
     let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
@@ -159,11 +168,20 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(crate::dom_model::sem_const(sig, rid, lv) && crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, rid, lv)));
     let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
         crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l)));
-    assert(crate::dom_model::sem_const(sig, sh.ctors[p], Seq::empty()));
+    assert(crate::dom_model::sem_const(sig, sh.ctors[p], clv));
+    // the constructor's type at its instance is closed, from its own
+    assert(crate::dom_rec_end::ty_closed(ss, crate::ti_syntax::dty_at(sig, cid, Seq::empty())));
+    let r0 = sig.consts[cid].ty;
+    crate::dom_levels::sl_nil(r0, sig.consts[cid].lps);
+    let l0 = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), r0, r0, crate::ti_syntax::sort(l)));
+    crate::dom_levels::sig_lps_at(sig, sig.consts[cid].lps, clv);
+    crate::ti_level::derivable_ls(ss, eq(Seq::empty(), r0, r0, crate::ti_syntax::sort(l0)), sig.consts[cid].lps, clv);
+    assert(crate::ti_level::gls(Seq::<ExprSpec>::empty(), sig.consts[cid].lps, clv) =~= Seq::<ExprSpec>::empty());
+    assert(derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, clv), crate::ti_syntax::dty_at(sig, cid, clv),
+        crate::ti_syntax::sort(crate::level_model::subst_level_spec(l0, sig.consts[cid].lps, clv)))));
     assert(crate::dom_rec_end::ty_closed(ss, crate::ti_syntax::dty_at(sig, cid, clv)));
     let lc = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, clv),
         crate::ti_syntax::dty_at(sig, cid, clv), crate::ti_syntax::sort(l)));
-    assert(crate::dom_rec_minor::fields_lv(sig, rid, lv, p));
     assert(crate::dom_iota::r2l_ok(sig, rid, lv, p, clv));
     assert(a0.last() == major);
     assert(major == spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs));

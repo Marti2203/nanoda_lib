@@ -1130,6 +1130,23 @@ Stages, each landing through the gate:
   premise (`rec_conv_side`); renaming, substitution, local swap/close and
   level instantiation and signature extension carry it (`pjs_*`,
   `rinst_ls`); it is opaque, so rules other than `Iota` do not unfold it.
+  **U4b-5b: the model's Iota at every instance; `rec_frag` drops
+  `pdoms_lv` and `fields_lv`.** The constructor step (`cf_fields_ok`,
+  `cf_chain`, `cf_val_typed`, `cf_step`, `ind_pv_mem`, `typed_at_pv`,
+  `ind_ty_plain`) works at the constructor's instance `cl`: the parameters
+  typed along their sorts there (`pdoms_at`), the fields at `cfu(cl)`, the
+  recursive ones at the canonical code at `cl`. The right-in-left
+  direction reads the rule's binders at the recursor's instance `us` and
+  moves to the major's `clv` (equivalent by `iota_lv`): a parameter's sort
+  has the same members at equivalent levels (`sort_mem_lv`,
+  `chain_pdoms_lv`), a closed field's two instances convert in the
+  stripped signature so the soundness oracle gives them the same members
+  (`r2l_closed_field`), the canonical code ignores the instance
+  (`canon_blind`). `rec_model` makes the constructors semantic at every
+  instance. With this the recursor fragment no longer restricts
+  universes: universe-polymorphic inductives whose fields are recursive,
+  closed or parameters (`List.{u}`, `Prod.{u,v}`, `Option.{u}`) are in it;
+  fields over the parameters stay monomorphic (`pfield_ok`, U3c).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

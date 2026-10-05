@@ -169,6 +169,7 @@ pub proof fn ctor_at(sig: Sig, rid: u64, p: int, us: Seq<LevelSpec>)
         &&& tds.len() == sh.np + sh.fields[p].len()
         &&& forall|q: int| 0 <= q < sh.np ==> #[trigger] tds[q] == crate::dom_rel::ptype(sig, sh.ind, us, q)
         &&& forall|k: int| 0 <= k < sh.fields[p].len() ==> #[trigger] tds[sh.np + k] == cfu(sig, rid, p, k, us)
+        &&& crate::dom_iota::cbody(sig, rid, p, us) == spine_app(ExprSpec::Const(sh.ind, us), vars(sh.fields[p].len(), sh.np))
     }),
 {
     let sh = rshape(sig, rid);

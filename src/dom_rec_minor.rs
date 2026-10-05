@@ -222,20 +222,6 @@ pub proof fn field_vsub_pre(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpe
     }
 }
 
-/// Rule `j`'s field types are level-invariant.
-pub open spec fn fields_lv(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> bool {
-    let sh = rshape(sig, rid);
-    forall|k: int| 0 <= k < sh.fields[j].len() ==>
-        crate::expr_model::subst_expr_levels(#[trigger] sh.fields[j][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[j][k]
-}
-
-/// The parameters' domains are level-invariant.
-pub open spec fn pdoms_lv(sig: Sig, rid: u64, lv: Seq<LevelSpec>) -> bool {
-    let sh = rshape(sig, rid);
-    forall|q: int| 0 <= q < sh.np ==>
-        crate::expr_model::subst_expr_levels(#[trigger] sh.pdoms[q], sig.ienv.recs[rid].uparams, lv) == sh.pdoms[q]
-}
-
 /// A parameter's declared domain in the recursor's telescope: its sort.
 pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int)
     requires

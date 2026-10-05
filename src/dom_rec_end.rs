@@ -228,10 +228,9 @@ pub proof fn tel_dom_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i:
     crate::dom_rec_minor::vsub_pi_dom(ds[i], crate::rec_canon::binds(BinderKind::Pi, ds.subrange(i + 1, ds.len() as int), b), xi);
 }
 
-/// WHAT THE RECURSOR'S END ASSUMES of the signature: subject reduction and
-/// the recursor in scope over an inductive without parameters or levels,
-/// its constructors neither recursors nor definitions, its rules well
-/// formed, and its fields closed and level-invariant.
+/// WHAT THE RECURSOR'S END ASSUMES of the signature: Iota's signature
+/// condition, the model's facts about the recursor (`sig_rec`) and the
+/// recursor in the fragment.
 pub open spec fn rec_hyps(sig: Sig, c: u64) -> bool {
     crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c)
 }
@@ -285,8 +284,9 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     &&& crate::dom_code::never_prop(sig, sh.ind)
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& crate::dom_levels::sig_lps(sig)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::dom_model::sem_const(sig, #[trigger] sh.ctors[p], Seq::empty())
-        && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty()))
+    &&& forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[sh.ind].lps.len() && 0 <= p < sh.nmin()
+        ==> #[trigger] crate::dom_model::sem_const(sig, sh.ctors[p], ls)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
@@ -500,8 +500,6 @@ pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
-    &&& forall|lv: Seq<LevelSpec>, p: int| 0 <= p < sh.nmin() ==> #[trigger] crate::dom_rec_minor::fields_lv(sig, c, lv, p)
-    &&& forall|lv: Seq<LevelSpec>| #[trigger] crate::dom_rec_minor::pdoms_lv(sig, c, lv)
 }
 
 /// Closed simple types read only the constants.
@@ -596,12 +594,6 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     let sh = crate::dom_rec_ty::rshape(s1, c);
     assert(sh == crate::dom_rec_ty::rshape(s2, c));
     assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
-    assert forall|lv: Seq<LevelSpec>, p: int| 0 <= p < sh.nmin() implies #[trigger] crate::dom_rec_minor::fields_lv(s2, c, lv, p) by {
-        assert(crate::dom_rec_minor::fields_lv(s1, c, lv, p));
-    }
-    assert forall|lv: Seq<LevelSpec>| #[trigger] crate::dom_rec_minor::pdoms_lv(s2, c, lv) by {
-        assert(crate::dom_rec_minor::pdoms_lv(s1, c, lv));
-    }
 }
 
 /// The fragment reads only the constants and the inductive tables.
