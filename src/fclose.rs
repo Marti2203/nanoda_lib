@@ -326,6 +326,7 @@ pub proof fn fclose_iota_extract(k: nat, c: nat, env: EnvSpec, pidx: usize, inne
 }
 
 /// PARALLEL REDUCTION IS STABLE UNDER CLOSING A LOCAL.
+#[verifier::spinoff_prover]
 pub proof fn pstep_fclose(env: EnvSpec, k: nat, c: nat, e1: ExprSpec, e2: ExprSpec)
     requires
         env_bv_free(env),

@@ -998,6 +998,7 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
         &&& crate::dom_rec::apps(w.u0, w.ws) == crate::dom_rec::recval(sig, rc.c, rc.fs)
     }),
 {
+    walk_value(sig, rc);
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let nf = rc.nf(sig);
@@ -1027,6 +1028,22 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
             crate::dom_rec::ih_in(sig.ienv.recs[rc.c], rc.fs, fsm[sh.rposj(rc.j)[r] as int])) by {
         assert(w.ws[nf + r] == hs[r]);
     }
+}
+
+/// The walk's minor applied to its values is the recursor's value.
+#[verifier::spinoff_prover]
+proof fn walk_value(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures
+        crate::dom_rec::apps(walk_of(sig, rc).u0, walk_of(sig, rc).ws) == crate::dom_rec::recval(sig, rc.c, rc.fs),
+{
+    let w = walk_of(sig, rc);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let nf = rc.nf(sig);
+    let fsm = rc.fsm(sig);
+    crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
+    let hs = crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf);
     assert(rc.fs.last() == rc.wx(sig));
     let rd = sig.ienv.recs[rc.c];
     assert(rd.num_params == sh.np && rd.num_motives == 1);
