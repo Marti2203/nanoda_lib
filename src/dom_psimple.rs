@@ -316,4 +316,40 @@ pub proof fn conv_der(sig: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec, m2: ExprS
     crate::ti_meta::mk_d(sig, r);
 }
 
+/// A former's application over the parameters: its head and arguments.
+pub proof fn psapp_args(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        psapp(sig, ind, pdoms, np, k, e),
+    ensures
+        spine_head(e) is Const,
+        !(e is Var),
+        forall|i: int| 0 <= i < spine_args(e).len() ==> psimple(sig, ind, pdoms, np, k, #[trigger] spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        psapp_args(sig, ind, pdoms, np, k, *f);
+        let a = spine_args(e);
+        assert forall|i: int| 0 <= i < a.len() implies psimple(sig, ind, pdoms, np, k, #[trigger] a[i]) by {
+            if i < a.len() - 1 {
+                assert(a[i] == spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// Both diagonals of a derivable equation.
+pub proof fn der_diag(sig: Sig, g: crate::ti_syntax::Ctx, x: ExprSpec, x2: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, x2, t)),
+    ensures
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, x, t)),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x2, x2, t)),
+{
+    let d = crate::ti_sub::get(sig, crate::ti_syntax::eq(g, x, x2, t));
+    let l = crate::ti_meta::d_left(sig, d);
+    let r = crate::ti_meta::d_right(sig, d);
+    crate::ti_meta::mk_d(sig, l);
+    crate::ti_meta::mk_d(sig, r);
+}
+
 } // verus!

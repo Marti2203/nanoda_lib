@@ -1194,6 +1194,7 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
             } else {
                 crate::dom_rec_ty::scope_ctor(sig, rid, p);
                 crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+                crate::dom_rec_ty::scope_basic(sig, rid, p, k);
                 assert(crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]));
                 simple_closed(sig, sh.ind, sh.fields[p][k]);
                 crate::subst_algebra::lift_closed((1 + p) as nat, k as nat, sh.fields[p][k]);
@@ -1603,6 +1604,7 @@ pub proof fn cf_chain(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<
                 ind_pv_mem_wf(sig, rid, dps, pv, xf, j);
             }
             crate::dom_canon::canon_fields(sig, ind, p, k);
+            crate::dom_rec_ty::scope_basic(sig, rid, p, k);
             if isrec(sig, rid, p, k) {
                 occ_plain(sig, rid, p, k);
                 assert forall|q: int| 0 <= q < np implies #[trigger] le(pv[q], env((k + np - 1 - q) as nat)) by {
@@ -1695,6 +1697,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq<Cpt
         assert(es[k] == crate::dom_code::centry_at(sig, ind, Seq::empty(), pv, p as nat, k as nat));
         assert(ht(xf[k]) < ht(val));
         crate::dom_canon::canon_fields(sig, ind, p, k);
+        crate::dom_rec_ty::scope_basic(sig, rid, p, k);
         if isrec(sig, rid, p, k) {
             typed_up(xf[k], dcan, n);
         } else {
@@ -2249,6 +2252,7 @@ pub proof fn r2l_closed_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, cl
     let f = sh.fields[p][k];
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     assert(crate::rec_canon::simple_ty(sig, sh.ind, f));
     simple_closed(sig, sh.ind, f);
     crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
@@ -2383,6 +2387,7 @@ pub proof fn r2l_fields(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
         r2l_pvar_field(sig, rid, lv, p, clv, ds, xs, k);
         typed_wf(ak[k], Cpt::U);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+        crate::dom_rec_ty::scope_basic(sig, rid, p, k);
         assert(pv[pvq(sig, rid, p, k)] == xs[pvq(sig, rid, p, k)]);
     }
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies

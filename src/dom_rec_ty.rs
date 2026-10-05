@@ -276,6 +276,35 @@ pub open spec fn rec_scope(sig: Sig, rid: u64) -> bool {
     &&& forall|i: int, j: int| #![trigger sig.ienv.recs[rid].uparams[i], sig.ienv.recs[rid].uparams[j]]
         0 <= i < sig.ienv.recs[rid].uparams.len() && 0 <= j < sig.ienv.recs[rid].uparams.len()
         && sig.ienv.recs[rid].uparams[i] == sig.ienv.recs[rid].uparams[j] ==> i == j
+    &&& fields_basic(sig, rid)
+}
+
+/// Every field of the recursor's constructors is `fbasic`.
+#[verifier::opaque]
+pub open spec fn fields_basic(sig: Sig, rid: u64) -> bool {
+    let sh = rshape(sig, rid);
+    forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() ==> #[trigger] fbasic(sig, rid, p, k)
+}
+
+/// A recursor's field the recursor stage handles: a direct occurrence, a
+/// closed simple type, or a type parameter (formers over the parameters
+/// not yet, docs/TYPED_TARGET.md P3b).
+pub open spec fn fbasic(sig: Sig, rid: u64, p: int, k: int) -> bool {
+    let sh = rshape(sig, rid);
+    crate::rec_canon::direct_occ(sh.fields[p][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat)
+        || crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) || crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
+}
+
+/// The recursor's fields are of the kinds it handles.
+pub proof fn scope_basic(sig: Sig, rid: u64, p: int, k: int)
+    requires
+        rec_scope(sig, rid),
+        0 <= p < rshape(sig, rid).nmin(),
+        0 <= k < rshape(sig, rid).fields[p].len(),
+    ensures
+        fbasic(sig, rid, p, k),
+{
+    reveal(fields_basic);
 }
 
 /// The recursor's shape.

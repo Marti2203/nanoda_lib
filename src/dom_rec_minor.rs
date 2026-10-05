@@ -140,6 +140,7 @@ pub proof fn field_vsub(sig: Sig, rid: u64, p: int, k: int, s: nat, a: Seq<ExprS
     let (xs, ys) = (a + b + c, a + c);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(sh.ind, Seq::empty());
         crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
@@ -189,6 +190,7 @@ pub proof fn field_vsub_pre(sig: Sig, rid: u64, p: int, k: int, a: Seq<ExprSpec>
     let (xs, ys) = (a + b, a + c);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(sh.ind, Seq::empty());
         crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);

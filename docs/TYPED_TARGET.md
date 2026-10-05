@@ -908,6 +908,21 @@ Stages, each landing through the gate:
     conversion, the minor's field binders.
   - Gate: the fragment (`rec_canon`) admits `psimple` last, once every
     case is in.
+  **P3b-1 (04adcb7)**: the kind, `plow`, `ptyped`, `ps_inst`, and the
+  lifting/transfer lemmas `ps_rel`/`ps_below`.
+  **P3b-2: the model admits formers over the parameters.** `rec_canon`'s
+  field condition is `field_kind` (opaque: a direct occurrence or
+  `psimple`); `fields_typed` asks `pfield_ok` of the fields that are
+  neither closed nor a parameter. Their cases: `pfield_rel` in the lifting
+  lemma, `pfield_below` in `con_below`, `cf_end_pfield` in constructor
+  adequacy, `ps_bound` in the telescope bound, `ps_ceval_typed` in
+  `canon_typed`. `con_below` now takes the target's parameter relation
+  (`prel` at `t2`); its callers have it (`par_ok` at the high stage,
+  `rc_ptr`, `closed_rel`/`ps_rel` on the arguments). The constructor
+  induction records each type parameter's typing (`pty_ok` in `pr_ok`),
+  which the substitution lemma needs. The recursor stage keeps the old
+  kinds through `rec_scope`'s opaque `fields_basic` (`scope_basic` at
+  each field case); lifting that is the recursor half of P3b.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

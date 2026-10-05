@@ -69,7 +69,8 @@ pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty
         wf(v),
         wf(w),
         n <= n0,
-        rec ==> crate::dom_lift::ptr(sig, n0, n, g, ind, ty, ty, pv) && crate::dom_rel::pconv(sig, g, ind, ty, ty),
+        rec ==> crate::dom_lift::ptr(sig, n0, n, g, ind, ty, ty, pv) && crate::dom_lift::prel(sig, n, g, ind, ty, ty, pv)
+            && crate::dom_rel::pconv(sig, g, ind, ty, ty),
         w is Bot || (con_top(sig, n0, g, y, y2, ty, w, c) && has_type(n0, w, c) && has_type(n0, c, Cpt::U)
             && c is Nd && c->Nd_0 is Ty && fbnd(sig, ind, pv, ty, rec, c) && (d is Bot || fbnd(sig, ind, pv, ty, rec, d))),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
@@ -341,6 +342,7 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, s: nat, rho: crate:
     }
     crate::dom_rec_ty::scope_ctor(sig, c, j);
     crate::dom_canon::canon_fields(sig, ind, j, k);
+    crate::dom_rec_ty::scope_basic(sig, c, j, k);
     if crate::rec_canon::direct_occ(f, ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(ind, Seq::empty());
         crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
@@ -404,6 +406,22 @@ pub proof fn simple_congr(s1: Sig, s2: Sig, ind: u64, e: ExprSpec)
     }
 }
 
+/// Simple types over the parameters read only the constants.
+pub proof fn psimple_congr(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::rec_canon::psimple(s1, ind, pdoms, np, k, e) == crate::rec_canon::psimple(s2, ind, pdoms, np, k, e),
+        crate::rec_canon::psapp(s1, ind, pdoms, np, k, e) == crate::rec_canon::psapp(s2, ind, pdoms, np, k, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        psimple_congr(s1, s2, ind, pdoms, np, k, *f);
+        psimple_congr(s1, s2, ind, pdoms, np, k, *x);
+    }
+}
+
 /// The canonical recursor reads only the constants and the tables.
 pub proof fn canon_congr(s1: Sig, s2: Sig, c: u64)
     requires
@@ -422,6 +440,12 @@ pub proof fn canon_congr(s1: Sig, s2: Sig, c: u64)
         crate::rec_canon::simple_ty(s1, ind, #[trigger] sh.fields[j][k]) == crate::rec_canon::simple_ty(s2, ind, sh.fields[j][k]) by {
         simple_congr(s1, s2, ind, sh.fields[j][k]);
     }
+    reveal(crate::rec_canon::field_kind);
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+        crate::rec_canon::field_kind(s1, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, #[trigger] sh.fields[j][k])
+            == crate::rec_canon::field_kind(s2, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[j][k]) by {
+        psimple_congr(s1, s2, ind, sh.pdoms, sh.np, k as nat, sh.fields[j][k]);
+    }
 }
 
 /// One direction of the scope's congruence.
@@ -436,6 +460,13 @@ pub proof fn scope_dir(s1: Sig, s2: Sig, c: u64)
     canon_congr(s1, s2, c);
     assert(crate::rec_canon::rec_ind(s1, c) == crate::rec_canon::rec_ind(s2, c));
     assert(crate::dom_rec_ty::rshape(s1, c) == crate::dom_rec_ty::rshape(s2, c));
+    let sh = crate::dom_rec_ty::rshape(s1, c);
+    reveal(crate::dom_rec_ty::fields_basic);
+    assert forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() implies
+        #[trigger] crate::dom_rec_ty::fbasic(s2, c, p, k) by {
+        assert(crate::dom_rec_ty::fbasic(s1, c, p, k));
+        simple_congr(s1, s2, sh.ind, sh.fields[p][k]);
+    }
     assert forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(s2, r2)
         && crate::rec_canon::rec_ind(s2, r2) == crate::rec_canon::rec_ind(s2, c) implies r2 == c by {
         canon_congr(s1, s2, r2);
@@ -742,6 +773,7 @@ proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
     let p = j;
     let ind = sh.ind;
     crate::dom_canon::canon_fields(sig, ind, p, i);
+    crate::dom_rec_ty::scope_basic(sig, rc.c, p, i);
     tbl_wf(dm);
     assert(tbl(dm->Nd_1)[p]->Nd_1[i] == es[i]);
     assert(crate::dom_lift::entry_canon(sig, ind, rc.pv(sig), p, i, es[i]));
@@ -1177,6 +1209,7 @@ pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
         n <= rc.nn,
     ensures
         crate::dom_lift::ptr(sig, rc.nn, n, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind(sig), rc.pv(sig)),
+        crate::dom_lift::prel(sig, n, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind(sig), rc.pv(sig)),
         crate::dom_rel::pconv(sig, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind(sig)),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
@@ -1216,6 +1249,23 @@ pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
             assert(false);
         }
         crate::dom_lift::par_xfer(sig, nn, n, g, x, w0, y, y2, w, v, c1, c2);
+    }
+    assert forall|q: int, c2: Cpt| 0 <= q < sh.np && sh.pdoms[q] is Sort && wf(c2) && le(c2, pv[q]) && has_type(n, c2, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, crate::dom_lift::pq(sig, ind, ci, q), crate::dom_lift::pq(sig, ind, ci, q), c2) by {
+        let (x, w0) = (rc.xs[q], rc.fs[q]);
+        assert(crate::dom_lift::pq(sig, ind, ci, q) == x);
+        assert(pv[q] == w0);
+        rc_par(sig, rc, q);
+        if w0 is Bot {
+            if !(c2 is Bot) {
+                head_le(c2, w0);
+            }
+            ty_bot(sig, n, g, x, x);
+        } else {
+            crate::dom_adeq_base::ty_up(n, nn, c2, Cpt::U);
+            crate::dom_rel_mono::decr_ty(sig, nn, g, x, x, c2, w0);
+            crate::dom_adeq_base::stab_ty_up(sig, n, nn, g, x, x, c2);
+        }
     }
 }
 
@@ -2123,6 +2173,34 @@ pub proof fn field_arg_ctx(sig: Sig, rc: Rc, k: nat)
     assert(w.ys[k as int] == rc.args[k as int] && w.ys2[k as int] == rc.args2[k as int]);
     assert(w.ws[k as int] == rc.fsm(sig)[k as int]);
     crate::dom_con_rel::pi_dom_typed(n, a);
+    field_arg_bnd(sig, rc, k);
+    crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[rc.pre(sig)], rc.cx(sig), rc.ind(sig));
+}
+
+/// The walk's field argument's domain, bounded (`field_dom_bnd` at the
+/// parameters' values).
+#[verifier::spinoff_prover]
+pub proof fn field_arg_bnd(sig: Sig, rc: Rc, k: nat)
+    requires
+        rec_ctx(sig, rc),
+        k < rc.nf(sig),
+        crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
+        !(walk_of(sig, rc).u(k) is Bot),
+    ensures ({
+        let w = walk_of(sig, rc);
+        let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+        let dd = *w.a(k)->Pi_0;
+        let ki = k as int;
+        &&& dd is Bot || (pvar_at(sig, rc.c, rc.j, ki) ==> le(dd, rc.pv(sig)[pidx(sig, rc.c, rc.j, ki)]) && wf(dd))
+        &&& dd is Bot || pvar_at(sig, rc.c, rc.j, ki) || fbnd(sig, sh.ind, rc.pv(sig), sh.fields[rc.j][ki], crate::dom_iota::isrec(sig, rc.c, rc.j, ki), dd)
+    }),
+{
+    let w = walk_of(sig, rc);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    walk_facts(sig, rc);
+    walk_shape(sig, rc, k);
+    crate::dom_rec_walk::walk_at(sig, w, k);
+    let a = w.a(k);
     // the domain's code below its field type's canonical table
     let pre = rc.pre(sig);
     crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[pre], rc.cx(sig), rc.ind(sig));
@@ -2226,6 +2304,7 @@ pub proof fn field_arg_con(sig: Sig, rc: Rc, k: nat)
         let f = sh.fields[rc.j][k as int];
         crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
         crate::dom_canon::canon_fields(sig, sh.ind, rc.j, k as int);
+        crate::dom_rec_ty::scope_basic(sig, rc.c, rc.j, k as int);
         crate::dom_iota::simple_closed(sig, sh.ind, f);
         crate::ti_spine::vsub_closed(f, rc.xs.subrange(0, rc.np(sig)) + rc.args.subrange(0, k as int));
     }

@@ -257,8 +257,8 @@ pub proof fn tbl_canon_le(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt, b: Cpt)
     }
 }
 
-/// A field of neither kind is a closed simple type: its type at any type's
-/// parameters is itself, and its canonical code reads no parameters.
+/// A closed simple field type: its type at any type's parameters is
+/// itself, and its canonical code reads no parameters.
 pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
     requires
         sig.consts[j].lps.len() == 0,
@@ -268,9 +268,9 @@ pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
             canon_shape(sig, j).ni, k as nat),
         !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
+        crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
     ensures
         fq(sig, j, t, p, k) == canon_shape(sig, j).fields[p][k],
-        crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
         crate::expr_model::nlbv(canon_shape(sig, j).fields[p][k]) == 0,
         forall|pv: Seq<Cpt>, pv2: Seq<Cpt>| #[trigger] cf(sig, j, pv, p, k) == #[trigger] cf(sig, j, pv2, p, k),
 {
@@ -796,11 +796,65 @@ pub proof fn canon_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: 
             fq_var(sig, j, e2, pv, p, k);
             let q = (k + sh.np - 1 - sh.fields[p][k]->Var_0) as int;
             assert(rel_ty(sig, n, g, pq(sig, j, e, q), pq(sig, j, e2, q), ec));
+        } else if !crate::rec_canon::simple_ty(sig, j, sh.fields[p][k]) {
+            pfield_rel(sig, n, g, e, e2, pv, p, k, ec);
         } else {
             field_rel(sig, n, g, e, e2, pv, p, k, ec);
         }
     }
     ty_ind(sig, n, g, e, e2, u);
+}
+
+/// One field over the parameters of the lifting lemma.
+proof fn pfield_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<Cpt>, p: int, k: int, v: Cpt)
+    requires
+        spine_head(e) is Const,
+        spine_head(e2) is Const,
+        spine_head(e2)->Const_0 == spine_head(e)->Const_0,
+        canon_ok(sig, spine_head(e)->Const_0),
+        0 <= p < canon_shape(sig, spine_head(e)->Const_0).nmin(),
+        0 <= k < canon_shape(sig, spine_head(e)->Const_0).fields[p].len(),
+        !crate::rec_canon::direct_occ(canon_shape(sig, spine_head(e)->Const_0).fields[p][k], spine_head(e)->Const_0,
+            canon_shape(sig, spine_head(e)->Const_0).us(), canon_shape(sig, spine_head(e)->Const_0).np,
+            canon_shape(sig, spine_head(e)->Const_0).ni, k as nat),
+        !crate::rec_canon::pvar_field(canon_shape(sig, spine_head(e)->Const_0).pdoms, canon_shape(sig, spine_head(e)->Const_0).np,
+            k as nat, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
+        !crate::rec_canon::simple_ty(sig, spine_head(e)->Const_0, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
+        ir(sig, e, spine_head(e)->Const_0) == e,
+        ir(sig, e2, spine_head(e)->Const_0) == e2,
+        spine_args(e).len() >= canon_shape(sig, spine_head(e)->Const_0).np,
+        spine_args(e2).len() >= canon_shape(sig, spine_head(e)->Const_0).np,
+        pv.len() >= canon_shape(sig, spine_head(e)->Const_0).np,
+        prel(sig, n, g, spine_head(e)->Const_0, e, e2, pv),
+        pconv(sig, g, spine_head(e)->Const_0, e, e2),
+        derivable(sig, Jd::Wf(g)),
+        wf(v),
+        le(v, cf(sig, spine_head(e)->Const_0, pv, p, k)),
+        v is Bot || has_type(n, v, Cpt::U),
+    ensures
+        rel_ty(sig, n, g, fq(sig, spine_head(e)->Const_0, e, p, k), fq(sig, spine_head(e)->Const_0, e2, p, k), v),
+    decreases (rk(sig, spine_head(e)->Const_0) + 1) as nat, 1int, 0nat,
+{
+    let j = spine_head(e)->Const_0;
+    let sh = canon_shape(sig, j);
+    let np = sh.np;
+    pfield_facts(sig, j, p, k);
+    let ex = crate::rec_canon::plow(sh.fields[p][k], k as nat);
+    let (a, a2) = (spine_args(e).subrange(0, np as int), spine_args(e2).subrange(0, np as int));
+    let pv2 = pv.subrange(0, np as int);
+    assert(fq(sig, j, e, p, k) == crate::ti_spine::vsub(ex, a));
+    assert(fq(sig, j, e2, p, k) == crate::ti_spine::vsub(ex, a2));
+    assert(cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv2, ex));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
+        && derivable(sig, eq(g, #[trigger] a[q], a2[q], sh.pdoms[q])) by {
+        assert(crate::dom_rel::peq(sig, g, j, q, spine_args(ir(sig, e, j))[q], spine_args(ir(sig, e2, j))[q]));
+    }
+    assert forall|q: int, c: Cpt| 0 <= q < pv2.len() && wf(c) && le(c, pv2[q]) && has_type(n, c, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, a[q], a2[q], c) by {
+        let _s = sh.pdoms[q];
+        assert(rel_ty(sig, n, g, pq(sig, j, e, q), pq(sig, j, e2, q), c));
+    }
+    ps_rel(sig, n, g, j, ex, a, a2, pv2, v);
 }
 
 /// One closed field of the lifting lemma.
@@ -817,6 +871,7 @@ proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<
             canon_shape(sig, spine_head(e)->Const_0).ni, k as nat),
         !crate::rec_canon::pvar_field(canon_shape(sig, spine_head(e)->Const_0).pdoms, canon_shape(sig, spine_head(e)->Const_0).np,
             k as nat, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
+        crate::rec_canon::simple_ty(sig, spine_head(e)->Const_0, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
         derivable(sig, Jd::Wf(g)),
         wf(v),
         le(v, cf(sig, spine_head(e)->Const_0, pv, p, k)),
@@ -844,8 +899,8 @@ pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
             canon_shape(sig, j).ni, k as nat),
         !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
-    ensures
         crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
+    ensures
         crate::dom_canon::ranked(sig, canon_shape(sig, j).fields[p][k], rk(sig, j)),
         styped(sig, canon_shape(sig, j).fields[p][k]),
         cf(sig, j, Seq::empty(), p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), canon_shape(sig, j).fields[p][k]),
@@ -859,6 +914,129 @@ pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
     assert(sig.consts[j].lps =~= Seq::<u64>::empty());
     crate::dom_canon::sl_none(f, ls);
     crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(), fpe(Seq::empty(), sh.np, k as nat), Seq::empty(), j, f);
+}
+
+/// A FIELD OVER THE PARAMETERS (neither a direct occurrence, a parameter,
+/// nor closed): simple over them, typed in their context, and its type and
+/// code read only the parameters.
+pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
+    requires
+        canon_ok(sig, j),
+        0 <= p < canon_shape(sig, j).nmin(),
+        0 <= k < canon_shape(sig, j).fields[p].len(),
+        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
+            canon_shape(sig, j).ni, k as nat),
+        !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
+        !crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
+    ensures ({
+        let sh = canon_shape(sig, j);
+        let f = sh.fields[p][k];
+        let e = crate::rec_canon::plow(f, k as nat);
+        &&& crate::rec_canon::psapp(sig, j, sh.pdoms, sh.np, k as nat, f)
+        &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, k as nat, f)
+        &&& crate::dom_canon::pranked(sig, f, rk(sig, j))
+        &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, 0, e)
+        &&& crate::dom_canon::pranked(sig, e, rk(sig, j))
+        &&& crate::dom_psimple::ptyped(sig, sh.pdoms, e)
+        &&& sh.pdoms.len() == sh.np
+        &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+        &&& forall|pv: Seq<Cpt>| pv.len() >= sh.np ==>
+            #[trigger] cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv.subrange(0, sh.np as int), e)
+        &&& forall|t: ExprSpec| spine_args(ir(sig, t, j)).len() >= sh.np ==>
+            #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(e, spine_args(ir(sig, t, j)).subrange(0, sh.np as int))
+    }),
+{
+    let sh = canon_shape(sig, j);
+    let f = sh.fields[p][k];
+    let e = crate::rec_canon::plow(f, k as nat);
+    crate::dom_canon::canon_fields(sig, j, p, k);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, j);
+    assert(crate::rec_canon::psapp(sig, j, sh.pdoms, sh.np, k as nat, f));
+    reveal(fields_typed);
+    assert(pfield_ok(sig, j, p, k));
+    crate::dom_psimple::psimple_plow(sig, j, sh.pdoms, sh.np, k as nat, f, rk(sig, j));
+    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
+    assert forall|pv: Seq<Cpt>| pv.len() >= sh.np implies
+        #[trigger] cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv.subrange(0, sh.np as int), e) by {
+        crate::dom_psimple::ceval_plow(sig, j, sh.pdoms, sh.np, k as nat, f, rk(sig, j), j, Seq::empty(), pv);
+    }
+    assert forall|t: ExprSpec| spine_args(ir(sig, t, j)).len() >= sh.np implies
+        #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(e, spine_args(ir(sig, t, j)).subrange(0, sh.np as int)) by {
+        let x = ir(sig, t, j);
+        crate::dom_canon::sl_none(f, spine_head(x)->Const_1);
+        crate::dom_psimple::plow_vsub(sig, j, sh.pdoms, sh.np, k as nat, f, spine_args(x).subrange(0, sh.np as int),
+            Seq::new(k as nat, |_i: int| ExprSpec::Closed));
+    }
+}
+
+/// One field over the parameters of the constructor clause's transfer.
+#[verifier::spinoff_prover]
+proof fn pfield_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, t: ExprSpec, t2: ExprSpec, pv: Seq<Cpt>, p: int, i: int,
+    y: ExprSpec, y2: ExprSpec, fw: Cpt, fv: Cpt, ec: Cpt, ec2: Cpt)
+    requires
+        canon_ok(sig, j),
+        0 <= p < canon_shape(sig, j).nmin(),
+        0 <= i < canon_shape(sig, j).fields[p].len(),
+        !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][i], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
+            canon_shape(sig, j).ni, i as nat),
+        !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, i as nat, canon_shape(sig, j).fields[p][i]),
+        !crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][i]),
+        spine_args(ir(sig, t, j)).len() >= canon_shape(sig, j).np,
+        spine_args(ir(sig, t2, j)).len() >= canon_shape(sig, j).np,
+        pv.len() >= canon_shape(sig, j).np,
+        ptr(sig, n0, n, g, j, t, t2, pv),
+        prel(sig, n, g, j, t2, t2, pv),
+        crate::dom_rel::pconv(sig, g, j, t, t2),
+        derivable(sig, Jd::Wf(g)),
+        le(ec, cf(sig, j, pv, p, i)),
+        le(ec2, cf(sig, j, pv, p, i)),
+        rel_tm(sig, n0, g, y, y2, fq(sig, j, t, p, i), fw, ec),
+        has_type(n0, fw, ec),
+        has_type(n0, ec, Cpt::U),
+        has_type(n, fv, ec2),
+        has_type(n, ec2, Cpt::U),
+        wf(fv),
+        !(fv is Bot),
+        le(fv, fw),
+    ensures
+        rel_tm(sig, n, g, y, y2, fq(sig, j, t2, p, i), fv, ec2),
+    decreases (rk(sig, j) + 1) as nat, 1int, ht(fv),
+{
+    let sh = canon_shape(sig, j);
+    let np = sh.np;
+    pfield_facts(sig, j, p, i);
+    let ex = crate::rec_canon::plow(sh.fields[p][i], i as nat);
+    let (a, a2) = (spine_args(ir(sig, t, j)).subrange(0, np as int), spine_args(ir(sig, t2, j)).subrange(0, np as int));
+    let pv2 = pv.subrange(0, np as int);
+    assert(fq(sig, j, t, p, i) == crate::ti_spine::vsub(ex, a));
+    assert(fq(sig, j, t2, p, i) == crate::ti_spine::vsub(ex, a2));
+    assert(cf(sig, j, pv, p, i) == ceval(sig, rk(sig, j), j, Seq::empty(), pv2, ex));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
+        && derivable(sig, eq(g, #[trigger] a[q], a2[q], sh.pdoms[q])) by {
+        assert(crate::dom_rel::peq(sig, g, j, q, spine_args(ir(sig, t, j))[q], spine_args(ir(sig, t2, j))[q]));
+    }
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
+        && derivable(sig, eq(g, #[trigger] a2[q], a2[q], sh.pdoms[q])) by {
+        assert(derivable(sig, eq(g, a[q], a2[q], sh.pdoms[q])));
+        crate::dom_psimple::der_diag(sig, g, a[q], a2[q], sh.pdoms[q]);
+    }
+    assert forall|q: int, c: Cpt| 0 <= q < pv2.len() && wf(c) && le(c, pv2[q]) && has_type(n, c, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, a2[q], a2[q], c) by {
+        let _s = sh.pdoms[q];
+        assert(rel_ty(sig, n, g, pq(sig, j, t2, q), pq(sig, j, t2, q), c));
+    }
+    assert forall|q: int, z: ExprSpec, z2: ExprSpec, w1: Cpt, v1: Cpt, e1: Cpt, e2: Cpt|
+        #![trigger rel_tm(sig, n0, g, z, z2, a[q], w1, e1), rel_tm(sig, n, g, z, z2, a2[q], v1, e2)]
+        0 <= q < pv2.len()
+        && rel_tm(sig, n0, g, z, z2, a[q], w1, e1) && has_type(n0, w1, e1) && has_type(n0, e1, Cpt::U) && wf(e1) && le(e1, pv2[q])
+        && has_type(n, v1, e2) && has_type(n, e2, Cpt::U) && wf(e2) && le(e2, pv2[q]) && wf(v1) && !(v1 is Bot) && le(v1, w1)
+        implies rel_tm(sig, n, g, z, z2, a2[q], v1, e2) by {
+        let _s = sh.pdoms[q];
+        assert(pq(sig, j, t, q) == a[q] && pq(sig, j, t2, q) == a2[q]);
+        assert(rel_tm(sig, n0, g, z, z2, pq(sig, j, t, q), w1, e1));
+        assert(rel_tm(sig, n, g, z, z2, pq(sig, j, t2, q), v1, e2));
+    }
+    ps_below(sig, n0, n, g, j, ex, a, a2, pv2, y, y2, fw, fv, ec, ec2);
 }
 
 /// THE CONSTRUCTOR CLAUSE MOVES between two codes below the canonical
@@ -881,6 +1059,7 @@ pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
         tbl(d2->Nd_1).len() > 0 ==> spine_args(ir(sig, t, d->Nd_0->Ty_0)).len() >= canon_shape(sig, d->Nd_0->Ty_0).np
             && spine_args(ir(sig, t2, d->Nd_0->Ty_0)).len() >= canon_shape(sig, d->Nd_0->Ty_0).np,
         ptr(sig, n0, n, g, d->Nd_0->Ty_0, t, t2, pv),
+        prel(sig, n, g, d->Nd_0->Ty_0, t2, t2, pv),
         d2 is Nd && d2->Nd_0 == d->Nd_0,
         crate::dom_rel::pconv(sig, g, d->Nd_0->Ty_0, t, t2),
     ensures
@@ -931,6 +1110,9 @@ pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
                     let q = (i + sh.np - 1 - sh.fields[p][i]->Var_0) as int;
                     assert(rel_tm(sig, n0, g, y, y2, pq(sig, j, t, q), fw[i], ec));
                     assert(rel_tm(sig, n, g, y, y2, pq(sig, j, t2, q), fv[i], ec2));
+                } else if !crate::rec_canon::simple_ty(sig, j, sh.fields[p][i]) {
+                    // a field over the parameters: moved to the target's
+                    pfield_below(sig, n0, n, g, j, t, t2, pv, p, i, y, y2, fw[i], fv[i], ec, ec2);
                 } else {
                     // a closed field: below its canonical code
                     fq_closed(sig, j, t, p, i);
@@ -1018,6 +1200,21 @@ pub proof fn closed_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpec
             assert(cs[q] == Cpt::Bot);
             head_le(e1, cs[q]);
             ty_of_bot(n0, w1);
+        }
+    }
+    // the head's parameters, related below their codes
+    assert forall|q: int, c3: Cpt| 0 <= q < sk.np && sk.pdoms[q] is Sort && wf(c3) && le(c3, cs[q]) && has_type(n, c3, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, pq(sig, kk, r, q), pq(sig, kk, r, q), c3) by {
+        if q < ca.len() {
+            let a = spine_args(r)[q];
+            assert(ca[q] == ceval(sig, rj, j, Seq::empty(), Seq::empty(), a));
+            closed_rel(sig, n, g, j, a, c3);
+        } else {
+            assert(cs[q] == Cpt::Bot);
+            if !(c3 is Bot) {
+                head_le(c3, cs[q]);
+            }
+            ty_bot(sig, n, g, pq(sig, kk, r, q), pq(sig, kk, r, q));
         }
     }
     let rsh = canon_shape(sig, kk);

@@ -224,6 +224,7 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
     let (xs, xs2) = (ps + fs.subrange(0, k), ps2 + fs.subrange(0, k));
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(sh.ind, Seq::empty());
         crate::beta_model::spine_recompose(f);
@@ -329,6 +330,7 @@ pub proof fn field_ty_chain(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec
     ind_cong(sig, g, rid, ps, ps2, th);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(sh.ind, Seq::empty());
         crate::beta_model::spine_recompose(f);
@@ -480,6 +482,7 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
         assert(xk.len() == pre + k);
         crate::dom_rec_ty::scope_ctor(sig, rid, p);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+        crate::dom_rec_ty::scope_basic(sig, rid, p, k);
         let ks = rd.uparams;
         if crate::dom_iota::isrec(sig, rid, p, k) {
             let ci = ExprSpec::Const(sh.ind, Seq::empty());

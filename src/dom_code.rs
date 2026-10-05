@@ -87,17 +87,30 @@ pub open spec fn sargs_typed(sig: Sig, e: ExprSpec) -> bool
     }
 }
 
-/// Every field of `ind`'s constructors that is neither a direct recursive
-/// occurrence nor a type parameter is a type, its constants ranked below
-/// `ind`
-/// (docs/TYPED_TARGET.md, S6 "Parameters", P2b).
+/// Every closed field type of `ind`'s constructors is a type, its
+/// constants ranked below `ind`; every other field over the parameters is
+/// `pfield_ok` (docs/TYPED_TARGET.md, S6 "Parameters", P2b, P3b).
 #[verifier::opaque]
 pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
     let sh = canon_shape(sig, ind);
-    forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+    &&& forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
         && ls.len() == sig.consts[ind].lps.len() && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
-        && !pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
+        && !pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && simple_ty(sig, ind, sh.fields[p][k])
         ==> #[trigger] ftyped(sig, ind, p, k, ls) && crate::dom_canon::ranked(sig, sh.fields[p][k], rk(sig, ind))
+    &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+        && !pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && !simple_ty(sig, ind, sh.fields[p][k])
+        ==> #[trigger] pfield_ok(sig, ind, p, k)
+}
+
+/// A field over the parameters (neither closed nor a parameter itself):
+/// the parameters all types, the field typed in their context and ranked
+/// below `ind` (docs/TYPED_TARGET.md, S6 "Parameters", P3b).
+pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
+    let sh = canon_shape(sig, ind);
+    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& crate::dom_psimple::ptyped(sig, sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
+    &&& crate::dom_canon::pranked(sig, sh.fields[p][k], rk(sig, ind))
 }
 
 /// `ind` at `ls` has its canonical table over `args`.

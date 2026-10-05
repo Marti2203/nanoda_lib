@@ -175,6 +175,13 @@ pub open spec fn plow(e: ExprSpec, k: nat) -> ExprSpec
     }
 }
 
+/// A FIELD'S KIND in the fragment: a direct occurrence, or a simple type
+/// over the parameters.
+#[verifier::opaque]
+pub open spec fn field_kind(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, us: Seq<LevelSpec>, np: nat, ni: nat, k: nat, e: ExprSpec) -> bool {
+    direct_occ(e, ind, us, np, ni, k) || psimple(sig, ind, pdoms, np, k, e)
+}
+
 /// The recursive fields among the first `n`, in order.
 pub open spec fn rec_pos(fs: Seq<ExprSpec>, ind: u64, us: Seq<LevelSpec>, np: nat, ni: nat, n: nat) -> Seq<nat>
     decreases n,
@@ -365,8 +372,7 @@ pub open spec fn rec_canon(sig: Sig, rid: u64) -> bool {
         &&& tbody(t, np + nf) == ind_app(ind, sh.us(), vars(nf, np) + sh.tss[j])
         &&& sh.tss[j].len() == ni
         &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
-        &&& forall|k: int| 0 <= k < nf ==> direct_occ(#[trigger] sh.fields[j][k], ind, sh.us(), np, ni, k as nat)
-            || simple_ty(sig, ind, sh.fields[j][k]) || pvar_field(sh.pdoms, np, k as nat, sh.fields[j][k])
+        &&& forall|k: int| 0 <= k < nf ==> field_kind(sig, ind, sh.pdoms, sh.us(), np, ni, k as nat, #[trigger] sh.fields[j][k])
         &&& rd.rules[j].rhs == sh.rule_rhs(lm, rid, plevels(rd.uparams), j)
     }
     // the recursor's type

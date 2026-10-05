@@ -496,10 +496,27 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
             // a type parameter: below the parameter's value
             crate::dom_lift::cf_var(sig, ind, pv, pc as int, i);
             crate::dom_adeq_base::mem_var(sig, f->Var_0, env, a0);
-        } else {
+        } else if crate::rec_canon::simple_ty(sig, ind, f) {
             crate::dom_lift::field_facts(sig, ind, pc as int, i);
             crate::dom_lift::fq_closed(sig, ind, f, pc as int, i);
             crate::dom_canon::closed_bound(sig, ind, Seq::empty(), Seq::empty(), f, env, a0);
+        } else {
+            // a type over the parameters: below its code at their values
+            crate::dom_lift::pfield_facts(sig, ind, pc as int, i);
+            crate::dom_canon::canon_fields(sig, ind, pc as int, i);
+            let pe = crate::dom_code::fpe(pv, np, i as nat);
+            assert(pv.subrange(0, np as int) =~= pv);
+            assert forall|q: int| 0 <= q < np implies le(env((i as nat + np - 1 - q) as nat), #[trigger] pe[q]) by {
+                assert(pe[q] == pv[q]);
+                le_refl(pv[q]);
+            }
+            assert(crate::dom_code::aw(pv)) by {
+                assert forall|q: int| 0 <= q < pv.len() implies #[trigger] wf(pv[q]) by {
+                    assert(pv[q] == env((k - 1 - q) as nat));
+                }
+            }
+            crate::dom_code::fpe_aw(pv, np, i as nat);
+            crate::dom_canon::ps_bound(sig, ind, sh.pdoms, np, i as nat, Seq::empty(), pe, f, env, a0);
         }
     }
     assert forall|q: int| 0 <= q < gen->Pi_1.len() implies

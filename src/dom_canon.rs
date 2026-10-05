@@ -183,6 +183,69 @@ pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, 
     le_trans(d, canon_code(sig, j, us, ws), code);
 }
 
+/// A MEMBER OF A SIMPLE TYPE OVER THE PARAMETERS lies below its canonical
+/// code, the parameters' variables' values below their codes.
+pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec,
+    rho: Env, d: Cpt)
+    requires
+        aw(pe),
+        crate::rec_canon::psimple(sig, ind, pdoms, np, k, e),
+        pranked(sig, e, rk(sig, ind)),
+        sig.consts[ind].lps.len() == 0,
+        mem(sig, e, rho, d),
+        forall|i: nat| #[trigger] wf(rho(i)),
+        pe.len() == np + k,
+        forall|q: int| 0 <= q < np ==> le(rho((k + np - 1 - q) as nat), #[trigger] pe[q]),
+    ensures
+        le(d, ceval(sig, rk(sig, ind), ind, ls, pe, e)),
+    decreases esize(e),
+{
+    let r = rk(sig, ind);
+    if crate::rec_canon::pvar_field(pdoms, np, k, e) {
+        let v = e->Var_0;
+        let q = (k + np - 1 - v) as int;
+        crate::dom_adeq_base::mem_var(sig, v, rho, d);
+        assert(le(rho((k + np - 1 - q) as nat), pe[q]));
+        assert(pe[pe.len() - 1 - v] == pe[q]);
+        le_trans(d, rho(v), pe[q]);
+        return;
+    }
+    crate::dom_psimple::psimple_facts(sig, ind, pdoms, np, k, e, r);
+    let h = spine_head(e);
+    let (j, us) = (h->Const_0, h->Const_1);
+    let args = spine_args(e);
+    crate::beta_model::spine_recompose(e);
+    let code = ceval(sig, r, ind, ls, pe, e);
+    assert(code == canon_code(sig, j, lsub(sig, ind, ls, us), cargs(sig, r, ind, ls, pe, e)));
+    assert(lsub(sig, ind, ls, us) =~= us) by {
+        assert forall|i: int| 0 <= i < us.len() implies #[trigger] lsub(sig, ind, ls, us)[i] == us[i] by {
+            assert(sig.consts[ind].lps =~= Seq::<u64>::empty());
+            subst_level_none(us[i], ls);
+        }
+    }
+    let ca = cargs(sig, r, ind, ls, pe, e);
+    cargs_spine(sig, r, ind, ls, pe, e);
+    cargs_wf(sig, r, ind, ls, pe, e);
+    canon_wf(sig, j, us, ca);
+    if !sem_const(sig, j, us) {
+        crate::dom_bound::nonsem_bot(sig, j, us, rho);
+        crate::dom_bound::spine_bot(sig, h, args, rho, d);
+        return;
+    }
+    let t = sig.consts[j].ty;
+    crate::dom_rec_shape::tarity_sl(t, sig.consts[j].lps, us);
+    tbody_sl(t, tarity(t), sig.consts[j].lps, us);
+    let ws = crate::dom_bound::tf_spine(sig, j, us, args, rho, d);
+    assert(tbody(dty_at(sig, j, us), args.len()) is Sort);
+    spine_args_size(e);
+    assert forall|i: int| 0 <= i < ws.len() implies le(#[trigger] ws[i], ca[i]) by {
+        assert(crate::dom_model::mem(sig, args[i], rho, ws[i]));
+        ps_bound(sig, ind, pdoms, np, k, ls, pe, args[i], rho, ws[i]);
+    }
+    canon_mono(sig, j, us, ws, ca);
+    le_trans(d, canon_code(sig, j, us, ws), code);
+}
+
 /// The codes of `ind`'s type parameters among `args` are types.
 pub open spec fn sparams_typed(sig: Sig, ind: u64, args: Seq<Cpt>) -> bool {
     let sh = canon_shape(sig, ind);
@@ -318,6 +381,42 @@ pub proof fn ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: S
     canon_typed(sig, jd, lsub(sig, outer, ls, us), ca);
 }
 
+/// A SIMPLE TYPE OVER THE PARAMETERS HAS A TYPE AS CODE, its type
+/// parameters' codes being types.
+pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pdoms: Seq<ExprSpec>, np: nat, k: nat,
+    pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        crate::rec_canon::psimple(sig, outer, pdoms, np, k, e),
+        aw(pe),
+        pe.len() == np + k,
+        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] pe[q], Cpt::U),
+    ensures
+        typed(ceval(sig, r, outer, ls, pe, e), Cpt::U),
+    decreases r, 1int, esize(e),
+{
+    crate::dom_sound::typed_basic();
+    if crate::rec_canon::pvar_field(pdoms, np, k, e) {
+        let v = e->Var_0;
+        let q = (k + np - 1 - v) as int;
+        assert(pe[pe.len() - 1 - v] == pe[q]);
+        return;
+    }
+    crate::dom_psimple::psapp_args(sig, outer, pdoms, np, k, e);
+    let h = spine_head(e);
+    let (jd, us) = (h->Const_0, h->Const_1);
+    if !(0 <= rk(sig, jd) < r) {
+        return;
+    }
+    let ca = cargs(sig, r, outer, ls, pe, e);
+    cargs_spine(sig, r, outer, ls, pe, e);
+    cargs_wf(sig, r, outer, ls, pe, e);
+    spine_args_size(e);
+    assert forall|q: int| 0 <= q < ca.len() implies #[trigger] typed(ca[q], Cpt::U) by {
+        ps_ceval_typed(sig, r, outer, ls, pdoms, np, k, pe, spine_args(e)[q]);
+    }
+    canon_typed(sig, jd, lsub(sig, outer, ls, us), ca);
+}
+
 /// CANONICAL CODES ARE TYPES: their table entries are canonical codes of
 /// lower-ranked formers, parameters' codes, or bottom.
 pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
@@ -358,8 +457,14 @@ pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
             let q = (k + sh.np - 1 - e->Var_0) as int;
             assert(pe[pe.len() - 1 - e->Var_0] == args[q]);
             assert(typed(args[q], Cpt::U));
-        } else {
+        } else if simple_ty(sig, ind, e) {
             ceval_typed(sig, rk(sig, ind), ind, ls, pe, e);
+        } else {
+            // a type over the parameters: their codes are types
+            assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
+                assert(pe[q] == args[q]);
+            }
+            ps_ceval_typed(sig, rk(sig, ind), ind, ls, sh.pdoms, sh.np, k as nat, pe, e);
         }
         typed_up(v, Cpt::U, n);
     }
@@ -503,8 +608,8 @@ pub proof fn sl_none(e: ExprSpec, vs: Seq<LevelSpec>)
     }
 }
 
-/// A canonical shape's fields are direct occurrences or closed simple
-/// types.
+/// A canonical shape's fields are direct occurrences, closed simple types,
+/// type parameters, or simple types over the parameters.
 pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
     requires
         has_canon(sig, ind),
@@ -515,12 +620,15 @@ pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
         crate::rec_canon::direct_occ(sh.fields[j][k], ind, sh.us(), sh.np, sh.ni, k as nat)
             || crate::rec_canon::simple_ty(sig, ind, sh.fields[j][k])
             || crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[j][k])
+            || crate::rec_canon::psimple(sig, ind, sh.pdoms, sh.np, k as nat, sh.fields[j][k])
     }),
 {
     let rid = canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
     let sh = canon_shape(sig, ind);
     assert(sh.ctors[j] == sh.ctors[j]);
+    reveal(crate::rec_canon::field_kind);
+    assert(crate::rec_canon::field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[j][k]));
 }
 
 } // verus!
