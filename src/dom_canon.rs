@@ -36,6 +36,18 @@ pub open spec fn ranked(sig: Sig, e: ExprSpec, r: int) -> bool
     }
 }
 
+/// `ranked`, a parameter's variable allowed.
+pub open spec fn pranked(sig: Sig, e: ExprSpec, r: int) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => pranked(sig, *f, r) && pranked(sig, *x, r),
+        ExprSpec::Const(j, _) => 0 <= rk(sig, j) < r && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
+        ExprSpec::Var(_) => true,
+        _ => false,
+    }
+}
+
 /// A spine's arguments are smaller.
 pub proof fn spine_args_size(e: ExprSpec)
     ensures

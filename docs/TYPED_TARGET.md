@@ -861,9 +861,8 @@ Stages, each landing through the gate:
   `sr_inj_fields`), `ti_sr::sr_iota`, `dom_rec_conv::rec_conv_side` (its
   `heads[q] ≡ pargs[q]` hypothesis, from `cpar`). The derivation-walking
   lemmas that rebuild or inspect Iota nodes (renaming, substitution,
-  signature extension, local swap/close) use `iota_pjs_none` (empty while
-  `rec_frag` asks `np == 0`); at the gate flip they rename/substitute the
-  premises instead.
+  signature extension, local swap/close) rename or substitute the
+  premises (`pjs_psub`, `pjs_ext`, `pjs_ls`, `pjs_swap`, `pjs_close`).
   **P4b-2k: right-to-left Iota at the parameters' values.** The
   constructor chain (`cf_fields_ok`, `cf_ds`, `cf_chain`, `cf_val_typed`,
   `cf_step`) runs at the parameter values `pv` (typed along the declared
@@ -878,6 +877,37 @@ Stages, each landing through the gate:
   the Iota node's parameter premises, whose soundness `dom_sound` passes
   to `sound_iota`. `r2l_ok` asks type parameters and `pdoms_lv` instead
   of `np == 0`.
+  **P4b-3 (134fbcb): recursors with type parameters enter the fragment.**
+  `rec_frag` asks the parameters' declared domains to be sorts instead of
+  `np == 0`, and the fields level-invariant (`fields_lv`) instead of
+  closed. Every recursor whose parameters are types, and whose fields are
+  direct occurrences, closed simple types or a parameter itself, is now in
+  the model and its Iota sound.
+  **P3b, the plan (2026-10-05): formers applied to parameters as field
+  types** (`MyOpt α`, `Pair α Nat`, nested). `ceval` already reads
+  parameter variables through `fpe`, so the codes need nothing; the
+  predicates and the lemmas over them do.
+  - Kind: `psimple(sig, ind, pdoms, np, k, e)` — a parameter's variable
+    (`pvar_field`) or another former fully applied to `psimple`
+    arguments; `pranked` its rank condition (variables allowed).
+    `plow(e, k)` drops the `k` earlier fields' slots (`vsub(e, a + c) ==
+    vsub(plow(e, k), a)` for `c.len() == k`).
+  - Typing hypothesis: `fields_typed` asks a non-closed `psimple` field's
+    `plow` typed at a sort in the parameters' context (`pctx`, the
+    declared domains); instances follow by `d_sub` at a pair of parameter
+    substitutions (`spair`), the type parameters of nested formers by
+    `former_args_typed` in that context, and `F[ps] ≡ F[ps']` by the same
+    substitution lemma with the parameters' `peq`.
+  - Lifting (`ps_rel`), transfer (`ps_below`), member bound
+    (`ps_bound`): by rank and size as `closed_rel`/`closed_below`/
+    `closed_bound`, the variable case being the outer parameters'
+    `prel`/`ptr`/environment bound, which the callers already hold
+    (`canon_rel`, `con_below`, `tb_mem`).
+  - Recursor side: the field kind gets its case in `rc_field`, the
+    right-to-left chain (`cf_*`, `r2l_*`), `field_vsub`, `iota_sr`'s field
+    conversion, the minor's field binders.
+  - Gate: the fragment (`rec_canon`) admits `psimple` last, once every
+    case is in.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

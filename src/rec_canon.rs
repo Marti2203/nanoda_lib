@@ -143,6 +143,38 @@ pub open spec fn pvar_field(pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) 
     &&& pdoms[(k + np - 1 - e->Var_0) as int] is Sort
 }
 
+/// A SIMPLE TYPE OVER THE PARAMETERS: a type parameter's variable under
+/// the `k` earlier fields, or another former fully applied to simple types
+/// over the parameters (docs/TYPED_TARGET.md, S6 "Parameters", P3b).
+pub open spec fn psimple(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
+    decreases e, 1int,
+{
+    pvar_field(pdoms, np, k, e) || (psapp(sig, ind, pdoms, np, k, e) && spine_head(e) is Const
+        && spine_args(e).len() == tarity(sig.consts[spine_head(e)->Const_0].ty))
+}
+
+pub open spec fn psapp(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
+    decreases e, 0int,
+{
+    match e {
+        ExprSpec::App(f, x) => psapp(sig, ind, pdoms, np, k, *f) && psimple(sig, ind, pdoms, np, k, *x),
+        ExprSpec::Const(j, _) => other_former(sig, ind, j),
+        _ => false,
+    }
+}
+
+/// A field type over the parameters with the `k` earlier fields' slots
+/// dropped: its variables renumbered into the parameters' context.
+pub open spec fn plow(e: ExprSpec, k: nat) -> ExprSpec
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => ExprSpec::App(Box::new(plow(*f, k)), Box::new(plow(*x, k))),
+        ExprSpec::Var(i) => if i >= k { ExprSpec::Var((i - k) as nat) } else { e },
+        _ => e,
+    }
+}
+
 /// The recursive fields among the first `n`, in order.
 pub open spec fn rec_pos(fs: Seq<ExprSpec>, ind: u64, us: Seq<LevelSpec>, np: nat, ni: nat, n: nat) -> Seq<nat>
     decreases n,

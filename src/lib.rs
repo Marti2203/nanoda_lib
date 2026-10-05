@@ -109,6 +109,7 @@ pub mod ti_strip;
 pub mod ti_beta;
 pub mod dom_rec_conv;
 pub mod dom_lift;
+pub mod dom_psimple;
 pub mod dom_ctor_bound;
 pub mod ti_meta;
 pub mod ti_sub;

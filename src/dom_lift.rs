@@ -445,6 +445,279 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
 }
 
 /// Below a canonical code: below its table at arguments padded to the
+/// The parameters' relation at their values `a`, `a2` and codes `pv`.
+pub open spec fn prel_at(sig: Sig, n: nat, g: Ctx, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>) -> bool {
+    forall|q: int, c: Cpt| 0 <= q < pv.len() && wf(c) && le(c, pv[q]) && has_type(n, c, Cpt::U)
+        ==> #[trigger] rel_ty(sig, n, g, a[q], a2[q], c)
+}
+
+/// A SIMPLE TYPE OVER THE PARAMETERS, typed in their context, is related at
+/// two related parameter values below its canonical code at the
+/// parameters' codes (the lifting lemma's parameter case).
+pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>, c: Cpt)
+    requires
+        crate::rec_canon::psimple(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
+        crate::dom_canon::pranked(sig, e, rk(sig, j)),
+        crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
+        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a, a2),
+        canon_shape(sig, j).pdoms.len() == canon_shape(sig, j).np,
+        pv.len() == canon_shape(sig, j).np,
+        prel_at(sig, n, g, a, a2, pv),
+        derivable(sig, Jd::Wf(g)),
+        wf(c),
+        le(c, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
+        c is Bot || has_type(n, c, Cpt::U),
+    ensures
+        rel_ty(sig, n, g, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2), c),
+    decreases (rk(sig, j) + 1) as nat, 0int, crate::ti_syntax::esize(e),
+{
+    let sh = canon_shape(sig, j);
+    let np = sh.np;
+    let rj = rk(sig, j);
+    let (x, x2) = (crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2));
+    if c is Bot {
+        ty_bot(sig, n, g, x, x2);
+        return;
+    }
+    if crate::rec_canon::pvar_field(sh.pdoms, np, 0, e) {
+        // a parameter: its relation
+        let i = e->Var_0;
+        crate::ti_spine::vsub_var(i, a);
+        crate::ti_spine::vsub_var(i, a2);
+        assert(rel_ty(sig, n, g, a[np - 1 - i], a2[np - 1 - i], c));
+        return;
+    }
+    let c0 = ceval(sig, rj, j, Seq::empty(), pv, e);
+    crate::dom_psimple::psimple_facts(sig, j, sh.pdoms, np, 0, e, rj);
+    let h = spine_head(e);
+    let (kk, us) = (h->Const_0, h->Const_1);
+    if !(0 <= rk(sig, kk) < rj) {
+        head_le(c, c0);
+        assert(false);
+    }
+    let ca = cargs(sig, rj, j, Seq::empty(), pv, e);
+    let us2 = lsub(sig, j, Seq::empty(), us);
+    assert(c0 == canon_code(sig, kk, us2, ca));
+    crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), pv, e);
+    crate::dom_canon::spine_args_size(e);
+    crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
+    crate::dom_psimple::vsub_spine(e, a);
+    crate::dom_psimple::vsub_spine(e, a2);
+    let sk = canon_shape(sig, kk);
+    let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
+    canon_bnd(sig, kk, us2, ca, cs, c);
+    // the instances, convertible and stuck, their type parameters convertible
+    ps_pconv(sig, g, j, e, a, a2);
+    // the head's parameters: the arguments, related below their codes
+    assert forall|q: int, c2: Cpt| 0 <= q < sk.np && sk.pdoms[q] is Sort && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, pq(sig, kk, x, q), pq(sig, kk, x2, q), c2) by {
+        if q < ca.len() {
+            let ai = spine_args(e)[q];
+            assert(ca[q] == ceval(sig, rj, j, Seq::empty(), pv, ai));
+            assert(pq(sig, kk, x, q) == crate::ti_spine::vsub(ai, a));
+            assert(pq(sig, kk, x2, q) == crate::ti_spine::vsub(ai, a2));
+            ps_rel(sig, n, g, j, ai, a, a2, pv, c2);
+        } else {
+            assert(cs[q] == Cpt::Bot);
+            if !(c2 is Bot) {
+                head_le(c2, cs[q]);
+            }
+            ty_bot(sig, n, g, pq(sig, kk, x, q), pq(sig, kk, x2, q));
+        }
+    }
+    canon_rel(sig, n, g, x, x2, cs, c);
+}
+
+/// The parameters' transfer at their values `a` (source) and `a2`
+/// (target) and codes `pv`.
+pub open spec fn ptr_at(sig: Sig, n0: nat, n: nat, g: Ctx, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>) -> bool {
+    forall|q: int, y: ExprSpec, y2: ExprSpec, w: Cpt, v: Cpt, c1: Cpt, c2: Cpt|
+        #![trigger rel_tm(sig, n0, g, y, y2, a[q], w, c1), rel_tm(sig, n, g, y, y2, a2[q], v, c2)]
+        0 <= q < pv.len()
+        && rel_tm(sig, n0, g, y, y2, a[q], w, c1) && has_type(n0, w, c1) && has_type(n0, c1, Cpt::U) && wf(c1) && le(c1, pv[q])
+        && has_type(n, v, c2) && has_type(n, c2, Cpt::U) && wf(c2) && le(c2, pv[q]) && wf(v) && !(v is Bot) && le(v, w)
+        ==> rel_tm(sig, n, g, y, y2, a2[q], v, c2)
+}
+
+/// A former's application over the parameters, at two related parameter
+/// values: its type parameters convert.
+pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+    requires
+        crate::rec_canon::psapp(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
+        spine_args(e).len() == crate::rec_canon::tarity(sig.consts[spine_head(e)->Const_0].ty),
+        crate::dom_canon::pranked(sig, e, rk(sig, j)),
+        crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
+        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a, a2),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        crate::dom_rel::pconv(sig, g, spine_head(e)->Const_0, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2)),
+        ir(sig, crate::ti_spine::vsub(e, a), spine_head(e)->Const_0) == crate::ti_spine::vsub(e, a),
+        ir(sig, crate::ti_spine::vsub(e, a2), spine_head(e)->Const_0) == crate::ti_spine::vsub(e, a2),
+        crate::ti_chain::tchain(sig, g, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2)),
+        exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2), sort(l))),
+{
+    let sh = canon_shape(sig, j);
+    let (x, x2) = (crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2));
+    crate::dom_psimple::psimple_facts(sig, j, sh.pdoms, sh.np, 0, e, rk(sig, j));
+    let kk = spine_head(e)->Const_0;
+    let sk = canon_shape(sig, kk);
+    crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
+    crate::dom_psimple::vsub_spine(e, a);
+    crate::dom_psimple::vsub_spine(e, a2);
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, e, e, sort(l)));
+    crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, e, e, sort(l)));
+    crate::dom_psimple::ps_inst(sig, g, sh.pdoms, e, sort(l), a, a2);
+    reveal(crate::ti_sub::tconvd);
+    assert(derivable(sig, eq(g, x, x2, sort(l))));
+    crate::ti_chain::tchain_one(sig, g, x, x2);
+    iapp_self(sig, x);
+    iapp_self(sig, x2);
+    if has_canon(sig, kk) {
+        crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
+        crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
+        assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
+            implies #[trigger] crate::dom_rel::peq(sig, g, kk, q, spine_args(x)[q], spine_args(x2)[q]) by {
+            let ai = spine_args(e)[q];
+            let (y, y2) = (crate::ti_spine::vsub(ai, a), crate::ti_spine::vsub(ai, a2));
+            assert(crate::dom_psimple::ptyped(sig, sh.pdoms, ai));
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, ai, ai, sort(l)));
+            crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, ai, ai, sort(la)));
+            crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, sort(la), a, a2);
+            assert(derivable(sig, eq(g, y, y2, sort(la))));
+            crate::ti_chain::tchain_one(sig, g, y, y2);
+            if sig.consts[kk].lps.len() == 0 {
+                crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, ai, ai, sk.pdoms[q]));
+                crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, sk.pdoms[q], a, a2);
+            }
+        }
+    }
+}
+
+/// A VALUE RELATED AT A SIMPLE TYPE OVER THE PARAMETERS moves to the
+/// type at other parameter values (convertible, transferring), between two
+/// codes below the type's canonical code, and between stages.
+pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>,
+    y: ExprSpec, y2: ExprSpec, fw: Cpt, fv: Cpt, c1: Cpt, c2: Cpt)
+    requires
+        crate::rec_canon::psimple(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
+        crate::dom_canon::pranked(sig, e, rk(sig, j)),
+        crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
+        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a, a2),
+        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a2, a2),
+        canon_shape(sig, j).pdoms.len() == canon_shape(sig, j).np,
+        pv.len() == canon_shape(sig, j).np,
+        prel_at(sig, n, g, a2, a2, pv),
+        ptr_at(sig, n0, n, g, a, a2, pv),
+        derivable(sig, Jd::Wf(g)),
+        le(c1, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
+        le(c2, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
+        rel_tm(sig, n0, g, y, y2, crate::ti_spine::vsub(e, a), fw, c1),
+        has_type(n0, fw, c1),
+        has_type(n0, c1, Cpt::U),
+        has_type(n, fv, c2),
+        has_type(n, c2, Cpt::U),
+        wf(fv),
+        !(fv is Bot),
+        le(fv, fw),
+    ensures
+        rel_tm(sig, n, g, y, y2, crate::ti_spine::vsub(e, a2), fv, c2),
+    decreases (rk(sig, j) + 1) as nat, 0int, crate::ti_syntax::esize(e),
+{
+    let sh = canon_shape(sig, j);
+    let np = sh.np;
+    let rj = rk(sig, j);
+    let (x, x2) = (crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2));
+    let c0 = ceval(sig, rj, j, Seq::empty(), pv, e);
+    head_le(fv, fw);
+    if c1 is Bot {
+        ty_of_bot(n0, fw);
+    }
+    if c2 is Bot {
+        ty_of_bot(n, fv);
+    }
+    assert(wf(c1) && wf(c2));
+    if crate::rec_canon::pvar_field(sh.pdoms, np, 0, e) {
+        // a parameter: its transfer
+        let i = e->Var_0;
+        crate::ti_spine::vsub_var(i, a);
+        crate::ti_spine::vsub_var(i, a2);
+        assert(rel_tm(sig, n0, g, y, y2, a[np - 1 - i], fw, c1));
+        return;
+    }
+    crate::dom_psimple::psimple_facts(sig, j, sh.pdoms, np, 0, e, rj);
+    let h = spine_head(e);
+    let (kk, us) = (h->Const_0, h->Const_1);
+    if !(0 <= rk(sig, kk) < rj) {
+        head_le(c1, c0);
+        assert(false);
+    }
+    let ca = cargs(sig, rj, j, Seq::empty(), pv, e);
+    let us2 = lsub(sig, j, Seq::empty(), us);
+    assert(c0 == canon_code(sig, kk, us2, ca));
+    crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), pv, e);
+    crate::dom_canon::spine_args_size(e);
+    crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
+    crate::dom_psimple::vsub_spine(e, a);
+    crate::dom_psimple::vsub_spine(e, a2);
+    let sk = canon_shape(sig, kk);
+    let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
+    canon_bnd(sig, kk, us2, ca, cs, c1);
+    canon_bnd(sig, kk, us2, ca, cs, c2);
+    // the target's type relation, and the source's clause
+    ps_rel(sig, n, g, j, e, a2, a2, pv, c2);
+    ps_pconv(sig, g, j, e, a, a2);
+    ps_pconv(sig, g, j, e, a2, a2);
+    tm_ind(sig, n0, g, y, y2, x, fw, c1);
+    tm_ind(sig, n, g, y, y2, x2, fv, c2);
+    // the head's parameters: the arguments, moved below their codes
+    assert forall|q: int, z: ExprSpec, z2: ExprSpec, w1: Cpt, v1: Cpt, e1: Cpt, e2: Cpt|
+        #![trigger rel_tm(sig, n0, g, z, z2, pq(sig, kk, x, q), w1, e1), rel_tm(sig, n, g, z, z2, pq(sig, kk, x2, q), v1, e2)]
+        0 <= q < sk.np && sk.pdoms[q] is Sort
+        && rel_tm(sig, n0, g, z, z2, pq(sig, kk, x, q), w1, e1) && has_type(n0, w1, e1) && has_type(n0, e1, Cpt::U) && wf(e1) && le(e1, cs[q])
+        && has_type(n, v1, e2) && has_type(n, e2, Cpt::U) && wf(e2) && le(e2, cs[q]) && wf(v1) && !(v1 is Bot) && le(v1, w1)
+        implies rel_tm(sig, n, g, z, z2, pq(sig, kk, x2, q), v1, e2) by {
+        if q < ca.len() {
+            let ai = spine_args(e)[q];
+            assert(ca[q] == ceval(sig, rj, j, Seq::empty(), pv, ai));
+            ps_below(sig, n0, n, g, j, ai, a, a2, pv, z, z2, w1, v1, e1, e2);
+        } else {
+            head_le(v1, w1);
+            assert(cs[q] == Cpt::Bot);
+            head_le(e1, cs[q]);
+            ty_of_bot(n0, w1);
+        }
+    }
+    // the target's parameters, related below their codes
+    assert forall|q: int, c3: Cpt| 0 <= q < sk.np && sk.pdoms[q] is Sort && wf(c3) && le(c3, cs[q]) && has_type(n, c3, Cpt::U)
+        implies #[trigger] rel_ty(sig, n, g, pq(sig, kk, x2, q), pq(sig, kk, x2, q), c3) by {
+        if q < ca.len() {
+            let ai = spine_args(e)[q];
+            assert(ca[q] == ceval(sig, rj, j, Seq::empty(), pv, ai));
+            ps_rel(sig, n, g, j, ai, a2, a2, pv, c3);
+        } else {
+            assert(cs[q] == Cpt::Bot);
+            if !(c3 is Bot) {
+                head_le(c3, cs[q]);
+            }
+            ty_bot(sig, n, g, pq(sig, kk, x2, q), pq(sig, kk, x2, q));
+        }
+    }
+    let rsh = canon_shape(sig, kk);
+    if tbl(c2->Nd_1).len() > 0 {
+        assert(canon_ok(sig, kk));
+        crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
+        crate::dom_rec_shape::tarity_binds(rsh.pdoms + rsh.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, rsh.np + rsh.ni));
+    }
+    head_le(c1, c0);
+    head_le(c2, c0);
+    crate::dom_rel::ty_ind(sig, n, g, x2, x2, c2);
+    con_below(sig, n0, n, g, y, y2, x, x2, fw, fv, c1, c2, cs);
+    // the reducts' equations, at the target type
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, x, x2, sort(l)));
+    crate::dom_psimple::conv_der(sig, g, y, cr(sig, y), x, x2, l);
+    crate::dom_psimple::conv_der(sig, g, y2, cr(sig, y2), x, x2, l);
+}
+
 /// parameters.
 pub proof fn canon_bnd(sig: Sig, kk: u64, us: Seq<LevelSpec>, ca: Seq<Cpt>, cs: Seq<Cpt>, c: Cpt)
     requires
