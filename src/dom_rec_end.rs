@@ -508,6 +508,7 @@ pub proof fn scope_dir(s1: Sig, s2: Sig, c: u64)
     ensures
         crate::dom_rec_ty::rec_scope(s2, c),
 {
+    reveal(crate::dom_rec_ty::rec_elp);
     canon_congr(s1, s2, c);
     assert(crate::rec_canon::rec_ind(s1, c) == crate::rec_canon::rec_ind(s2, c));
     assert(crate::dom_rec_ty::rshape(s1, c) == crate::dom_rec_ty::rshape(s2, c));

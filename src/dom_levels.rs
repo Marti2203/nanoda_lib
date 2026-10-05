@@ -190,4 +190,55 @@ pub proof fn sl_plevels_id(ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(a =~= vs);
 }
 
+/// Parameter sets: every level parameter of `a` is in `b`.
+pub open spec fn lps_sub(a: Seq<u64>, b: Seq<u64>) -> bool {
+    forall|i: int| 0 <= i < a.len() ==> b.contains(#[trigger] a[i])
+}
+
+pub proof fn lp_mono(l: LevelSpec, a: Seq<u64>, b: Seq<u64>)
+    requires
+        crate::level_inst::lp_in(l, a),
+        lps_sub(a, b),
+    ensures
+        crate::level_inst::lp_in(l, b),
+    decreases l,
+{
+    match l {
+        LevelSpec::Succ(x) => lp_mono(*x, a, b),
+        LevelSpec::Max(x, y) => { lp_mono(*x, a, b); lp_mono(*y, a, b); },
+        LevelSpec::IMax(x, y) => { lp_mono(*x, a, b); lp_mono(*y, a, b); },
+        LevelSpec::Param(q) => {
+            crate::ti_ls2::find_level_idx_at(a, q);
+            let i = crate::level_model::find_level_idx(a, q)->Some_0;
+            assert(b.contains(a[i as int]));
+            crate::level_inst::find_level_idx_contains(b, q);
+        },
+        _ => {},
+    }
+}
+
+/// A term over the parameters `a` is over any superset.
+pub proof fn elp_mono(e: ExprSpec, a: Seq<u64>, b: Seq<u64>)
+    requires
+        crate::level_inst::elp_in(e, a),
+        lps_sub(a, b),
+    ensures
+        crate::level_inst::elp_in(e, b),
+    decreases e,
+{
+    match e {
+        ExprSpec::Sort(l) => lp_mono(l, a, b),
+        ExprSpec::Const(_, ls) => {
+            assert forall|i: int| 0 <= i < ls.len() implies crate::level_inst::lp_in(#[trigger] ls[i], b) by {
+                lp_mono(ls[i], a, b);
+            }
+        },
+        ExprSpec::App(f, x) => { elp_mono(*f, a, b); elp_mono(*x, a, b); },
+        ExprSpec::Bind(_, t, x) => { elp_mono(*t, a, b); elp_mono(*x, a, b); },
+        ExprSpec::Let(t, v, x) => { elp_mono(*t, a, b); elp_mono(*v, a, b); elp_mono(*x, a, b); },
+        ExprSpec::Proj(_, x) => elp_mono(*x, a, b),
+        _ => {},
+    }
+}
+
 } // verus!

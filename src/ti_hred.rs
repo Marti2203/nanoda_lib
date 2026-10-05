@@ -31,7 +31,8 @@ pub open spec fn rec_arity(sig: Sig, t: ExprSpec) -> bool {
     match crate::beta_model::find_rule(rd.rules, cid) {
         Some(ri) => sig.ienv.ctor_np.contains_key(cid)
             && crate::beta_model::spine_args(major).len() == sig.ienv.ctor_np[cid] as nat + rd.rules[ri].nfields
-            && sig.consts.contains_key(cid) && crate::beta_model::spine_head(major)->Const_1.len() == sig.consts[cid].lps.len(),
+            && sig.consts.contains_key(cid) && crate::beta_model::spine_head(major)->Const_1.len() == sig.consts[cid].lps.len()
+            && crate::beta_model::spine_head(t)->Const_1.len() == rd.uparams.len(),
         None => false,
     }
 }

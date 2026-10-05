@@ -276,6 +276,110 @@ pub open spec fn rec_scope(sig: Sig, rid: u64) -> bool {
     &&& forall|i: int, j: int| #![trigger sig.ienv.recs[rid].uparams[i], sig.ienv.recs[rid].uparams[j]]
         0 <= i < sig.ienv.recs[rid].uparams.len() && 0 <= j < sig.ienv.recs[rid].uparams.len()
         && sig.ienv.recs[rid].uparams[i] == sig.ienv.recs[rid].uparams[j] ==> i == j
+    &&& rec_elp(sig, rid)
+}
+
+/// The inductive's and its constructors' types mention only the
+/// inductive's level parameters.
+#[verifier::opaque]
+pub open spec fn rec_elp(sig: Sig, rid: u64) -> bool {
+    let sh = rshape(sig, rid);
+    &&& crate::level_inst::elp_in(sig.consts[sh.ind].ty, sig.consts[sh.ind].lps)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::level_inst::elp_in(sig.consts[#[trigger] sh.ctors[p]].ty, sig.consts[sh.ind].lps)
+}
+
+/// THE INDUCTIVE'S INSTANCE inside the recursor's type at `lv`.
+pub open spec fn rinst(sig: Sig, rid: u64, lv: Seq<LevelSpec>) -> Seq<LevelSpec> {
+    crate::level_model::subst_levels_spec(rshape(sig, rid).us(), sig.ienv.recs[rid].uparams, lv)
+}
+
+/// A term over the inductive's level parameters, at the recursor's
+/// instance, is at the inductive's instance there.
+pub proof fn rinst_id(sig: Sig, rid: u64, lv: Seq<LevelSpec>, e: ExprSpec)
+    requires
+        crate::level_inst::elp_in(e, rshape(sig, rid).lps),
+    ensures
+        crate::expr_model::subst_expr_levels(e, sig.ienv.recs[rid].uparams, lv)
+            == crate::expr_model::subst_expr_levels(e, rshape(sig, rid).lps, rinst(sig, rid, lv)),
+        rinst(sig, rid, lv).len() == rshape(sig, rid).lps.len(),
+{
+    let (lps, up) = (rshape(sig, rid).lps, sig.ienv.recs[rid].uparams);
+    crate::ti_ls2::sle_params(e, lps);
+    crate::level_inst::expr_compose(e, lps, crate::rec_canon::plevels(lps), up, lv);
+}
+
+/// The inductive's level parameters are the recursor's (after the
+/// motive's universe, if any).
+pub proof fn rec_lps_sub(sig: Sig, rid: u64)
+    requires
+        rec_scope(sig, rid),
+    ensures
+        crate::dom_levels::lps_sub(rshape(sig, rid).lps, sig.ienv.recs[rid].uparams),
+        rshape(sig, rid).lps == sig.consts[rshape(sig, rid).ind].lps,
+{
+    let (sh, up) = (rshape(sig, rid), sig.ienv.recs[rid].uparams);
+    scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(crate::rec_canon::rec_canon(sig, rid));
+    let lps = sig.consts[sh.ind].lps;
+    if up != lps {
+        assert(up.drop_first() == lps);
+        assert forall|i: int| 0 <= i < lps.len() implies up.contains(#[trigger] lps[i]) by {
+            assert(up[i + 1] == lps[i]);
+        }
+    } else {
+        assert forall|i: int| 0 <= i < lps.len() implies up.contains(#[trigger] lps[i]) by {
+            assert(up[i] == lps[i]);
+        }
+    }
+}
+
+/// The parameter domains mention only the inductive's level parameters.
+pub proof fn rec_elp_pdoms(sig: Sig, rid: u64)
+    requires
+        rec_scope(sig, rid),
+    ensures
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> crate::level_inst::elp_in(#[trigger] rshape(sig, rid).pdoms[q], rshape(sig, rid).lps),
+{
+    let sh = rshape(sig, rid);
+    reveal(rec_elp);
+    scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    let t = sig.consts[sh.ind].ty;
+    crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(t, sh.np + sh.ni), sh.lps);
+    assert forall|q: int| 0 <= q < sh.np implies crate::level_inst::elp_in(#[trigger] sh.pdoms[q], sh.lps) by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+    }
+}
+
+/// The fields and parameter domains mention only the inductive's level
+/// parameters.
+pub proof fn rec_elp_parts(sig: Sig, rid: u64, p: int)
+    requires
+        rec_scope(sig, rid),
+        0 <= p < rshape(sig, rid).nmin(),
+    ensures ({
+        let sh = rshape(sig, rid);
+        &&& sh.lps == sig.consts[sh.ind].lps
+        &&& forall|q: int| 0 <= q < sh.np ==> crate::level_inst::elp_in(#[trigger] sh.pdoms[q], sh.lps)
+        &&& forall|k: int| 0 <= k < sh.fields[p].len() ==> crate::level_inst::elp_in(#[trigger] sh.fields[p][k], sh.lps)
+    }),
+{
+    let sh = rshape(sig, rid);
+    reveal(rec_elp);
+    scope_ctor(sig, rid, p);
+    scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape(sig, sh.ind, p);
+    let t = sig.consts[sh.ctors[p]].ty;
+    let nf = sh.fields[p].len();
+    assert(crate::level_inst::elp_in(t, sig.consts[sh.ind].lps));
+    crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.fields[p], crate::rec_canon::tbody(t, sh.np + nf), sig.consts[sh.ind].lps);
+    assert forall|q: int| 0 <= q < sh.np implies crate::level_inst::elp_in(#[trigger] sh.pdoms[q], sh.lps) by {
+        assert((sh.pdoms + sh.fields[p])[q] == sh.pdoms[q]);
+    }
+    assert forall|k: int| 0 <= k < sh.fields[p].len() implies crate::level_inst::elp_in(#[trigger] sh.fields[p][k], sh.lps) by {
+        assert((sh.pdoms + sh.fields[p])[sh.np + k] == sh.fields[p][k]);
+    }
 }
 
 /// A recursor in scope is its inductive's canonical recursor.

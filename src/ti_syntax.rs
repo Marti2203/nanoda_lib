@@ -437,8 +437,8 @@ pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
     assert(crate::dom_rec_end::rec_frag(sig, crate::beta_model::spine_head(m)->Const_0));
 }
 
-/// Iota's premise types are the declared parameter sorts (level-invariant
-/// in the fragment).
+/// Iota's premise types: the declared parameter sorts at the recursor's
+/// instance, which is the inductive's instance there.
 pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     requires
         iota_ok(sig),
@@ -446,15 +446,25 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
         0 <= q < crate::dom_rec_ty::rshape(sig, crate::beta_model::spine_head(m)->Const_0).np,
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
-        let pd = crate::dom_rec_ty::rshape(sig, rid).pdoms[q];
-        &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, crate::beta_model::spine_head(m)->Const_1) == pd
+        let lv = crate::beta_model::spine_head(m)->Const_1;
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pd = sh.pdoms[q];
         &&& pd is Sort
+        &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv) is Sort
+        &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv)
+            == crate::expr_model::subst_expr_levels(pd, sh.lps, crate::dom_rec_ty::rinst(sig, rid, lv))
+        &&& crate::level_inst::elp_in(pd, sig.ienv.recs[rid].uparams)
     }),
 {
     let rid = crate::beta_model::spine_head(m)->Const_0;
+    let lv = crate::beta_model::spine_head(m)->Const_1;
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
     assert(crate::dom_rec_end::rec_frag(sig, rid));
-    assert(crate::dom_rec_minor::pdoms_lv(sig, rid, crate::beta_model::spine_head(m)->Const_1));
-    let _p = crate::dom_rec_ty::rshape(sig, rid).pdoms[q];
+    let pd = sh.pdoms[q];
+    crate::dom_rec_ty::rec_elp_pdoms(sig, rid);
+    crate::dom_rec_ty::rinst_id(sig, rid, lv, pd);
+    crate::dom_rec_ty::rec_lps_sub(sig, rid);
+    crate::dom_levels::elp_mono(pd, sh.lps, sig.ienv.recs[rid].uparams);
 }
 
 /// A derivation is valid: every rule instance is correct.

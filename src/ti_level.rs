@@ -442,9 +442,6 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     crate::dom_rec_ty::scope_ctor_ind(sig, rid);
     crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
-    assert(sig.consts[sh.ind].lps =~= Seq::<u64>::empty());
-    assert(crate::level_inst::elp_in(sig.consts[sh.ind].ty, Seq::empty()));
-    elp_binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(sig.consts[sh.ind].ty, sh.np + sh.ni), Seq::empty());
     crate::ti_syntax::iota_major_len(sig, m);
     let (args, cargs) = (spine_args(m), spine_args(major));
     let m2 = subst_expr_levels(m, ks, vs);
@@ -454,10 +451,11 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(crate::level_inst::sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jls(pj[q], ks, vs) by {
         crate::ti_syntax::iota_pdom_id(sig, m, q);
-        crate::ti_syntax::iota_pdom_id(sig, m2, q);
-        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
-        crate::level_inst::expr_closed(sh.pdoms[q], ks, vs);
-        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], sh.pdoms[q]));
+        let lv = spine_head(m)->Const_1;
+        assert(spine_head(m2)->Const_1 == subst_levels_spec(lv, ks, vs));
+        assert(lv.len() == rd.uparams.len());
+        crate::level_inst::expr_compose(sh.pdoms[q], rd.uparams, lv, ks, vs);
+        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], subst_expr_levels(sh.pdoms[q], rd.uparams, lv)));
         assert(spine_args(m2)[q] == subst_expr_levels(args[q], ks, vs));
         assert(spine_args(subst_expr_levels(major, ks, vs))[q] == subst_expr_levels(cargs[q], ks, vs));
     }

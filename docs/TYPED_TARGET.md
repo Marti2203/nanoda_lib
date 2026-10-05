@@ -1052,6 +1052,23 @@ Stages, each landing through the gate:
   (`iota_pdom_id`, from `rec_frag`'s `pdoms_lv`; `sr_ok` carries
   `pdoms_lv` too), so the rule's producers and rebuild lemmas need only
   that identity.
+  **U4b-0 (groundwork):** `rinst(sig, rid, lv)` (the inductive's
+  instance inside the recursor at `lv`) and `rinst_id` (a term over the
+  inductive's level parameters at `lv` over `uparams` is the term at
+  `rinst` over `lps`, by `sle_params` + `expr_compose`); `rec_scope`
+  carries `rec_elp` (the inductive's and constructors' types mention
+  only its level parameters; `rec_elp_parts`, `rec_elp_pdoms`);
+  `rec_arity` checks the recursor's own instance length (level
+  composition needs it); `iota_pdom_id` gives the premise type as the
+  domain at `rinst`, and the rebuild lemmas no longer assume the
+  identity (`pjs_ls` composes by `expr_compose`, `elp_mono`,
+  `rec_lps_sub`). `step_swap` split (`step_swap_bind`).
+  **U4b plan (from the 2026-10-05 flip, 32 functions):** Iota's subject
+  reduction converts the major's constructor head from its own instance
+  to `rinst` (`ConstAx` at the instances `ind_inj_args` shows
+  level-equivalent), then runs at one instance `us` for the inductive and
+  its constructors; the iota_sr / dom_rec_end / dom_iota lemmas take `us`
+  where they now write `Const(ind, [])`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

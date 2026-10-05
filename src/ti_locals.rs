@@ -188,10 +188,12 @@ proof fn pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
     let pj2 = crate::ti_syntax::iota_pjs(s2, sswap(g, x, y), crate::swap_model::fswap(m, x, y));
     assert(crate::swap_model::sswap(args, x, y)[rd.major_idx as int] == crate::swap_model::fswap(major, x, y));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jswap(pj[q], x, y) by {
-        assert(pdoms[q] is Sort);
         crate::ti_syntax::iota_pdom_id(sig, m, q);
-        assert(crate::swap_model::fswap(pdoms[q], x, y) == pdoms[q]);
-        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pdoms[q]));
+        let pi = crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, spine_head(m)->Const_1);
+        assert(spine_head(crate::swap_model::fswap(m, x, y)) == spine_head(m));
+        assert(pi is Sort);
+        assert(crate::swap_model::fswap(pi, x, y) == pi);
+        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pi));
         assert(spine_args(crate::swap_model::fswap(m, x, y))[q] == crate::swap_model::fswap(args[q], x, y));
         assert(spine_args(crate::swap_model::fswap(major, x, y))[q] == crate::swap_model::fswap(cargs[q], x, y));
     }
@@ -227,10 +229,12 @@ proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
     let pj2 = crate::ti_syntax::iota_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, g.len(), m));
     assert(crate::fclose::sclose(k, g.len(), args)[rd.major_idx as int] == crate::fclose::fclose(k, g.len(), major));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jclose(k, a, pj[q]) by {
-        assert(pdoms[q] is Sort);
         crate::ti_syntax::iota_pdom_id(s1, m, q);
-        assert(crate::fclose::fclose(k, g.len(), pdoms[q]) == pdoms[q]);
-        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pdoms[q]));
+        let pi = crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, spine_head(m)->Const_1);
+        assert(spine_head(crate::fclose::fclose(k, g.len(), m)) == spine_head(m));
+        assert(pi is Sort);
+        assert(crate::fclose::fclose(k, g.len(), pi) == pi);
+        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pi));
         assert(spine_args(crate::fclose::fclose(k, g.len(), m))[q] == crate::fclose::fclose(k, g.len(), args[q]));
         assert(spine_args(crate::fclose::fclose(k, g.len(), major))[q] == crate::fclose::fclose(k, g.len(), cargs[q]));
     }
@@ -282,13 +286,14 @@ proof fn step_close_iota(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
     assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
 }
 
-/// One rule instance, swapped.
+/// The binder rules' instances, swapped.
 #[verifier::spinoff_prover]
-proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
+proof fn step_swap_bind(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
     requires
         sig_fv_free(sig),
         step_ok(sig, r, j, ps),
         forall|k: int| 0 <= k < ps.len() ==> concl(#[trigger] pswap(sig, ps, x, y)[k]) == jswap(concl(ps[k]), x, y),
+        r is PiCong || r is LamCong || r is AppCong || r is Zeta || r is Beta || r is Eta,
     ensures
         step_ok(sig_swap(sig, x, y), r, jswap(j, x, y), pswap(sig, ps, x, y)),
 {
@@ -296,43 +301,6 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
     let qs = pswap(sig, ps, x, y);
     assert(qs.len() == ps.len());
     match r {
-        Rule::CtxNil => {
-            assert(sswap(Seq::<ExprSpec>::empty(), x, y) =~= Seq::<ExprSpec>::empty());
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
-        Rule::CtxCons(l) => {
-            let g = j->Wf_0;
-            sswap_drop_last(g, x, y);
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
-        Rule::Var(i) => {
-            let g = j->Eq_0;
-            let p = g.len() - 1 - i;
-            fswap_lift(i + 1, 0, g[p], x, y);
-            assert(sswap(g, x, y)[p] == fswap(g[p], x, y));
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
-        Rule::Univ(..) => {
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
-        Rule::Sym => {
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
-        Rule::Trans => {
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
-        Rule::Conv(_) => {
-            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
-            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
-            assert(step_ok(s2, r, jswap(j, x, y), qs));
-        },
         Rule::PiCong(..) => {
             let g = j->Eq_0;
             let (a, a2) = (*j->Eq_1->Bind_1, *j->Eq_2->Bind_1);
@@ -420,6 +388,63 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             assert(concl(qs[4]) == jswap(concl(ps[4]), x, y));
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
+        _ => {},
+    }
+}
+
+/// One rule instance, swapped.
+#[verifier::spinoff_prover]
+proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
+    requires
+        sig_fv_free(sig),
+        step_ok(sig, r, j, ps),
+        forall|k: int| 0 <= k < ps.len() ==> concl(#[trigger] pswap(sig, ps, x, y)[k]) == jswap(concl(ps[k]), x, y),
+    ensures
+        step_ok(sig_swap(sig, x, y), r, jswap(j, x, y), pswap(sig, ps, x, y)),
+{
+    let s2 = sig_swap(sig, x, y);
+    let qs = pswap(sig, ps, x, y);
+    assert(qs.len() == ps.len());
+    match r {
+        Rule::CtxNil => {
+            assert(sswap(Seq::<ExprSpec>::empty(), x, y) =~= Seq::<ExprSpec>::empty());
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::CtxCons(l) => {
+            let g = j->Wf_0;
+            sswap_drop_last(g, x, y);
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::Var(i) => {
+            let g = j->Eq_0;
+            let p = g.len() - 1 - i;
+            fswap_lift(i + 1, 0, g[p], x, y);
+            assert(sswap(g, x, y)[p] == fswap(g[p], x, y));
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::Univ(..) => {
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::Sym => {
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::Trans => {
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::Conv(_) => {
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::PiCong(..) | Rule::LamCong(..) | Rule::AppCong(..) | Rule::Zeta(..) | Rule::Beta(..) | Rule::Eta(..) =>
+            step_swap_bind(sig, r, j, ps, x, y),
         Rule::Irr(_) => {
             assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
             assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
