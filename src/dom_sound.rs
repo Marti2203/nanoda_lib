@@ -2031,6 +2031,17 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             }
             crate::ti_meta::mk_d(sig, ps[0]);
             crate::ti_meta::mk_d(sig, ps[1]);
+            // the parameter premises: the recursor's parameters and the
+            // constructor's own denote alike
+            reveal(crate::ti_syntax::iota_pjs);
+            let rd = sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0];
+            let args = crate::beta_model::spine_args(m);
+            let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
+            assert forall|q: int| 0 <= q < rd.num_params implies #[trigger] sem_eq(sig, args[q], cargs[q], rho) by {
+                let pj = crate::ti_syntax::iota_pjs(sig, g, m);
+                assert(concl(ps[2 + q]) == pj[q]);
+                sound(sig, ps[2 + q], rho);
+            }
             crate::dom_iota_sound::sound_iota(sig, g, m, a, rho);
         },
         _ => {},

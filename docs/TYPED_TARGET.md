@@ -864,6 +864,20 @@ Stages, each landing through the gate:
   signature extension, local swap/close) use `iota_pjs_none` (empty while
   `rec_frag` asks `np == 0`); at the gate flip they rename/substitute the
   premises instead.
+  **P4b-2k: right-to-left Iota at the parameters' values.** The
+  constructor chain (`cf_fields_ok`, `cf_ds`, `cf_chain`, `cf_val_typed`,
+  `cf_step`) runs at the parameter values `pv` (typed along the declared
+  domains, `dps`) instead of bottom: recursive fields at the canonical
+  code at `pv`, parameter-typed fields at a code below their parameter's
+  value (`ispvar`/`pvq`; the table's entry is that value, `cf_var`),
+  closed ones as before. `ind_pv_mem`/`typed_at_pv` replace the
+  bottom-parameter membership lemmas (by `tf_step` at the parameter chain
+  and `canon_mono`). The right-to-left lemmas take `pv` from the rule's
+  chain (`r2l_pv`, `r2l_pvar_field`), and `r2l_major` gives the
+  constructor's own parameter arguments those values as members — from
+  the Iota node's parameter premises, whose soundness `dom_sound` passes
+  to `sound_iota`. `r2l_ok` asks type parameters and `pdoms_lv` instead
+  of `np == 0`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

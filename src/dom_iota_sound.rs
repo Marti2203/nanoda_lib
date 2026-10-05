@@ -90,6 +90,8 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
         derivable(sig, eq(g, m, m, t)),
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
         forall|i: nat| #[trigger] wf(rho(i)),
+        forall|q: int| 0 <= q < sig.ienv.recs[spine_head(m)->Const_0].num_params ==> #[trigger] sem_eq(sig, spine_args(m)[q],
+            spine_args(spine_args(m)[sig.ienv.recs[spine_head(m)->Const_0].major_idx as int])[q], rho),
     ensures
         sem_eq(sig, m, crate::beta_model::rec_result(sig.ienv, m), rho),
 {
@@ -108,8 +110,8 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(crate::dom_rec_end::rec_hyps(sig, rid));
     crate::dom_iota::rec_wired_holds(sig);
     // the redex, split at its major
-    let nmin = sh.nmin();
-    let pre = (nmin + 1) as int;
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + nmin + 1) as int;
     crate::beta_model::spine_recompose(m);
     assert(rd.major_idx == pre);
     let major = args[pre];
@@ -136,13 +138,14 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     // the rule's side
     let heads = a0.subrange(0, pre);
     let body = crate::expr_model::subst_expr_levels(rd.rules[p].rhs, rd.uparams, lv);
-    let core = spine_app(spine_app(body, heads), cargs);
-    assert(cargs.subrange(cargs.len() - rd.rules[p].nfields, cargs.len() as int) =~= cargs);
+    let fargs = cargs.subrange(np as int, cargs.len() as int);
+    let core = spine_app(spine_app(body, heads), fargs);
+    assert(cargs.subrange(cargs.len() - rd.rules[p].nfields, cargs.len() as int) =~= fargs);
     assert(args.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
     assert(args.subrange((rd.major_idx + 1) as int, args.len() as int) =~= extra);
     let n = crate::beta_model::rec_result(sig.ienv, m);
     assert(n == spine_app(core, extra));
-    crate::dom_iota::spine_concat(body, heads, cargs);
+    crate::dom_iota::spine_concat(body, heads, fargs);
     let ss = crate::ti_strip::strip(sig);
     assert(crate::dom_rec_end::rule_typed(sig, rid, lv, p));
     let ctx = crate::dom_rec_end::rule_ctx(sig, rid, lv, p);
@@ -166,6 +169,9 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(major == spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs));
     assert(cargs.subrange(0, cargs.len() as int) =~= cargs);
     // the two directions
+    assert forall|q: int| 0 <= q < np implies #[trigger] crate::dom_sound::sem_eq(sig, a0[q], cargs[q], rho) by {
+        assert(a0[q] == args[q]);
+    }
     assert forall|u: Cpt| #[trigger] mem(sig, x1, rho, u) == mem(sig, core, rho, u) by {
         if mem(sig, x1, rho, u) {
             crate::dom_iota::iota_core_l2r(ss, sig, rid, lv, l, p, clv, lc, a0, cargs, rho, u);

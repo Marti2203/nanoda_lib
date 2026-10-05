@@ -511,42 +511,4 @@ pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
     assert(sh.ctors[j] == sh.ctors[j]);
 }
 
-/// A universe-monomorphic inductive's canonical codes without parameters,
-/// at equally many arguments, share their key and table.
-pub proof fn canon_same_table(sig: Sig, ind: u64, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>)
-    requires
-        canon_shape(sig, ind).np == 0,
-        sig.consts[ind].lps.len() == 0,
-        l1.len() == 0,
-        l2.len() == 0,
-        a1.len() == a2.len(),
-    ensures
-        canon_code(sig, ind, l1, a1)->Nd_0 == canon_code(sig, ind, l2, a2)->Nd_0,
-        crate::dom_typing::tbl(canon_code(sig, ind, l1, a1)->Nd_1) == crate::dom_typing::tbl(canon_code(sig, ind, l2, a2)->Nd_1),
-{
-    assert(l1 =~= l2);
-    let sh = canon_shape(sig, ind);
-    let t1 = code_args(sig, ind, a1) + seq![Cpt::Nd(NdKey::Tag(2), if tabled(sig, ind, l1, a1) { cblocks(sig, ind, l1, a1, sh.nmin()) } else { Seq::empty() })];
-    let t2 = code_args(sig, ind, a2) + seq![Cpt::Nd(NdKey::Tag(2), if tabled(sig, ind, l2, a2) { cblocks(sig, ind, l2, a2, sh.nmin()) } else { Seq::empty() })];
-    assert(t1.last() == t1[t1.len() - 1]);
-    assert(t2.last() == t2[t2.len() - 1]);
-    if tabled(sig, ind, l1, a1) {
-        cblocks_at(sig, ind, l1, a1, sh.nmin());
-        cblocks_at(sig, ind, l2, a2, sh.nmin());
-        assert forall|p: int| 0 <= p < sh.nmin() implies #[trigger] cblocks(sig, ind, l1, a1, sh.nmin())[p] == cblocks(sig, ind, l2, a2, sh.nmin())[p] by {
-            let nf = sh.fields[p].len();
-            centries_at(sig, ind, l1, a1, p as nat, nf);
-            centries_at(sig, ind, l2, a2, p as nat, nf);
-            assert forall|k: int| 0 <= k < nf implies #[trigger] centries(sig, ind, l1, a1, p as nat, nf)[k] == centries(sig, ind, l2, a2, p as nat, nf)[k] by {
-                canon_fields(sig, ind, p, k);
-                if !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat) {
-                    ceval_closed(sig, rk(sig, ind), ind, l1, fpe(a1, sh.np, k as nat), fpe(a2, sh.np, k as nat), ind, sh.fields[p][k]);
-                }
-            }
-            assert(centries(sig, ind, l1, a1, p as nat, nf) =~= centries(sig, ind, l2, a2, p as nat, nf));
-        }
-        assert(cblocks(sig, ind, l1, a1, sh.nmin()) =~= cblocks(sig, ind, l2, a2, sh.nmin()));
-    }
-}
-
 } // verus!
