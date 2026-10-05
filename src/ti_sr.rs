@@ -262,17 +262,23 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     crate::iota_sr::iota_sr(sig, g, m, t);
     let n = crate::beta_model::rec_result(sig.ienv, m);
     let d1 = get(sig, eq(g, n, n, t));
+    crate::ti_valid::d_ty(sig, dm);
+    let (l, d2) = get_t(sig, g, t, t);
+    assert(!crate::ti_syntax::iota_prop(sig, m)) by {
+        reveal(crate::ti_syntax::iota_prop);
+        reveal(crate::dom_rec_end::rec_large);
+    }
     let ij = eq(g, m, n, t);
     let pj = crate::ti_syntax::iota_pjs(sig, g, m);
-    let ip = seq![dm, d1] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
+    let ip = seq![dm, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
     assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))
         && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[q])) == pj[q] by {
         let dq = crate::ti_sub::get(sig, pj[q]);
         crate::ti_sub::pick_of(sig, dq);
     }
-    assert(prems(ip, seq![eq(g, m, m, t), eq(g, n, n, t)] + pj));
-    valid_node(sig, Rule::Iota, ij, ip);
-    mk_d(sig, node(Rule::Iota, ij, ip));
+    assert(prems(ip, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + pj));
+    valid_node(sig, Rule::Iota(l), ij, ip);
+    mk_d(sig, node(Rule::Iota(l), ij, ip));
 }
 
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its

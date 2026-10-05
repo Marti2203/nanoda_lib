@@ -143,7 +143,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::AppCong(_, _) => d_wf(sig, ps[0]),
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
         Rule::Zeta(_) => d_wf(sig, ps[0]),
-        Rule::Iota => d_wf(sig, ps[0]),
+        Rule::Iota(_) => d_wf(sig, ps[0]),
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
@@ -301,7 +301,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::AppCong(..) => d_ren_app(sig, d, w, dl, r),
         Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
         Rule::Zeta(..) => d_ren_zeta(sig, d, w, dl, r),
-        Rule::Iota => d_ren_iota(sig, d, w, dl, r),
+        Rule::Iota(_) => d_ren_iota(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
         Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
@@ -768,12 +768,15 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    let l = rule->Iota_0;
     let m = j->Eq_1;
     let n = j->Eq_2;
     let a = j->Eq_3;
     let q = rn(r);
     let d0 = d_ren(sig, ps[0], w, dl, r);
     let d1 = d_ren(sig, ps[1], w, dl, r);
+    let d2 = d_ren(sig, ps[2], w, dl, r);
+    assert(psub(sort(l), q) == sort(l));
     crate::ti_subst::psub_fire(q, sig, m);
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
     // the parameter premises, renamed
@@ -781,17 +784,18 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, j->Eq_0, m), crate::ti_syntax::iota_pjs(sig, dl, psub(m, q)));
     assert forall|k: int| 0 <= k < pj2.len() implies valid(sig, #[trigger] crate::ti_sub::pick(sig, pj2[k]))
         && concl(crate::ti_sub::pick(sig, pj2[k])) == pj2[k] by {
-        assert(concl(ps[2 + k]) == pj[k]);
-        let dk = d_ren(sig, ps[2 + k], w, dl, r);
+        assert(concl(ps[3 + k]) == pj[k]);
+        let dk = d_ren(sig, ps[3 + k], w, dl, r);
         crate::ti_sub::pick_of(sig, dk);
     }
-    let ps2 = seq![d0, d1] + Seq::new(pj2.len(), |k: int| crate::ti_sub::pick(sig, pj2[k]));
+    let ps2 = seq![d0, d1, d2] + Seq::new(pj2.len(), |k: int| crate::ti_sub::pick(sig, pj2[k]));
     assert(prems(ps2, seq![
         eq(dl, psub(m, q), psub(m, q), psub(a, q)),
         eq(dl, psub(n, q), psub(n, q), psub(a, q)),
+        eq(dl, psub(a, q), psub(a, q), sort(l)),
     ] + pj2));
-    valid_node(sig, Rule::Iota, j2, ps2);
-    node(Rule::Iota, j2, ps2)
+    valid_node(sig, Rule::Iota(l), j2, ps2);
+    node(Rule::Iota(l), j2, ps2)
 }
 
 } // verus!

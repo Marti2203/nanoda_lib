@@ -225,7 +225,7 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
             }
         },
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => { assert(scoped(j)); },
-        Rule::Iota => {
+        Rule::Iota(_) => {
             d_scope(sig, ps[0]);
             d_scope(sig, ps[1]);
             assert(scoped(j));

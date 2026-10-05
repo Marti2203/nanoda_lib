@@ -1174,6 +1174,68 @@ Stages, each landing through the gate:
   needs `I P ≡ I P'` to give `P ≡ P'`, which the parametric relation's
   parameter clause provides through the fundamental theorem.
 
+### Prop stage plan (2026-10-05)
+
+Order changed (agreed 2026-10-05): Prop before indices in Type. Codes
+carry no indices (see "Found 2026-09-28"), so in the model a value of
+`I ps idx` belongs to `I ps idx'` for every `idx'`, and the recursor's
+value at a constructor is typed at the motive at the constructor's own
+index terms, not at the major's: indexed families eliminating into Type
+need a redesign of the code layer. Indexed families in Lean's core
+library are almost all propositions (`Eq`, `HEq`, `Nat.le`, `Acc`), and
+eliminating a proposition into Prop is semantically trivial: proofs
+denote bottom (`prop_denot_bot`), so both sides of such an Iota denote
+bottom whatever the indices.
+
+Facts the plan rests on:
+
+- The model already interprets a Prop inductive's constructors and
+  recursor as bottom: `code_ok` interprets constructors only under
+  `canon_ok` (which asks `never_prop`) and recursors only under
+  `rec_hyps`. Their types are propositions (impredicativity), so bottom
+  is their whole denotation.
+- `has_canon` is syntactic (`rec_canon`, which already allows indices
+  and any sort), so the relation's parameter clause (`pconv`) and
+  injectivity (`ind_inj_args`) already cover Prop inductives' parameters.
+- A Prop-only recursor is one with no extra motive universe
+  (`uparams == lps`, `elim_level == Zero`).
+- Proof irrelevance is sound and adequate from a premise `t : Sort l`
+  with `is_zero(l)` (`sound_irr`, `adeq_irr`).
+
+Steps:
+
+- **P1a: Iota carries its type's sort (done).** Rule `Iota(l)` gains the
+  premise `t : Sort(l)` (third, before the parameter premises) and the
+  side condition `iota_prop(sig, m) ==> is_zero(l)` (`iota_prop`, opaque:
+  the redex's recursor has `elim_level == Zero`). The level is the rule's
+  own, not the recursor's elimination level at its instance: with extra
+  arguments after the major, `t` is the motive's result applied further,
+  not the motive at the major. Producers: the relation's Iota conversion
+  (`t` the motive at the major, sorted by `motive_at`) and subject
+  reduction (`l` from validity, `d_ty`); both have `iota_prop` false
+  because `rec_frag` now asks `rec_large` (opaque: a motive universe
+  exists) until P1b admits Prop-only recursors. Renaming, substitution,
+  local swap/close, level instantiation (`ls_is_zero`), signature
+  extension carry the premise and `iota_prop`.
+- **P1b: Prop-only recursors of non-indexed Prop inductives in the
+  signature condition.** `iota_ok` admits, besides `rec_frag`, a
+  recursor in scope (`rec_canon`, `ni == 0`) whose elimination level is
+  `Zero` and whose rules are typed (the `rule_typed` part of
+  `rec_model`). Soundness and adequacy of such an Iota go through proof
+  irrelevance on the P1a premise (`sound_irr`/`adeq_irr` style); the
+  recursor itself is not interpreted (bottom).
+- **P1c: subject reduction for them.** `iota_sr` without `canon_ok`: the
+  parameters' equalities by injectivity (`has_canon` suffices), the
+  fields at their types without the model's tables (the field kinds of
+  `rec_canon` and the rule's own typing).
+- **P2: indexed Prop families.** `rec_scope` without `ni == 0` for the
+  Prop route: the recursor's telescope with the index binders, the major
+  at the indices, the rule's type at the constructor's index terms.
+  Subject reduction needs the major's indices equal to the constructor's
+  index terms: the relation's type clause (`pconv`) grows index
+  equations (each index at its declared type at the parameters and the
+  earlier indices), so injectivity reads them back.
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no

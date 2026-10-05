@@ -55,6 +55,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::Beta(l1, l2) => Rule::Beta(ll_(l1, ks, vs), ll_(l2, ks, vs)),
         Rule::Eta(l1, l2) => Rule::Eta(ll_(l1, ks, vs), ll_(l2, ks, vs)),
         Rule::Irr(l) => Rule::Irr(ll_(l, ks, vs)),
+        Rule::Iota(l) => Rule::Iota(ll_(l, ks, vs)),
         Rule::ConstAx(l) => Rule::ConstAx(ll_(l, ks, vs)),
         Rule::ConstDef(l) => Rule::ConstDef(ll_(l, ks, vs)),
         Rule::Local(l) => Rule::Local(ll_(l, ks, vs)),
@@ -431,6 +432,7 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
             ==> #[trigger] crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs))[q]
                 == jls(crate::ti_syntax::iota_pjs(sig, g, m)[q], ks, vs),
         crate::ti_syntax::iota_lv(sig, m) ==> crate::ti_syntax::iota_lv(sig, subst_expr_levels(m, ks, vs)),
+        crate::ti_syntax::iota_prop(sig, subst_expr_levels(m, ks, vs)) == crate::ti_syntax::iota_prop(sig, m),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
@@ -452,6 +454,7 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(crate::level_inst::sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
     // the level condition, instantiated alike on both sides
     reveal(crate::ti_syntax::iota_lv);
+    reveal(crate::ti_syntax::iota_prop);
     if crate::ti_syntax::iota_lv(sig, m) {
         let lv = spine_head(m)->Const_1;
         let clv = spine_head(major)->Const_1;
@@ -488,6 +491,10 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     pjs_ls(sig, j->Eq_0, j->Eq_1, ks, vs);
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+    assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
+    if crate::ti_syntax::iota_prop(sig, j->Eq_1) {
+        ls_is_zero(r->Iota_0, ks, vs);
+    }
 }
 
 /// DERIVATIONS SURVIVE LEVEL INSTANTIATION.

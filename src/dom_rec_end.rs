@@ -507,6 +507,13 @@ pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
+    &&& rec_large(sig, c)
+}
+
+/// The recursor eliminates into any universe (it has a motive universe).
+#[verifier::opaque]
+pub open spec fn rec_large(sig: Sig, c: u64) -> bool {
+    !(crate::rec_canon::elim_level(sig, c, crate::rec_canon::rec_ind(sig, c)) is Zero)
 }
 
 /// Closed simple types read only the constants.
@@ -601,6 +608,7 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     let sh = crate::dom_rec_ty::rshape(s1, c);
     assert(sh == crate::dom_rec_ty::rshape(s2, c));
     assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
+    assert(rec_large(s2, c)) by { reveal(rec_large); }
 }
 
 /// The fragment reads only the constants and the inductive tables.

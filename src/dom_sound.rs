@@ -2018,7 +2018,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
-        Rule::Iota => {
+        Rule::Iota(_) => {
             sound(sig, ps[0], rho);
             // the recursor-stripped signature's derivations have no Iota node
             let ss = crate::ti_strip::strip(sig);
@@ -2039,8 +2039,8 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
             assert forall|q: int| 0 <= q < rd.num_params implies #[trigger] sem_eq(sig, args[q], cargs[q], rho) by {
                 let pj = crate::ti_syntax::iota_pjs(sig, g, m);
-                assert(concl(ps[2 + q]) == pj[q]);
-                sound(sig, ps[2 + q], rho);
+                assert(concl(ps[3 + q]) == pj[q]);
+                sound(sig, ps[3 + q], rho);
             }
             assert(crate::ti_syntax::iota_lv(sig, m));
             crate::dom_iota_sound::sound_iota(sig, g, m, a, rho);

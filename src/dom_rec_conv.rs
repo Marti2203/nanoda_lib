@@ -289,6 +289,8 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     crate::dom_adeq_syn::dsym(sig, g, m, m1, t);
     let d0 = crate::ti_sub::get(sig, eq(g, m1, m1, t));
     let d1 = crate::ti_sub::get(sig, eq(g, n1, n1, t));
+    crate::dom_adeq_syn::dsym(sig, g, ty1, t, sort(l));
+    let d2 = crate::ti_sub::get(sig, eq(g, t, t, sort(l)));
     let jd = eq(g, m1, n1, t);
     // the parameter premises: the recursor's parameters are the
     // constructor's own
@@ -299,20 +301,25 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     assert(rd.num_params == np);
     assert(rd.major_idx == pre);
     assert(crate::ti_syntax::iota_lv(sig, m1)) by { reveal(crate::ti_syntax::iota_lv); }
+    assert(crate::dom_rec_end::rec_frag(sig, c));
+    assert(!crate::ti_syntax::iota_prop(sig, m1)) by {
+        reveal(crate::ti_syntax::iota_prop);
+        reveal(crate::dom_rec_end::rec_large);
+    }
     assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
         crate::ti_syntax::iota_pdom_id(sig, m1, q);
         let _pq = crate::dom_rec_ty::rshape(sig, c).pdoms[q];
         assert(xs1[q] == heads[q] && (pargs + args)[q] == pargs[q]);
     }
-    let ps2 = seq![d0, d1] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
+    let ps2 = seq![d0, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
     assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))
         && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[q])) == pj[q] by {
         let dq = crate::ti_sub::get(sig, pj[q]);
         crate::ti_sub::pick_of(sig, dq);
     }
-    assert(crate::ti_syntax::prems(ps2, seq![eq(g, m1, m1, t), eq(g, n1, n1, t)] + pj));
-    crate::ti_meta::valid_node(sig, Rule::Iota, jd, ps2);
-    crate::ti_meta::mk_d(sig, crate::ti_meta::node(Rule::Iota, jd, ps2));
+    assert(crate::ti_syntax::prems(ps2, seq![eq(g, m1, m1, t), eq(g, n1, n1, t), eq(g, t, t, sort(l))] + pj));
+    crate::ti_meta::valid_node(sig, Rule::Iota(l), jd, ps2);
+    crate::ti_meta::mk_d(sig, crate::ti_meta::node(Rule::Iota(l), jd, ps2));
     crate::dom_adeq_syn::dtrans(sig, g, m, m1, n1, t);
     crate::dom_adeq_syn::dtrans(sig, g, m, n1, r, t);
 }

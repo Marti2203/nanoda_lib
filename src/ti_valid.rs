@@ -87,7 +87,7 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Zeta(_) => {
             d_ty(sig, ps[2]);
         },
-        Rule::Iota => {
+        Rule::Iota(_) => {
             d_ty(sig, ps[0]);
         },
         Rule::Beta(l1, l2) => {
@@ -160,9 +160,11 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
     ensures
         crate::ti_syntax::iota_pjs(sig2, g, m) == crate::ti_syntax::iota_pjs(sig, g, m),
         crate::ti_syntax::iota_lv(sig2, m) == crate::ti_syntax::iota_lv(sig, m),
+        crate::ti_syntax::iota_prop(sig2, m) == crate::ti_syntax::iota_prop(sig, m),
 {
     reveal(crate::ti_syntax::iota_pjs);
     reveal(crate::ti_syntax::iota_lv);
+    reveal(crate::ti_syntax::iota_prop);
     let rid = crate::beta_model::spine_head(m)->Const_0;
     assert(crate::dom_rec_end::rec_frag(sig, rid));
     assert(crate::rec_canon::rec_canon(sig, rid));
@@ -203,7 +205,7 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             let k = j->Eq_1->Free_0;
             assert(sig.locals.contains_key(k));
         },
-        Rule::Iota => {
+        Rule::Iota(_) => {
             rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
             pjs_ext(sig, sig2, j->Eq_0, j->Eq_1);
         },

@@ -182,8 +182,9 @@ pub enum Rule {
     /// instead of the body under a binder.
     Zeta(LevelSpec),
     /// A recursor applied to a constructor application unfolds to its
-    /// rule's instance, where both sides are typed.
-    Iota,
+    /// rule's instance, where both sides are typed, and their type is a
+    /// type at the given sort (a proposition for a recursor into Prop).
+    Iota(LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -365,10 +366,11 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             },
             _ => false,
         },
-        Rule::Iota => match j {
+        Rule::Iota(l) => match j {
             Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::ti_hred::rec_fire(sig, m)
                 && n == crate::beta_model::rec_result(sig.ienv, m) && iota_lv(sig, m)
-                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t)] + iota_pjs(sig, g, m)),
+                && (iota_prop(sig, m) ==> is_zero(l))
+                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + iota_pjs(sig, g, m)),
             _ => false,
         },
         Rule::Irr(l) => match j {
@@ -380,6 +382,13 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
     }
+}
+
+/// The redex's recursor eliminates only into Prop (no motive universe).
+#[verifier::opaque]
+pub open spec fn iota_prop(sig: Sig, m: ExprSpec) -> bool {
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)) is Zero
 }
 
 /// Iota's level condition: the recursor's instance of the inductive is
