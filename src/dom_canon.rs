@@ -225,7 +225,7 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
         aw(pe),
         crate::rec_canon::psimple(sig, ind, pdoms, np, k, e),
         pranked(sig, e, rk(sig, ind)),
-        sig.consts[ind].lps.len() == 0,
+        crate::dom_code::blind_ty(sig, e),
         mem(sig, e, rho, d),
         forall|i: nat| #[trigger] wf(rho(i)),
         pe.len() == np + k,
@@ -250,14 +250,12 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
     let args = spine_args(e);
     crate::beta_model::spine_recompose(e);
     let code = ceval(sig, r, ind, ls, pe, e);
-    assert(code == canon_code(sig, j, lsub(sig, ind, ls, us), cargs(sig, r, ind, ls, pe, e)));
-    assert(lsub(sig, ind, ls, us) =~= us) by {
-        assert forall|i: int| 0 <= i < us.len() implies #[trigger] lsub(sig, ind, ls, us)[i] == us[i] by {
-            assert(sig.consts[ind].lps =~= Seq::<u64>::empty());
-            subst_level_none(us[i], ls);
-        }
-    }
+    let ul = lsub(sig, ind, ls, us);
+    assert(code == canon_code(sig, j, ul, cargs(sig, r, ind, ls, pe, e)));
+    crate::dom_code::blind_head(sig, e);
+    crate::dom_levels::blind_args(sig, e);
     let ca = cargs(sig, r, ind, ls, pe, e);
+    crate::dom_code::canon_blind(sig, j, us, ul, ca);
     cargs_spine(sig, r, ind, ls, pe, e);
     cargs_wf(sig, r, ind, ls, pe, e);
     canon_wf(sig, j, us, ca);

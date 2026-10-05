@@ -565,8 +565,8 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env
             // a type over the parameters: below its code at their values
             crate::dom_lift::pfield_facts(sig, ind, pc as int, i);
             crate::dom_canon::canon_fields(sig, ind, pc as int, i);
-            assert(lps =~= Seq::<u64>::empty());
-            crate::dom_canon::sl_none(f, ls);
+            crate::dom_canon::sl_kinds(sig, ind, sh.pdoms, np, i as nat, f, rk(sig, ind), lps, ls);
+            crate::dom_code::blind_sl(sig, f, lps, ls);
             let pe = crate::dom_code::fpe(pv, np, i as nat);
             assert(pv.subrange(0, np as int) =~= pv);
             assert forall|q: int| 0 <= q < np implies le(env((i as nat + np - 1 - q) as nat), #[trigger] pe[q]) by {
@@ -579,7 +579,8 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env
                 }
             }
             crate::dom_code::fpe_aw(pv, np, i as nat);
-            crate::dom_canon::ps_bound(sig, ind, sh.pdoms, np, i as nat, Seq::empty(), pe, f, env, a0);
+            crate::dom_canon::ps_bound(sig, ind, sh.pdoms, np, i as nat, Seq::empty(), pe, da, env, a0);
+            crate::dom_code::ceval_sl(sig, rk(sig, ind), ind, Seq::empty(), pe, f, lps, ls);
         }
     }
     assert forall|q: int| 0 <= q < gen->Pi_1.len() implies

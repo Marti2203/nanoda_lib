@@ -775,6 +775,36 @@ pub proof fn ls_pair_nil(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, ks: Se
 }
 
 
+/// A CONTEXT OF SORTS at two equivalent instances: the pair invariant
+/// into its first instance.
+pub proof fn lpair_sorts(sig: Sig, g: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>, vs2: Seq<LevelSpec>)
+    requires
+        derivable(sig, Jd::Wf(g)),
+        forall|q: int| 0 <= q < g.len() ==> (#[trigger] g[q]) is Sort,
+        sig_lp_ok(sig, ks, vs),
+        sig_lp_ok(sig, ks, vs2),
+        levs_eq(vs, vs2),
+    ensures
+        lpair(sig, g, gls(g, ks, vs), ks, vs, vs2),
+{
+    reveal(lpair);
+    let dl = gls(g, ks, vs);
+    crate::ti_level::derivable_ls(sig, Jd::Wf(g), ks, vs);
+    let w = get(sig, Jd::Wf(g));
+    assert forall|i: nat| i < g.len() implies #[trigger] derivable(sig, eq(dl, ExprSpec::Var(i), ExprSpec::Var(i), le_(var_ty(g, i), ks, vs))) by {
+        let dv = d_var(sig, w, i);
+        mk_d(sig, dv);
+        crate::ti_level::derivable_ls(sig, eq(g, ExprSpec::Var(i), ExprSpec::Var(i), var_ty(g, i)), ks, vs);
+    }
+    assert forall|i: nat| i < g.len() implies #[trigger] tconvd(sig, dl, le_(var_ty(g, i), ks, vs), le_(var_ty(g, i), ks, vs2)) by {
+        let a = g[g.len() - 1 - i];
+        let l = a->Sort_0;
+        assert(a == sort(l));
+        crate::subst_algebra::lift_closed(i + 1, 0, a);
+        sort_pair(sig, dl, l, ks, vs, vs2);
+    }
+}
+
 /// The position `find_level_idx` reports holds the parameter.
 pub proof fn find_level_idx_at(ks: Seq<u64>, q: u64)
     ensures

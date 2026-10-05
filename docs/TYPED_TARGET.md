@@ -1147,6 +1147,24 @@ Stages, each landing through the gate:
   universes: universe-polymorphic inductives whose fields are recursive,
   closed or parameters (`List.{u}`, `Prod.{u,v}`, `Option.{u}`) are in it;
   fields over the parameters stay monomorphic (`pfield_ok`, U3c).
+  **U3c: fields over the parameters at every instance.** `pfield_ok` no
+  longer asks for a monomorphic inductive. Its typing (in the raw
+  parameters' context) gives the field's typing at any two equivalent
+  instances: `lpair_sorts` sets up `d_ls2` over the parameters' sorts,
+  `ps_pair` instantiates and substitutes (`ps_inst2`). The relation's
+  lifting lemmas for such fields (`ps_rel`, `ps_below`, `ps_pconv`) take
+  two instances and relate the field at each type's own instance
+  (`pfield_rel`/`pfield_below` read them off `iinst`); constructor
+  adequacy states the parameters' typing at the constructor's instance
+  (`pty_ok`, `pr_ok`, moved between the two sides' equivalent instances by
+  `pr_ok_lv`; `cf_inv` records `levs_eq(ls, ls2)`). Codes ignore the
+  levels (`ps_bound` asks `blind_ty`, `ceval_sl`), so the semantic bounds
+  read the instanced field; the model's right-in-left Iota moves the
+  field's members between the recursor's and the constructor's instance
+  through its lowering (`ps_mem_plow`) and the soundness oracle on the
+  `d_ls2` derivation in the parameters' context (`ps_mem_lv`, fitting by
+  `chain_fits`). With this every field kind is universe-polymorphic:
+  e.g. `Array.{u}`'s `List α` field is in the fragment.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

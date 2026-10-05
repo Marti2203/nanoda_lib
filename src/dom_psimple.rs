@@ -255,6 +255,149 @@ pub proof fn ps_inst(sig: Sig, g: crate::ti_syntax::Ctx, pdoms: Seq<ExprSpec>, e
     crate::ti_beta::vsub_tsub(e, a2);
 }
 
+/// TWO TERMS EQUAL IN THE PARAMETERS' CONTEXT, at two related parameter
+/// values, have equal instances.
+pub proof fn ps_inst2(sig: Sig, g: crate::ti_syntax::Ctx, pdoms: Seq<ExprSpec>, e: ExprSpec, e2: ExprSpec, t: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+    requires
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(pdoms, e, e2, t)),
+        t is Sort,
+        ppair(sig, g, pdoms, a, a2),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::Jd::Wf(g)),
+    ensures
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, vsub(e, a), vsub(e2, a2), t)),
+{
+    let np = pdoms.len();
+    let (s, s2) = (crate::ti_beta::tsub(a, np), crate::ti_beta::tsub(a2, np));
+    ppair_spair(sig, g, pdoms, a, a2);
+    let d = crate::ti_sub::get(sig, crate::ti_syntax::eq(pdoms, e, e2, t));
+    crate::ti_sub::d_sub(sig, d, g, s, s2);
+    crate::ti_beta::vsub_tsub(e, a);
+    crate::ti_beta::vsub_tsub(e2, a2);
+}
+
+/// A TYPING OVER A FORMER'S PARAMETERS, at two equivalent instances and
+/// two related parameter values (the second at the first instance's
+/// sorts): the two instances equal at the first's type.
+pub proof fn ps_pair(sig: Sig, g: crate::ti_syntax::Ctx, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>, x: ExprSpec, t: ExprSpec,
+    a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+    requires
+        crate::dom_code::has_canon(sig, j),
+        crate::dom_levels::sig_lps(sig),
+        crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, t)),
+        t is Sort,
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, j).pdoms.len() ==> (#[trigger] crate::dom_code::canon_shape(sig, j).pdoms[q]) is Sort,
+        ls1.len() == sig.consts[j].lps.len(),
+        crate::conv_cr::levs_eq(ls1, ls2),
+        ppair(sig, g, crate::ti_level::gls(crate::dom_code::canon_shape(sig, j).pdoms, sig.consts[j].lps, ls1), a, a2),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::Jd::Wf(g)),
+    ensures ({
+        let ks = sig.consts[j].lps;
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, vsub(crate::expr_model::subst_expr_levels(x, ks, ls1), a),
+            vsub(crate::expr_model::subst_expr_levels(x, ks, ls2), a2), crate::expr_model::subst_expr_levels(t, ks, ls1)))
+    }),
+{
+    let ss = crate::ti_strip::strip(sig);
+    let pd = crate::dom_code::canon_shape(sig, j).pdoms;
+    let ks = sig.consts[j].lps;
+    let dl = crate::ti_level::gls(pd, ks, ls1);
+    crate::dom_levels::sig_lps_at(sig, ks, ls1);
+    assert(ls2.len() == ls1.len());
+    crate::dom_levels::sig_lps_at(sig, ks, ls2);
+    let d = crate::ti_sub::get(ss, crate::ti_syntax::eq(pd, x, x, t));
+    let w = crate::ti_meta::d_wf(ss, d);
+    crate::ti_meta::mk_d(ss, w);
+    crate::ti_ls2::lpair_sorts(ss, pd, ks, ls1, ls2);
+    crate::ti_ls2::d_ls2(ss, d, dl, ks, ls1, ls2);
+    let (x1, x2, t1) = (crate::expr_model::subst_expr_levels(x, ks, ls1), crate::expr_model::subst_expr_levels(x, ks, ls2),
+        crate::expr_model::subst_expr_levels(t, ks, ls1));
+    crate::ti_strip::strip_derivable(sig, crate::ti_syntax::eq(dl, x1, x2, t1));
+    ps_inst2(sig, g, dl, x1, x2, t1, a, a2);
+}
+
+/// A FIELD OVER THE PARAMETERS has its lowering's members, in any
+/// environment holding the parameters' values past the earlier fields'.
+pub proof fn ps_mem_plow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec,
+    env: crate::dom_model::Env, env2: crate::dom_model::Env, d: Cpt)
+    requires
+        psimple(sig, ind, pdoms, np, k, e) || psapp(sig, ind, pdoms, np, k, e),
+        forall|i: nat| i < np ==> #[trigger] env2(i) == env(i + k),
+    ensures
+        crate::dom_model::mem(sig, e, env, d) == crate::dom_model::mem(sig, plow(e, k), env2, d),
+{
+    use crate::ti_subst::{lift_is_rn, lr};
+    use crate::dom_model::{mem, mem_w, mem_rn, mem_closed, env_rn, Wit};
+    let x = plow(e, k);
+    plow_lift_id(sig, ind, pdoms, np, k, e);
+    lift_is_rn(k, 0, x);
+    let r = env_rn(env, lr(k, 0));
+    assert forall|i: nat| i < np implies #[trigger] r(i) == env2(i) by {
+        assert(r(i) == env(i + k));
+    }
+    reveal(mem);
+    if mem(sig, e, env, d) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, e, env, d, w);
+        mem_rn(sig, x, lr(k, 0), env, d, w);
+        mem_closed(sig, x, r, env2, np, d, w);
+        assert(mem_w(sig, x, env2, d, w));
+    }
+    if mem(sig, x, env2, d) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, x, env2, d, w);
+        mem_closed(sig, x, r, env2, np, d, w);
+        mem_rn(sig, x, lr(k, 0), env, d, w);
+        assert(mem_w(sig, e, env, d, w));
+    }
+}
+
+/// A TYPE OVER A FORMER'S PARAMETERS at two equivalent instances has the
+/// same members wherever the parameters' values fit their sorts: the two
+/// instances convert in the parameters' context, and the soundness oracle
+/// gives convertible types the same members.
+pub proof fn ps_mem_lv(ss: Sig, sig: Sig, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>, x: ExprSpec, l: LevelSpec,
+    dps: Seq<Cpt>, pv: Seq<Cpt>, d: Cpt)
+    requires
+        crate::dom_sound::sound_oracle(ss, sig),
+        ss == crate::ti_strip::strip(sig),
+        crate::dom_code::has_canon(sig, j),
+        crate::dom_levels::sig_lps(sig),
+        crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, crate::ti_syntax::sort(l))),
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, j).pdoms.len() ==> (#[trigger] crate::dom_code::canon_shape(sig, j).pdoms[q]) is Sort,
+        ls1.len() == sig.consts[j].lps.len(),
+        crate::conv_cr::levs_eq(ls1, ls2),
+        crate::dom_tele::chain_ok(sig, crate::ti_level::gls(crate::dom_code::canon_shape(sig, j).pdoms, sig.consts[j].lps, ls1),
+            crate::dom_model::bot_env(), dps, pv),
+    ensures ({
+        let ks = sig.consts[j].lps;
+        crate::dom_model::mem(sig, crate::expr_model::subst_expr_levels(x, ks, ls1), crate::dom_tele::exts(crate::dom_model::bot_env(), pv), d)
+            == crate::dom_model::mem(sig, crate::expr_model::subst_expr_levels(x, ks, ls2), crate::dom_tele::exts(crate::dom_model::bot_env(), pv), d)
+    }),
+{
+    let pd = crate::dom_code::canon_shape(sig, j).pdoms;
+    let ks = sig.consts[j].lps;
+    let dl = crate::ti_level::gls(pd, ks, ls1);
+    crate::dom_levels::sig_lps_at(sig, ks, ls1);
+    assert(ls2.len() == ls1.len());
+    crate::dom_levels::sig_lps_at(sig, ks, ls2);
+    let d0 = crate::ti_sub::get(ss, crate::ti_syntax::eq(pd, x, x, crate::ti_syntax::sort(l)));
+    let w = crate::ti_meta::d_wf(ss, d0);
+    crate::ti_meta::mk_d(ss, w);
+    crate::ti_ls2::lpair_sorts(ss, pd, ks, ls1, ls2);
+    crate::ti_ls2::d_ls2(ss, d0, dl, ks, ls1, ls2);
+    let (x1, x2, t1) = (crate::expr_model::subst_expr_levels(x, ks, ls1), crate::expr_model::subst_expr_levels(x, ks, ls2),
+        crate::expr_model::subst_expr_levels(crate::ti_syntax::sort(l), ks, ls1));
+    let dd = crate::ti_sub::get(ss, crate::ti_syntax::eq(dl, x1, x2, t1));
+    let rho = crate::dom_tele::exts(crate::dom_model::bot_env(), pv);
+    assert(crate::dom_sound::fits_env(sig, Seq::empty(), crate::dom_model::bot_env())) by {
+        assert forall|i: nat| #[trigger] crate::dom_compact::wf(crate::dom_model::bot_env()(i)) by {
+            crate::dom_sound::typed_basic();
+            crate::dom_model::typed_wf(Cpt::Bot, Cpt::U);
+        }
+    }
+    crate::dom_tele::chain_fits(sig, Seq::empty(), dl, crate::dom_model::bot_env(), dps, pv);
+    assert(Seq::<ExprSpec>::empty() + dl =~= dl);
+    crate::dom_sound::oracle_use(ss, sig, dd, rho);
+    assert(crate::dom_sound::sem_eq(sig, x1, x2, rho));
+}
+
 /// Instantiating a constant's spine instantiates its arguments.
 pub proof fn vsub_spine(e: ExprSpec, a: Seq<ExprSpec>)
     requires

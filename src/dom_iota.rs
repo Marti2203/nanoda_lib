@@ -1203,10 +1203,11 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
                 crate::dom_rec_ty::rec_lps_sub(sig, rid);
                 crate::dom_rec_ty::rec_elp_parts(sig, rid, p);
                 crate::dom_rec_ty::rinst_id(sig, rid, lv, f);
-                crate::iota_sr::ps_field_mono(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
-                assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == f);
-                assert(mf[k] == crate::subst_algebra::lift((1 + p) as nat, k as nat, f));
-                assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, f));
+                let fu = crate::iota_sr::cfu(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
+                crate::iota_sr::ps_field_at(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
+                assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == fu);
+                assert(mf[k] == crate::subst_algebra::lift((1 + p) as nat, k as nat, fu));
+                assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, fu));
                 assert forall|j: nat| j < np implies #[trigger] e1(j + (k as nat) + ((1 + p) as nat)) == e2(j + (k as nat) + ((1 + nmin) as nat)) by {
                     let (i1, i2) = ((j + k + 1 + p) as nat, (j + k + 1 + nmin) as nat);
                     let q = (np - 1 - j) as int;
@@ -1215,7 +1216,7 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
                     crate::dom_rec_ty::exts_at(bot_env(), xl.subrange(0, i), i2);
                     assert(xl[q] == xs[q]);
                 }
-                crate::dom_psimple::ps_mem_transfer(sig, sh.ind, sh.pdoms, np, k as nat, f, (1 + p) as nat, (1 + nmin) as nat, e1, e2, dsf[k]);
+                crate::dom_psimple::ps_mem_transfer(sig, sh.ind, sh.pdoms, np, k as nat, fu, (1 + p) as nat, (1 + nmin) as nat, e1, e2, dsf[k]);
             } else {
                 crate::dom_rec_ty::scope_ctor(sig, rid, p);
                 crate::dom_canon::canon_fields(sig, sh.ind, p, k);
@@ -1700,18 +1701,20 @@ proof fn cf_ps_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: Seq<Cp
     crate::dom_rec_ty::scope_canon(sig, rid);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_lift::pfield_facts(sig, ind, p, k);
-    // over the parameters, so without level parameters
-    crate::iota_sr::ps_field_mono(sig, rid, p, k, cl);
-    crate::dom_rec_ty::rec_lps_sub(sig, rid);
-    assert forall|i: int| 0 <= i < np implies #[trigger] pdoms_at(sig, rid, cl)[i] == sh.pdoms[i] by {
-        crate::dom_canon::sl_none(sh.pdoms[i], cl);
-        assert(sh.lps =~= Seq::<u64>::empty());
-    }
+    // the field at the instance: over the parameters, blind, ranked alike
+    let fu = crate::iota_sr::cfu(sig, rid, p, k, cl);
+    crate::iota_sr::ps_field_at(sig, rid, p, k, cl);
+    crate::dom_canon::sl_kinds(sig, ind, sh.pdoms, np, k as nat, e, crate::dom_code::rk(sig, ind), sh.lps, cl);
+    crate::dom_code::blind_sl(sig, e, sh.lps, cl);
     assert forall|i: int| 0 <= i < pv.len() implies #[trigger] wf(pv[i]) && typed(pv[i], Cpt::U) by {
-        assert(crate::dom_sound::dfit(sig, pdoms_at(sig, rid, cl)[i], crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]));
+        let pd = pdoms_at(sig, rid, cl)[i];
+        assert(crate::dom_sound::dfit(sig, pd, crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]));
         typed_wf(pv[i], dps[i]);
-        let _s = sh.pdoms[i];
-        crate::dom_canon::sort_mem_typed(sig, sh.pdoms[i]->Sort_0, crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]);
+        let l0 = sh.pdoms[i]->Sort_0;
+        assert(sh.pdoms[i] == ExprSpec::Sort(l0));
+        assert(pd == ExprSpec::Sort(crate::level_model::subst_level_spec(l0, sh.lps, cl)));
+        crate::dom_canon::sort_mem_typed(sig, crate::level_model::subst_level_spec(l0, sh.lps, cl),
+            crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]);
     }
     let env = crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k));
     assert forall|i: nat| #[trigger] wf(env(i)) by {
@@ -1724,7 +1727,8 @@ proof fn cf_ps_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: Seq<Cp
         le_refl(pv[q]);
     }
     crate::dom_code::fpe_aw(pv, np, k as nat);
-    crate::dom_canon::ps_bound(sig, ind, sh.pdoms, np, k as nat, Seq::empty(), pe, e, env, ak[k]);
+    crate::dom_canon::ps_bound(sig, ind, sh.pdoms, np, k as nat, Seq::empty(), pe, fu, env, ak[k]);
+    crate::dom_code::ceval_sl(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e, sh.lps, cl);
     crate::dom_sound::typed_basic();
     assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
         assert(pe[q] == pv[q]);
@@ -1796,8 +1800,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: S
             } else if !crate::rec_canon::simple_ty(sig, ind, e) {
                 // a type over the parameters: below its code at their values
                 cf_ps_typed(sig, rid, p, cl, dps, pv, xf, ak, k);
-                crate::iota_sr::ps_field_mono(sig, rid, p, k, cl);
-                assert(cl =~= Seq::<LevelSpec>::empty());
+                crate::dom_code::ceval_blind(sig, r, ind, Seq::empty(), cl, pe, e);
             } else {
                 let fu = crate::iota_sr::cfu(sig, rid, p, k, cl);
                 crate::dom_lift::field_facts(sig, ind, p, k);
@@ -2550,7 +2553,8 @@ pub proof fn r2l_ps_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: S
         let pre = (sh.np + 1 + sh.nmin()) as int;
         let i = pre + k;
         let (pv, xf) = (xs.subrange(0, sh.np as int), xs.subrange(pre, xs.len() as int));
-        &&& mem(sig, sh.fields[p][k], crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), ds[i])
+        &&& mem(sig, crate::iota_sr::cfu(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv)),
+                crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), ds[i])
         &&& typed(ds[i], Cpt::U) && typed(xs[i], ds[i])
     }),
 {
@@ -2574,17 +2578,18 @@ pub proof fn r2l_ps_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: S
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     crate::dom_rec_ty::rec_elp_parts(sig, rid, p);
     crate::dom_rec_ty::rinst_id(sig, rid, lv, f);
-    crate::iota_sr::ps_field_mono(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
-    assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == f);
+    let fu = crate::iota_sr::cfu(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
+    crate::iota_sr::ps_field_at(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
+    assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == fu);
     crate::ti_level::ls_lift((1 + nmin) as nat, k as nat, f, rd.uparams, lv);
-    assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, f));
-    crate::subst_algebra::lift_zero(k as nat, f);
+    assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, fu));
+    crate::subst_algebra::lift_zero(k as nat, fu);
     assert forall|j: nat| j < np implies #[trigger] e1(j + (k as nat) + ((1 + nmin) as nat)) == e2(j + (k as nat) + 0) by {
         crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, i), (j + k + 1 + nmin) as nat);
         crate::dom_rec_ty::exts_at(bot_env(), pv + xf.subrange(0, k), (j + k) as nat);
         assert((pv + xf.subrange(0, k))[np - 1 - j] == xs[np - 1 - j]);
     }
-    crate::dom_psimple::ps_mem_transfer(sig, sh.ind, sh.pdoms, np, k as nat, f, (1 + nmin) as nat, 0, e1, e2, ds[i]);
+    crate::dom_psimple::ps_mem_transfer(sig, sh.ind, sh.pdoms, np, k as nat, fu, (1 + nmin) as nat, 0, e1, e2, ds[i]);
 }
 
 /// constructor step needs, at the chain's parameter inputs.
@@ -2637,7 +2642,26 @@ pub proof fn r2l_fields(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int,
         r2l_ps_field(sig, rid, lv, p, clv, ds, xs, k);
         crate::dom_rec_ty::scope_ctor(sig, rid, p);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-        crate::iota_sr::ps_field_mono(sig, rid, p, k, clv);
+        // from the recursor's instance to the constructor's, through the
+        // field's lowering over the parameters
+        crate::iota_sr::ps_field_at(sig, rid, p, k, us);
+        crate::iota_sr::ps_field_at(sig, rid, p, k, clv);
+        crate::dom_lift::pfield_facts(sig, sh.ind, p, k);
+        let (fu, fu2) = (crate::iota_sr::cfu(sig, rid, p, k, us), crate::iota_sr::cfu(sig, rid, p, k, clv));
+        let e = crate::rec_canon::plow(sh.fields[p][k], k as nat);
+        let env = crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k));
+        let env2 = crate::dom_tele::exts(bot_env(), pv);
+        let kn = k as nat;
+        assert forall|i: nat| i < np implies #[trigger] env2(i) == env(i + kn) by {
+            crate::dom_rec_ty::exts_at(bot_env(), pv, i);
+            crate::dom_rec_ty::exts_at(bot_env(), pv + xf.subrange(0, k), i + kn);
+            assert((pv + xf.subrange(0, k))[np - 1 - i] == pv[np - 1 - i]);
+        }
+        crate::dom_psimple::ps_mem_plow(sig, sh.ind, sh.pdoms, np, k as nat, fu, env, env2, ak[k]);
+        crate::dom_psimple::ps_mem_plow(sig, sh.ind, sh.pdoms, np, k as nat, fu2, env, env2, ak[k]);
+        let l0 = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
+        assert(crate::ti_level::gls(sh.pdoms, sig.consts[sh.ind].lps, us) =~= pdoms_at(sig, rid, us));
+        crate::dom_psimple::ps_mem_lv(ss, sig, sh.ind, us, clv, e, l0, ds.subrange(0, np as int), pv, ak[k]);
     }
     assert forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) implies
         wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {

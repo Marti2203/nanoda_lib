@@ -160,8 +160,8 @@ pub proof fn field_vsub(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpec>, 
         crate::ti_spine::vsub_closed(fu, xs);
         crate::ti_spine::vsub_closed(fu, ys);
     } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
-        crate::iota_sr::ps_field_mono(sig, rid, p, k, us);
-        crate::dom_psimple::plift_vsub(sig, sh.ind, sh.pdoms, np, k as nat, f, s, a, b, c);
+        crate::iota_sr::ps_field_at(sig, rid, p, k, us);
+        crate::dom_psimple::plift_vsub(sig, sh.ind, sh.pdoms, np, k as nat, fu, s, a, b, c);
     } else {
         let v = f->Var_0;
         assert(fu == f);
@@ -209,9 +209,9 @@ pub proof fn field_vsub_pre(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpe
         crate::ti_spine::vsub_closed(fu, xs);
         crate::ti_spine::vsub_closed(fu, ys);
     } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
-        crate::iota_sr::ps_field_mono(sig, rid, p, k, us);
-        crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, np, k as nat, f, a, b);
-        crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, np, k as nat, f, a, c);
+        crate::iota_sr::ps_field_at(sig, rid, p, k, us);
+        crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, np, k as nat, fu, a, b);
+        crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, np, k as nat, fu, a, c);
     } else {
         let v = f->Var_0;
         assert(fu == f);

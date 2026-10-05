@@ -456,12 +456,17 @@ pub open spec fn prel_at(sig: Sig, n: nat, g: Ctx, a: Seq<ExprSpec>, a2: Seq<Exp
 /// A SIMPLE TYPE OVER THE PARAMETERS, typed in their context, is related at
 /// two related parameter values below its canonical code at the
 /// parameters' codes (the lifting lemma's parameter case).
-pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>, c: Cpt)
+pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>, c: Cpt)
     requires
         crate::rec_canon::psimple(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
         crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
-        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a, a2),
+        crate::dom_levels::sig_lps(sig),
+        has_canon(sig, j),
+        forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
+        ls.len() == sig.consts[j].lps.len(),
+        crate::conv_cr::levs_eq(ls, ls2),
+        crate::dom_psimple::ppair(sig, g, crate::ti_level::gls(canon_shape(sig, j).pdoms, sig.consts[j].lps, ls), a, a2),
         canon_shape(sig, j).pdoms.len() == canon_shape(sig, j).np,
         pv.len() == canon_shape(sig, j).np,
         prel_at(sig, n, g, a, a2, pv),
@@ -470,13 +475,15 @@ pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSp
         le(c, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
         c is Bot || has_type(n, c, Cpt::U),
     ensures
-        rel_ty(sig, n, g, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2), c),
+        rel_ty(sig, n, g, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2), a2), c),
     decreases (rk(sig, j) + 1) as nat, 0int, crate::ti_syntax::esize(e),
 {
     let sh = canon_shape(sig, j);
     let np = sh.np;
     let rj = rk(sig, j);
-    let (x, x2) = (crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2));
+    let ks = sig.consts[j].lps;
+    let (e1, e2) = (crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2));
+    let (x, x2) = (crate::ti_spine::vsub(e1, a), crate::ti_spine::vsub(e2, a2));
     if c is Bot {
         ty_bot(sig, n, g, x, x2);
         return;
@@ -484,6 +491,7 @@ pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSp
     if crate::rec_canon::pvar_field(sh.pdoms, np, 0, e) {
         // a parameter: its relation
         let i = e->Var_0;
+        assert(e1 == e && e2 == e);
         crate::ti_spine::vsub_var(i, a);
         crate::ti_spine::vsub_var(i, a2);
         assert(rel_ty(sig, n, g, a[np - 1 - i], a2[np - 1 - i], c));
@@ -503,22 +511,24 @@ pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSp
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), pv, e);
     crate::dom_canon::spine_args_size(e);
     crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
-    crate::dom_psimple::vsub_spine(e, a);
-    crate::dom_psimple::vsub_spine(e, a2);
+    crate::dom_levels::sl_spine(e, ks, ls);
+    crate::dom_levels::sl_spine(e, ks, ls2);
+    crate::dom_psimple::vsub_spine(e1, a);
+    crate::dom_psimple::vsub_spine(e2, a2);
     let sk = canon_shape(sig, kk);
     let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
     canon_bnd(sig, kk, us2, ca, cs, c);
     // the instances, convertible and stuck, their type parameters convertible
-    ps_pconv(sig, g, j, e, a, a2);
+    ps_pconv(sig, g, j, ls, ls2, e, a, a2);
     // the head's parameters: the arguments, related below their codes
     assert forall|q: int, c2: Cpt| 0 <= q < sk.np && sk.pdoms[q] is Sort && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
         implies #[trigger] rel_ty(sig, n, g, pq(sig, kk, x, q), pq(sig, kk, x2, q), c2) by {
         if q < ca.len() {
             let ai = spine_args(e)[q];
             assert(ca[q] == ceval(sig, rj, j, Seq::empty(), pv, ai));
-            assert(pq(sig, kk, x, q) == crate::ti_spine::vsub(ai, a));
-            assert(pq(sig, kk, x2, q) == crate::ti_spine::vsub(ai, a2));
-            ps_rel(sig, n, g, j, ai, a, a2, pv, c2);
+            assert(pq(sig, kk, x, q) == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls), a));
+            assert(pq(sig, kk, x2, q) == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls2), a2));
+            ps_rel(sig, n, g, j, ls, ls2, ai, a, a2, pv, c2);
         } else {
             assert(cs[q] == Cpt::Bot);
             if !(c2 is Bot) {
@@ -541,56 +551,82 @@ pub open spec fn ptr_at(sig: Sig, n0: nat, n: nat, g: Ctx, a: Seq<ExprSpec>, a2:
         ==> rel_tm(sig, n, g, y, y2, a2[q], v, c2)
 }
 
-/// A former's application over the parameters, at two related parameter
-/// values: its type parameters convert.
-pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
+/// A former's application over the parameters, at two equivalent instances
+/// and two related parameter values: its type parameters convert, and its
+/// levels are equivalent.
+pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
     requires
         crate::rec_canon::psapp(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
         spine_args(e).len() == crate::rec_canon::tarity(sig.consts[spine_head(e)->Const_0].ty),
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
         crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
-        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a, a2),
+        crate::dom_levels::sig_lps(sig),
+        has_canon(sig, j),
+        forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
+        ls.len() == sig.consts[j].lps.len(),
+        crate::conv_cr::levs_eq(ls, ls2),
+        crate::dom_psimple::ppair(sig, g, crate::ti_level::gls(canon_shape(sig, j).pdoms, sig.consts[j].lps, ls), a, a2),
         derivable(sig, Jd::Wf(g)),
-    ensures
-        crate::dom_rel::pconv(sig, g, spine_head(e)->Const_0, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2)),
-        ir(sig, crate::ti_spine::vsub(e, a), spine_head(e)->Const_0) == crate::ti_spine::vsub(e, a),
-        ir(sig, crate::ti_spine::vsub(e, a2), spine_head(e)->Const_0) == crate::ti_spine::vsub(e, a2),
-        crate::ti_chain::tchain(sig, g, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2)),
-        exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2), sort(l))),
+    ensures ({
+        let (x, x2) = (crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2), a2));
+        &&& crate::dom_rel::pconv(sig, g, spine_head(e)->Const_0, x, x2)
+        &&& ir(sig, x, spine_head(e)->Const_0) == x
+        &&& ir(sig, x2, spine_head(e)->Const_0) == x2
+        &&& crate::ti_chain::tchain(sig, g, x, x2)
+        &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, x, x2, sort(l)))
+    }),
 {
     let sh = canon_shape(sig, j);
-    let (x, x2) = (crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2));
+    let ks = sig.consts[j].lps;
+    let (e1, e2) = (crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2));
+    let (x, x2) = (crate::ti_spine::vsub(e1, a), crate::ti_spine::vsub(e2, a2));
     crate::dom_psimple::psimple_facts(sig, j, sh.pdoms, sh.np, 0, e, rk(sig, j));
     let kk = spine_head(e)->Const_0;
+    let us = spine_head(e)->Const_1;
     let sk = canon_shape(sig, kk);
     crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
-    crate::dom_psimple::vsub_spine(e, a);
-    crate::dom_psimple::vsub_spine(e, a2);
+    crate::dom_levels::sl_spine(e, ks, ls);
+    crate::dom_levels::sl_spine(e, ks, ls2);
+    crate::dom_psimple::vsub_spine(e1, a);
+    crate::dom_psimple::vsub_spine(e2, a2);
     let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, e, e, sort(l)));
-    crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, e, e, sort(l)));
-    crate::dom_psimple::ps_inst(sig, g, sh.pdoms, e, sort(l), a, a2);
+    crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, e, sort(l), a, a2);
+    let lx = crate::level_model::subst_level_spec(l, ks, ls);
+    assert(crate::expr_model::subst_expr_levels(sort(l), sig.consts[j].lps, ls) == sort(lx));
     reveal(crate::ti_sub::tconvd);
-    assert(derivable(sig, eq(g, x, x2, sort(l))));
+    assert(derivable(sig, eq(g, x, x2, sort(lx))));
     crate::ti_chain::tchain_one(sig, g, x, x2);
     iapp_self(sig, x);
     iapp_self(sig, x2);
     if has_canon(sig, kk) {
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
+        // the levels
+        let nk = sig.consts[kk].lps.len();
+        crate::ti_ls2::levs_eq_refl(us);
+        crate::ti_ls2::lls_pair(us, us, ks, ls, ls2);
+        crate::dom_levels::lpad_levs_eq(crate::level_model::subst_levels_spec(us, ks, ls), crate::level_model::subst_levels_spec(us, ks, ls2), nk);
+        let i1 = crate::dom_rel::iinst(sig, kk, x);
+        let i0 = crate::dom_rel::iinst(sig, kk, e);
+        crate::dom_levels::lpad_sl(us, nk, ks, ls);
+        assert(i1 == crate::level_model::subst_levels_spec(i0, ks, ls));
+        // the type parameters
         assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, kk, crate::dom_rel::iinst(sig, kk, x), q, spine_args(x)[q], spine_args(x2)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, kk, i1, q, spine_args(x)[q], spine_args(x2)[q]) by {
             let ai = spine_args(e)[q];
-            let (y, y2) = (crate::ti_spine::vsub(ai, a), crate::ti_spine::vsub(ai, a2));
+            let (y, y2) = (crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls2), a2));
             assert(crate::dom_psimple::ptyped(sig, sh.pdoms, ai));
             let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, ai, ai, sort(l)));
-            crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, ai, ai, sort(la)));
-            crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, sort(la), a, a2);
-            assert(derivable(sig, eq(g, y, y2, sort(la))));
+            crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, ai, sort(la), a, a2);
+            assert(crate::expr_model::subst_expr_levels(sort(la), sig.consts[j].lps, ls) == sort(crate::level_model::subst_level_spec(la, ks, ls)));
             crate::ti_chain::tchain_one(sig, g, y, y2);
-            let pt = crate::dom_rel::ptype(sig, kk, crate::dom_rel::iinst(sig, kk, e), q);
-            assert(crate::dom_rel::iinst(sig, kk, x) == crate::dom_rel::iinst(sig, kk, e));
-            crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, ai, ai, pt));
-            crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, pt, a, a2);
+            let pt0 = crate::dom_rel::ptype(sig, kk, i0, q);
+            let pq0 = sk.pdoms[q];
+            assert(pq0 == sort(pq0->Sort_0));
+            crate::dom_levels::pdoms_elp(sig, kk, q);
+            crate::level_inst::expr_compose(pq0, sig.consts[kk].lps, i0, ks, ls);
+            assert(crate::expr_model::subst_expr_levels(pt0, sig.consts[j].lps, ls) == crate::dom_rel::ptype(sig, kk, i1, q));
+            crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, ai, pt0, a, a2);
         }
     }
 }
@@ -598,14 +634,19 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a
 /// A VALUE RELATED AT A SIMPLE TYPE OVER THE PARAMETERS moves to the
 /// type at other parameter values (convertible, transferring), between two
 /// codes below the type's canonical code, and between stages.
-pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>,
+pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>,
     y: ExprSpec, y2: ExprSpec, fw: Cpt, fv: Cpt, c1: Cpt, c2: Cpt)
     requires
         crate::rec_canon::psimple(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
         crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
-        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a, a2),
-        crate::dom_psimple::ppair(sig, g, canon_shape(sig, j).pdoms, a2, a2),
+        crate::dom_levels::sig_lps(sig),
+        has_canon(sig, j),
+        forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
+        ls.len() == sig.consts[j].lps.len(),
+        crate::conv_cr::levs_eq(ls, ls2),
+        crate::dom_psimple::ppair(sig, g, crate::ti_level::gls(canon_shape(sig, j).pdoms, sig.consts[j].lps, ls), a, a2),
+        crate::dom_psimple::ppair(sig, g, crate::ti_level::gls(canon_shape(sig, j).pdoms, sig.consts[j].lps, ls2), a2, a2),
         canon_shape(sig, j).pdoms.len() == canon_shape(sig, j).np,
         pv.len() == canon_shape(sig, j).np,
         prel_at(sig, n, g, a2, a2, pv),
@@ -613,7 +654,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a:
         derivable(sig, Jd::Wf(g)),
         le(c1, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
         le(c2, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
-        rel_tm(sig, n0, g, y, y2, crate::ti_spine::vsub(e, a), fw, c1),
+        rel_tm(sig, n0, g, y, y2, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), a), fw, c1),
         has_type(n0, fw, c1),
         has_type(n0, c1, Cpt::U),
         has_type(n, fv, c2),
@@ -622,13 +663,16 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a:
         !(fv is Bot),
         le(fv, fw),
     ensures
-        rel_tm(sig, n, g, y, y2, crate::ti_spine::vsub(e, a2), fv, c2),
+        rel_tm(sig, n, g, y, y2, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2), a2), fv, c2),
     decreases (rk(sig, j) + 1) as nat, 0int, crate::ti_syntax::esize(e),
 {
     let sh = canon_shape(sig, j);
     let np = sh.np;
     let rj = rk(sig, j);
-    let (x, x2) = (crate::ti_spine::vsub(e, a), crate::ti_spine::vsub(e, a2));
+    let ks = sig.consts[j].lps;
+    let (e1, e2) = (crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2));
+    let (x, x2) = (crate::ti_spine::vsub(e1, a), crate::ti_spine::vsub(e2, a2));
+    crate::ti_ls2::levs_eq_refl(ls2);
     let c0 = ceval(sig, rj, j, Seq::empty(), pv, e);
     head_le(fv, fw);
     if c1 is Bot {
@@ -641,6 +685,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a:
     if crate::rec_canon::pvar_field(sh.pdoms, np, 0, e) {
         // a parameter: its transfer
         let i = e->Var_0;
+        assert(e1 == e && e2 == e);
         crate::ti_spine::vsub_var(i, a);
         crate::ti_spine::vsub_var(i, a2);
         assert(rel_tm(sig, n0, g, y, y2, a[np - 1 - i], fw, c1));
@@ -659,16 +704,18 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a:
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), pv, e);
     crate::dom_canon::spine_args_size(e);
     crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
-    crate::dom_psimple::vsub_spine(e, a);
-    crate::dom_psimple::vsub_spine(e, a2);
+    crate::dom_levels::sl_spine(e, ks, ls);
+    crate::dom_levels::sl_spine(e, ks, ls2);
+    crate::dom_psimple::vsub_spine(e1, a);
+    crate::dom_psimple::vsub_spine(e2, a2);
     let sk = canon_shape(sig, kk);
     let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
     canon_bnd(sig, kk, us2, ca, cs, c1);
     canon_bnd(sig, kk, us2, ca, cs, c2);
     // the target's type relation, and the source's clause
-    ps_rel(sig, n, g, j, e, a2, a2, pv, c2);
-    ps_pconv(sig, g, j, e, a, a2);
-    ps_pconv(sig, g, j, e, a2, a2);
+    ps_rel(sig, n, g, j, ls2, ls2, e, a2, a2, pv, c2);
+    ps_pconv(sig, g, j, ls, ls2, e, a, a2);
+    ps_pconv(sig, g, j, ls2, ls2, e, a2, a2);
     tm_ind(sig, n0, g, y, y2, x, fw, c1);
     tm_ind(sig, n, g, y, y2, x2, fv, c2);
     // the head's parameters: the arguments, moved below their codes
@@ -681,7 +728,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a:
         if q < ca.len() {
             let ai = spine_args(e)[q];
             assert(ca[q] == ceval(sig, rj, j, Seq::empty(), pv, ai));
-            ps_below(sig, n0, n, g, j, ai, a, a2, pv, z, z2, w1, v1, e1, e2);
+            ps_below(sig, n0, n, g, j, ls, ls2, ai, a, a2, pv, z, z2, w1, v1, e1, e2);
         } else {
             head_le(v1, w1);
             assert(cs[q] == Cpt::Bot);
@@ -695,7 +742,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, e: ExprSpec, a:
         if q < ca.len() {
             let ai = spine_args(e)[q];
             assert(ca[q] == ceval(sig, rj, j, Seq::empty(), pv, ai));
-            ps_rel(sig, n, g, j, ai, a2, a2, pv, c3);
+            ps_rel(sig, n, g, j, ls2, ls2, ai, a2, a2, pv, c3);
         } else {
             assert(cs[q] == Cpt::Bot);
             if !(c3 is Bot) {
@@ -1108,24 +1155,26 @@ proof fn pfield_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq
     let np = sh.np;
     pfield_facts(sig, j, p, k);
     let ex = crate::rec_canon::plow(sh.fields[p][k], k as nat);
+    let ks = sig.consts[j].lps;
     let (a, a2) = (spine_args(e).subrange(0, np as int), spine_args(e2).subrange(0, np as int));
+    let (i1, i2) = (crate::dom_rel::iinst(sig, j, e), crate::dom_rel::iinst(sig, j, e2));
     let pv2 = pv.subrange(0, np as int);
-    assert(fq(sig, j, e, p, k) == crate::ti_spine::vsub(ex, a));
-    assert(fq(sig, j, e2, p, k) == crate::ti_spine::vsub(ex, a2));
+    assert(fq(sig, j, e, p, k) == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ex, ks, i1), a));
+    assert(fq(sig, j, e2, p, k) == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ex, ks, i2), a2));
     assert(cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv2, ex));
-    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
-        && derivable(sig, eq(g, #[trigger] a[q], a2[q], sh.pdoms[q])) by {
-        let ii = crate::dom_rel::iinst(sig, j, ir(sig, e, j));
-        assert(crate::dom_rel::peq(sig, g, j, ii, q, spine_args(ir(sig, e, j))[q], spine_args(ir(sig, e2, j))[q]));
-        assert(sig.consts[j].lps =~= Seq::<u64>::empty());
-        crate::dom_canon::sl_none(sh.pdoms[q], ii);
+    let gl = crate::ti_level::gls(sh.pdoms, ks, i1);
+    assert forall|q: int| 0 <= q < gl.len() implies gl[q] is Sort
+        && derivable(sig, eq(g, #[trigger] a[q], a2[q], gl[q])) by {
+        assert(crate::dom_rel::peq(sig, g, j, i1, q, spine_args(ir(sig, e, j))[q], spine_args(ir(sig, e2, j))[q]));
+        assert(gl[q] == crate::dom_rel::ptype(sig, j, i1, q));
+        let _s = sh.pdoms[q];
     }
     assert forall|q: int, c: Cpt| 0 <= q < pv2.len() && wf(c) && le(c, pv2[q]) && has_type(n, c, Cpt::U)
         implies #[trigger] rel_ty(sig, n, g, a[q], a2[q], c) by {
         let _s = sh.pdoms[q];
         assert(rel_ty(sig, n, g, pq(sig, j, e, q), pq(sig, j, e2, q), c));
     }
-    ps_rel(sig, n, g, j, ex, a, a2, pv2, v);
+    ps_rel(sig, n, g, j, i1, i2, ex, a, a2, pv2, v);
 }
 
 /// One closed field of the lifting lemma.
@@ -1207,7 +1256,6 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
         let sh = canon_shape(sig, j);
         let f = sh.fields[p][k];
         let e = crate::rec_canon::plow(f, k as nat);
-        &&& sig.consts[j].lps.len() == 0
         &&& crate::rec_canon::psapp(sig, j, sh.pdoms, sh.np, k as nat, f)
         &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, k as nat, f)
         &&& crate::dom_canon::pranked(sig, f, rk(sig, j))
@@ -1219,7 +1267,9 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
         &&& forall|pv: Seq<Cpt>| pv.len() >= sh.np ==>
             #[trigger] cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv.subrange(0, sh.np as int), e)
         &&& forall|t: ExprSpec| spine_args(ir(sig, t, j)).len() >= sh.np ==>
-            #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(e, spine_args(ir(sig, t, j)).subrange(0, sh.np as int))
+            #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(
+                crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, crate::dom_rel::iinst(sig, j, ir(sig, t, j))),
+                spine_args(ir(sig, t, j)).subrange(0, sh.np as int))
     }),
 {
     let sh = canon_shape(sig, j);
@@ -1231,16 +1281,19 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
     reveal(fields_typed);
     assert(pfield_ok(sig, j, p, k));
     crate::dom_psimple::psimple_plow(sig, j, sh.pdoms, sh.np, k as nat, f, rk(sig, j));
-    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
     assert forall|pv: Seq<Cpt>| pv.len() >= sh.np implies
         #[trigger] cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv.subrange(0, sh.np as int), e) by {
         crate::dom_psimple::ceval_plow(sig, j, sh.pdoms, sh.np, k as nat, f, rk(sig, j), j, Seq::empty(), pv);
     }
     assert forall|t: ExprSpec| spine_args(ir(sig, t, j)).len() >= sh.np implies
-        #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(e, spine_args(ir(sig, t, j)).subrange(0, sh.np as int)) by {
+        #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(
+            crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, crate::dom_rel::iinst(sig, j, ir(sig, t, j))),
+            spine_args(ir(sig, t, j)).subrange(0, sh.np as int)) by {
         let x = ir(sig, t, j);
-        crate::dom_canon::sl_none(f, crate::dom_rel::iinst(sig, j, x));
-        crate::dom_psimple::plow_vsub(sig, j, sh.pdoms, sh.np, k as nat, f, spine_args(x).subrange(0, sh.np as int),
+        let (ks, vs) = (sig.consts[j].lps, crate::dom_rel::iinst(sig, j, x));
+        let fl = crate::expr_model::subst_expr_levels(f, ks, vs);
+        crate::dom_canon::sl_kinds(sig, j, sh.pdoms, sh.np, k as nat, f, rk(sig, j), ks, vs);
+        crate::dom_psimple::plow_vsub(sig, j, sh.pdoms, sh.np, k as nat, fl, spine_args(x).subrange(0, sh.np as int),
             Seq::new(k as nat, |_i: int| ExprSpec::Closed));
     }
 }
@@ -1282,22 +1335,27 @@ proof fn pfield_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, t: ExprSpec, t2
     let np = sh.np;
     pfield_facts(sig, j, p, i);
     let ex = crate::rec_canon::plow(sh.fields[p][i], i as nat);
+    let ks = sig.consts[j].lps;
     let (a, a2) = (spine_args(ir(sig, t, j)).subrange(0, np as int), spine_args(ir(sig, t2, j)).subrange(0, np as int));
+    let (i1, i2) = (crate::dom_rel::iinst(sig, j, ir(sig, t, j)), crate::dom_rel::iinst(sig, j, ir(sig, t2, j)));
     let pv2 = pv.subrange(0, np as int);
-    assert(fq(sig, j, t, p, i) == crate::ti_spine::vsub(ex, a));
-    assert(fq(sig, j, t2, p, i) == crate::ti_spine::vsub(ex, a2));
+    assert(fq(sig, j, t, p, i) == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ex, ks, i1), a));
+    assert(fq(sig, j, t2, p, i) == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ex, ks, i2), a2));
     assert(cf(sig, j, pv, p, i) == ceval(sig, rk(sig, j), j, Seq::empty(), pv2, ex));
-    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
-        && derivable(sig, eq(g, #[trigger] a[q], a2[q], sh.pdoms[q])) by {
-        let ii = crate::dom_rel::iinst(sig, j, ir(sig, t, j));
-        assert(crate::dom_rel::peq(sig, g, j, ii, q, spine_args(ir(sig, t, j))[q], spine_args(ir(sig, t2, j))[q]));
-        assert(sig.consts[j].lps =~= Seq::<u64>::empty());
-        crate::dom_canon::sl_none(sh.pdoms[q], ii);
+    let (gl1, gl2) = (crate::ti_level::gls(sh.pdoms, ks, i1), crate::ti_level::gls(sh.pdoms, ks, i2));
+    assert forall|q: int| 0 <= q < gl1.len() implies gl1[q] is Sort
+        && derivable(sig, eq(g, #[trigger] a[q], a2[q], gl1[q])) by {
+        assert(crate::dom_rel::peq(sig, g, j, i1, q, spine_args(ir(sig, t, j))[q], spine_args(ir(sig, t2, j))[q]));
+        assert(gl1[q] == crate::dom_rel::ptype(sig, j, i1, q));
+        let _s = sh.pdoms[q];
     }
-    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
-        && derivable(sig, eq(g, #[trigger] a2[q], a2[q], sh.pdoms[q])) by {
-        assert(derivable(sig, eq(g, a[q], a2[q], sh.pdoms[q])));
-        crate::dom_psimple::der_diag(sig, g, a[q], a2[q], sh.pdoms[q]);
+    assert forall|q: int| 0 <= q < gl2.len() implies gl2[q] is Sort
+        && derivable(sig, eq(g, #[trigger] a2[q], a2[q], gl2[q])) by {
+        let _s = sh.pdoms[q];
+        assert(crate::dom_rel::peq(sig, g, j, i1, q, spine_args(ir(sig, t, j))[q], spine_args(ir(sig, t2, j))[q]));
+        crate::dom_rel::peq_symm(sig, g, j, i1, q, a[q], a2[q]);
+        crate::dom_rel::peq_lv(sig, g, j, i1, i2, q, a2[q], a2[q]);
+        assert(gl2[q] == crate::dom_rel::ptype(sig, j, i2, q));
     }
     assert forall|q: int, c: Cpt| 0 <= q < pv2.len() && wf(c) && le(c, pv2[q]) && has_type(n, c, Cpt::U)
         implies #[trigger] rel_ty(sig, n, g, a2[q], a2[q], c) by {
@@ -1315,7 +1373,7 @@ proof fn pfield_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, t: ExprSpec, t2
         assert(rel_tm(sig, n0, g, z, z2, pq(sig, j, t, q), w1, e1));
         assert(rel_tm(sig, n, g, z, z2, pq(sig, j, t2, q), v1, e2));
     }
-    ps_below(sig, n0, n, g, j, ex, a, a2, pv2, y, y2, fw, fv, ec, ec2);
+    ps_below(sig, n0, n, g, j, i1, i2, ex, a, a2, pv2, y, y2, fw, fv, ec, ec2);
 }
 
 /// THE CONSTRUCTOR CLAUSE MOVES between two codes below the canonical
