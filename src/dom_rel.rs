@@ -200,6 +200,7 @@ pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) ->
     let sh = crate::dom_code::canon_shape(sig, ind);
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() >= sh.np
+        && crate::conv_cr::levs_eq(iinst(sig, ind, ir(sig, t, ind)), iinst(sig, ind, ir(sig, t2, ind)))
         && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, q, a[q], a2[q])
 }
 

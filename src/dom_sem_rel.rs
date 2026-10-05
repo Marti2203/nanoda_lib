@@ -191,7 +191,8 @@ pub open spec fn tf_prel(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p:
 /// The type parameters so far convert.
 pub open spec fn tf_pconv(sig: Sig, g: Ctx, c: u64, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>) -> bool {
     let sh = crate::dom_code::canon_shape(sig, c);
-    forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
+    &&& crate::conv_cr::levs_eq(crate::dom_rel::iinst(sig, c, m), crate::dom_rel::iinst(sig, c, m2))
+    &&& forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
         ==> #[trigger] crate::dom_rel::peq(sig, g, c, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
 }
 
