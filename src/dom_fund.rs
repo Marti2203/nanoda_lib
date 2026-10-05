@@ -581,6 +581,10 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
             crate::dom_rel::lpad_id(ls, sig.consts[ind].lps.len());
         }
         crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
+        assert forall|q: int| 0 <= q < crate::beta_model::spine_args(t).len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, crate::beta_model::spine_args(t)[q], crate::beta_model::spine_args(t)[q]) by {
+            crate::ti_chain::mchain_refl(sig, g, crate::beta_model::spine_args(t)[q]);
+        }
     } else {
         let c = ind_code_mem(sig, ind, ls, xs);
         let nn = cstage(c, Cpt::U);
@@ -591,7 +595,8 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
 }
 
 /// INDUCTIVE INJECTIVITY, at two applications of the inductive: their
-/// type parameters convert.
+/// type parameters convert, and their parameters (and indices, unless the
+/// inductive is always a type) are joined by term chains.
 pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, xs: Seq<ExprSpec>, ys: Seq<ExprSpec>,
     th: ExprSpec)
     requires
@@ -610,6 +615,9 @@ pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: S
         crate::conv_cr::levs_eq(ls, crate::dom_rel::lpad(ls2, sig.consts[ind].lps.len())),
         forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
             ==> #[trigger] peq(sig, g, ind, ls, q, xs[q], ys[q]),
+        ys.len() == xs.len(),
+        forall|q: int| 0 <= q < xs.len() && (q < crate::dom_code::canon_shape(sig, ind).np || !crate::dom_code::never_prop(sig, ind))
+            ==> #[trigger] crate::ti_chain::mchain(sig, g, xs[q], ys[q]),
 {
     let t2 = crate::beta_model::spine_app(ExprSpec::Const(ind, ls2), ys);
     ind_inj_chain(sig, g, ind, ls, xs, t2, th);

@@ -442,6 +442,10 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
             crate::ti_sr::wk_closed(sig, g, x, x, pt);
         }
         crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, kk, r));
+        assert forall|q: int| 0 <= q < spine_args(r).len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, spine_args(r)[q], spine_args(r)[q]) by {
+            crate::ti_chain::mchain_refl(sig, g, spine_args(r)[q]);
+        }
     }
     canon_rel(sig, n, g, r, r, cs, c);
 }
@@ -627,6 +631,17 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
             crate::level_inst::expr_compose(pq0, sig.consts[kk].lps, i0, ks, ls);
             assert(crate::expr_model::subst_expr_levels(pt0, sig.consts[j].lps, ls) == crate::dom_rel::ptype(sig, kk, i1, q));
             crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, ai, pt0, a, a2);
+        }
+        // every argument: a type over the parameters at the two values
+        assert forall|q: int| 0 <= q < spine_args(x).len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, spine_args(x)[q], spine_args(x2)[q]) by {
+            let ai = spine_args(e)[q];
+            let (y, y2) = (crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls2), a2));
+            assert(crate::dom_psimple::ptyped(sig, sh.pdoms, ai));
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, ai, ai, sort(l)));
+            crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, ai, sort(la), a, a2);
+            assert(crate::expr_model::subst_expr_levels(sort(la), sig.consts[j].lps, ls) == sort(crate::level_model::subst_level_spec(la, ks, ls)));
+            crate::ti_chain::mchain_one(sig, g, y, y2, sort(crate::level_model::subst_level_spec(la, ks, ls)));
         }
     }
 }
@@ -844,6 +859,17 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
             crate::ti_level::ls_nlbv(a, ks, ls2);
             crate::ti_sr::wk_closed(sig, g, crate::expr_model::subst_expr_levels(a, ks, ls1),
                 crate::expr_model::subst_expr_levels(a, ks, ls2), pt1);
+        }
+        // every argument: a closed type at the two instances
+        assert forall|q: int| 0 <= q < spine_args(r1).len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, spine_args(r1)[q], spine_args(r2)[q]) by {
+            let a = spine_args(r)[q];
+            assert(styped(sig, a));
+            crate::dom_iota::simple_closed(sig, j, a);
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, sort(l)));
+            crate::dom_levels::closed_conv(sig, g, a, la, ks, ls1, ls2);
+            crate::ti_chain::mchain_one(sig, g, crate::expr_model::subst_expr_levels(a, ks, ls1),
+                crate::expr_model::subst_expr_levels(a, ks, ls2), sort(crate::level_model::subst_level_spec(la, ks, ls1)));
         }
     }
 }

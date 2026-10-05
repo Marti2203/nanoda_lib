@@ -350,6 +350,10 @@ pub proof fn pconv_symm(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec)
             peq_symm(sig, g, ind, i1, q, a[q], a2[q]);
             crate::dom_rel::peq_lv(sig, g, ind, i1, i2, q, a2[q], a[q]);
         }
+        assert forall|q: int| 0 <= q < a2.len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))
+            implies #[trigger] crate::ti_chain::mchain(sig, g, a2[q], a[q]) by {
+            crate::ti_chain::mchain_sym(sig, g, a[q], a2[q]);
+        }
     }
 }
 
@@ -372,6 +376,10 @@ pub proof fn pconv_trans(sig: Sig, g: Ctx, ind: u64, t1: ExprSpec, t2: ExprSpec,
             implies #[trigger] peq(sig, g, ind, i1, q, a1[q], a3[q]) by {
             crate::dom_rel::peq_lv(sig, g, ind, i2, i1, q, a2[q], a3[q]);
             peq_trans(sig, g, ind, i1, q, a1[q], a2[q], a3[q]);
+        }
+        assert forall|q: int| 0 <= q < a1.len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))
+            implies #[trigger] crate::ti_chain::mchain(sig, g, a1[q], a3[q]) by {
+            crate::ti_chain::mchain_trans(sig, g, a1[q], a2[q], a3[q]);
         }
     }
 }

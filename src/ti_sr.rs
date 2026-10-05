@@ -287,6 +287,46 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     crate::ti_spine::reconv_spine(sig, g, x1, n1, e, ex, t);
 }
 
+/// A TERM CHAIN FROM A TYPED TERM is an equality at its type: each step's
+/// type chains to it by uniqueness of typing.
+pub proof fn mchain_typed(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec, t: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, x, x, t)),
+        crate::ti_chain::mchain(sig, g, x, y),
+    ensures
+        derivable(sig, eq(g, x, y, t)),
+{
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == x && #[trigger] ch[ch.len() - 1] == y
+        && crate::ti_chain::mchain_ok(sig, g, ch);
+    mchain_typed_k(sig, g, ch, ch.len() - 1, t);
+}
+
+proof fn mchain_typed_k(sig: Sig, g: Ctx, ch: Seq<ExprSpec>, k: int, t: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        0 <= k < ch.len(),
+        derivable(sig, eq(g, ch[0], ch[0], t)),
+        crate::ti_chain::mchain_ok(sig, g, ch),
+    ensures
+        derivable(sig, eq(g, ch[0], ch[k], t)),
+    decreases k,
+{
+    if k > 0 {
+        mchain_typed_k(sig, g, ch, k - 1, t);
+        crate::dom_adeq_syn::dsym(sig, g, ch[0], ch[k - 1], t);
+        let i = k - 1;
+        assert(crate::ti_chain::mconvd(sig, g, ch[i], ch[i + 1]));
+        assert(i + 1 == k);
+        reveal(crate::ti_chain::mconvd);
+        let t1 = choose|t1: ExprSpec| #[trigger] derivable(sig, eq(g, ch[k - 1], ch[k], t1));
+        crate::dom_adeq_syn::dsym(sig, g, ch[k - 1], ch[k], t1);
+        uniq(sig, g, ch[k - 1], t1, t);
+        crate::ti_chain::conv_chain(sig, g, ch[k - 1], ch[k], t1, t);
+        crate::dom_adeq_syn::dtrans(sig, g, ch[0], ch[k - 1], ch[k], t);
+    }
+}
+
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its
 /// type.
 #[verifier::spinoff_prover]

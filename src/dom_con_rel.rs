@@ -957,6 +957,11 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
             assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
             assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t)[q]));
         }
+        assert forall|q: int| 0 <= q < spine_args(ty).len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))
+            implies #[trigger] crate::ti_chain::mchain(sig, g, spine_args(ty)[q], spine_args(t)[q]) by {
+            assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
+            crate::ti_chain::mchain_refl(sig, g, xs[q]);
+        }
     }
 }
 

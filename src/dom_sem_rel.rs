@@ -188,14 +188,17 @@ pub open spec fn tf_prel(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, p:
         ==> #[trigger] rel_ty(sig, n, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q], c)
 }
 
-/// The type parameters so far convert.
+/// The type parameters so far convert, and every argument so far is joined
+/// by a term chain.
 pub open spec fn tf_pconv(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, m: ExprSpec, m2: ExprSpec, p: Seq<Cpt>) -> bool {
     let sh = crate::dom_code::canon_shape(sig, c);
     let li = crate::dom_rel::lpad(ls, sig.consts[c].lps.len());
     &&& crate::conv_cr::levs_eq(crate::dom_rel::iinst(sig, c, m), crate::dom_rel::iinst(sig, c, m2))
     &&& crate::conv_cr::levs_eq(crate::dom_rel::iinst(sig, c, m), li)
-    &&& forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
-        ==> #[trigger] crate::dom_rel::peq(sig, g, c, li, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
+    &&& (forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
+        ==> #[trigger] crate::dom_rel::peq(sig, g, c, li, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]))
+    &&& forall|q: int| 0 <= q < p.len()
+        ==> #[trigger] crate::ti_chain::mchain(sig, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
 }
 
 /// Where the former has canonical tables, the type is its telescope's
@@ -301,6 +304,26 @@ pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Ex
                 assert(crate::dom_rel::peq(sig, g, c, li, q, a1[q], a2[q]));
                 crate::dom_rel::peq_symm(sig, g, c, li, q, a1[q], a2[q]);
                 assert(a2.push(x)[q] == a2[q] && a2.push(x2)[q] == a2[q]);
+            }
+        }
+        // the term chains: the new argument's conversion is one step
+        crate::ti_chain::mchain_one(sig, g, x, x2, rp(sig, t).0);
+        assert forall|q: int| 0 <= q < p2.len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, a1.push(x)[q], a2.push(x2)[q]) by {
+            if q < p.len() {
+                assert(crate::ti_chain::mchain(sig, g, a1[q], a2[q]));
+            }
+        }
+        assert forall|q: int| 0 <= q < p2.len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, a1.push(x)[q], a1.push(x2)[q]) by {
+            if q < p.len() {
+                crate::ti_chain::mchain_refl(sig, g, a1[q]);
+            }
+        }
+        assert forall|q: int| 0 <= q < p2.len()
+            implies #[trigger] crate::ti_chain::mchain(sig, g, a2.push(x)[q], a2.push(x2)[q]) by {
+            if q < p.len() {
+                crate::ti_chain::mchain_refl(sig, g, a2[q]);
             }
         }
     }
@@ -526,6 +549,10 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
                 assert forall|q: int| 0 <= q < sc.np && sc.pdoms[q] is Sort implies
                     #[trigger] crate::dom_rel::peq(sig, g, c, im, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]) by {
                     crate::dom_rel::peq_lv(sig, g, c, li, im, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]);
+                }
+                assert forall|q: int| 0 <= q < crate::beta_model::spine_args(m).len() implies
+                    #[trigger] crate::ti_chain::mchain(sig, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]) by {
+                    assert(q < p.len());
                 }
                 assert(crate::dom_rel::pconv(sig, g, c, m, m2));
             }

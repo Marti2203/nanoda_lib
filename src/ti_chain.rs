@@ -110,6 +110,94 @@ pub proof fn tchain_sym(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec)
     assert(r[r.len() - 1] == c[0]);
 }
 
+/// `x` and `y` are derivably equal at some type.
+#[verifier::opaque]
+pub open spec fn mconvd(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec) -> bool {
+    exists|t: ExprSpec| #[trigger] derivable(sig, eq(g, x, y, t))
+}
+
+/// Consecutive entries are equal terms, each at its own type.
+pub open spec fn mchain_ok(sig: Sig, g: Ctx, ch: Seq<ExprSpec>) -> bool {
+    forall|i: int| 0 <= i < ch.len() - 1 ==> #[trigger] mconvd(sig, g, ch[i], ch[i + 1])
+}
+
+/// A TERM CHAIN: `x` and `y` are joined by equalities at any types (an
+/// inductive's arguments in the relation's `pconv`; subject reduction
+/// types them with uniqueness of typing).
+pub open spec fn mchain(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec) -> bool {
+    exists|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == x && #[trigger] ch[ch.len() - 1] == y && mchain_ok(sig, g, ch)
+}
+
+pub proof fn mchain_refl(sig: Sig, g: Ctx, x: ExprSpec)
+    ensures
+        mchain(sig, g, x, x),
+{
+    let ch = seq![x];
+    assert(ch[ch.len() - 1] == x);
+}
+
+pub proof fn mchain_one(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec, t: ExprSpec)
+    requires
+        derivable(sig, eq(g, x, y, t)),
+    ensures
+        mchain(sig, g, x, y),
+{
+    reveal(mconvd);
+    let ch = seq![x, y];
+    assert(mconvd(sig, g, ch[0], ch[1]));
+    assert(mchain_ok(sig, g, ch));
+    assert(ch[ch.len() - 1] == y);
+}
+
+pub proof fn mchain_trans(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+    requires
+        mchain(sig, g, x, y),
+        mchain(sig, g, y, z),
+    ensures
+        mchain(sig, g, x, z),
+{
+    let c1 = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == x && #[trigger] ch[ch.len() - 1] == y && mchain_ok(sig, g, ch);
+    let c2 = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == y && #[trigger] ch[ch.len() - 1] == z && mchain_ok(sig, g, ch);
+    let c = c1 + c2.drop_first();
+    assert forall|i: int| 0 <= i < c.len() - 1 implies #[trigger] mconvd(sig, g, c[i], c[i + 1]) by {
+        if i < c1.len() - 1 {
+            assert(c[i] == c1[i] && c[i + 1] == c1[i + 1]);
+        } else if i == c1.len() - 1 {
+            assert(c[i] == c1[i] && c1[i] == c2[0] && c[i + 1] == c2[1]);
+        } else {
+            let k = i - c1.len() + 1;
+            assert(c[i] == c2[k] && c[i + 1] == c2[k + 1]);
+        }
+    }
+    if c2.len() == 1 {
+        assert(c =~= c1);
+    } else {
+        assert(c[c.len() - 1] == c2[c2.len() - 1]);
+    }
+    assert(c[c.len() - 1] == z);
+}
+
+pub proof fn mchain_sym(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec)
+    requires
+        mchain(sig, g, x, y),
+    ensures
+        mchain(sig, g, y, x),
+{
+    let c = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == x && #[trigger] ch[ch.len() - 1] == y && mchain_ok(sig, g, ch);
+    let r = Seq::new(c.len(), |i: int| c[c.len() - 1 - i]);
+    assert forall|i: int| 0 <= i < r.len() - 1 implies #[trigger] mconvd(sig, g, r[i], r[i + 1]) by {
+        let j = c.len() - 2 - i;
+        assert(mconvd(sig, g, c[j], c[j + 1]));
+        reveal(mconvd);
+        let t = choose|t: ExprSpec| #[trigger] derivable(sig, eq(g, c[j], c[j + 1], t));
+        let d = get(sig, eq(g, c[j], c[j + 1], t));
+        let ds = d_sym(sig, d);
+        mk_d(sig, ds);
+        assert(derivable(sig, eq(g, c[j + 1], c[j], t)));
+    }
+    assert(r[r.len() - 1] == c[0]);
+}
+
 /// A conversion's type moved along one type conversion.
 pub proof fn conv_step(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, x: ExprSpec, y: ExprSpec)
     requires

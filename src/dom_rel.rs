@@ -218,15 +218,20 @@ pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> b
     }
 }
 
-/// THE TYPE PARAMETERS CONVERT: of a canonical inductive, the applications
-/// two types reduce to are applied past the parameters, with equal type
-/// parameters. What injectivity of the inductive reads back.
+/// THE ARGUMENTS CONVERT: of a canonical inductive, the applications two
+/// types reduce to are applied past the parameters, to as many arguments,
+/// with equal type parameters (at their sorts) and the parameters joined by
+/// term chains, the indices too unless the inductive is always a type (the
+/// model is index-blind there). What injectivity of the inductive reads
+/// back.
 pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) -> bool {
     let sh = crate::dom_code::canon_shape(sig, ind);
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
-    crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() >= sh.np
+    crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() == a.len()
         && crate::conv_cr::levs_eq(iinst(sig, ind, ir(sig, t, ind)), iinst(sig, ind, ir(sig, t2, ind)))
-        && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q])
+        && (forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q]))
+        && forall|q: int| 0 <= q < a.len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))
+            ==> #[trigger] crate::ti_chain::mchain(sig, g, a[q], a2[q])
 }
 
 /// Marker trigger for the clauses' quantifiers (a same-group call inside a

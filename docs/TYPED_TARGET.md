@@ -1235,13 +1235,43 @@ Steps:
   a Prop-only recursor), then extend over the extra arguments
   (`reconv_spine`). So the P1a side condition holds without sort
   uniqueness along conversion chains.
-- **P2: indexed Prop families.** `rec_scope` without `ni == 0` for the
-  Prop route: the recursor's telescope with the index binders, the major
-  at the indices, the rule's type at the constructor's index terms.
-  Subject reduction needs the major's indices equal to the constructor's
-  index terms: the relation's type clause (`pconv`) grows index
-  equations (each index at its declared type at the parameters and the
-  earlier indices), so injectivity reads them back.
+- **P2: indexed Prop families.** Found 2026-10-05: almost every indexed
+  Prop family in core also has value parameters (`Eq`'s `a : α`,
+  `Nat.le`'s `n`, `Acc`'s `r`, `HEq`'s), so P2 needs value parameters
+  too. The model side is free for both: a Prop-only recursor's inductive
+  has no tables (`canon_ok` asks `never_prop`) and its Iota is
+  irrelevance. What they need is subject reduction, which needs the
+  major's indices and value parameters convertible with the recursor's
+  (injectivity). Today `pconv` records conversions only for parameters
+  typed by a sort (`peq`): a value argument's domain depends on the
+  earlier arguments, and recording a typed equality there would make the
+  relation's symmetry and transitivity need substitution congruence over
+  the telescope inside the fundamental lemma.
+  Design: **term chains.** `mchain(g, x, y)`: a sequence from `x` to `y`
+  whose consecutive entries are derivably equal at *some* type.
+  Reflexive, symmetric and transitive by construction, and weakening
+  carries it. Subject reduction (outside the model) turns a chain into an
+  equality at the declared domain, step by step with `uniq`
+  (`mchain_typed`: `x : T` and `mchain(x, y)` give `x ≡ y : T`).
+  - **V1 (done): `pconv` records a term chain for every parameter, and
+    for every index unless the inductive is always a type** (`never_prop`:
+    there the model is index-blind and a recursive field's type relates to
+    the result type at other index terms, `direct_pconv`). Establishing sites: the type former's relation
+    (`tf_pconv`: each argument's conversion at its domain is one step),
+    closed field types (`closed_pconv`: arguments are closed types,
+    `sargs_typed`, related across the two level instances by
+    `closed_conv`), field types over the parameters (`ps_pconv`), direct
+    occurrences (`direct_pconv`), the recursor's inductive (`dom_rec_end`).
+    `ind_inj_args` reads the chains back (and the argument counts agree);
+    `ti_sr::mchain_typed` types them.
+  - **V2: Prop-only recursors with value parameters and indices.**
+    `rec_frag` keeps `pdoms` sorts and `ni == 0` only for recursors with
+    a motive universe. `iota_pjs` holds the parameters at their domains
+    instantiated at the recursor's earlier arguments, and grows index
+    premises; `iota_sr` is generalized over the index binders (motive over
+    the indices and the major, the major at the indices, the rule at the
+    constructor's index terms), with the chains from V1 giving the
+    major's indices and value parameters.
 
 ### Open: large elimination out of Prop
 
