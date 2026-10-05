@@ -776,13 +776,20 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let d1 = d_ren(sig, ps[1], w, dl, r);
     crate::ti_subst::psub_fire(q, sig, m);
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
-    crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, m);
-    crate::ti_syntax::iota_pjs_none(sig, dl, psub(m, q));
-    let ps2 = seq![d0, d1];
+    // the parameter premises, renamed
+    crate::ti_subst::pjs_psub(sig, j->Eq_0, dl, m, q);
+    let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, j->Eq_0, m), crate::ti_syntax::iota_pjs(sig, dl, psub(m, q)));
+    assert forall|k: int| 0 <= k < pj2.len() implies valid(sig, #[trigger] crate::ti_sub::pick(sig, pj2[k]))
+        && concl(crate::ti_sub::pick(sig, pj2[k])) == pj2[k] by {
+        assert(concl(ps[2 + k]) == pj[k]);
+        let dk = d_ren(sig, ps[2 + k], w, dl, r);
+        crate::ti_sub::pick_of(sig, dk);
+    }
+    let ps2 = seq![d0, d1] + Seq::new(pj2.len(), |k: int| crate::ti_sub::pick(sig, pj2[k]));
     assert(prems(ps2, seq![
         eq(dl, psub(m, q), psub(m, q), psub(a, q)),
         eq(dl, psub(n, q), psub(n, q), psub(a, q)),
-    ] + crate::ti_syntax::iota_pjs(sig, dl, psub(m, q))));
+    ] + pj2));
     valid_node(sig, Rule::Iota, j2, ps2);
     node(Rule::Iota, j2, ps2)
 }

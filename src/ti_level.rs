@@ -399,6 +399,58 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
     }
 }
 
+/// A telescope's level parameters are its domains'.
+proof fn elp_binds(bk: crate::expr_model::BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, us: Seq<u64>)
+    requires
+        crate::level_inst::elp_in(crate::rec_canon::binds(bk, ds, b), us),
+    ensures
+        forall|i: int| 0 <= i < ds.len() ==> crate::level_inst::elp_in(#[trigger] ds[i], us),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        elp_binds(bk, ds.drop_first(), b, us);
+        assert forall|i: int| 0 <= i < ds.len() implies crate::level_inst::elp_in(#[trigger] ds[i], us) by {
+            if i > 0 {
+                assert(ds[i] == ds.drop_first()[i - 1]);
+            }
+        }
+    }
+}
+
+/// IOTA'S PARAMETER PREMISES UNDER LEVEL INSTANTIATION: the instantiated
+/// redex's are the instantiated premises (their sorts mention no level
+/// parameter).
+proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        crate::ti_syntax::iota_ok(sig),
+        crate::ti_hred::rec_fire(sig, m),
+    ensures ({
+        let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs)));
+        &&& pj2.len() == pj.len()
+        &&& forall|q: int| 0 <= q < pj.len() ==> #[trigger] pj2[q] == jls(pj[q], ks, vs)
+    }),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::iota_pjs);
+    let rid = spine_head(m)->Const_0;
+    let rd = sig.ienv.recs[rid];
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::level_inst::li_spine_const(m, ks, vs);
+    let major = spine_args(m)[rd.major_idx as int];
+    crate::level_inst::li_spine_const(major, ks, vs);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(sig.consts[sh.ind].lps =~= Seq::<u64>::empty());
+    assert(crate::level_inst::elp_in(sig.consts[sh.ind].ty, Seq::empty()));
+    elp_binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(sig.consts[sh.ind].ty, sh.np + sh.ni), Seq::empty());
+    assert forall|q: int| 0 <= q < rd.num_params implies subst_expr_levels(#[trigger] sh.pdoms[q], ks, vs) == sh.pdoms[q] by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+        crate::level_inst::expr_closed(sh.pdoms[q], ks, vs);
+    }
+}
+
 #[verifier::spinoff_prover]
 proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
@@ -412,8 +464,7 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     let qs = pls(sig, ps, ks, vs);
     assert(qs.len() == ps.len());
     crate::level_inst::li_fire(sig, j->Eq_1, ks, vs);
-    crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, j->Eq_1);
-    crate::ti_syntax::iota_pjs_none(sig, jls(j, ks, vs)->Eq_0, jls(j, ks, vs)->Eq_1);
+    pjs_ls(sig, j->Eq_0, j->Eq_1, ks, vs);
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
 }

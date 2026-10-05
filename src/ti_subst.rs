@@ -554,6 +554,30 @@ pub proof fn psub_rec(t: Sub, env: crate::expr_arena_bridge::EnvSpec, sp: ExprSp
 
 /// Substitution keeps a recursor redex firing: ready, and its major of
 /// the constructor's exact arity.
+/// IOTA'S PARAMETER PREMISES UNDER SUBSTITUTION: the substituted redex's
+/// are the substituted premises, their sorts unchanged.
+pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: crate::ti_syntax::Ctx, m: ExprSpec, t: Sub)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        crate::ti_hred::rec_fire(sig, m),
+    ensures ({
+        let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, g2, psub(m, t)));
+        &&& pj2.len() == pj.len()
+        &&& forall|q: int| 0 <= q < pj.len() ==> #[trigger] pj[q] is Eq && pj[q]->Eq_0 == g
+        &&& forall|q: int| 0 <= q < pj.len() ==> pj[q] is Eq && #[trigger] pj2[q] == crate::ti_syntax::eq(g2, psub(pj[q]->Eq_1, t),
+                psub(pj[q]->Eq_2, t), psub(pj[q]->Eq_3, t))
+    }),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::iota_pjs);
+    crate::ti_syntax::iota_pdoms(sig, m);
+    psub_spine_const(t, m);
+    let rd = sig.ienv.recs[spine_head(m)->Const_0];
+    let major = spine_args(m)[rd.major_idx as int];
+    psub_spine_const(t, major);
+    assert(spsub(spine_args(m), t)[rd.major_idx as int] == psub(major, t));
+}
+
 pub proof fn psub_fire(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     requires
         crate::ti_hred::rec_fire(sig, sp),

@@ -395,16 +395,17 @@ pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], pdoms[q]))
 }
 
-/// Iota's parameter premises are none while the recursor fragment has no
-/// parameters.
-pub proof fn iota_pjs_none(sig: Sig, g: Ctx, m: ExprSpec)
+/// Iota's parameter premises are at sorts: the recursor fragment's
+/// parameters are type parameters.
+pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
     requires
         iota_ok(sig),
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
-    ensures
-        iota_pjs(sig, g, m) =~= Seq::<Jd>::empty(),
+    ensures ({
+        let rid = crate::beta_model::spine_head(m)->Const_0;
+        forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
+    }),
 {
-    reveal(iota_pjs);
     assert(crate::dom_rec_end::rec_frag(sig, crate::beta_model::spine_head(m)->Const_0));
 }
 

@@ -1026,13 +1026,21 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let bj = eq(dl, psub(m, s), psub(n, s), psub(a, s));
-    crate::ti_syntax::iota_pjs_none(sig, g, m);
-    crate::ti_syntax::iota_pjs_none(sig, dl, psub(m, s));
-    let bp = seq![q0, q1];
+    // the parameter premises, substituted
+    crate::ti_subst::pjs_psub(sig, g, dl, m, s);
+    let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, dl, psub(m, s)));
+    assert forall|k: int| 0 <= k < pj2.len() implies valid(sig, #[trigger] pick(sig, pj2[k]))
+        && concl(pick(sig, pj2[k])) == pj2[k] by {
+        assert(concl(ps[2 + k]) == pj[k]);
+        d_sub(sig, ps[2 + k], dl, s, s);
+        let dk = get(sig, pj2[k]);
+        pick_of(sig, dk);
+    }
+    let bp = seq![q0, q1] + Seq::new(pj2.len(), |k: int| pick(sig, pj2[k]));
     assert(prems(bp, seq![
         eq(dl, psub(m, s), psub(m, s), psub(a, s)),
         eq(dl, psub(n, s), psub(n, s), psub(a, s)),
-    ] + crate::ti_syntax::iota_pjs(sig, dl, psub(m, s))));
+    ] + pj2));
     valid_node(sig, Rule::Iota, bj, bp);
     let bd = node(Rule::Iota, bj, bp);
     let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));

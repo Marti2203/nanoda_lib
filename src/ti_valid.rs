@@ -150,6 +150,28 @@ pub proof fn rec_sub(env: crate::expr_arena_bridge::EnvSpec, env2: crate::expr_a
     }
 }
 
+/// Iota's parameter premises read only the recursor's entry and its
+/// inductive's type, which an extension keeps.
+proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
+    requires
+        sig_ext(sig, sig2),
+        iota_ok(sig),
+        sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
+    ensures
+        crate::ti_syntax::iota_pjs(sig2, g, m) == crate::ti_syntax::iota_pjs(sig, g, m),
+{
+    reveal(crate::ti_syntax::iota_pjs);
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    assert(crate::rec_canon::rec_canon(sig, rid));
+    assert(sig2.ienv.recs[rid] == sig.ienv.recs[rid]);
+    assert(sig2.consts[rid] == sig.consts[rid]);
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    assert(crate::rec_canon::rec_ind(sig2, rid) == ind);
+    assert(sig2.consts[ind] == sig.consts[ind]);
+    assert(crate::dom_rec_ty::rshape(sig2, rid).pdoms == crate::dom_rec_ty::rshape(sig, rid).pdoms);
+}
+
 /// One rule instance stays correct in an extended signature.
 proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     requires
@@ -180,8 +202,7 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
         },
         Rule::Iota => {
             rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
-            crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, j->Eq_1);
-            crate::ti_syntax::iota_pjs_none(sig2, j->Eq_0, j->Eq_1);
+            pjs_ext(sig, sig2, j->Eq_0, j->Eq_1);
         },
         _ => {},
     }

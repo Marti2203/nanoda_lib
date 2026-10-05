@@ -157,6 +157,65 @@ pub open spec fn pswap(sig: Sig, ps: Seq<Deriv>, x: nat, y: nat) -> Seq<Deriv> {
     Seq::new(ps.len(), |k: int| pick(sig_swap(sig, x, y), jswap(concl(ps[k]), x, y)))
 }
 
+/// IOTA'S PARAMETER PREMISES UNDER A LOCAL SWAP: the swapped redex's are
+/// the swapped premises (the signature's shapes are untouched, the sorts
+/// mention no local).
+proof fn pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        crate::ti_hred::rec_fire(sig, m),
+    ensures ({
+        let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m),
+            crate::ti_syntax::iota_pjs(sig_swap(sig, x, y), sswap(g, x, y), crate::swap_model::fswap(m, x, y)));
+        &&& pj2.len() == pj.len()
+        &&& forall|q: int| 0 <= q < pj.len() ==> #[trigger] pj2[q] == jswap(pj[q], x, y)
+    }),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::iota_pjs);
+    let s2 = sig_swap(sig, x, y);
+    let rid = spine_head(m)->Const_0;
+    let rd = sig.ienv.recs[rid];
+    crate::ti_syntax::iota_pdoms(sig, m);
+    crate::swap_model::fswap_spine(m, x, y);
+    let major = spine_args(m)[rd.major_idx as int];
+    crate::swap_model::fswap_spine(major, x, y);
+    assert(crate::dom_rec_ty::rshape(s2, rid) == crate::dom_rec_ty::rshape(sig, rid));
+    assert forall|q: int| 0 <= q < rd.num_params implies crate::swap_model::fswap(#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q], x, y)
+        == crate::dom_rec_ty::rshape(sig, rid).pdoms[q] by {
+        assert(crate::dom_rec_ty::rshape(sig, rid).pdoms[q] is Sort);
+    }
+}
+
+/// IOTA'S PARAMETER PREMISES UNDER CLOSING A LOCAL: the closed redex's are
+/// the closed premises.
+proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
+    requires
+        crate::ti_syntax::iota_ok(sig_with(sig, k, a)),
+        crate::ti_hred::rec_fire(sig_with(sig, k, a), m),
+    ensures ({
+        let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig_with(sig, k, a), g, m),
+            crate::ti_syntax::iota_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, g.len(), m)));
+        &&& pj2.len() == pj.len()
+        &&& forall|q: int| 0 <= q < pj.len() ==> #[trigger] pj2[q] == jclose(k, a, pj[q])
+    }),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::iota_pjs);
+    let s1 = sig_with(sig, k, a);
+    let rid = spine_head(m)->Const_0;
+    let rd = s1.ienv.recs[rid];
+    crate::ti_syntax::iota_pdoms(s1, m);
+    crate::fclose::fclose_spine_const(k, g.len(), m);
+    let major = spine_args(m)[rd.major_idx as int];
+    crate::fclose::fclose_spine_const(k, g.len(), major);
+    assert(crate::dom_rec_ty::rshape(s1, rid) == crate::dom_rec_ty::rshape(sig, rid));
+    assert forall|q: int| 0 <= q < rd.num_params implies crate::fclose::fclose(k, g.len(), #[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q])
+        == crate::dom_rec_ty::rshape(sig, rid).pdoms[q] by {
+        assert(crate::dom_rec_ty::rshape(sig, rid).pdoms[q] is Sort);
+    }
+}
+
 /// The Iota instance, swapped.
 #[verifier::spinoff_prover]
 proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
@@ -174,8 +233,7 @@ proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     crate::swap_model::fswap_fire(sig, j->Eq_1, x, y);
     crate::dom_rec_end::frag_congr(sig, s2);
     assert(crate::ti_hred::rec_fire(s2, crate::swap_model::fswap(j->Eq_1, x, y)));
-    crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, j->Eq_1);
-    crate::ti_syntax::iota_pjs_none(s2, jswap(j, x, y)->Eq_0, crate::swap_model::fswap(j->Eq_1, x, y));
+    pjs_swap(sig, j->Eq_0, j->Eq_1, x, y);
     assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
     assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
 }
@@ -199,8 +257,7 @@ proof fn step_close_iota(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
     crate::fclose::fclose_fire(k, j->Eq_0.len(), sig, j->Eq_1);
     crate::fclose::fclose_rec(k, j->Eq_0.len(), sig.ienv, j->Eq_1);
     crate::dom_rec_end::frag_congr(sig, s1);
-    crate::ti_syntax::iota_pjs_none(s1, j->Eq_0, j->Eq_1);
-    crate::ti_syntax::iota_pjs_none(sig, jclose(k, a, j)->Eq_0, jclose(k, a, j)->Eq_1);
+    pjs_close(sig, k, a, j->Eq_0, j->Eq_1);
     assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
     assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
 }
