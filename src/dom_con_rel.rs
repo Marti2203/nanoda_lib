@@ -492,7 +492,8 @@ pub open spec fn cf_inv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Level
     &&& derivable(sig, eq(g, m, m2, t)) && derivable(sig, eq(g, m2, m2, t2))
     &&& flds_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, np)
     &&& crate::dom_code::canon_ok(sig, ind)
-    &&& cf_bnd(sig, ind, pc, np, pv, xs.len() as nat, r, a, ds)
+    &&& ls.len() == sig.consts[ind].lps.len() && ls2.len() == sig.consts[ind].lps.len()
+    &&& cf_bnd(sig, ind, pc, np, ls, pv, xs.len() as nat, r, a, ds)
     &&& pr_ok(sig, nn, g, ind, xs, xs2, pv)
 }
 
@@ -506,9 +507,11 @@ pub open spec fn par_ok(sig: Sig, nn: nat, g: Ctx, x: ExprSpec, x2: ExprSpec, w:
 /// each diagonal).
 pub open spec fn pty_ok(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, x2: ExprSpec) -> bool {
     let d = crate::dom_code::canon_shape(sig, ind).pdoms[q];
-    &&& derivable(sig, eq(g, x, x2, d))
-    &&& derivable(sig, eq(g, x, x, d))
-    &&& derivable(sig, eq(g, x2, x2, d))
+    sig.consts[ind].lps.len() == 0 ==> {
+        &&& derivable(sig, eq(g, x, x2, d))
+        &&& derivable(sig, eq(g, x, x, d))
+        &&& derivable(sig, eq(g, x2, x2, d))
+    }
 }
 
 /// The type parameters so far, related at their values (`par_ok`) and
@@ -541,6 +544,42 @@ pub proof fn sort_code(sig: Sig, n: nat, g: Ctx, l: LevelSpec, t2: ExprSpec, d: 
     }
 }
 
+/// THE CONSTRUCTOR'S TYPE AT AN INSTANCE: the instanced telescope over
+/// the instanced fields, ending in the inductive at the instanced levels.
+pub proof fn ctor_inst(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np: nat)
+    requires
+        ctor_at(sig, c, ind, pc, np),
+        crate::dom_code::has_canon(sig, ind),
+        0 <= pc < crate::dom_code::canon_shape(sig, ind).nmin(),
+    ensures ({
+        let sh = crate::dom_code::canon_shape(sig, ind);
+        let lps = sig.consts[ind].lps;
+        let nf = sh.fields[pc as int].len();
+        let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+        &&& np == sh.np
+        &&& crate::ti_syntax::dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi,
+                crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls),
+                spine_app(ExprSpec::Const(ind, crate::level_model::subst_levels_spec(sh.us(), lps, ls)),
+                    crate::dom_rec_shape::sls(args0, lps, ls)))
+        &&& crate::dom_rec_shape::sls(args0, lps, ls).len() == args0.len()
+        &&& forall|q: int| 0 <= q < np ==> #[trigger] crate::dom_rec_shape::sls(args0, lps, ls)[q] == ExprSpec::Var((nf + np - 1 - q) as nat)
+        &&& crate::level_model::subst_levels_spec(sh.us(), lps, ls).len() == lps.len()
+    }),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
+    let t = sig.consts[c].ty;
+    let lps = sig.consts[ind].lps;
+    let nf = sh.fields[pc as int].len();
+    let body0 = crate::rec_canon::tbody(t, np + nf);
+    let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.fields[pc as int], body0, lps, ls);
+    crate::dom_rec_shape::sl_spine(ExprSpec::Const(ind, sh.us()), args0, lps, ls);
+    assert forall|q: int| 0 <= q < np implies #[trigger] crate::dom_rec_shape::sls(args0, lps, ls)[q] == ExprSpec::Var((nf + np - 1 - q) as nat) by {
+        assert(args0[q] == ExprSpec::Var((nf + np - 1 - q) as nat));
+    }
+}
+
 /// The constructor's type after all arguments: the inductive at the
 /// parameters (and indices), its own reduct.
 pub proof fn ctor_result(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np: nat, xs: Seq<ExprSpec>)
@@ -550,7 +589,7 @@ pub proof fn ctor_result(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat
         xs.len() == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
     ensures ({
         let t = trest(crate::ti_syntax::dty_at(sig, c, ls), xs);
-        &&& spine_head(t) == ExprSpec::Const(ind, Seq::empty())
+        &&& spine_head(t) == ExprSpec::Const(ind, crate::level_model::subst_levels_spec(crate::dom_code::canon_shape(sig, ind).us(), sig.consts[ind].lps, ls))
         &&& spine_args(t).len() == np + crate::dom_code::canon_shape(sig, ind).ni
         &&& forall|q: int| 0 <= q < np ==> #[trigger] spine_args(t)[q] == xs[q]
         &&& crate::dom_rel::ir(sig, t, ind) == t
@@ -558,21 +597,19 @@ pub proof fn ctor_result(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
-    let ty = sig.consts[c].ty;
+    ctor_inst(sig, c, ls, ind, pc, np);
+    let lps = sig.consts[ind].lps;
     let nf = sh.fields[pc as int].len();
-    assert(sig.consts[c].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(ty, ls);
-    let body = crate::rec_canon::tbody(ty, np + nf);
-    crate::ti_spine::trest_binds(sh.pdoms + sh.fields[pc as int], body, xs);
-    assert(sh.us() =~= Seq::<LevelSpec>::empty());
-    let args = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
-    let h = ExprSpec::Const(ind, Seq::empty());
+    let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+    let args = crate::dom_rec_shape::sls(args0, lps, ls);
+    let h = ExprSpec::Const(ind, crate::level_model::subst_levels_spec(sh.us(), lps, ls));
+    let body = spine_app(h, args);
+    crate::ti_spine::trest_binds(crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls), body, xs);
     crate::ti_hred_rec::vsub_spine(h, args, xs);
     crate::ti_spine::vsub_closed(h, xs);
     let sa = Seq::new(args.len(), |i: int| crate::ti_spine::vsub(args[i], xs));
     crate::beta_model::spine_destruct_app(h, sa);
     assert forall|q: int| 0 <= q < np implies #[trigger] sa[q] == xs[q] by {
-        assert(args[q] == ExprSpec::Var((nf + np - 1 - q) as nat));
         crate::ti_spine::vsub_var((nf + np - 1 - q) as nat, xs);
     }
     crate::dom_lift::iapp_self(sig, trest(crate::ti_syntax::dty_at(sig, c, ls), xs));
@@ -590,7 +627,7 @@ pub proof fn direct_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, 
             crate::dom_code::canon_shape(sig, ind).us(), np, crate::dom_code::canon_shape(sig, ind).ni, i as nat),
     ensures ({
         let ty = tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat);
-        &&& spine_head(ty) == ExprSpec::Const(ind, Seq::empty())
+        &&& spine_head(ty) == ExprSpec::Const(ind, crate::level_model::subst_levels_spec(crate::dom_code::canon_shape(sig, ind).us(), sig.consts[ind].lps, ls))
         &&& spine_args(ty).len() == np + crate::dom_code::canon_shape(sig, ind).ni
         &&& forall|q: int| 0 <= q < np ==> #[trigger] spine_args(ty)[q] == xs[q]
         &&& crate::dom_rel::ir(sig, ty, ind) == ty
@@ -598,17 +635,20 @@ pub proof fn direct_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, 
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
-    let t = sig.consts[c].ty;
-    let ds = sh.pdoms + sh.fields[pc as int];
+    ctor_inst(sig, c, ls, ind, pc, np);
+    let lps = sig.consts[ind].lps;
     let nf = sh.fields[pc as int].len();
-    assert(sig.consts[c].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(t, ls);
-    crate::dom_rec_end::tel_dom_binds(ds, crate::rec_canon::tbody(t, np + nf), xs, np + i);
-    let f = sh.fields[pc as int][i];
+    let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls);
+    let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+    let usl = crate::level_model::subst_levels_spec(sh.us(), lps, ls);
+    crate::dom_rec_end::tel_dom_binds(ds, spine_app(ExprSpec::Const(ind, usl), crate::dom_rec_shape::sls(args0, lps, ls)), xs, np + i);
+    let f0 = sh.fields[pc as int][i];
+    let f = crate::expr_model::subst_expr_levels(f0, lps, ls);
     assert(ds[np + i] == f);
     let xp = xs.subrange(0, np + i);
-    assert(sh.us() =~= Seq::<LevelSpec>::empty());
-    let h = ExprSpec::Const(ind, Seq::empty());
+    let h = ExprSpec::Const(ind, usl);
+    crate::beta_model::spine_recompose(f0);
+    crate::dom_levels::sl_spine(f0, lps, ls);
     crate::beta_model::spine_recompose(f);
     let args = spine_args(f);
     crate::ti_hred_rec::vsub_spine(h, args, xp);
@@ -616,7 +656,7 @@ pub proof fn direct_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, 
     let sa = Seq::new(args.len(), |k: int| crate::ti_spine::vsub(args[k], xp));
     crate::beta_model::spine_destruct_app(h, sa);
     assert forall|q: int| 0 <= q < np implies #[trigger] sa[q] == xs[q] by {
-        assert(args[q] == args.subrange(0, np as int)[q]);
+        assert(spine_args(f0)[q] == spine_args(f0).subrange(0, np as int)[q]);
         assert(args[q] == ExprSpec::Var((i + np - 1 - q) as nat));
         crate::ti_spine::vsub_var((i + np - 1 - q) as nat, xp);
     }
@@ -638,12 +678,13 @@ pub proof fn pvar_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
-    let t = sig.consts[c].ty;
-    let ds = sh.pdoms + sh.fields[pc as int];
+    ctor_inst(sig, c, ls, ind, pc, np);
+    let lps = sig.consts[ind].lps;
     let nf = sh.fields[pc as int].len();
-    assert(sig.consts[c].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(t, ls);
-    crate::dom_rec_end::tel_dom_binds(ds, crate::rec_canon::tbody(t, np + nf), xs, np + i);
+    let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls);
+    let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+    let usl = crate::level_model::subst_levels_spec(sh.us(), lps, ls);
+    crate::dom_rec_end::tel_dom_binds(ds, spine_app(ExprSpec::Const(ind, usl), crate::dom_rec_shape::sls(args0, lps, ls)), xs, np + i);
     let f = sh.fields[pc as int][i];
     assert(ds[np + i] == f);
     crate::ti_spine::vsub_var(f->Var_0, xs.subrange(0, np + i));
@@ -673,16 +714,23 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
     if k < np && sh.pdoms[k as int] is Sort {
         // the new parameter: a type, at a sort's code
         crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
-        let ty0 = sig.consts[c].ty;
-        let dsh = sh.pdoms + sh.fields[pc as int];
-        assert(sig.consts[c].lps =~= Seq::<u64>::empty());
-        crate::dom_canon::sl_none(ty0, ls);
+        ctor_inst(sig, c, ls, ind, pc, np);
+        let lps = sig.consts[ind].lps;
+        let nf = sh.fields[pc as int].len();
+        let dsh = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls);
+        let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+        let usl = crate::level_model::subst_levels_spec(sh.us(), lps, ls);
         tel_dom_trest(crate::ti_syntax::dty_at(sig, c, ls), ys, k as nat);
         assert(ys.subrange(0, k as int) =~= xs);
-        crate::dom_rec_end::tel_dom_binds(dsh, crate::rec_canon::tbody(ty0, np + sh.fields[pc as int].len()), ys, k as int);
-        assert(dsh[k as int] == sh.pdoms[k as int]);
-        crate::ti_spine::vsub_closed(sh.pdoms[k as int], ys.subrange(0, k as int));
-        assert(ta == sh.pdoms[k as int]);
+        crate::dom_rec_end::tel_dom_binds(dsh, spine_app(ExprSpec::Const(ind, usl), crate::dom_rec_shape::sls(args0, lps, ls)), ys, k as int);
+        let pd = crate::expr_model::subst_expr_levels(sh.pdoms[k as int], lps, ls);
+        assert(dsh[k as int] == pd);
+        crate::ti_spine::vsub_closed(pd, ys.subrange(0, k as int));
+        assert(ta == pd);
+        if lps.len() == 0 {
+            assert(lps =~= Seq::<u64>::empty());
+            crate::dom_canon::sl_none(sh.pdoms[k as int], ls);
+        }
         let l = ta->Sort_0;
         sort_code(sig, nn, g, l, ta, d0);
         crate::dom_sound::typed_basic();
@@ -760,29 +808,44 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
 /// The bounds along the telescope (`dom_ctor_bound`): the parameters'
 /// values so far, the code bounded, and the fields' domains below their
 /// bounds.
-pub open spec fn cf_bnd(sig: Sig, ind: u64, pc: nat, np: nat, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>) -> bool {
+pub open spec fn cf_bnd(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>) -> bool {
     &&& pv.len() == (if k < np { k } else { np })
-    &&& crate::dom_ctor_bound::tb(sig, ind, pc, np, Seq::empty(), pv, k, r, a)
-    &&& forall|i: int| 0 <= i < ds.len() ==> le(#[trigger] ds[i], crate::dom_ctor_bound::fbound(sig, ind, pc, Seq::empty(), pv, i))
+    &&& crate::dom_ctor_bound::tb(sig, ind, pc, np, ls, pv, k, r, a)
+    &&& forall|i: int| 0 <= i < ds.len() ==> le(#[trigger] ds[i], crate::dom_ctor_bound::fbound(sig, ind, pc, ls, pv, i))
+}
+
+/// The bounds at another instance of the same length.
+pub proof fn cf_bnd_blind(sig: Sig, ind: u64, pc: nat, np: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>)
+    requires
+        cf_bnd(sig, ind, pc, np, l1, pv, k, r, a, ds),
+        crate::dom_code::former_blind(sig, ind),
+        l1.len() == l2.len(),
+    ensures
+        cf_bnd(sig, ind, pc, np, l2, pv, k, r, a, ds),
+{
+    crate::dom_ctor_bound::tb_blind(sig, ind, pc, np, l1, l2, pv, k, r, a);
+    assert forall|i: int| 0 <= i < ds.len() implies le(#[trigger] ds[i], crate::dom_ctor_bound::fbound(sig, ind, pc, l2, pv, i)) by {
+        crate::dom_ctor_bound::fbound_blind(sig, ind, pc, l1, l2, pv, i);
+    }
 }
 
 /// The bounds one binder on.
-pub proof fn cf_bnd_step(sig: Sig, ind: u64, pc: nat, np: nat, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>, w: Cpt)
+pub proof fn cf_bnd_step(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>, w: Cpt)
     requires
-        cf_bnd(sig, ind, pc, np, pv, k, r, a, ds),
+        cf_bnd(sig, ind, pc, np, ls, pv, k, r, a, ds),
         r > 0,
         a is Pi,
         wf(a),
         wf(w),
         ds.len() == (if k < np { 0 } else { k - np }),
     ensures
-        cf_bnd(sig, ind, pc, np, crate::dom_ctor_bound::pv_next(np, pv, k, w), k + 1, (r - 1) as nat, cod(a, w),
+        cf_bnd(sig, ind, pc, np, ls, crate::dom_ctor_bound::pv_next(np, pv, k, w), k + 1, (r - 1) as nat, cod(a, w),
             if k < np { ds } else { ds.push(*a->Pi_0) }),
 {
-    crate::dom_ctor_bound::tb_cod(sig, ind, pc, np, Seq::empty(), pv, k, r, a, w);
+    crate::dom_ctor_bound::tb_cod(sig, ind, pc, np, ls, pv, k, r, a, w);
     if k >= np {
         let dz = ds.push(*a->Pi_0);
-        assert forall|i: int| 0 <= i < dz.len() implies le(#[trigger] dz[i], crate::dom_ctor_bound::fbound(sig, ind, pc, Seq::empty(), pv, i)) by {
+        assert forall|i: int| 0 <= i < dz.len() implies le(#[trigger] dz[i], crate::dom_ctor_bound::fbound(sig, ind, pc, ls, pv, i)) by {
             if i < ds.len() {
                 assert(dz[i] == ds[i]);
             }
@@ -865,6 +928,7 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
     ctor_result(sig, c, ls, ind, pc, np, xs);
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
     crate::dom_rel::ty_ind(sig, n, g, t, t, a);
+    crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
     if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, spine_args(ty)[q], spine_args(t)[q]) by {
@@ -958,8 +1022,8 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     let es = crate::dom_rel::cblock(u, a);
     assert(crate::dom_rel::blk_ok(u, a));
     // the result's code lies below the canonical code at the parameters
-    let top = crate::dom_code::canon_code(sig, ind, Seq::empty(), pv);
-    crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), pv);
+    let top = crate::dom_code::canon_code(sig, ind, ls, pv);
+    crate::dom_lift::canon_is_tbl(sig, ind, ls, pv);
     crate::dom_lift::tbl_canon_le(sig, ind, pv, a, top);
     ctor_result(sig, c, ls, ind, pc, np, xs);
     assert(a->Nd_0->Ty_0 == ind);
@@ -1023,7 +1087,7 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
     let p = pc as int;
     assert(tbl(a->Nd_1)[p]->Nd_1[i] == es[i]);
     assert(crate::dom_lift::entry_canon(sig, ind, pv, p, i, es[i]));
-    assert(le(d, crate::dom_ctor_bound::fbound(sig, ind, pc, Seq::empty(), pv, i)));
+    assert(le(d, crate::dom_ctor_bound::fbound(sig, ind, pc, ls, pv, i)));
     assert(has_type(n, a, Cpt::U));
     if d is Bot {
         ty_of_bot(nn, w);
@@ -1032,9 +1096,9 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
     if es[i] == crate::dom_typing::rmark() {
         // a recursive field: its domain's code and the result's both below
         // the canonical code at the parameters
-        let top = crate::dom_code::canon_code(sig, ind, Seq::empty(), pv);
+        let top = crate::dom_code::canon_code(sig, ind, ls, pv);
         assert(has_type(n, us[i], a));
-        crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), pv);
+        crate::dom_lift::canon_is_tbl(sig, ind, ls, pv);
         crate::dom_lift::tbl_canon_le(sig, ind, pv, d, top);
         head_le(d, top);
         tm_ind(sig, nn, g, y, y2, ty, w, d);
@@ -1080,7 +1144,13 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
             crate::dom_lift::field_facts(sig, ind, p, i);
             assert(crate::dom_lift::cf(sig, ind, pv, p, i) == crate::dom_lift::cf(sig, ind, Seq::empty(), p, i));
             ctor_field_ty(sig, c, ls, ind, pc, np, xs, i);
-            crate::dom_lift::closed_below(sig, nn, n, g, ind, sh.fields[p][i], y, y2, w, us[i], d, ec);
+            // the field at the constructor's instance, which is the result type's
+            ctor_inst(sig, c, ls, ind, pc, np);
+            ctor_result(sig, c, ls, ind, pc, np, xs);
+            crate::dom_levels::sl_plevels_id(sig.consts[ind].lps, ls);
+            crate::dom_rel::lpad_id(crate::level_model::subst_levels_spec(sh.us(), sig.consts[ind].lps, ls), sig.consts[ind].lps.len());
+            crate::ti_ls2::levs_eq_refl(ls);
+            crate::dom_lift::closed_below2(sig, nn, n, g, ind, sh.fields[p][i], ls, ls, y, y2, w, us[i], d, ec);
         }
     }
 }
@@ -1178,20 +1248,23 @@ pub proof fn ctor_field_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: n
             crate::dom_code::canon_shape(sig, ind).us(), np, crate::dom_code::canon_shape(sig, ind).ni, i as nat),
         crate::rec_canon::simple_ty(sig, ind, crate::dom_code::canon_shape(sig, ind).fields[pc as int][i]),
     ensures
-        tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat) == crate::dom_code::canon_shape(sig, ind).fields[pc as int][i],
+        tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat)
+            == crate::expr_model::subst_expr_levels(crate::dom_code::canon_shape(sig, ind).fields[pc as int][i], sig.consts[ind].lps, ls),
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
-    let t = sig.consts[c].ty;
-    let ds = sh.pdoms + sh.fields[pc as int];
+    ctor_inst(sig, c, ls, ind, pc, np);
+    let lps = sig.consts[ind].lps;
     let nf = sh.fields[pc as int].len();
-    assert(sig.consts[c].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(t, ls);
-    assert(crate::ti_syntax::dty_at(sig, c, ls) == t);
-    crate::dom_rec_end::tel_dom_binds(ds, crate::rec_canon::tbody(t, np + nf), xs, np + i);
-    assert(ds[np + i] == sh.fields[pc as int][i]);
+    let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls);
+    let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+    let usl = crate::level_model::subst_levels_spec(sh.us(), lps, ls);
+    crate::dom_rec_end::tel_dom_binds(ds, spine_app(ExprSpec::Const(ind, usl), crate::dom_rec_shape::sls(args0, lps, ls)), xs, np + i);
+    let f = crate::expr_model::subst_expr_levels(sh.fields[pc as int][i], lps, ls);
+    assert(ds[np + i] == f);
     crate::dom_iota::simple_closed(sig, ind, sh.fields[pc as int][i]);
-    crate::ti_spine::vsub_closed(sh.fields[pc as int][i], xs.subrange(0, np + i));
+    crate::ti_level::ls_nlbv(sh.fields[pc as int][i], lps, ls);
+    crate::ti_spine::vsub_closed(f, xs.subrange(0, np + i));
 }
 
 /// A field over the parameters: its declared domain in the constructor's
@@ -1202,6 +1275,7 @@ pub proof fn ctor_pfield_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: 
         crate::dom_code::canon_ok(sig, ind),
         0 <= i < crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
         np + i <= xs.len(),
+        sig.consts[ind].lps.len() == 0,
         crate::rec_canon::psapp(sig, ind, crate::dom_code::canon_shape(sig, ind).pdoms, np, i as nat,
             crate::dom_code::canon_shape(sig, ind).fields[pc as int][i]),
     ensures
@@ -1249,24 +1323,30 @@ pub proof fn ctor_tel_bound(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: 
     requires
         ctor_at(sig, c, ind, pc, crate::dom_code::canon_shape(sig, ind).np),
         crate::dom_code::canon_ok(sig, ind),
+        ls.len() == sig.consts[ind].lps.len(),
         tshape(crate::ti_syntax::dty_at(sig, c, ls), ind, r),
         crate::dom_model::mem(sig, crate::ti_syntax::dty_at(sig, c, ls), crate::dom_model::bot_env(), a),
     ensures
-        cf_bnd(sig, ind, pc, crate::dom_code::canon_shape(sig, ind).np, Seq::empty(), 0, r, a, Seq::empty()),
+        cf_bnd(sig, ind, pc, crate::dom_code::canon_shape(sig, ind).np, ls, Seq::empty(), 0, r, a, Seq::empty()),
         r == crate::dom_code::canon_shape(sig, ind).np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
     let t = sig.consts[c].ty;
     let nf = sh.fields[pc as int].len();
-    assert(sig.consts[c].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(t, ls);
-    let body = crate::rec_canon::tbody(t, sh.np + nf);
-    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, sh.us()), crate::rec_canon::vars(nf, sh.np) + sh.tss[pc as int]);
-    tshape_binds(sh.pdoms + sh.fields[pc as int], body, ind, r);
-    assert(crate::rec_canon::tbody(t, 0) == t);
+    let lps = sig.consts[ind].lps;
+    let body0 = crate::rec_canon::tbody(t, sh.np + nf);
+    let args0 = crate::rec_canon::vars(nf, sh.np) + sh.tss[pc as int];
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.fields[pc as int], body0, lps, ls);
+    crate::dom_rec_shape::sl_spine(ExprSpec::Const(ind, sh.us()), args0, lps, ls);
+    let body = crate::expr_model::subst_expr_levels(body0, lps, ls);
+    let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[pc as int], lps, ls);
+    let usl = crate::level_model::subst_levels_spec(sh.us(), lps, ls);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, usl), crate::dom_rec_shape::sls(args0, lps, ls));
+    tshape_binds(ds, body, ind, r);
+    assert(crate::rec_canon::tbody(crate::ti_syntax::dty_at(sig, c, ls), 0) == crate::ti_syntax::dty_at(sig, c, ls));
     assert forall|i: nat| #[trigger] wf(crate::dom_model::bot_env()(i)) by {}
-    crate::dom_ctor_bound::tb_mem(sig, ind, pc, 0, crate::dom_model::bot_env(), Seq::empty(), a);
+    crate::dom_ctor_bound::tb_mem(sig, ind, pc, ls, 0, crate::dom_model::bot_env(), Seq::empty(), a);
 }
 
 /// Level-equivalent telescopes have the same shape.
@@ -1337,6 +1417,10 @@ pub proof fn ctor_adeq_core(sig: Sig, nn: nat, n: nat, dl: Ctx, c: u64, ls: Seq<
     typed_up(ab, Cpt::U, nn);
     typed_up(v, ab, nn);
     typed_up(a, Cpt::U, nn);
+    // the instances' lengths, from the constant's typing
+    crate::dom_psimple::der_diag(sig, dl, m, m2, t0);
+    crate::ti_spine::const_typed(sig, dl, c, ls, t0);
+    crate::ti_spine::const_typed(sig, dl, c, ls2, t0);
     let e: Seq<Cpt> = Seq::empty();
     let r = cf_shape(ind, pc as nat, np, t0, e, 0, v);
     // the telescope's bound, from the joined code's membership
@@ -1556,7 +1640,7 @@ pub proof fn cf_next(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
     assert(ys2.subrange(0, k as int) =~= xs2);
     fld_push(sig, nn, g, t0, t02, xs, xs2, ds, fs, np, x, x2, d0, w);
     typed_facts_wf(n, u, a);
-    cf_bnd_step(sig, ind, pc, np, pv, k, r, a, ds, w);
+    cf_bnd_step(sig, ind, pc, np, ls, pv, k, r, a, ds, w);
     pr_step(sig, nn, n, g, c, ls, ls2, ind, pc, np, r, xs, xs2, a, ds, fs, u, pv, x, x2, w);
     cf_rel(sig, nn, k1, g, c, ls, ls2, ind, pc, np, (r - 1) as nat, ys, ys2, cod(a, w), dz, fz, crate::dom_compact::app(u, w), crate::dom_ctor_bound::pv_next(np, pv, k, w));
 }
@@ -1600,7 +1684,7 @@ pub proof fn cf_diag_l(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelS
     flds_diag_l(sig, nn, g, t0, t02, xs, xs2, ds, fs, np);
     fld_push(sig, nn, g, t0, t0, xs, xs, ds, fs, np, x, x2, d0, w);
     typed_facts_wf(n, u, a);
-    cf_bnd_step(sig, ind, pc, np, pv, k, r, a, ds, w);
+    cf_bnd_step(sig, ind, pc, np, ls, pv, k, r, a, ds, w);
     pr_step(sig, nn, n, g, c, ls, ls2, ind, pc, np, r, xs, xs2, a, ds, fs, u, pv, x, x2, w);
     cf_rel(sig, nn, k1, g, c, ls, ls, ind, pc, np, (r - 1) as nat, ys, ys2, cod(a, w), dz, fz, crate::dom_compact::app(u, w), crate::dom_ctor_bound::pv_next(np, pv, k, w));
 }
@@ -1645,7 +1729,8 @@ pub proof fn cf_diag_r(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelS
     flds_diag_r(sig, nn, g, t0, t02, xs, xs2, ds, fs, np);
     fld_push(sig, nn, g, t02, t02, xs2, xs2, ds, fs, np, x, x2, d0, w);
     typed_facts_wf(n, u, a);
-    cf_bnd_step(sig, ind, pc, np, pv, k, r, a, ds, w);
+    cf_bnd_step(sig, ind, pc, np, ls, pv, k, r, a, ds, w);
+    cf_bnd_blind(sig, ind, pc, np, ls, ls2, crate::dom_ctor_bound::pv_next(np, pv, k, w), k + 1, (r - 1) as nat, b, dz);
     pr_step(sig, nn, n, g, c, ls, ls2, ind, pc, np, r, xs, xs2, a, ds, fs, u, pv, x, x2, w);
     cf_rel(sig, nn, k1, g, c, ls2, ls2, ind, pc, np, (r - 1) as nat, ys, ys2, b, dz, fz, v, crate::dom_ctor_bound::pv_next(np, pv, k, w));
     conv_tm(sig, k1, g, sapp(m2, x), sapp(m2, x2), inst(0, x, tb2), inst(0, x, tb), v, b);

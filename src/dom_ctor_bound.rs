@@ -53,6 +53,39 @@ pub open spec fn tb(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv
     }
 }
 
+/// The bounds read the instance only through the inductive's own code,
+/// blind at equal lengths.
+pub proof fn fbound_blind(sig: Sig, ind: u64, pc: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, i: int)
+    requires
+        crate::dom_code::former_blind(sig, ind),
+        l1.len() == l2.len(),
+    ensures
+        fbound(sig, ind, pc, l1, pv, i) == fbound(sig, ind, pc, l2, pv, i),
+{
+    crate::dom_code::canon_blind(sig, ind, l1, l2, pv);
+}
+
+pub proof fn tb_blind(sig: Sig, ind: u64, pc: nat, np: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt)
+    requires
+        crate::dom_code::former_blind(sig, ind),
+        l1.len() == l2.len(),
+    ensures
+        tb(sig, ind, pc, np, l1, pv, k, r, a) == tb(sig, ind, pc, np, l2, pv, k, r, a),
+    decreases r,
+{
+    crate::dom_code::canon_blind(sig, ind, l1, l2, pv);
+    if r > 0 && a is Pi {
+        if k >= np {
+            fbound_blind(sig, ind, pc, l1, l2, pv, (k - np) as int);
+        }
+        assert forall|q: int| 0 <= q < a->Pi_1.len() implies
+            tb(sig, ind, pc, np, l1, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, #[trigger] a->Pi_1[q].1)
+            == tb(sig, ind, pc, np, l2, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, a->Pi_1[q].1) by {
+            tb_blind(sig, ind, pc, np, l1, l2, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, a->Pi_1[q].1);
+        }
+    }
+}
+
 /// The next binder's parameters' values after an input.
 pub open spec fn pv_next(np: nat, pv: Seq<Cpt>, k: nat, x: Cpt) -> Seq<Cpt> {
     if k < np { pv.push(x) } else { pv }
@@ -340,17 +373,18 @@ pub proof fn ctor_shape(sig: Sig, ind: u64, pc: int)
 
 /// A MEMBER OF AN APPLICATION OF A CANONICAL INDUCTIVE lies below its
 /// canonical code at its arguments' witnesses.
-pub proof fn ind_bound(sig: Sig, ind: u64, args: Seq<ExprSpec>, env: crate::dom_model::Env, d: Cpt) -> (ws: Seq<Cpt>)
+pub proof fn ind_bound(sig: Sig, ind: u64, us: Seq<LevelSpec>, args: Seq<ExprSpec>, env: crate::dom_model::Env, d: Cpt) -> (ws: Seq<Cpt>)
     requires
         canon_ok(sig, ind),
         args.len() == canon_shape(sig, ind).np + canon_shape(sig, ind).ni,
-        crate::dom_model::mem(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, Seq::empty()), args), env, d),
+        us.len() == sig.consts[ind].lps.len(),
+        crate::dom_model::mem(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, us), args), env, d),
         forall|i: nat| #[trigger] wf(env(i)),
     ensures
-        d is Bot || (crate::dom_bound::args_w(sig, args, env, ws) && le(d, canon_code(sig, ind, Seq::empty(), ws))),
+        d is Bot || (crate::dom_bound::args_w(sig, args, env, ws) && le(d, canon_code(sig, ind, us, ws))),
 {
     let sh = canon_shape(sig, ind);
-    let nil = Seq::<LevelSpec>::empty();
+    let nil = us;
     ctor_shape_ind(sig, ind);
     if !crate::dom_model::sem_const(sig, ind, nil) {
         crate::dom_bound::nonsem_bot(sig, ind, nil, env);
@@ -359,11 +393,12 @@ pub proof fn ind_bound(sig: Sig, ind: u64, args: Seq<ExprSpec>, env: crate::dom_
     }
     let ti = sig.consts[ind].ty;
     let b = crate::rec_canon::tbody(ti, sh.np + sh.ni);
-    assert(sig.consts[ind].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(ti, nil);
-    assert(crate::ti_syntax::dty_at(sig, ind, nil) == ti);
-    crate::dom_rec_shape::tarity_binds(sh.pdoms + sh.idoms, b);
-    crate::dom_iota::tbody_binds(sh.pdoms + sh.idoms, b);
+    let lps = sig.consts[ind].lps;
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, b, lps, us);
+    let (ds2, b2) = (crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, us), crate::expr_model::subst_expr_levels(b, lps, us));
+    assert(crate::ti_syntax::dty_at(sig, ind, us) == crate::rec_canon::binds(BinderKind::Pi, ds2, b2));
+    crate::dom_rec_shape::tarity_binds(ds2, b2);
+    crate::dom_iota::tbody_binds(ds2, b2);
     let ws = crate::dom_bound::tf_spine(sig, ind, nil, args, env, d);
     ws
 }
@@ -404,49 +439,51 @@ pub proof fn tbody_suffix(ds: Seq<ExprSpec>, b: ExprSpec, k: nat)
 
 /// A member of an application of the inductive over the parameters'
 /// variables lies below its canonical code at the parameters' values.
-proof fn var_ind_bound(sig: Sig, ind: u64, from: nat, args: Seq<ExprSpec>, env: crate::dom_model::Env, pv: Seq<Cpt>, d: Cpt)
+proof fn var_ind_bound(sig: Sig, ind: u64, us: Seq<LevelSpec>, from: nat, args: Seq<ExprSpec>, env: crate::dom_model::Env, pv: Seq<Cpt>, d: Cpt)
     requires
         canon_ok(sig, ind),
+        us.len() == sig.consts[ind].lps.len(),
         args.len() == canon_shape(sig, ind).np + canon_shape(sig, ind).ni,
         args.subrange(0, canon_shape(sig, ind).np as int) == crate::rec_canon::vars(from, canon_shape(sig, ind).np),
-        crate::dom_model::mem(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, Seq::empty()), args), env, d),
+        crate::dom_model::mem(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, us), args), env, d),
         forall|i: nat| #[trigger] wf(env(i)),
         pv.len() == canon_shape(sig, ind).np,
         forall|j: int| 0 <= j < pv.len() ==> #[trigger] pv[j] == env((from + pv.len() - 1 - j) as nat),
     ensures
-        le(d, canon_code(sig, ind, Seq::empty(), pv)),
+        le(d, canon_code(sig, ind, us, pv)),
 {
     let sh = canon_shape(sig, ind);
     let np = sh.np as int;
-    let ws = ind_bound(sig, ind, args, env, d);
+    let ws = ind_bound(sig, ind, us, args, env, d);
     if d is Bot {
         return;
     }
     let w2 = ws.subrange(0, np);
-    canon_prefix(sig, ind, Seq::empty(), ws);
+    canon_prefix(sig, ind, us, ws);
     assert forall|j: int| 0 <= j < np implies le(#[trigger] w2[j], pv[j]) by {
         assert(args[j] == args.subrange(0, np)[j]);
         assert(args[j] == ExprSpec::Var((from + np - 1 - j) as nat));
         assert(crate::dom_model::mem(sig, args[j], env, ws[j]));
         crate::dom_adeq_base::mem_var(sig, (from + np - 1 - j) as nat, env, ws[j]);
     }
-    canon_mono(sig, ind, Seq::empty(), w2, pv);
-    le_trans(d, canon_code(sig, ind, Seq::empty(), w2), canon_code(sig, ind, Seq::empty(), pv));
+    canon_mono(sig, ind, us, w2, pv);
+    le_trans(d, canon_code(sig, ind, us, w2), canon_code(sig, ind, us, pv));
 }
 
 /// A MEMBER OF A CONSTRUCTOR'S TYPE, `k` binders in, is bounded.
 #[verifier::spinoff_prover]
-pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::Env, pv: Seq<Cpt>, a: Cpt)
+pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env: crate::dom_model::Env, pv: Seq<Cpt>, a: Cpt)
     requires
         canon_ok(sig, ind),
         pc < canon_shape(sig, ind).nmin(),
         k <= canon_shape(sig, ind).np + canon_shape(sig, ind).fields[pc as int].len(),
-        crate::dom_model::mem(sig, crate::rec_canon::tbody(sig.consts[canon_shape(sig, ind).ctors[pc as int]].ty, k), env, a),
+        ls.len() == sig.consts[ind].lps.len(),
+        crate::dom_model::mem(sig, crate::rec_canon::tbody(crate::ti_syntax::dty_at(sig, canon_shape(sig, ind).ctors[pc as int], ls), k), env, a),
         forall|i: nat| #[trigger] wf(env(i)),
         pv.len() == (if k < canon_shape(sig, ind).np { k } else { canon_shape(sig, ind).np }),
         forall|j: int| 0 <= j < pv.len() ==> #[trigger] pv[j] == env((k - 1 - j) as nat),
     ensures
-        tb(sig, ind, pc, canon_shape(sig, ind).np, Seq::empty(), pv, k,
+        tb(sig, ind, pc, canon_shape(sig, ind).np, ls, pv, k,
             (canon_shape(sig, ind).np + canon_shape(sig, ind).fields[pc as int].len() - k) as nat, a),
     decreases canon_shape(sig, ind).np + canon_shape(sig, ind).fields[pc as int].len() - k,
 {
@@ -456,19 +493,32 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
     let r = (nb - k) as nat;
     let t = sig.consts[sh.ctors[pc as int]].ty;
     ctor_shape(sig, ind, pc as int);
-    let ds = sh.pdoms + sh.fields[pc as int];
-    let body = crate::rec_canon::tbody(t, nb);
-    assert(sh.lps =~= Seq::<u64>::empty());
-    assert(sh.us() =~= Seq::<LevelSpec>::empty());
+    let lps = sig.consts[ind].lps;
+    let ds0 = sh.pdoms + sh.fields[pc as int];
+    let body0 = crate::rec_canon::tbody(t, nb);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, ds0, body0, lps, ls);
+    let ds = crate::dom_rec_shape::sls(ds0, lps, ls);
+    let body = crate::expr_model::subst_expr_levels(body0, lps, ls);
+    assert(crate::ti_syntax::dty_at(sig, sh.ctors[pc as int], ls) == crate::rec_canon::binds(BinderKind::Pi, ds, body));
+    let usl = crate::level_model::subst_levels_spec(sh.us(), lps, ls);
+    assert(usl.len() == lps.len());
     tbody_suffix(ds, body, k);
     if a is Bot {
         return;
     }
     if k == nb {
         assert(ds.subrange(k as int, ds.len() as int) =~= Seq::<ExprSpec>::empty());
-        let args = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
-        assert(args.subrange(0, np as int) =~= crate::rec_canon::vars(nf, np));
-        var_ind_bound(sig, ind, nf, args, env, pv, a);
+        let args0 = crate::rec_canon::vars(nf, np) + sh.tss[pc as int];
+        crate::dom_rec_shape::sl_spine(ExprSpec::Const(ind, sh.us()), args0, lps, ls);
+        let args = crate::dom_rec_shape::sls(args0, lps, ls);
+        crate::dom_rec_shape::sl_vars(nf, np, lps, ls);
+        assert(args.subrange(0, np as int) =~= crate::rec_canon::vars(nf, np)) by {
+            assert forall|q: int| 0 <= q < np implies #[trigger] args[q] == crate::rec_canon::vars(nf, np)[q] by {
+                assert(args0[q] == crate::rec_canon::vars(nf, np)[q]);
+            }
+        }
+        var_ind_bound(sig, ind, usl, nf, args, env, pv, a);
+        crate::dom_code::canon_blind(sig, ind, usl, ls, pv);
         return;
     }
     // one binder: the domain and the generator's steps
@@ -485,13 +535,21 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
     assert(gen is Pi && le(a, gen));
     if k >= np {
         let i = (k - np) as int;
-        assert(da == sh.fields[pc as int][i]);
         let f = sh.fields[pc as int][i];
+        assert(da == crate::expr_model::subst_expr_levels(f, lps, ls));
         if crate::rec_canon::direct_occ(f, ind, sh.us(), np, sh.ni, i as nat) {
             crate::beta_model::spine_recompose(f);
-            assert(f == crate::beta_model::spine_app(ExprSpec::Const(ind, Seq::empty()), crate::beta_model::spine_args(f)));
+            crate::dom_levels::sl_spine(f, lps, ls);
+            let fa = crate::beta_model::spine_args(da);
+            crate::beta_model::spine_recompose(da);
+            assert(fa.subrange(0, np as int) =~= crate::rec_canon::vars(i as nat, np)) by {
+                assert forall|q: int| 0 <= q < np implies #[trigger] fa[q] == crate::rec_canon::vars(i as nat, np)[q] by {
+                    assert(crate::beta_model::spine_args(f)[q] == crate::beta_model::spine_args(f).subrange(0, np as int)[q]);
+                }
+            }
             assert forall|j: int| 0 <= j < pv.len() implies #[trigger] pv[j] == env((i + pv.len() - 1 - j) as nat) by {}
-            var_ind_bound(sig, ind, i as nat, crate::beta_model::spine_args(f), env, pv, a0);
+            var_ind_bound(sig, ind, usl, i as nat, fa, env, pv, a0);
+            crate::dom_code::canon_blind(sig, ind, usl, ls, pv);
         } else if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f) {
             // a type parameter: below the parameter's value
             crate::dom_lift::cf_var(sig, ind, pv, pc as int, i);
@@ -499,11 +557,16 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
         } else if crate::rec_canon::simple_ty(sig, ind, f) {
             crate::dom_lift::field_facts(sig, ind, pc as int, i);
             crate::dom_lift::fq_closed(sig, ind, f, pc as int, i);
-            crate::dom_canon::closed_bound(sig, ind, Seq::empty(), Seq::empty(), f, env, a0);
+            crate::dom_canon::sl_kinds(sig, ind, sh.pdoms, np, i as nat, f, rk(sig, ind), lps, ls);
+            crate::dom_code::blind_sl(sig, f, lps, ls);
+            crate::dom_canon::closed_bound(sig, ind, Seq::empty(), Seq::empty(), da, env, a0);
+            crate::dom_code::ceval_sl(sig, rk(sig, ind), ind, Seq::empty(), Seq::empty(), f, lps, ls);
         } else {
             // a type over the parameters: below its code at their values
             crate::dom_lift::pfield_facts(sig, ind, pc as int, i);
             crate::dom_canon::canon_fields(sig, ind, pc as int, i);
+            assert(lps =~= Seq::<u64>::empty());
+            crate::dom_canon::sl_none(f, ls);
             let pe = crate::dom_code::fpe(pv, np, i as nat);
             assert(pv.subrange(0, np as int) =~= pv);
             assert forall|q: int| 0 <= q < np implies le(env((i as nat + np - 1 - q) as nat), #[trigger] pe[q]) by {
@@ -520,7 +583,7 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
         }
     }
     assert forall|q: int| 0 <= q < gen->Pi_1.len() implies
-        tb(sig, ind, pc, np, Seq::empty(), pv_next(np, pv, k, gen->Pi_1[q].0), k + 1, (r - 1) as nat, #[trigger] gen->Pi_1[q].1) by {
+        tb(sig, ind, pc, np, ls, pv_next(np, pv, k, gen->Pi_1[q].0), k + 1, (r - 1) as nat, #[trigger] gen->Pi_1[q].1) by {
         let (x, y) = gen->Pi_1[q];
         assert(crate::dom_model::gsteps(gen)[q] == (x, y));
         assert(crate::dom_model::typed(crate::dom_model::gsteps(gen)[q].0, a0)
@@ -540,9 +603,9 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, k: nat, env: crate::dom_model::
                 assert(env2((k - j) as nat) == env((k - 1 - j) as nat));
             }
         }
-        tb_mem(sig, ind, pc, k + 1, env2, pv2, y);
+        tb_mem(sig, ind, pc, ls, k + 1, env2, pv2, y);
     }
-    tb_down(sig, ind, pc, np, Seq::empty(), pv, k, r, a, gen);
+    tb_down(sig, ind, pc, np, ls, pv, k, r, a, gen);
 }
 
 } // verus!

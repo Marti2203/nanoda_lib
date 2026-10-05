@@ -140,6 +140,19 @@ pub proof fn cargs_spine(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: S
     }
 }
 
+/// A telescope's body at an instance is the instance of its body.
+pub proof fn tbody_sl_eq(t: ExprSpec, k: nat, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        tbody(crate::expr_model::subst_expr_levels(t, ks, vs), k) == crate::expr_model::subst_expr_levels(tbody(t, k), ks, vs),
+    decreases k,
+{
+    if k > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, _, b) = t {
+            tbody_sl_eq(*b, (k - 1) as nat, ks, vs);
+        }
+    }
+}
+
 /// The body past `k` binders commutes with level substitution.
 pub proof fn tbody_sl(t: ExprSpec, k: nat, ks: Seq<u64>, vs: Seq<LevelSpec>)
     ensures
@@ -160,7 +173,7 @@ pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, 
         aw(pe),
         simple_ty(sig, ind, e),
         ranked(sig, e, rk(sig, ind)),
-        sig.consts[ind].lps.len() == 0,
+        blind_ty(sig, e),
         mem(sig, e, rho, d),
         forall|i: nat| #[trigger] wf(rho(i)),
     ensures
@@ -176,13 +189,10 @@ pub proof fn closed_bound(sig: Sig, ind: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, 
     assert(!(e is Var));
     let code = ceval(sig, r, ind, ls, pe, e);
     assert(code == canon_code(sig, j, lsub(sig, ind, ls, us), cargs(sig, r, ind, ls, pe, e)));
-    assert(lsub(sig, ind, ls, us) =~= us) by {
-        assert forall|i: int| 0 <= i < us.len() implies #[trigger] lsub(sig, ind, ls, us)[i] == us[i] by {
-            assert(sig.consts[ind].lps =~= Seq::<u64>::empty());
-            subst_level_none(us[i], ls);
-        }
-    }
     let ca = cargs(sig, r, ind, ls, pe, e);
+    blind_head(sig, e);
+    canon_blind(sig, j, us, lsub(sig, ind, ls, us), ca);
+    crate::dom_levels::blind_args(sig, e);
     cargs_spine(sig, r, ind, ls, pe, e);
     cargs_wf(sig, r, ind, ls, pe, e);
     canon_wf(sig, j, us, ca);

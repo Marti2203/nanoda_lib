@@ -185,7 +185,6 @@ pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
     if tabled(sig, j, ls, cs) {
         cblocks_at(sig, j, ls, cs, sh.nmin());
         assert(ts.last() == Cpt::Nd(NdKey::Tag(2), cblocks(sig, j, ls, cs, sh.nmin())));
-        assert(ls =~= Seq::<LevelSpec>::empty());
         assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
             implies #[trigger] entry_canon(sig, j, cs, p, k, tbl(ts)[p]->Nd_1[k]) by {
             let nf = sh.fields[p].len();
@@ -193,6 +192,8 @@ pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
             let e = tbl(ts)[p]->Nd_1[k];
             assert(e == centry_at(sig, j, ls, cs, p as nat, k as nat));
             if !crate::rec_canon::direct_occ(sh.fields[p][k], j, sh.us(), sh.np, sh.ni, k as nat) {
+                assert(crate::dom_code::blind_ty(sig, sh.fields[p][k]));
+                crate::dom_code::ceval_blind(sig, rk(sig, j), j, ls, Seq::empty(), fpe(cs, sh.np, k as nat), sh.fields[p][k]);
                 assert(ecode(e) == cf(sig, j, cs, p, k));
                 le_refl(cf(sig, j, cs, p, k));
             }
@@ -261,7 +262,6 @@ pub proof fn tbl_canon_le(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt, b: Cpt)
 /// itself, and its canonical code reads no parameters.
 pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
     requires
-        sig.consts[j].lps.len() == 0,
         has_canon(sig, j),
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
@@ -270,7 +270,9 @@ pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
         !crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
         crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
     ensures
-        fq(sig, j, t, p, k) == canon_shape(sig, j).fields[p][k],
+        fq(sig, j, t, p, k) == crate::expr_model::subst_expr_levels(canon_shape(sig, j).fields[p][k], sig.consts[j].lps,
+            crate::dom_rel::iinst(sig, j, ir(sig, t, j))),
+        sig.consts[j].lps.len() == 0 ==> fq(sig, j, t, p, k) == canon_shape(sig, j).fields[p][k],
         crate::expr_model::nlbv(canon_shape(sig, j).fields[p][k]) == 0,
         forall|pv: Seq<Cpt>, pv2: Seq<Cpt>| #[trigger] cf(sig, j, pv, p, k) == #[trigger] cf(sig, j, pv2, p, k),
 {
@@ -278,10 +280,14 @@ pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
     let f = sh.fields[p][k];
     crate::dom_canon::canon_fields(sig, j, p, k);
     crate::dom_iota::simple_closed(sig, j, f);
-    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
     let x = ir(sig, t, j);
-    crate::dom_canon::sl_none(f, crate::dom_rel::iinst(sig, j, x));
-    crate::ti_spine::vsub_closed(f, spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed));
+    let f2 = crate::expr_model::subst_expr_levels(f, sig.consts[j].lps, crate::dom_rel::iinst(sig, j, x));
+    crate::ti_level::ls_nlbv(f, sig.consts[j].lps, crate::dom_rel::iinst(sig, j, x));
+    crate::ti_spine::vsub_closed(f2, spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed));
+    if sig.consts[j].lps.len() == 0 {
+        assert(sig.consts[j].lps =~= Seq::<u64>::empty());
+        crate::dom_canon::sl_none(f, crate::dom_rel::iinst(sig, j, x));
+    }
     assert forall|pv: Seq<Cpt>, pv2: Seq<Cpt>| #[trigger] cf(sig, j, pv, p, k) == #[trigger] cf(sig, j, pv2, p, k) by {
         crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(), fpe(pv, sh.np, k as nat), fpe(pv2, sh.np, k as nat), j, f);
     }
@@ -308,7 +314,6 @@ pub proof fn cf_var(sig: Sig, j: u64, pv: Seq<Cpt>, p: int, k: int)
 /// that parameter, its canonical code the parameter's code.
 pub proof fn fq_var(sig: Sig, j: u64, t: ExprSpec, pv: Seq<Cpt>, p: int, k: int)
     requires
-        sig.consts[j].lps.len() == 0,
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
         crate::rec_canon::pvar_field(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, k as nat, canon_shape(sig, j).fields[p][k]),
@@ -326,7 +331,7 @@ pub proof fn fq_var(sig: Sig, j: u64, t: ExprSpec, pv: Seq<Cpt>, p: int, k: int)
     let f = sh.fields[p][k];
     let v = f->Var_0;
     let x = ir(sig, t, j);
-    assert(crate::expr_model::subst_expr_levels(f, sig.consts[j].lps, spine_head(x)->Const_1) == f);
+    assert(crate::expr_model::subst_expr_levels(f, sig.consts[j].lps, crate::dom_rel::iinst(sig, j, x)) == f);
     let xs = spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed);
     crate::ti_spine::vsub_var(v, xs);
     assert(xs[xs.len() - 1 - v] == spine_args(x)[(k + sh.np - 1 - v) as int]);
@@ -1136,6 +1141,7 @@ proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<
         !crate::rec_canon::pvar_field(canon_shape(sig, spine_head(e)->Const_0).pdoms, canon_shape(sig, spine_head(e)->Const_0).np,
             k as nat, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
         crate::rec_canon::simple_ty(sig, spine_head(e)->Const_0, canon_shape(sig, spine_head(e)->Const_0).fields[p][k]),
+        crate::dom_rel::pconv(sig, g, spine_head(e)->Const_0, e, e2),
         derivable(sig, Jd::Wf(g)),
         wf(v),
         le(v, cf(sig, spine_head(e)->Const_0, pv, p, k)),
@@ -1150,7 +1156,8 @@ proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<
     fq_closed(sig, j, e2, p, k);
     assert(cf(sig, j, pv, p, k) == cf(sig, j, Seq::empty(), p, k));
     field_facts(sig, j, p, k);
-    closed_rel(sig, n, g, j, f, v);
+    let (ls1, ls2) = (crate::dom_rel::iinst(sig, j, ir(sig, e, j)), crate::dom_rel::iinst(sig, j, ir(sig, e2, j)));
+    closed_rel2(sig, n, g, j, f, ls1, ls2, v);
 }
 
 /// A closed field type is simple, ranked below its inductive, typed, and
@@ -1167,16 +1174,17 @@ pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
     ensures
         crate::dom_canon::ranked(sig, canon_shape(sig, j).fields[p][k], rk(sig, j)),
         styped(sig, canon_shape(sig, j).fields[p][k]),
+        crate::dom_code::blind_ty(sig, canon_shape(sig, j).fields[p][k]),
+        crate::dom_levels::sig_lps(sig),
         cf(sig, j, Seq::empty(), p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), canon_shape(sig, j).fields[p][k]),
 {
     let sh = canon_shape(sig, j);
     let f = sh.fields[p][k];
     crate::dom_canon::canon_fields(sig, j, p, k);
     reveal(fields_typed);
-    let ls = Seq::<LevelSpec>::empty();
+    let ls = crate::rec_canon::plevels(sig.consts[j].lps);
     assert(ftyped(sig, j, p, k, ls));
-    assert(sig.consts[j].lps =~= Seq::<u64>::empty());
-    crate::dom_canon::sl_none(f, ls);
+    crate::ti_ls2::sle_params(f, sig.consts[j].lps);
     crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(), fpe(Seq::empty(), sh.np, k as nat), Seq::empty(), j, f);
 }
 
@@ -1187,7 +1195,6 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
     requires
         has_canon(sig, j),
         fields_typed(sig, j),
-        sig.consts[j].lps.len() == 0,
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
@@ -1198,6 +1205,7 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
         let sh = canon_shape(sig, j);
         let f = sh.fields[p][k];
         let e = crate::rec_canon::plow(f, k as nat);
+        &&& sig.consts[j].lps.len() == 0
         &&& crate::rec_canon::psapp(sig, j, sh.pdoms, sh.np, k as nat, f)
         &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, k as nat, f)
         &&& crate::dom_canon::pranked(sig, f, rk(sig, j))
@@ -1380,12 +1388,13 @@ pub proof fn con_below(sig: Sig, n0: nat, n: nat, g: Ctx, m: ExprSpec, m2: ExprS
                     // a field over the parameters: moved to the target's
                     pfield_below(sig, n0, n, g, j, t, t2, pv, p, i, y, y2, fw[i], fv[i], ec, ec2);
                 } else {
-                    // a closed field: below its canonical code
+                    // a closed field: below its canonical code, at the two instances
                     fq_closed(sig, j, t, p, i);
                     fq_closed(sig, j, t2, p, i);
                     assert(cf(sig, j, pv, p, i) == cf(sig, j, Seq::empty(), p, i));
                     field_facts(sig, j, p, i);
-                    closed_below(sig, n0, n, g, j, sh.fields[p][i], y, y2, fw[i], fv[i], ec, ec2);
+                    closed_below2(sig, n0, n, g, j, sh.fields[p][i], crate::dom_rel::iinst(sig, j, ir(sig, t, j)),
+                        crate::dom_rel::iinst(sig, j, ir(sig, t2, j)), y, y2, fw[i], fv[i], ec, ec2);
                 }
             }
         }

@@ -1531,7 +1531,7 @@ pub open spec fn cf_fields_ok(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq
     &&& 0 <= p < sh.nmin()
     &&& sig.consts[sh.ind].lps.len() == 0
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
-    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind)
+    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& crate::dom_tele::chain_ok(sig, sh.pdoms, bot_env(), dps, pv)
     &&& xf.len() == sh.fields[p].len()
@@ -2260,7 +2260,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_model::sem_const(sig, rid, lv)
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& crate::dom_model::sem_const(sig, sh.ctors[p], clv)
-    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind)
+    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& crate::dom_rec_minor::pdoms_lv(sig, rid, lv)

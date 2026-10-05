@@ -252,6 +252,7 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& crate::dom_code::never_prop(sig, sh.ind)
     &&& crate::dom_code::fields_blind(sig, sh.ind)
+    &&& crate::dom_levels::sig_lps(sig)
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::dom_model::sem_const(sig, #[trigger] sh.ctors[p], Seq::empty())
         && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
@@ -399,7 +400,7 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, s: nat, rho: crate:
         crate::subst_algebra::lift_spine_app(s, k as nat, ci, crate::rec_canon::vars(k as nat, np));
         let args = crate::rec_canon::vars(k as nat + s, np);
         assert(crate::subst_algebra::slift(s, k as nat, crate::rec_canon::vars(k as nat, np)) =~= args);
-        let ws = crate::dom_ctor_bound::ind_bound(sig, ind, args, rho, d);
+        let ws = crate::dom_ctor_bound::ind_bound(sig, ind, Seq::empty(), args, rho, d);
         crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), ws);
         crate::dom_lift::tbl_canon_le(sig, ind, ws, d, crate::dom_code::canon_code(sig, ind, Seq::empty(), ws));
         assert forall|q: int| 0 <= q < ws.len() implies le(#[trigger] ws[q], pv[q]) by {
@@ -2681,7 +2682,7 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
                 assert(crate::dom_con_rel::flds_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0));
             }
         }
-        let ws0 = crate::dom_ctor_bound::ind_bound(sig, ind, args, env0, d0);
+        let ws0 = crate::dom_ctor_bound::ind_bound(sig, ind, Seq::empty(), args, env0, d0);
         crate::dom_lift::canon_is_tbl(sig, ind, Seq::empty(), ws0);
         crate::dom_lift::tbl_canon_le(sig, ind, ws0, d0, crate::dom_code::canon_code(sig, ind, Seq::empty(), ws0));
         assert forall|q: int| 0 <= q < ws0.len() implies le(#[trigger] ws0[q], pvs[q]) by {

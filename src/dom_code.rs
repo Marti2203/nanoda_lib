@@ -108,6 +108,7 @@ pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
 /// below `ind` (docs/TYPED_TARGET.md, S6 "Parameters", P3b).
 pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
     let sh = canon_shape(sig, ind);
+    &&& sig.consts[ind].lps.len() == 0
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& crate::dom_psimple::ptyped(sig, sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
     &&& crate::dom_canon::pranked(sig, sh.fields[p][k], rk(sig, ind))
@@ -118,8 +119,8 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && sig.consts[ind].lps.len() == 0 && never_prop(sig, ind) && fields_typed(sig, ind)
-        && fields_blind(sig, ind)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind)
+        && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
 

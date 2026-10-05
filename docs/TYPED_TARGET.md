@@ -1022,6 +1022,19 @@ Stages, each landing through the gate:
   `sig_lps` (`sig_lp_ok` at every instance, as `export_sound` proves for
   kernel signatures) feeds `d_ls2`. Helpers in `dom_levels`; `sle_params`
   in `ti_ls2`.
+  **U3b-2b: universe-polymorphic inductives have tables.** `canon_ok`
+  no longer asks `lps == 0`; it asks `never_prop`, `fields_blind`,
+  `sig_lps` and `lps_distinct` (so a constructor's result is at its own
+  instance, `sl_plevels_id`). The model reads constructor types at their
+  instance (`ctor_inst`; `ctor_result`/`direct_ty` report the inductive
+  at the substituted levels; `ctor_field_ty` gives `F[ls]`), the
+  constructor induction carries the instance (`cf_bnd`, lengths in
+  `cf_inv` from `ConstAx`'s typing, `cf_bnd_blind` across sides), the
+  member bounds take it (`ind_bound`, `var_ind_bound`, `tb_mem`;
+  `closed_bound` asks `blind_ty` instead of `lps == 0`), and closed fields
+  move by `closed_rel2`/`closed_below2`. Formers over the parameters
+  (`pfield_ok`, `pty_ok`) stay monomorphic (U3c); recursors stay
+  monomorphic (`rec_frag`, U4).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

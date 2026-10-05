@@ -163,4 +163,31 @@ pub proof fn closed_conv(sig: Sig, g: Ctx, r: ExprSpec, l: LevelSpec, ks: Seq<u6
     crate::ti_chain::tchain_one(sig, g, r1, r2);
 }
 
+/// Level parameters without repeats.
+pub open spec fn lps_distinct(ks: Seq<u64>) -> bool {
+    forall|i: int, j: int| #![trigger ks[i], ks[j]] 0 <= i < ks.len() && 0 <= j < ks.len() && ks[i] == ks[j] ==> i == j
+}
+
+/// At distinct parameters, the parameters' instance is the instance.
+pub proof fn sl_plevels_id(ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        lps_distinct(ks),
+        vs.len() == ks.len(),
+    ensures
+        subst_levels_spec(crate::rec_canon::plevels(ks), ks, vs) == vs,
+{
+    let a = subst_levels_spec(crate::rec_canon::plevels(ks), ks, vs);
+    assert forall|i: int| 0 <= i < vs.len() implies #[trigger] a[i] == vs[i] by {
+        let q = ks[i];
+        crate::level_inst::find_level_idx_contains(ks, q);
+        assert(ks.contains(q));
+        crate::ti_ls2::find_level_idx_at(ks, q);
+        let m = crate::level_model::find_level_idx(ks, q)->Some_0;
+        assert(ks[m as int] == ks[i]);
+        assert(m as int == i);
+        assert(crate::rec_canon::plevels(ks)[i] == LevelSpec::Param(q));
+    }
+    assert(a =~= vs);
+}
+
 } // verus!
