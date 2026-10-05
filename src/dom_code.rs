@@ -118,8 +118,15 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && sig.consts[ind].lps.len() == 0 && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && sig.consts[ind].lps.len() == 0 && never_prop(sig, ind) && fields_typed(sig, ind)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
+}
+
+/// `ind`'s sort is a type at every instance (docs/TYPED_TARGET.md,
+/// "Universe polymorphism": Prop-valued instances wait for the Prop stage).
+pub open spec fn never_prop(sig: Sig, ind: u64) -> bool {
+    let t = sig.consts[ind].ty;
+    tbody(t, tarity(t)) is Sort && forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(tbody(t, tarity(t))->Sort_0, rho) > 0
 }
 
 /// Universe-polymorphic inductives are not in the fragment yet
@@ -486,6 +493,146 @@ pub proof fn ceval_closed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: 
     if let ExprSpec::App(f, x) = e {
         ceval_closed(sig, r, outer, ls, p1, p2, ind, *f);
         ceval_closed(sig, r, outer, ls, p1, p2, ind, *x);
+    }
+}
+
+/// Whether an inductive lives in Prop reads its instance only up to
+/// level equivalence.
+pub proof fn prop_lveq(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+    ensures
+        is_prop_at(sig, ind, ls) == is_prop_at(sig, ind, ls2),
+{
+    let lps = sig.consts[ind].lps;
+    if ls.len() == lps.len() {
+        let t0 = sig.consts[ind].ty;
+        let k = tarity(t0);
+        crate::dom_rec_shape::tarity_sl(t0, lps, ls);
+        crate::dom_rec_shape::tarity_sl(t0, lps, ls2);
+        crate::dom_canon::tbody_sl(t0, k, lps, ls);
+        crate::dom_canon::tbody_sl(t0, k, lps, ls2);
+        if let ExprSpec::Sort(l0) = tbody(t0, k) {
+            let (a, b) = (crate::level_model::subst_level_spec(l0, lps, ls), crate::level_model::subst_level_spec(l0, lps, ls2));
+            crate::ti_ls2::ll_pair(l0, l0, lps, ls, ls2);
+            assert(crate::conv_cr::lev_eq(a, b));
+            if is_zero(a) {
+                assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(b, rho) == 0 by {
+                    assert(crate::level_model::interp(a, rho) == crate::level_model::interp(b, rho));
+                }
+            }
+            if is_zero(b) {
+                assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(a, rho) == 0 by {
+                    assert(crate::level_model::interp(a, rho) == crate::level_model::interp(b, rho));
+                }
+            }
+        }
+    }
+}
+
+/// A never-Prop inductive is not Prop at any instance.
+pub proof fn never_prop_not(sig: Sig, ind: u64, ls: Seq<LevelSpec>)
+    requires
+        never_prop(sig, ind),
+    ensures
+        !is_prop_at(sig, ind, ls),
+{
+    let lps = sig.consts[ind].lps;
+    if ls.len() == lps.len() {
+        let t0 = sig.consts[ind].ty;
+        let k = tarity(t0);
+        crate::dom_rec_shape::tarity_sl(t0, lps, ls);
+        crate::dom_canon::tbody_sl(t0, k, lps, ls);
+        let l0 = tbody(t0, k)->Sort_0;
+        let rho = Map::<nat, nat>::empty();
+        crate::level_model::subst_level_spec_interp(l0, lps, ls, rho);
+        assert(crate::level_model::interp(l0, crate::level_model::subst_env(rho, lps, ls)) > 0);
+    }
+}
+
+/// THE CODES READ THE INSTANCE ONLY UP TO LEVEL EQUIVALENCE.
+pub proof fn canon_lveq(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, a: Seq<Cpt>)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+    ensures
+        canon_code(sig, ind, ls, a) == canon_code(sig, ind, ls2, a),
+    decreases rk(sig, ind) + 1, 0int, 0int,
+{
+    prop_lveq(sig, ind, ls, ls2);
+    if tabled(sig, ind, ls, a) {
+        cblocks_lveq(sig, ind, ls, ls2, a, canon_shape(sig, ind).nmin());
+    }
+}
+
+pub proof fn cblocks_lveq(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, a: Seq<Cpt>, j: nat)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[ind].lps.len(),
+    ensures
+        cblocks(sig, ind, ls, a, j) == cblocks(sig, ind, ls2, a, j),
+    decreases rk(sig, ind), 3int, j,
+{
+    let sh = canon_shape(sig, ind);
+    if !(j == 0 || j > sh.nmin() || rk(sig, ind) < 0) {
+        cblocks_lveq(sig, ind, ls, ls2, a, (j - 1) as nat);
+        centries_lveq(sig, ind, ls, ls2, a, (j - 1) as nat, sh.fields[j - 1].len());
+    }
+}
+
+pub proof fn centries_lveq(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, a: Seq<Cpt>, j: nat, k: nat)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[ind].lps.len(),
+    ensures
+        centries(sig, ind, ls, a, j, k) == centries(sig, ind, ls2, a, j, k),
+    decreases rk(sig, ind), 2int, k,
+{
+    let sh = canon_shape(sig, ind);
+    if !(k == 0 || j >= sh.nmin() || k > sh.fields[j as int].len() || rk(sig, ind) < 0 || a.len() < sh.np) {
+        centries_lveq(sig, ind, ls, ls2, a, j, (k - 1) as nat);
+        ceval_lveq(sig, rk(sig, ind), ind, ls, ls2, fpe(a, sh.np, (k - 1) as nat), sh.fields[j as int][k - 1]);
+    }
+}
+
+pub proof fn ceval_lveq(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[outer].lps.len(),
+    ensures
+        ceval(sig, r, outer, ls, pe, e) == ceval(sig, r, outer, ls2, pe, e),
+    decreases r, 1int, esize(e) + 1,
+{
+    if !(e is Var) {
+        if let ExprSpec::Const(jd, us) = spine_head(e) {
+            if 0 <= rk(sig, jd) < r {
+                cargs_lveq(sig, r, outer, ls, ls2, pe, e);
+                let (u1, u2) = (lsub(sig, outer, ls, us), lsub(sig, outer, ls2, us));
+                assert(crate::conv_cr::levs_eq(u1, u2)) by {
+                    assert forall|i: int, rho: Map<nat, nat>| 0 <= i < u1.len() implies
+                        #[trigger] crate::level_model::interp(u1[i], rho) == crate::level_model::interp(u2[i], rho) by {
+                        crate::ti_ls2::ll_pair(us[i], us[i], sig.consts[outer].lps, ls, ls2);
+                    }
+                }
+                canon_lveq(sig, jd, u1, u2, cargs(sig, r, outer, ls, pe, e));
+            }
+        }
+    }
+}
+
+pub proof fn cargs_lveq(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[outer].lps.len(),
+    ensures
+        cargs(sig, r, outer, ls, pe, e) == cargs(sig, r, outer, ls2, pe, e),
+    decreases r, 1int, esize(e),
+{
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+        cargs_lveq(sig, r, outer, ls, ls2, pe, *f);
+        ceval_lveq(sig, r, outer, ls, ls2, pe, *x);
     }
 }
 

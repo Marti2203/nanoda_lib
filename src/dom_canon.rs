@@ -419,6 +419,7 @@ pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pd
 
 /// CANONICAL CODES ARE TYPES: their table entries are canonical codes of
 /// lower-ranked formers, parameters' codes, or bottom.
+#[verifier::spinoff_prover]
 pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
     requires
         aw(args),

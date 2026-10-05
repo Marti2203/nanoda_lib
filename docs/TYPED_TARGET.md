@@ -970,6 +970,17 @@ Stages, each landing through the gate:
   at the identity pair) chains with that premise's pair. Congruences
   mirror `d_sub`; the constant rules are rebuilt at the two instances
   (`lls_pair`). `ls_pair_nil` is the closed-term corollary.
+  **U2a: codes are level-invariant.** `canon_lveq`/`ceval_lveq` (with
+  `cblocks`/`centries`/`cargs`): codes at level-equivalent instances are
+  equal, the Prop flag being semantic (`prop_lveq`). `canon_ok` and
+  `rec_model` ask `never_prop` (the sort is above zero at every
+  valuation; `never_prop_not` gives "not Prop" at every instance) — the
+  restriction universe-polymorphic tables will keep until the Prop stage.
+  Still `lps == 0` in `canon_ok`: the flip (2026-10-05 trial) breaks
+  23 functions, the model lemmas that read a constructor's field types
+  without their level instance (`ctor_field_ty`, `pvar_ty`, `direct_ty`,
+  `ctor_result`, `fq_closed`, `field_facts`, `tb_mem`, …); U3 generalizes
+  them to the instance (`subst_expr_levels(F, lps, ls)`, as `fq` reads).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

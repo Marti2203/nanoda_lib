@@ -1531,7 +1531,7 @@ pub open spec fn cf_fields_ok(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq
     &&& 0 <= p < sh.nmin()
     &&& sig.consts[sh.ind].lps.len() == 0
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
-    &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
+    &&& crate::dom_code::never_prop(sig, sh.ind)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& crate::dom_tele::chain_ok(sig, sh.pdoms, bot_env(), dps, pv)
     &&& xf.len() == sh.fields[p].len()
@@ -1804,6 +1804,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq<Cpt
             typed_up(xf[k], cv, n);
         }
     }
+    crate::dom_code::never_prop_not(sig, ind, Seq::empty());
     assert(has_type(n, val, dcan));
     typed_down(val, dcan, n);
 }
@@ -2259,7 +2260,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_model::sem_const(sig, rid, lv)
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& crate::dom_model::sem_const(sig, sh.ctors[p], clv)
-    &&& !crate::dom_code::is_prop_at(sig, sh.ind, Seq::empty())
+    &&& crate::dom_code::never_prop(sig, sh.ind)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& crate::dom_rec_minor::pdoms_lv(sig, rid, lv)
