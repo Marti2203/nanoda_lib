@@ -250,14 +250,6 @@ pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>
     crate::ti_spine::vsub_closed(sh.pdoms[q], xs.subrange(0, q));
 }
 
-/// The fragment's field facts for rule `j`: closed and level-invariant.
-pub open spec fn fields_plain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> bool {
-    let sh = rshape(sig, rid);
-    forall|k: int| 0 <= k < sh.fields[j].len() ==>
-        crate::expr_model::nlbv(#[trigger] sh.fields[j][k]) == 0
-        && crate::expr_model::subst_expr_levels(sh.fields[j][k], sig.ienv.recs[rid].uparams, lv) == sh.fields[j][k]
-}
-
 /// The minor's binders at the instance: fields, then hypotheses.
 pub open spec fn msds(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> Seq<ExprSpec> {
     let sh = rshape(sig, rid);

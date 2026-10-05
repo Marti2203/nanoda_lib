@@ -425,11 +425,11 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
         sig_lp_ok(sig, ks, vs),
         crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_fire(sig, m),
-    ensures ({
-        let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs)));
-        &&& pj2.len() == pj.len()
-        &&& forall|q: int| 0 <= q < pj.len() ==> #[trigger] pj2[q] == jls(pj[q], ks, vs)
-    }),
+    ensures
+        crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs)).len() == crate::ti_syntax::iota_pjs(sig, g, m).len(),
+        forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len()
+            ==> #[trigger] crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs))[q]
+                == jls(crate::ti_syntax::iota_pjs(sig, g, m)[q], ks, vs),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
@@ -445,9 +445,19 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(sig.consts[sh.ind].lps =~= Seq::<u64>::empty());
     assert(crate::level_inst::elp_in(sig.consts[sh.ind].ty, Seq::empty()));
     elp_binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(sig.consts[sh.ind].ty, sh.np + sh.ni), Seq::empty());
-    assert forall|q: int| 0 <= q < rd.num_params implies subst_expr_levels(#[trigger] sh.pdoms[q], ks, vs) == sh.pdoms[q] by {
+    crate::ti_syntax::iota_major_len(sig, m);
+    let (args, cargs) = (spine_args(m), spine_args(major));
+    let m2 = subst_expr_levels(m, ks, vs);
+    let pj = crate::ti_syntax::iota_pjs(sig, g, m);
+    let pj2 = crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), m2);
+    assert(spine_head(m2)->Const_0 == rid);
+    assert(crate::level_inst::sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
+    assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jls(pj[q], ks, vs) by {
         assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
         crate::level_inst::expr_closed(sh.pdoms[q], ks, vs);
+        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], sh.pdoms[q]));
+        assert(spine_args(m2)[q] == subst_expr_levels(args[q], ks, vs));
+        assert(spine_args(subst_expr_levels(major, ks, vs))[q] == subst_expr_levels(cargs[q], ks, vs));
     }
 }
 

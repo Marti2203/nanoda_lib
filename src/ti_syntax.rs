@@ -395,6 +395,32 @@ pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], pdoms[q]))
 }
 
+/// A firing redex's major has at least the recursor's parameters as
+/// arguments (its constructor takes them first).
+pub proof fn iota_major_len(sig: Sig, m: ExprSpec)
+    requires
+        iota_ok(sig),
+        crate::ti_hred::rec_fire(sig, m),
+    ensures ({
+        let rd = sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0];
+        let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
+        &&& crate::beta_model::spine_head(major) is Const
+        &&& crate::beta_model::spine_args(major).len() >= rd.num_params
+    }),
+{
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    let rd = sig.ienv.recs[rid];
+    let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
+    let cid = crate::beta_model::spine_head(major)->Const_0;
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    let p = crate::iota_sr::fired_rule(sig, m);
+    crate::beta_model::find_rule_spec(rd.rules, cid);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    assert(sh.ctors[p] == cid);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sig.ienv.ctor_np[cid] as nat == sh.np);
+}
+
 /// Iota's parameter premises are at sorts: the recursor fragment's
 /// parameters are type parameters.
 pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)

@@ -560,22 +560,36 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
     requires
         crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_fire(sig, m),
-    ensures ({
-        let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, g2, psub(m, t)));
-        &&& pj2.len() == pj.len()
-        &&& forall|q: int| 0 <= q < pj.len() ==> #[trigger] pj[q] is Eq && pj[q]->Eq_0 == g
-        &&& forall|q: int| 0 <= q < pj.len() ==> pj[q] is Eq && #[trigger] pj2[q] == crate::ti_syntax::eq(g2, psub(pj[q]->Eq_1, t),
-                psub(pj[q]->Eq_2, t), psub(pj[q]->Eq_3, t))
-    }),
+    ensures
+        crate::ti_syntax::iota_pjs(sig, g2, psub(m, t)).len() == crate::ti_syntax::iota_pjs(sig, g, m).len(),
+        forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q] is Eq
+            && crate::ti_syntax::iota_pjs(sig, g, m)[q]->Eq_0 == g,
+        forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> #[trigger] crate::ti_syntax::iota_pjs(sig, g2, psub(m, t))[q]
+            == crate::ti_syntax::eq(g2, psub(crate::ti_syntax::iota_pjs(sig, g, m)[q]->Eq_1, t),
+                psub(crate::ti_syntax::iota_pjs(sig, g, m)[q]->Eq_2, t), psub(crate::ti_syntax::iota_pjs(sig, g, m)[q]->Eq_3, t)),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
     crate::ti_syntax::iota_pdoms(sig, m);
+    crate::ti_syntax::iota_major_len(sig, m);
     psub_spine_const(t, m);
-    let rd = sig.ienv.recs[spine_head(m)->Const_0];
-    let major = spine_args(m)[rd.major_idx as int];
+    let rid = spine_head(m)->Const_0;
+    let rd = sig.ienv.recs[rid];
+    let args = spine_args(m);
+    let major = args[rd.major_idx as int];
     psub_spine_const(t, major);
-    assert(spsub(spine_args(m), t)[rd.major_idx as int] == psub(major, t));
+    assert(spsub(args, t)[rd.major_idx as int] == psub(major, t));
+    let cargs = spine_args(major);
+    let pdoms = crate::dom_rec_ty::rshape(sig, rid).pdoms;
+    let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, g2, psub(m, t)));
+    assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q]
+        == crate::ti_syntax::eq(g2, psub(pj[q]->Eq_1, t), psub(pj[q]->Eq_2, t), psub(pj[q]->Eq_3, t)) by {
+        assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pdoms[q]));
+        assert(pdoms[q] is Sort);
+        assert(psub(pdoms[q], t) == pdoms[q]);
+        assert(spine_args(psub(m, t))[q] == psub(args[q], t));
+        assert(spine_args(psub(major, t))[q] == psub(cargs[q], t));
+    }
 }
 
 pub proof fn psub_fire(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)

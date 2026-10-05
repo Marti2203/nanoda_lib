@@ -86,7 +86,7 @@ proof fn field_ctx(sig: Sig, c: u64, lv: Seq<LevelSpec>, j: int, heads: Seq<Expr
     let f = sh.fields[j][k];
     let ctx = rule_ctx(sig, c, lv, j);
     crate::dom_iota::major_form(sig, c, lv);
-    assert(crate::dom_rec_minor::fields_plain(sig, c, lv, j));
+    assert(crate::dom_rec_minor::fields_lv(sig, c, lv, j));
     assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == f);
     crate::ti_level::ls_lift((1 + nmin) as nat, k as nat, f, rd.uparams, lv);
     assert(ctx[i] == crate::dom_iota::ftds(sig, c, lv, j)[k]);
@@ -340,7 +340,7 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), lt, lt, pt));
     crate::dom_iota::rule_split(sig, rid, lv, p);
     crate::iota_sr::rule_ty_split(sig, rid, lv, p);
-    assert(crate::dom_rec_minor::fields_plain(sig, rid, lv, p));
+    assert(crate::dom_rec_minor::fields_lv(sig, rid, lv, p));
 }
 
 } // verus!
