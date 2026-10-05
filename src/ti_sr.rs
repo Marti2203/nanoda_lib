@@ -259,26 +259,32 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
     assert(crate::dom_rec_end::rec_frag(sig, h->Const_0));
     crate::dom_rec_conv::sr_ok_of(sig, h->Const_0, h->Const_1, pr);
-    crate::iota_sr::iota_sr(sig, g, m, t);
-    let n = crate::beta_model::rec_result(sig.ienv, m);
-    let d1 = get(sig, eq(g, n, n, t));
-    crate::ti_valid::d_ty(sig, dm);
-    let (l, d2) = get_t(sig, g, t, t);
-    assert(!crate::ti_syntax::iota_prop(sig, m)) by {
+    let l = crate::iota_sr::iota_sr(sig, g, m, t);
+    // the Iota node at the bare redex, in the motive's sort; then the
+    // extra arguments
+    crate::iota_sr::bare_facts(sig, g, m);
+    let (x1, e, ex) = (crate::iota_sr::bare(sig, m), crate::iota_sr::iota_end(sig, m), crate::iota_sr::extra(sig, m));
+    let n1 = crate::beta_model::rec_result(sig.ienv, x1);
+    let d0 = get(sig, eq(g, x1, x1, e));
+    let d1 = get(sig, eq(g, n1, n1, e));
+    let d2 = get(sig, eq(g, e, e, sort(l)));
+    if crate::ti_syntax::iota_prop(sig, x1) {
         reveal(crate::ti_syntax::iota_prop);
-        reveal(crate::dom_rec_end::rec_large);
+        assert(l == LevelSpec::Zero);
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {}
     }
-    let ij = eq(g, m, n, t);
-    let pj = crate::ti_syntax::iota_pjs(sig, g, m);
-    let ip = seq![dm, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
+    let ij = eq(g, x1, n1, e);
+    let pj = crate::ti_syntax::iota_pjs(sig, g, x1);
+    let ip = seq![d0, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
     assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))
         && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[q])) == pj[q] by {
         let dq = crate::ti_sub::get(sig, pj[q]);
         crate::ti_sub::pick_of(sig, dq);
     }
-    assert(prems(ip, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + pj));
+    assert(prems(ip, seq![eq(g, x1, x1, e), eq(g, n1, n1, e), eq(g, e, e, sort(l))] + pj));
     valid_node(sig, Rule::Iota(l), ij, ip);
     mk_d(sig, node(Rule::Iota(l), ij, ip));
+    crate::ti_spine::reconv_spine(sig, g, x1, n1, e, ex, t);
 }
 
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its

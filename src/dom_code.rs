@@ -124,6 +124,14 @@ pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
 
+/// What subject reduction needs of `ind`: its canonical tables' syntactic
+/// half, at any sort.
+pub open spec fn canon_sr(sig: Sig, ind: u64) -> bool {
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && fields_typed(sig, ind)
+        && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
+        && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
+}
+
 /// `ind`'s sort is a type at every instance (docs/TYPED_TARGET.md,
 /// "Universe polymorphism": Prop-valued instances wait for the Prop stage).
 pub open spec fn never_prop(sig: Sig, ind: u64) -> bool {

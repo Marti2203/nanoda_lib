@@ -301,10 +301,10 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     assert(rd.num_params == np);
     assert(rd.major_idx == pre);
     assert(crate::ti_syntax::iota_lv(sig, m1)) by { reveal(crate::ti_syntax::iota_lv); }
-    assert(crate::dom_rec_end::rec_frag(sig, c));
-    assert(!crate::ti_syntax::iota_prop(sig, m1)) by {
+    if crate::ti_syntax::iota_prop(sig, m1) {
         reveal(crate::ti_syntax::iota_prop);
-        reveal(crate::dom_rec_end::rec_large);
+        assert(l == LevelSpec::Zero);
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {}
     }
     assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
         crate::ti_syntax::iota_pdom_id(sig, m1, q);

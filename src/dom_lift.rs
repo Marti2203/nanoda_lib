@@ -1215,7 +1215,7 @@ proof fn field_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq<
 /// its canonical code at no parameters is its code.
 pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
     requires
-        canon_ok(sig, j),
+        canon_sr(sig, j),
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,

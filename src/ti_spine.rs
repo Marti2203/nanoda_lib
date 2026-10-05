@@ -435,6 +435,43 @@ pub proof fn retype_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: Expr
     conv_chain(sig, g, spine_app(h2, xs), spine_app(h2, xs), inst(0, x, b), t);
 }
 
+/// Equal heads stay equal under a spine typed from one of them.
+pub proof fn reconv_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, h1, h2, ty)),
+        derivable(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t)),
+    ensures
+        derivable(sig, eq(g, spine_app(h1, xs), spine_app(h2, xs), t)),
+    decreases xs.len(),
+{
+    if xs.len() == 0 {
+        assert(spine_app(h1, xs) == h1 && spine_app(h2, xs) == h2);
+        crate::dom_adeq_syn::dsym(sig, g, h1, h2, ty);
+        crate::ti_sr::uniq(sig, g, h1, ty, t);
+        conv_chain(sig, g, h1, h2, ty, t);
+        return;
+    }
+    let n = xs.len() - 1;
+    let init = xs.subrange(0, n);
+    let x = xs[n];
+    crate::dom_bound::spine_push(h1, xs);
+    crate::dom_bound::spine_push(h2, xs);
+    let f1 = spine_app(h1, init);
+    let f2 = spine_app(h2, init);
+    let d = crate::ti_sub::get(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t));
+    gen(sig, d);
+    let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] gmark(a, b, l2, l2)
+        && derivable(sig, eq(g, f1, f1, pi(a, b))) && derivable(sig, eq(g, x, x, a)) && typ(sig, g.push(a), b, l2)
+        && tchain(sig, g, t, inst(0, x, b));
+    reconv_spine(sig, g, h1, h2, ty, init, pi(a, b));
+    pi_typed_of(sig, g, f1, a, b);
+    crate::ti_chain::tchain_refl(sig, g, pi(a, b));
+    crate::dom_sem_rel::app_pair(sig, g, f1, f2, pi(a, b), a, b, x, x);
+    crate::ti_chain::tchain_sym(sig, g, t, inst(0, x, b));
+    conv_chain(sig, g, spine_app(h1, xs), spine_app(h2, xs), inst(0, x, b), t);
+}
+
 /// Closed terms are left alone.
 pub proof fn vsub_closed(e: ExprSpec, xs: Seq<ExprSpec>)
     requires

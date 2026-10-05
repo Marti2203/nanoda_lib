@@ -124,7 +124,7 @@ pub proof fn vsub_pi_dom(t: ExprSpec, r: ExprSpec, xs: Seq<ExprSpec>)
 pub proof fn field_vsub(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpec>, s: nat, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
         0 <= p < rshape(sig, rid).nmin(),
         0 <= k < rshape(sig, rid).fields[p].len(),

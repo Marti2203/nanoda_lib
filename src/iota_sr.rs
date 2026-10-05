@@ -50,7 +50,7 @@ pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     let rd = sig.ienv.recs[rid];
     &&& rec_scope(sig, rid)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
-    &&& crate::dom_code::canon_ok(sig, sh.ind) && crate::dom_code::canon_shape(sig, sh.ind) == sh
+    &&& crate::dom_code::canon_sr(sig, sh.ind) && crate::dom_code::canon_shape(sig, sh.ind) == sh
     &&& crate::dom_model::sem_const(sig, sh.ind, crate::dom_rec_ty::rinst(sig, rid, lv))
     &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, sh.ctors[p], Seq::empty()))
     &&& 0 <= p < sh.nmin()
@@ -414,7 +414,7 @@ pub proof fn sr_switch(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, 
 pub proof fn ps_field_at(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpec>)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         0 <= p < rshape(sig, rid).nmin(),
         0 <= k < rshape(sig, rid).fields[p].len(),
         !crate::rec_canon::direct_occ(rshape(sig, rid).fields[p][k], rshape(sig, rid).ind, rshape(sig, rid).us(), rshape(sig, rid).np,
@@ -447,7 +447,7 @@ proof fn ps_field_eq(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, us2
     fs: Seq<ExprSpec>, k: int) -> (l: LevelSpec)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
@@ -497,7 +497,7 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, p
     y: ExprSpec, y2: ExprSpec)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
@@ -619,7 +619,7 @@ pub proof fn ind_cong(sig: Sig, g: Ctx, rid: u64, us: Seq<LevelSpec>, ps: Seq<Ex
 pub proof fn field_ty_chain(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int, th: ExprSpec)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
@@ -685,7 +685,7 @@ pub proof fn field_conv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, 
     y: ExprSpec, y2: ExprSpec)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
@@ -775,7 +775,7 @@ pub proof fn cfu_conv(sig: Sig, g: Ctx, rid: u64, p: int, k: int, us: Seq<LevelS
     ps: Seq<ExprSpec>, fs: Seq<ExprSpec>)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ind, Seq::empty())),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
@@ -890,7 +890,7 @@ pub proof fn sr_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
 pub proof fn ftds_vsub(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>, k: int)
     requires
         rec_scope(sig, rid),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         0 <= p < rshape(sig, rid).nmin(),
         heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
         0 <= k < rshape(sig, rid).fields[p].len(),
@@ -1009,6 +1009,7 @@ pub proof fn motive_at(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, ps: Seq<E
     ensures
         crate::ti_spine::vsub(rtds(sig, rid, lv)[rshape(sig, rid).np as int], ps)
             == crate::ti_syntax::pi(spine_app(ExprSpec::Const(rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv)), ps), crate::ti_syntax::sort(l)),
+        crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)) is Zero ==> l == LevelSpec::Zero,
 {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
@@ -1152,7 +1153,7 @@ proof fn sr_inj_fields(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, p
         rec_scope(sig, rid),
         forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
         crate::dom_model::sem_const(sig, rshape(sig, rid).ind, us),
-        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         ps.len() == rshape(sig, rid).np,
@@ -1207,7 +1208,7 @@ proof fn sr_inj_fields(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, p
 /// SUBJECT REDUCTION FOR IOTA: a typed redex's reduct is typed at the
 /// redex's type.
 #[verifier::spinoff_prover]
-pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> (l: LevelSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, m, m, t)),
@@ -1215,6 +1216,12 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
         sr_ok(sig, spine_head(m)->Const_0, spine_head(m)->Const_1, fired_rule(sig, m)),
     ensures
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
+        derivable(sig, eq(g, bare(sig, m), bare(sig, m), iota_end(sig, m))),
+        derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, bare(sig, m)), crate::beta_model::rec_result(sig.ienv, bare(sig, m)),
+            iota_end(sig, m))),
+        derivable(sig, eq(g, iota_end(sig, m), iota_end(sig, m), crate::ti_syntax::sort(l))),
+        crate::rec_canon::elim_level(sig, spine_head(m)->Const_0, crate::rec_canon::rec_ind(sig, spine_head(m)->Const_0)) is Zero
+            ==> l == LevelSpec::Zero,
         forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]),
         crate::ti_syntax::iota_lv(sig, m),
 {
@@ -1320,6 +1327,84 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     assert(cargs.subrange(cargs.len() - rd.rules[p].nfields, cargs.len() as int) =~= fs);
     assert(args.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
     assert(args.subrange((rd.major_idx + 1) as int, args.len() as int) =~= extra);
+    // the bare redex and its reduct, at the motive at the major, in the
+    // motive's sort
+    bare_facts(sig, g, m);
+    assert(bare(sig, m) == x1);
+    assert(iota_end(sig, m) == ExprSpec::App(Box::new(a0[np as int]), Box::new(a0[pre])));
+    assert(spine_app(x2, Seq::<ExprSpec>::empty()) == x2);
+    crate::beta_model::spine_destruct_app(h, a0);
+    assert(a0.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
+    assert(a0.subrange(pre + 1, a0.len() as int) =~= Seq::<ExprSpec>::empty());
+    assert(crate::beta_model::rec_result(sig.ienv, x1) == x2);
+    crate::dom_iota::spine_concat(h, a0, Seq::<ExprSpec>::empty());
+    assert(a0 + Seq::<ExprSpec>::empty() =~= a0);
+    let l = motive_at(sig, rid, lv, p, ps);
+    assert(heads.subrange(0, np as int) =~= ps);
+    assert(a0.subrange(0, np as int) =~= ps);
+    let mt = crate::ti_syntax::pi(ip, crate::ti_syntax::sort(l));
+    assert(derivable(sig, eq(g, a0[np as int], a0[np as int], mt)));
+    pi_typed_of(sig, g, a0[np as int], ip, crate::ti_syntax::sort(l));
+    crate::ti_chain::tchain_refl(sig, g, mt);
+    crate::dom_sem_rel::app_pair(sig, g, a0[np as int], a0[np as int], mt, ip, crate::ti_syntax::sort(l), major, major);
+    assert(crate::subst_algebra::inst(0, major, crate::ti_syntax::sort(l)) == crate::ti_syntax::sort(l));
+    l
+}
+
+/// THE BARE REDEX: a firing redex's spine up to its major.
+pub open spec fn bare(sig: Sig, m: ExprSpec) -> ExprSpec {
+    let rd = sig.ienv.recs[spine_head(m)->Const_0];
+    spine_app(spine_head(m), spine_args(m).subrange(0, (rd.major_idx + 1) as int))
+}
+
+/// The arguments after the major.
+pub open spec fn extra(sig: Sig, m: ExprSpec) -> Seq<ExprSpec> {
+    let rd = sig.ienv.recs[spine_head(m)->Const_0];
+    spine_args(m).subrange((rd.major_idx + 1) as int, spine_args(m).len() as int)
+}
+
+/// The bare redex's type: the motive at the major.
+pub open spec fn iota_end(sig: Sig, m: ExprSpec) -> ExprSpec {
+    let rd = sig.ienv.recs[spine_head(m)->Const_0];
+    ExprSpec::App(Box::new(spine_args(m)[rd.num_params as int]), Box::new(spine_args(m)[rd.major_idx as int]))
+}
+
+/// A firing redex is its bare redex, which fires alike with the same
+/// rule, side conditions and premises, applied to the extra arguments;
+/// so is its reduct.
+pub proof fn bare_facts(sig: Sig, g: Ctx, m: ExprSpec)
+    requires
+        crate::ti_hred::rec_fire(sig, m),
+    ensures
+        m == spine_app(bare(sig, m), extra(sig, m)),
+        crate::ti_hred::rec_fire(sig, bare(sig, m)),
+        spine_head(bare(sig, m)) == spine_head(m),
+        crate::beta_model::rec_result(sig.ienv, m) == spine_app(crate::beta_model::rec_result(sig.ienv, bare(sig, m)), extra(sig, m)),
+        crate::ti_syntax::iota_pjs(sig, g, bare(sig, m)) == crate::ti_syntax::iota_pjs(sig, g, m),
+        crate::ti_syntax::iota_lv(sig, bare(sig, m)) == crate::ti_syntax::iota_lv(sig, m),
+        crate::ti_syntax::iota_prop(sig, bare(sig, m)) == crate::ti_syntax::iota_prop(sig, m),
+        fired_rule(sig, bare(sig, m)) == fired_rule(sig, m),
+        iota_end(sig, bare(sig, m)) == iota_end(sig, m),
+        extra(sig, bare(sig, m)) == Seq::<ExprSpec>::empty(),
+{
+    let h = spine_head(m);
+    let args = spine_args(m);
+    let rd = sig.ienv.recs[h->Const_0];
+    let (a0, ex) = (args.subrange(0, (rd.major_idx + 1) as int), extra(sig, m));
+    crate::beta_model::spine_recompose(m);
+    assert(a0 + ex =~= args);
+    crate::dom_iota::spine_concat(h, a0, ex);
+    crate::beta_model::spine_destruct_app(h, a0);
+    let x1 = bare(sig, m);
+    assert(spine_args(x1) == a0);
+    assert(a0.subrange(0, (rd.major_idx + 1) as int) =~= a0);
+    assert(a0[rd.major_idx as int] == args[rd.major_idx as int]);
+    assert(a0.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= args.subrange(0, crate::beta_model::rec_prefix(rd) as int));
+    assert(a0.subrange((rd.major_idx + 1) as int, a0.len() as int) =~= Seq::<ExprSpec>::empty());
+    reveal(crate::ti_syntax::iota_pjs);
+    reveal(crate::ti_syntax::iota_lv);
+    reveal(crate::ti_syntax::iota_prop);
+    assert(crate::ti_syntax::iota_pjs(sig, g, x1) =~= crate::ti_syntax::iota_pjs(sig, g, m));
 }
 
 } // verus!
