@@ -1082,6 +1082,22 @@ Stages, each landing through the gate:
   hypotheses) give nested formers' parameters at their instanced sorts,
   `former_args_typed` likewise for every former; `closed_pconv` composes
   the instances (`lpad_sl`, `pdoms_elp`).
+  **U4b-3: Iota's subject reduction at every instance.** `iota_sr` no
+  longer assumes a monomorphic inductive. The major's constructor is typed
+  at its own instance (`sr_major`), injectivity (`ind_inj_args`) shows
+  that instance equivalent to the recursor's `rinst`, and `sr_switch`
+  moves the constructor there (`ConstAx` between the two instances, its
+  premise from `closed_conv` on the constructor's closed type; then
+  `retype_spine`). Everything after runs at `rinst`: the constructor's
+  telescope `ctel(us)` with the parameters at `ptype` and the fields at
+  `cfu(us)` (`ctor_at`), the field lemmas (`ind_cong`, `field_conv`,
+  `field_ty_chain`) taking the instance, and `sr_result` closing the chain
+  at the major with the two-headed `spine_cong2`. Fields over the
+  parameters only occur in monomorphic inductives (`ps_field_mono`).
+  `sr_ok` drops `lps == 0`, `pdoms_lv` and the fields' level invariance,
+  asking instead for the inductive semantic at `rinst` and the
+  constructor's type closed. The monomorphic callers in `dom_rec_end` and
+  `dom_rec_conv` bridge with `mono_at`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

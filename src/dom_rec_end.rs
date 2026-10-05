@@ -825,7 +825,8 @@ proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
     assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], rc.pargs[q], sh.pdoms[q])) by {
         assert(ps[q] == rc.xs[q]);
     }
-    crate::iota_sr::field_conv(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, th, y, y2);
+    crate::iota_sr::mono_at(sig, rc.c, j);
+    crate::iota_sr::field_conv(sig, g, rc.c, j, Seq::empty(), ps, rc.pargs, rc.args, i, th, y, y2);
     crate::dom_rec_minor::field_vsub_pre(sig, rc.c, j, i, ps, rc.args.subrange(0, i), rc.args.subrange(0, i));
     assert(rc.fty(sig, i) == crate::ti_spine::vsub(f, ps + rc.args.subrange(0, i)));
     if fsm[i] is Bot {
@@ -898,8 +899,9 @@ proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
         assert(Seq::new(np, |q: int| xa[xa.len() - 1 - crate::dom_iota::vidx(i as nat, np)[q]]) =~= ps);
         assert(rc.fty(sig, i) == ci);
         let (z, z2) = (cr(sig, y), cr(sig, y2));
-        crate::iota_sr::field_conv(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, th, y, z);
-        crate::iota_sr::field_conv(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, th, y2, z2);
+        crate::iota_sr::mono_at(sig, rc.c, j);
+        crate::iota_sr::field_conv(sig, g, rc.c, j, Seq::empty(), ps, rc.pargs, rc.args, i, th, y, z);
+        crate::iota_sr::field_conv(sig, g, rc.c, j, Seq::empty(), ps, rc.pargs, rc.args, i, th, y2, z2);
     }
     assert(rc.fcode(sig, i) is Nd && rc.fcode(sig, i)->Nd_0 is Ty);
 }
@@ -1380,7 +1382,8 @@ proof fn cxr_field(sig: Sig, rc: Rc, i: int, l: LevelSpec)
     assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], rc.pargs[q], sh.pdoms[q])) by {
         assert(ps[q] == rc.xs[q]);
     }
-    crate::iota_sr::field_ty_chain(sig, g, rc.c, j, ps, rc.pargs, rc.args, i, crate::ti_syntax::sort(l));
+    crate::iota_sr::mono_at(sig, rc.c, j);
+    crate::iota_sr::field_ty_chain(sig, g, rc.c, j, Seq::empty(), ps, rc.pargs, rc.args, i, crate::ti_syntax::sort(l));
     assert(crate::ti_chain::tchain(sig, g, ti, ti2));
     rc_args2_typed(sig, rc, i);
     assert(derivable(sig, eq(g, rc.args[i], rc.args[i], ti)));
@@ -1579,7 +1582,8 @@ pub proof fn rc_args2_typed(sig: Sig, rc: Rc, k: int)
     reveal(crate::ti_sub::tconvd);
     let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(rc.g, rc.ind2(sig), rc.ind2(sig), crate::ti_syntax::sort(l)));
     rec_canon_ok(sig, rc.c);
-    crate::iota_sr::field_conv(sig, rc.g, rc.c, rc.j, ps2, ps, rc.args2, k, crate::ti_syntax::sort(l), rc.args2[k], rc.args2[k]);
+    crate::iota_sr::mono_at(sig, rc.c, rc.j);
+    crate::iota_sr::field_conv(sig, rc.g, rc.c, rc.j, Seq::empty(), ps2, ps, rc.args2, k, crate::ti_syntax::sort(l), rc.args2[k], rc.args2[k]);
 }
 
 /// The recursor's type after fewer arguments than its binders is a Pi.

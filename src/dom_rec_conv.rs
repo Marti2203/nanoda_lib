@@ -264,10 +264,10 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, heads: 
     crate::dom_adeq_syn::dsym(sig, g, x, cx, ci);
     let thc = crate::dom_iota::spine_gen(sig, g, cc, pargs + args, ci);
     crate::ti_spine::const_typed(sig, g, sh.ctors[j], Seq::empty(), thc);
-    crate::dom_iota::ctor_ty_split(sig, c, j, Seq::empty());
-    crate::dom_iota::ctor_plain(sig, c, j, Seq::empty());
-    assert(crate::ti_syntax::dty_at(sig, sh.ctors[j], Seq::empty()) == crate::iota_sr::ctel(sig, c, j));
-    crate::iota_sr::sr_result(sig, g, c, lv, j, heads, pargs, args);
+    crate::dom_rec_ty::rinst_mono(sig, c, lv);
+    crate::iota_sr::mono_at(sig, c, j);
+    crate::iota_sr::ctor_at(sig, c, j, Seq::empty());
+    crate::iota_sr::sr_result(sig, g, c, lv, j, Seq::empty(), heads, pargs, args);
     // at the major: the motive's application to the major's conversion
     crate::dom_rec_end::motive_form(sig, c, lv);
     assert(crate::dom_rec_end::rec_frag(sig, c));
@@ -347,7 +347,8 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), lt, lt, pt));
     crate::dom_iota::rule_split(sig, rid, lv, p);
     crate::iota_sr::rule_ty_split(sig, rid, lv, p);
-    assert(crate::dom_rec_minor::fields_lv(sig, rid, lv, p));
+    crate::dom_rec_ty::rinst_mono(sig, rid, lv);
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty())));
 }
 
 } // verus!

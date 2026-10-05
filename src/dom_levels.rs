@@ -136,6 +136,42 @@ pub proof fn blind_args(sig: Sig, e: ExprSpec)
     }
 }
 
+/// Substituting no levels changes nothing.
+pub proof fn lp_nil(l: LevelSpec, ks: Seq<u64>)
+    ensures
+        subst_level_spec(l, ks, Seq::empty()) == l,
+    decreases l,
+{
+    match l {
+        LevelSpec::Succ(a) => lp_nil(*a, ks),
+        LevelSpec::Max(a, b) => { lp_nil(*a, ks); lp_nil(*b, ks); },
+        LevelSpec::IMax(a, b) => { lp_nil(*a, ks); lp_nil(*b, ks); },
+        _ => {},
+    }
+}
+
+pub proof fn sl_nil(e: ExprSpec, ks: Seq<u64>)
+    ensures
+        subst_expr_levels(e, ks, Seq::empty()) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::Sort(l) => lp_nil(l, ks),
+        ExprSpec::Const(id, ls) => {
+            assert(subst_levels_spec(ls, ks, Seq::empty()) =~= ls) by {
+                assert forall|i: int| 0 <= i < ls.len() implies #[trigger] subst_levels_spec(ls, ks, Seq::empty())[i] == ls[i] by {
+                    lp_nil(ls[i], ks);
+                }
+            }
+        },
+        ExprSpec::App(f, a) => { sl_nil(*f, ks); sl_nil(*a, ks); },
+        ExprSpec::Bind(_, t, b) => { sl_nil(*t, ks); sl_nil(*b, ks); },
+        ExprSpec::Let(t, v, b) => { sl_nil(*t, ks); sl_nil(*v, ks); sl_nil(*b, ks); },
+        ExprSpec::Proj(_, st) => sl_nil(*st, ks),
+        _ => {},
+    }
+}
+
 /// A CLOSED TYPE'S TWO INSTANCES CONVERT, in any well-formed context.
 pub proof fn closed_conv(sig: Sig, g: Ctx, r: ExprSpec, l: LevelSpec, ks: Seq<u64>, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>)
     requires

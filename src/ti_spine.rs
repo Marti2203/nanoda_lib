@@ -171,11 +171,24 @@ pub proof fn spine_cong(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<Exp
         forall|i: int| 0 <= i < xs.len() ==> derivable(sig, eq(g, #[trigger] xs[i], ys[i], sdom(t0, xs, i))),
     ensures
         derivable(sig, eq(g, spine_app(h, xs), spine_app(h, ys), trest(t0, xs))),
+{
+    spine_cong2(sig, g, h, h, t0, xs, ys);
+}
+
+/// The same, at two equal heads.
+pub proof fn spine_cong2(sig: Sig, g: Ctx, h: ExprSpec, h2: ExprSpec, t0: ExprSpec, xs: Seq<ExprSpec>, ys: Seq<ExprSpec>)
+    requires
+        derivable(sig, eq(g, h, h2, t0)),
+        ys.len() == xs.len(),
+        forall|i: int| 0 <= i < xs.len() ==> #[trigger] is_pi(trest(t0, xs.subrange(0, i))),
+        forall|i: int| 0 <= i < xs.len() ==> derivable(sig, eq(g, #[trigger] xs[i], ys[i], sdom(t0, xs, i))),
+    ensures
+        derivable(sig, eq(g, spine_app(h, xs), spine_app(h2, ys), trest(t0, xs))),
     decreases xs.len(),
 {
     if xs.len() == 0 {
         assert(spine_app(h, xs) == h);
-        assert(spine_app(h, ys) == h);
+        assert(spine_app(h2, ys) == h2);
         assert(trest(t0, xs) == t0);
         return;
     }
@@ -183,7 +196,7 @@ pub proof fn spine_cong(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<Exp
     let (init, yinit) = (xs.subrange(0, n), ys.subrange(0, n));
     let (x, y) = (xs[n], ys[n]);
     crate::dom_bound::spine_push(h, xs);
-    crate::dom_bound::spine_push(h, ys);
+    crate::dom_bound::spine_push(h2, ys);
     assert forall|i: int| 0 <= i < init.len() implies #[trigger] is_pi(trest(t0, init.subrange(0, i))) by {
         assert(init.subrange(0, i) =~= xs.subrange(0, i));
         assert(is_pi(trest(t0, xs.subrange(0, i))));
@@ -193,10 +206,10 @@ pub proof fn spine_cong(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<Exp
         assert(init.subrange(0, i) =~= xs.subrange(0, i));
         assert(derivable(sig, eq(g, xs[i], ys[i], sdom(t0, xs, i))));
     }
-    spine_cong(sig, g, h, t0, init, yinit);
+    spine_cong2(sig, g, h, h2, t0, init, yinit);
     assert(xs.subrange(0, n) =~= init);
     assert(is_pi(trest(t0, xs.subrange(0, n))));
-    let (f, f2) = (spine_app(h, init), spine_app(h, yinit));
+    let (f, f2) = (spine_app(h, init), spine_app(h2, yinit));
     let p = trest(t0, init);
     let (a, b) = (*p->Bind_1, *p->Bind_2);
     assert(p == pi(a, b));
