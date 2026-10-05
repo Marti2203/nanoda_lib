@@ -1265,13 +1265,35 @@ Steps:
     `ind_inj_args` reads the chains back (and the argument counts agree);
     `ti_sr::mchain_typed` types them.
   - **V2: Prop-only recursors with value parameters and indices.**
-    `rec_frag` keeps `pdoms` sorts and `ni == 0` only for recursors with
-    a motive universe. `iota_pjs` holds the parameters at their domains
-    instantiated at the recursor's earlier arguments, and grows index
-    premises; `iota_sr` is generalized over the index binders (motive over
-    the indices and the major, the major at the indices, the rule at the
-    constructor's index terms), with the chains from V1 giving the
-    major's indices and value parameters.
+    `rec_frag` keeps `pdoms` sorts and `ni == 0` for recursors with a
+    motive universe; a Prop-only recursor may have value parameters and
+    indices when its inductive is not always a type (`!never_prop`, so
+    `pconv` carries the index chains). `iota_pjs` is empty for a Prop-only
+    redex (its soundness is irrelevance and needs no parameter premises).
+    Subject reduction by a generic route instead of `iota_sr`'s field-kind
+    case analysis (design 2026-10-05):
+    - the constructor's telescope `ctds(us)` is well formed (`pi_tele_wf`
+      on its closed type at the instance);
+    - `ind_inj_args` on the major's type `I.{us} ps idx` against the
+      constructor's `I.{clv} ps2 tss[ps2, fs]` gives `levs_eq` and chains
+      for every parameter and index;
+    - `tpair(ctds, ps2 ++ fs, ps ++ fs)` (`mchain_typed` for the
+      parameters, the major's own typing for the fields), so
+      `tpair_spair`: the `spair`'s type clause converts every field type
+      `F_k[ps2, fs<k]` to `F_k[ps, fs<k]` (all field kinds, value
+      parameters included), and `d_sub` on the index terms' typings gives
+      `tss[ps2, fs] ≡ tss[ps, fs]`;
+    - the rule's spine types the reduct at `P tss[ps, fs] (c.{us} ps fs)`;
+      chains (`mchain_trans`) join each `tss_i[ps, fs]` to `idx_i` and the
+      constructor application to the major, `mchain_typed` types them at
+      the motive's domains, and `spine_cong2` converts the type to
+      `P idx major`.
+    Needs index-aware forms of the recursor-telescope lemmas (`rtds`,
+    `rec_ty_split`, `rule_ty_split`, `sr_heads`, `motive_at`, `major_form`)
+    and spine inversion of the constructor's result type for the `tss`.
+    Landed groundwork: `ti_beta::tpair`/`tpair_spair`, `pi_tele_wf`.
+    Estimated well over a thousand lines; it buys `Eq`, `HEq`, `Nat.le`
+    (`Acc`'s and `Exists`'s fields need further field kinds).
 
 ### Open: large elimination out of Prop
 

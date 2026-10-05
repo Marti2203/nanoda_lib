@@ -207,6 +207,79 @@ pub proof fn beta_upto(sig: Sig, dl: Ctx, ds: Seq<ExprSpec>, b: ExprSpec, bt: Ex
     crate::ti_sub::spair_cons(sig, ck, dl, s, s, a, x, x, l1);
 }
 
+/// A TYPED PI TELESCOPE: its domains extend the context well formed, and
+/// its body is a type there.
+pub proof fn pi_tele_wf(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, b: ExprSpec, l: LevelSpec) -> (lb: LevelSpec)
+    requires
+        derivable(sig, eq(g, binds(BinderKind::Pi, ds, b), binds(BinderKind::Pi, ds, b), sort(l))),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        derivable(sig, Jd::Wf(g + ds)),
+        derivable(sig, eq(g + ds, b, b, sort(lb))),
+    decreases ds.len(),
+{
+    if ds.len() == 0 {
+        assert(g + ds =~= g);
+        return l;
+    }
+    let (a, rest) = (ds[0], ds.drop_first());
+    let r = binds(BinderKind::Pi, rest, b);
+    assert(binds(BinderKind::Pi, ds, b) == pi(a, r));
+    let dp = get(sig, eq(g, pi(a, r), pi(a, r), sort(l)));
+    crate::ti_gen::gen(sig, dp);
+    assert(crate::ti_gen::gen_pi(sig, g, a, r, sort(l)));
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, r, l1, l2)
+        && crate::ti_gen::typ(sig, g, a, l1) && crate::ti_gen::typ(sig, g.push(a), r, l2)
+        && crate::ti_chain::tchain(sig, g, sort(l), sort(crate::ti_syntax::imax(l1, l2)));
+    let w = get(sig, Jd::Wf(g));
+    let da = get(sig, eq(g, a, a, sort(l1)));
+    let w2 = crate::ti_meta::d_cons(sig, w, l1, da);
+    mk_d(sig, w2);
+    assert(g.push(a) + rest =~= g + ds);
+    pi_tele_wf(sig, g.push(a), rest, b, l2)
+}
+
+/// A TELESCOPE PAIR: two argument sequences equal entrywise at the
+/// telescope's domains instantiated at the first sequence's earlier
+/// entries.
+pub open spec fn tpair(sig: Sig, dl: Ctx, ds: Seq<ExprSpec>, xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>) -> bool {
+    &&& xs.len() == ds.len() && xs2.len() == ds.len()
+    &&& forall|i: int| 0 <= i < ds.len() ==>
+        derivable(sig, eq(dl, #[trigger] xs[i], xs2[i], crate::ti_subst::psub(ds[i], tsub(xs, i as nat))))
+}
+
+/// A telescope pair is a related substitution pair out of the telescope.
+pub proof fn tpair_spair(sig: Sig, dl: Ctx, ds: Seq<ExprSpec>, xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, k: nat)
+    requires
+        derivable(sig, Jd::Wf(ds)),
+        derivable(sig, Jd::Wf(dl)),
+        tpair(sig, dl, ds, xs, xs2),
+        k <= ds.len(),
+    ensures
+        crate::ti_sub::spair(sig, ds.subrange(0, k as int), dl, tsub(xs, k), tsub(xs2, k)),
+    decreases k,
+{
+    if k == 0 {
+        assert(crate::ti_sub::spair(sig, ds.subrange(0, 0), dl, crate::ti_subst::ids(), crate::ti_subst::ids())) by {
+            reveal(crate::ti_sub::spair);
+        }
+        return;
+    }
+    let k0 = (k - 1) as nat;
+    tpair_spair(sig, dl, ds, xs, xs2, k0);
+    let (s, s2) = (tsub(xs, k0), tsub(xs2, k0));
+    let a = ds[k0 as int];
+    let (ck, ck1) = (ds.subrange(0, k0 as int), ds.subrange(0, k as int));
+    assert(ck1 =~= ck.push(a));
+    wf_prefix(sig, ds, k as int);
+    let w = get(sig, Jd::Wf(ck1));
+    let (l1, da) = crate::ti_meta::d_wf_last(sig, w);
+    assert(ck1.drop_last() =~= ck);
+    crate::ti_sub::d_sub(sig, da, dl, s, s2);
+    assert(derivable(sig, eq(dl, xs[k0 as int], xs2[k0 as int], crate::ti_subst::psub(a, s))));
+    crate::ti_sub::spair_cons(sig, ck, dl, s, s2, a, xs[k0 as int], xs2[k0 as int], l1);
+}
+
 /// The substitution, pointwise.
 pub proof fn tsub_at(xs: Seq<ExprSpec>, k: nat, i: nat)
     requires
