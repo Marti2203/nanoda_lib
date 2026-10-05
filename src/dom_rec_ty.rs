@@ -293,6 +293,16 @@ pub open spec fn rinst(sig: Sig, rid: u64, lv: Seq<LevelSpec>) -> Seq<LevelSpec>
     crate::level_model::subst_levels_spec(rshape(sig, rid).us(), sig.ienv.recs[rid].uparams, lv)
 }
 
+/// Without level parameters, the inductive's instance is empty.
+pub proof fn rinst_mono(sig: Sig, rid: u64, lv: Seq<LevelSpec>)
+    requires
+        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+    ensures
+        rinst(sig, rid, lv) == Seq::<LevelSpec>::empty(),
+{
+    assert(rinst(sig, rid, lv) =~= Seq::<LevelSpec>::empty());
+}
+
 /// A term over the inductive's level parameters, at the recursor's
 /// instance, is at the inductive's instance there.
 pub proof fn rinst_id(sig: Sig, rid: u64, lv: Seq<LevelSpec>, e: ExprSpec)

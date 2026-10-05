@@ -24,15 +24,15 @@ verus! {
 
 /// The rule body's type under the arguments: the motive at the constructor
 /// applied to the parameters and the fields.
-pub proof fn bty_inst(sig: Sig, c: u64, j: int, zs: Seq<ExprSpec>)
+pub proof fn bty_inst(sig: Sig, c: u64, lv: Seq<LevelSpec>, j: int, zs: Seq<ExprSpec>)
     requires
         0 <= j < rshape(sig, c).nmin(),
         zs.len() == rshape(sig, c).np + rshape(sig, c).nmin() + 1 + rshape(sig, c).fields[j].len(),
     ensures ({
         let np = rshape(sig, c).np as int;
         let pre = (rshape(sig, c).np + rshape(sig, c).nmin() + 1) as int;
-        psub(rule_bty(sig, c, j), tsub(zs, zs.len())) == ExprSpec::App(Box::new(zs[np]),
-            Box::new(spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], Seq::empty()),
+        psub(rule_bty(sig, c, lv, j), tsub(zs, zs.len())) == ExprSpec::App(Box::new(zs[np]),
+            Box::new(spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], crate::dom_rec_ty::rinst(sig, c, lv)),
                 zs.subrange(0, np) + zs.subrange(pre, zs.len() as int))))
     }),
 {
@@ -41,7 +41,7 @@ pub proof fn bty_inst(sig: Sig, c: u64, j: int, zs: Seq<ExprSpec>)
     let n = zs.len();
     let pre = (np + nmin + 1) as int;
     let s = tsub(zs, n);
-    let h = ExprSpec::Const(sh.ctors[j], Seq::empty());
+    let h = ExprSpec::Const(sh.ctors[j], crate::dom_rec_ty::rinst(sig, c, lv));
     let vs = crate::rec_canon::vars(1 + nmin + nf, np) + crate::rec_canon::vars(0, nf);
     let want = zs.subrange(0, np as int) + zs.subrange(pre, n as int);
     crate::ti_beta::tsub_at(zs, n, nmin + nf);
@@ -126,12 +126,14 @@ pub proof fn rule_beta(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, j: int, hea
         derivable(sig, eq(g, spine_app(body, zs), r, ty))
     }),
 {
+    assert(crate::dom_rec_end::rec_frag(sig, c));
+    crate::dom_rec_ty::rinst_mono(sig, c, lv);
     let sh = rshape(sig, c);
     let rd = sig.ienv.recs[c];
     let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[j].len());
     let pre = (np + nmin + 1) as int;
     let ctx = rule_ctx(sig, c, lv, j);
-    let (b, bt) = (crate::dom_iota::rule_body(sig, c, lv, j), rule_bty(sig, c, j));
+    let (b, bt) = (crate::dom_iota::rule_body(sig, c, lv, j), rule_bty(sig, c, lv, j));
     let zs = heads + args;
     let n = zs.len();
     let t0 = crate::ti_syntax::dty_at(sig, c, lv);
@@ -166,7 +168,7 @@ pub proof fn rule_beta(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, j: int, hea
     crate::ti_beta::beta_upto(sig, g, ctx, b, bt, lb, zs, n);
     assert(zs.subrange(0, n as int) =~= zs);
     assert(ctx.subrange(n as int, n as int) =~= Seq::<ExprSpec>::empty());
-    bty_inst(sig, c, j, zs);
+    bty_inst(sig, c, lv, j, zs);
     assert(zs.subrange(pre, n as int) =~= args);
     assert(zs.subrange(0, np as int) =~= heads.subrange(0, np as int));
     assert(zs[np as int] == heads[np as int]);
@@ -268,6 +270,8 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, heads: 
     crate::iota_sr::sr_result(sig, g, c, lv, j, heads, pargs, args);
     // at the major: the motive's application to the major's conversion
     crate::dom_rec_end::motive_form(sig, c, lv);
+    assert(crate::dom_rec_end::rec_frag(sig, c));
+    crate::dom_rec_ty::rinst_mono(sig, c, lv);
     let l = crate::iota_sr::motive_at(sig, c, lv, j, ps);
     let mt = crate::ti_syntax::pi(ci, sort(l));
     crate::ti_spine::pi_typed_of(sig, g, p, ci, sort(l));
@@ -335,7 +339,7 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     assert(rule_typed(sig, rid, lv, p));
     let ss = crate::ti_strip::strip(sig);
     let ctx = rule_ctx(sig, rid, lv, p);
-    let (b, bt) = (crate::dom_iota::rule_body(sig, rid, lv, p), rule_bty(sig, rid, p));
+    let (b, bt) = (crate::dom_iota::rule_body(sig, rid, lv, p), rule_bty(sig, rid, lv, p));
     let lb = choose|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, sort(lb)));
     assert(Seq::<ExprSpec>::empty() + ctx =~= ctx);
     crate::ti_beta::lam_tele(ss, Seq::empty(), ctx, b, bt, lb);

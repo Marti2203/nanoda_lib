@@ -220,18 +220,19 @@ pub open spec fn rule_ctx(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> Seq<E
 
 /// Rule `p`'s body's type in its binders: the motive at the constructor
 /// applied to the parameters and the fields.
-pub open spec fn rule_bty(sig: Sig, c: u64, p: int) -> ExprSpec {
+pub open spec fn rule_bty(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> ExprSpec {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
     ExprSpec::App(Box::new(ExprSpec::Var(nmin + nf)),
-        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], Seq::empty()), crate::rec_canon::vars(1 + nmin + nf, np) + crate::rec_canon::vars(0, nf))))
+        Box::new(spine_app(ExprSpec::Const(sh.ctors[p], crate::dom_rec_ty::rinst(sig, c, lv)),
+            crate::rec_canon::vars(1 + nmin + nf, np) + crate::rec_canon::vars(0, nf))))
 }
 
 /// Rule `p`'s body at a level instance is typed in its binders, without
 /// recursors, and its type telescope is closed.
 pub open spec fn rule_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     let ss = crate::ti_strip::strip(sig);
-    let (ctx, b, bt) = (rule_ctx(sig, c, lv, p), crate::dom_iota::rule_body(sig, c, lv, p), rule_bty(sig, c, p));
+    let (ctx, b, bt) = (rule_ctx(sig, c, lv, p), crate::dom_iota::rule_body(sig, c, lv, p), rule_bty(sig, c, lv, p));
     &&& derivable(ss, crate::ti_syntax::Jd::Wf(ctx))
     &&& derivable(ss, eq(ctx, b, b, bt))
     &&& (exists|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, crate::ti_syntax::sort(lb))))
@@ -2644,6 +2645,9 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     crate::dom_rec_minor::rec_dom(sig, rc.c, rc.ls2, rc.xs2, np);
     assert(rc.xs.subrange(0, np) =~= ps);
     assert(rc.xs2.subrange(0, np) =~= ps2);
+    assert(rec_frag(sig, rc.c));
+    crate::dom_rec_ty::rinst_mono(sig, rc.c, rc.ls);
+    crate::dom_rec_ty::rinst_mono(sig, rc.c, rc.ls2);
     let la = crate::iota_sr::motive_at(sig, rc.c, rc.ls, rc.j, ps);
     let lb = crate::iota_sr::motive_at(sig, rc.c, rc.ls2, rc.j, ps2);
     let (tp, tp2) = (tel_dom(t0, rc.xs, np as nat), tel_dom(t02, rc.xs2, np as nat));
@@ -2796,6 +2800,8 @@ pub proof fn sides_ty(sig: Sig, rc: Rc)
     assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, pre));
     major_dom(sig, rc.c, rc.ls, rc.xs);
     crate::dom_rec_minor::rec_dom(sig, rc.c, rc.ls, rc.xs, np);
+    assert(rec_frag(sig, rc.c));
+    crate::dom_rec_ty::rinst_mono(sig, rc.c, rc.ls);
     let l = crate::iota_sr::motive_at(sig, rc.c, rc.ls, rc.j, ps);
     let so = crate::ti_syntax::sort(l);
     let mt = pi(ci, so);

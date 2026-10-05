@@ -149,7 +149,7 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     let ss = crate::ti_strip::strip(sig);
     assert(crate::dom_rec_end::rule_typed(sig, rid, lv, p));
     let ctx = crate::dom_rec_end::rule_ctx(sig, rid, lv, p);
-    let bt = crate::dom_rec_end::rule_bty(sig, rid, p);
+    let bt = crate::dom_rec_end::rule_bty(sig, rid, lv, p);
     let lb = choose|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, crate::ti_syntax::sort(lb)));
     assert(Seq::<ExprSpec>::empty() + ctx =~= ctx);
     crate::ti_beta::lam_tele(ss, Seq::empty(), ctx, crate::dom_iota::rule_body(sig, rid, lv, p), bt, lb);
