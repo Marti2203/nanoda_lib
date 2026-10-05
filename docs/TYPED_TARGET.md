@@ -1120,6 +1120,16 @@ Stages, each landing through the gate:
   every instance and its type closed. Still assumed in `rec_frag`:
   `pdoms_lv` and `fields_lv` (used by the model's right-in-left Iota
   direction, `r2l_ok`, next).
+  **U4b-5a: Iota's level condition.** The model's right-in-left Iota
+  direction rebuilds the major at its constructor's own instance and needs
+  that instance equivalent to the recursor's instance of the inductive
+  (a parameter's sort can be Prop at one and not at the other). Like the
+  parameter premises, the model cannot recover this by injectivity, so
+  rule `Iota` asks for it (`iota_lv`). Subject reduction supplies it
+  (`iota_sr`, by injectivity), the relation's Iota conversion from its
+  premise (`rec_conv_side`); renaming, substitution, local swap/close and
+  level instantiation and signature extension carry it (`pjs_*`,
+  `rinst_ls`); it is opaque, so rules other than `Iota` do not unfold it.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

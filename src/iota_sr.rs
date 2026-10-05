@@ -1231,6 +1231,7 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     ensures
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
         forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]),
+        crate::ti_syntax::iota_lv(sig, m),
 {
     let h = spine_head(m);
     let (rid, lv) = (h->Const_0, h->Const_1);
@@ -1290,6 +1291,7 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     crate::dom_fund::ind_inj_args(sig, g, sh.ind, us, clv, ps, ps2, crate::ti_syntax::sort(lt));
     crate::dom_rel::lpad_id(clv, sig.consts[sh.ind].lps.len());
+    assert(crate::ti_syntax::iota_lv(sig, m)) by { reveal(crate::ti_syntax::iota_lv); }
     // the major with its constructor at the recursor's instance
     sr_switch(sig, g, rid, p, clv, us, cargs, ip);
     sr_major(sig, g, rid, p, us, cargs, ip);

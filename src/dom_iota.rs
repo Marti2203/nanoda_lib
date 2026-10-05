@@ -1939,6 +1939,7 @@ pub proof fn ind_pv_mem(sig: Sig, rid: u64, from: nat, env: Env, dps: Seq<Cpt>, 
 
 /// A VALUE TYPED AT A MEMBER of the inductive at parameter variables below
 /// the parameters' values is typed at the canonical code at those values.
+#[verifier::spinoff_prover]
 pub proof fn typed_at_pv(sig: Sig, rid: u64, from: nat, env: Env, x: Cpt, d: Cpt, dps: Seq<Cpt>, pv: Seq<Cpt>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),

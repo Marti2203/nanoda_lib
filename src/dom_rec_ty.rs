@@ -293,6 +293,26 @@ pub open spec fn rinst(sig: Sig, rid: u64, lv: Seq<LevelSpec>) -> Seq<LevelSpec>
     crate::level_model::subst_levels_spec(rshape(sig, rid).us(), sig.ienv.recs[rid].uparams, lv)
 }
 
+/// The recursor's instance of the inductive commutes with instantiating
+/// the recursor's levels.
+pub proof fn rinst_ls(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        rec_scope(sig, rid),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+    ensures
+        rinst(sig, rid, crate::level_model::subst_levels_spec(lv, ks, vs))
+            == crate::level_model::subst_levels_spec(rinst(sig, rid, lv), ks, vs),
+{
+    let (sh, up) = (rshape(sig, rid), sig.ienv.recs[rid].uparams);
+    rec_lps_sub(sig, rid);
+    let e = ExprSpec::Const(sh.ind, sh.us());
+    assert forall|i: int| 0 <= i < sh.us().len() implies crate::level_inst::lp_in(#[trigger] sh.us()[i], up) by {
+        assert(up.contains(sh.lps[i]));
+        crate::level_inst::find_level_idx_contains(up, sh.lps[i]);
+    }
+    crate::level_inst::expr_compose(e, up, lv, ks, vs);
+}
+
 /// Without level parameters, the inductive's instance is empty.
 pub proof fn rinst_mono(sig: Sig, rid: u64, lv: Seq<LevelSpec>)
     requires

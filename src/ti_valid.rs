@@ -159,8 +159,10 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
     ensures
         crate::ti_syntax::iota_pjs(sig2, g, m) == crate::ti_syntax::iota_pjs(sig, g, m),
+        crate::ti_syntax::iota_lv(sig2, m) == crate::ti_syntax::iota_lv(sig, m),
 {
     reveal(crate::ti_syntax::iota_pjs);
+    reveal(crate::ti_syntax::iota_lv);
     let rid = crate::beta_model::spine_head(m)->Const_0;
     assert(crate::dom_rec_end::rec_frag(sig, rid));
     assert(crate::rec_canon::rec_canon(sig, rid));
@@ -170,6 +172,7 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
     assert(crate::rec_canon::rec_ind(sig2, rid) == ind);
     assert(sig2.consts[ind] == sig.consts[ind]);
     assert(crate::dom_rec_ty::rshape(sig2, rid).pdoms == crate::dom_rec_ty::rshape(sig, rid).pdoms);
+    assert(crate::dom_rec_ty::rshape(sig2, rid).us() == crate::dom_rec_ty::rshape(sig, rid).us());
 }
 
 /// One rule instance stays correct in an extended signature.

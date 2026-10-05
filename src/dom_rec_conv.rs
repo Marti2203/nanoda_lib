@@ -298,6 +298,7 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     crate::beta_model::spine_destruct_app(cc, pargs + args);
     assert(rd.num_params == np);
     assert(rd.major_idx == pre);
+    assert(crate::ti_syntax::iota_lv(sig, m1)) by { reveal(crate::ti_syntax::iota_lv); }
     assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
         crate::ti_syntax::iota_pdom_id(sig, m1, q);
         let _pq = crate::dom_rec_ty::rshape(sig, c).pdoms[q];

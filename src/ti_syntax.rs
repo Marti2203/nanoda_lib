@@ -367,7 +367,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         },
         Rule::Iota => match j {
             Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::ti_hred::rec_fire(sig, m)
-                && n == crate::beta_model::rec_result(sig.ienv, m)
+                && n == crate::beta_model::rec_result(sig.ienv, m) && iota_lv(sig, m)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t)] + iota_pjs(sig, g, m)),
             _ => false,
         },
@@ -380,6 +380,18 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
     }
+}
+
+/// Iota's level condition: the recursor's instance of the inductive is
+/// the major constructor's own, up to equivalence (like the parameter
+/// premises, what injectivity gives and the model's soundness cannot
+/// recover).
+#[verifier::opaque]
+pub open spec fn iota_lv(sig: Sig, m: ExprSpec) -> bool {
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    let major = crate::beta_model::spine_args(m)[sig.ienv.recs[rid].major_idx as int];
+    crate::conv_cr::levs_eq(crate::dom_rec_ty::rinst(sig, rid, crate::beta_model::spine_head(m)->Const_1),
+        crate::beta_model::spine_head(major)->Const_1)
 }
 
 /// Iota's parameter premises: the recursor's parameters equal the major
