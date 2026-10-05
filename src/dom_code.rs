@@ -677,6 +677,50 @@ pub proof fn cargs_blind(sig: Sig, r: int, outer: u64, u1: Seq<LevelSpec>, u2: S
     }
 }
 
+/// Level substitution keeps a type blind.
+pub proof fn blind_sl(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        blind_ty(sig, crate::expr_model::subst_expr_levels(e, ks, vs)) == blind_ty(sig, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        blind_sl(sig, *f, ks, vs);
+        blind_sl(sig, *x, ks, vs);
+    }
+}
+
+/// A BLIND TYPE'S CODE ignores the levels written in it.
+pub proof fn ceval_sl(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        blind_ty(sig, e),
+    ensures
+        ceval(sig, r, outer, ls, pe, crate::expr_model::subst_expr_levels(e, ks, vs)) == ceval(sig, r, outer, ls, pe, e),
+        cargs(sig, r, outer, ls, pe, crate::expr_model::subst_expr_levels(e, ks, vs)) == cargs(sig, r, outer, ls, pe, e),
+        spine_head(e) is Const ==> spine_head(crate::expr_model::subst_expr_levels(e, ks, vs)) is Const
+            && spine_head(crate::expr_model::subst_expr_levels(e, ks, vs))->Const_0 == spine_head(e)->Const_0
+            && spine_head(crate::expr_model::subst_expr_levels(e, ks, vs))->Const_1.len() == spine_head(e)->Const_1.len(),
+        !(spine_head(e) is Const) ==> !(spine_head(crate::expr_model::subst_expr_levels(e, ks, vs)) is Const),
+    decreases e,
+{
+    let e2 = crate::expr_model::subst_expr_levels(e, ks, vs);
+    match e {
+        ExprSpec::App(f, x) => {
+            ceval_sl(sig, r, outer, ls, pe, *f, ks, vs);
+            ceval_sl(sig, r, outer, ls, pe, *x, ks, vs);
+        },
+        _ => {},
+    }
+    if !(e is Var) {
+        if let ExprSpec::Const(jd, us) = spine_head(e) {
+            if 0 <= rk(sig, jd) < r {
+                blind_head(sig, e);
+                let us2 = spine_head(e2)->Const_1;
+                canon_blind(sig, jd, lsub(sig, outer, ls, us2), lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, pe, e));
+            }
+        }
+    }
+}
+
 /// THE CODES READ THE INSTANCE ONLY UP TO LEVEL EQUIVALENCE.
 pub proof fn canon_lveq(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, a: Seq<Cpt>)
     requires

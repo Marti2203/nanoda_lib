@@ -991,6 +991,23 @@ Stages, each landing through the gate:
   the instance on the term side (`subst_expr_levels(F, lps, ls)` where
   `sl_none` gave `F`). Split for resource limits: `ftds_vsub` out of
   `sr_rule_arg`, `r2l_fit` out of `iota_core_r2l`.
+  **U3b-0 (groundwork):** `fq` reads the reduct's instance padded to the
+  declared length (`iinst`/`lpad`: the identity on typed terms, and
+  `fields_typed` always applies to it, so no caller needs a length fact);
+  `sl_kinds` (level substitution keeps the field kinds, `plow` commutes),
+  `blind_sl`, `ceval_sl` (a blind type's code ignores its levels).
+  **Finding (2026-10-05): the relation must carry the instances' level
+  equivalence.** With `lps == 0` dropped, `field_rel` must relate a
+  closed field at the two sides' instances, `F[ls]` and `F[ls2]`. Nothing
+  in the relation says `ls ≡ ls2`: that would come from injectivity of
+  the inductive in its levels, which the model cannot use (the same
+  cycle as for parameters, P4a). So U3b adds to `pconv` the clause
+  `levs_eq(iinst(ir t), iinst(ir t2))`; its producers have it (the same
+  term on both sides in `closed_rel`/`ps_rel`; `ConstAx`'s `levs_eq` in
+  the type-former adequacy; the monomorphic recursor), and `field_rel`
+  then lifts `F[ls] ≡ F[ls2]` by `ls_pair_nil` (U1). Fields over the
+  parameters (`pfield_ok`) stay monomorphic until U3c: their typing is in
+  the parameters' context, whose sorts carry levels.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

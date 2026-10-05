@@ -280,7 +280,7 @@ pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
     crate::dom_iota::simple_closed(sig, j, f);
     assert(sig.consts[j].lps =~= Seq::<u64>::empty());
     let x = ir(sig, t, j);
-    crate::dom_canon::sl_none(f, spine_head(x)->Const_1);
+    crate::dom_canon::sl_none(f, crate::dom_rel::iinst(sig, j, x));
     crate::ti_spine::vsub_closed(f, spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed));
     assert forall|pv: Seq<Cpt>, pv2: Seq<Cpt>| #[trigger] cf(sig, j, pv, p, k) == #[trigger] cf(sig, j, pv2, p, k) by {
         crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(), fpe(pv, sh.np, k as nat), fpe(pv2, sh.np, k as nat), j, f);
@@ -965,7 +965,7 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
     assert forall|t: ExprSpec| spine_args(ir(sig, t, j)).len() >= sh.np implies
         #[trigger] fq(sig, j, t, p, k) == crate::ti_spine::vsub(e, spine_args(ir(sig, t, j)).subrange(0, sh.np as int)) by {
         let x = ir(sig, t, j);
-        crate::dom_canon::sl_none(f, spine_head(x)->Const_1);
+        crate::dom_canon::sl_none(f, crate::dom_rel::iinst(sig, j, x));
         crate::dom_psimple::plow_vsub(sig, j, sh.pdoms, sh.np, k as nat, f, spine_args(x).subrange(0, sh.np as int),
             Seq::new(k as nat, |_i: int| ExprSpec::Closed));
     }

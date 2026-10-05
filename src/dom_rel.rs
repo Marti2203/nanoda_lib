@@ -118,13 +118,33 @@ pub open spec fn ind_red(sig: Sig, t: ExprSpec, ind: u64) -> bool {
     hred(sig, t, ir(sig, t, ind)) && iapp(sig, ir(sig, t, ind), ind)
 }
 
+/// A level instance padded (or cut) to `n` levels: the identity on a
+/// well-formed instance.
+pub open spec fn lpad(ls: Seq<crate::level_model::LevelSpec>, n: nat) -> Seq<crate::level_model::LevelSpec> {
+    Seq::new(n, |i: int| if i < ls.len() { ls[i] } else { crate::level_model::LevelSpec::Zero })
+}
+
+pub proof fn lpad_id(ls: Seq<crate::level_model::LevelSpec>, n: nat)
+    requires
+        ls.len() == n,
+    ensures
+        lpad(ls, n) == ls,
+{
+    assert(lpad(ls, n) =~= ls);
+}
+
+/// The instance of `ind` the application `x` is at, as a full instance.
+pub open spec fn iinst(sig: Sig, ind: u64, x: ExprSpec) -> Seq<crate::level_model::LevelSpec> {
+    lpad(crate::beta_model::spine_head(x)->Const_1, sig.consts[ind].lps.len())
+}
+
 /// Field `k` of `ind`'s constructor `p` at the level instance and the
 /// parameters of the application `t` reduces to; the earlier fields, which
 /// the fragment's field types do not mention, are placeholders.
 pub open spec fn fq(sig: Sig, ind: u64, t: ExprSpec, p: int, k: int) -> ExprSpec {
     let x = ir(sig, t, ind);
     let sh = crate::dom_code::canon_shape(sig, ind);
-    let f = crate::expr_model::subst_expr_levels(sh.fields[p][k], sig.consts[ind].lps, crate::beta_model::spine_head(x)->Const_1);
+    let f = crate::expr_model::subst_expr_levels(sh.fields[p][k], sig.consts[ind].lps, iinst(sig, ind, x));
     crate::ti_spine::vsub(f, crate::beta_model::spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed))
 }
 

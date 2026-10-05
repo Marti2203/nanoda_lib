@@ -48,6 +48,30 @@ pub open spec fn pranked(sig: Sig, e: ExprSpec, r: int) -> bool
     }
 }
 
+/// LEVEL SUBSTITUTION KEEPS THE FIELD KINDS: the same constants in the
+/// same shape.
+pub proof fn sl_kinds(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec, r: int, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures ({
+        let e2 = crate::expr_model::subst_expr_levels(e, ks, vs);
+        &&& simple_ty(sig, ind, e2) == simple_ty(sig, ind, e)
+        &&& simple_app(sig, ind, e2) == simple_app(sig, ind, e)
+        &&& crate::rec_canon::psimple(sig, ind, pdoms, np, k, e2) == crate::rec_canon::psimple(sig, ind, pdoms, np, k, e)
+        &&& crate::rec_canon::psapp(sig, ind, pdoms, np, k, e2) == crate::rec_canon::psapp(sig, ind, pdoms, np, k, e)
+        &&& ranked(sig, e2, r) == ranked(sig, e, r)
+        &&& pranked(sig, e2, r) == pranked(sig, e, r)
+        &&& (spine_head(e) is Const <==> spine_head(e2) is Const)
+        &&& (spine_head(e) is Const ==> spine_head(e2)->Const_0 == spine_head(e)->Const_0)
+        &&& spine_args(e2).len() == spine_args(e).len()
+        &&& crate::rec_canon::plow(e2, k) == crate::expr_model::subst_expr_levels(crate::rec_canon::plow(e, k), ks, vs)
+    }),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        sl_kinds(sig, ind, pdoms, np, k, *f, r, ks, vs);
+        sl_kinds(sig, ind, pdoms, np, k, *x, r, ks, vs);
+    }
+}
+
 /// A spine's arguments are smaller.
 pub proof fn spine_args_size(e: ExprSpec)
     ensures
