@@ -210,7 +210,11 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstAx(_) | Rule::Local(_) => adeq_leaf(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstDef(_) | Rule::Delta(_) => adeq_def(sig, d, rho, dl, s, s2, n, u, a),
-        Rule::Iota(_) => adeq_iota(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::Iota(_) => if crate::ti_syntax::iota_prop(sig, concl(d)->Eq_1) {
+            adeq_irr(sig, d, rho, dl, s, s2, n, u, a)
+        } else {
+            adeq_iota(sig, d, rho, dl, s, s2, n, u, a)
+        },
         _ => {},
     }
 }
@@ -470,12 +474,14 @@ proof fn adeq_conv(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     trans_ty(sig, n, dl, psub(t, s), psub(a0, s), psub(t, s2), a);
 }
 
+/// PROOF IRRELEVANCE, and a Prop-only recursor's Iota: both sides are
+/// proofs, related at bottom.
 #[verifier::spinoff_prover]
 proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
     requires
         crate::dom_rec_end::sig_sr(sig),
         adeq_req(sig, d, rho, dl, s, s2, n, u, a),
-        d->Node_0 is Irr,
+        d->Node_0 is Irr || (d->Node_0 is Iota && crate::ti_syntax::iota_prop(sig, concl(d)->Eq_1)),
     ensures
         adeq_ens(sig, d, dl, s, s2, n, u, a),
     decreases d, 18int,
@@ -483,25 +489,29 @@ proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
-    if let Rule::Irr(l) = rule {
-        sound(sig, ps[0], rho);
-        let a2 = type_elem(sig, t, rho, l, a);
-        if a2 is Bot {
-            if !(a is Bot) {
-                head_le(a, a2);
-            }
-            ty_of_bot(n, u);
-        } else {
-            let nn = n + cstage(a2, Cpt::Prop);
-            typed_up(a2, Cpt::Prop, nn);
-            ty_up(n, nn, u, a);
-            below_prop_bot(nn, u, a, a2);
+    // the type premise
+    let (k, l) = match rule {
+        Rule::Iota(l) => (2int, l),
+        _ => (0int, rule->Irr_0),
+    };
+    assert(concl(ps[k]) == eq(g, t, t, ExprSpec::Sort(l)) && is_zero(l));
+    sound(sig, ps[k], rho);
+    let a2 = type_elem(sig, t, rho, l, a);
+    if a2 is Bot {
+        if !(a is Bot) {
+            head_le(a, a2);
         }
-        related_left(sig, g, rho, dl, s, s2);
-        adeq_type(sig, ps[0], rho, dl, s, s, n, a);
-        bot_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(t, s), a);
-        adeq_type(sig, ps[0], rho, dl, s, s2, n, a);
+        ty_of_bot(n, u);
+    } else {
+        let nn = n + cstage(a2, Cpt::Prop);
+        typed_up(a2, Cpt::Prop, nn);
+        ty_up(n, nn, u, a);
+        below_prop_bot(nn, u, a, a2);
     }
+    related_left(sig, g, rho, dl, s, s2);
+    adeq_type(sig, ps[k], rho, dl, s, s, n, a);
+    bot_tm(sig, n, dl, psub(m, s), psub(m2, s2), psub(t, s), a);
+    adeq_type(sig, ps[k], rho, dl, s, s2, n, a);
 }
 
 /// THE PI TYPE CLAUSE, from a body premise: the substituted Pis are

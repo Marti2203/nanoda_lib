@@ -78,8 +78,8 @@ pub proof fn spine_sem_eq(sig: Sig, f1: ExprSpec, f2: ExprSpec, xs: Seq<ExprSpec
     }
 }
 
-/// IOTA IS SOUND: a typed firing redex and its rule instance have the same
-/// members.
+/// IOTA IS SOUND: a typed firing redex of a recursor eliminating into any
+/// universe and its rule instance have the same members.
 #[verifier::spinoff_prover]
 pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     requires
@@ -88,6 +88,7 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
         crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_fire(sig, m),
         crate::ti_syntax::iota_lv(sig, m),
+        !crate::ti_syntax::iota_prop(sig, m),
         derivable(sig, eq(g, m, m, t)),
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
         forall|i: nat| #[trigger] wf(rho(i)),
@@ -108,6 +109,10 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     }
     reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, rid));
+    assert(crate::dom_rec_end::rec_large(sig, rid)) by {
+        reveal(crate::ti_syntax::iota_prop);
+        reveal(crate::dom_rec_end::rec_large);
+    }
     assert(crate::dom_rec_end::rec_hyps(sig, rid));
     crate::dom_iota::rec_wired_holds(sig);
     // the redex, split at its major

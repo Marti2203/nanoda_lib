@@ -1216,18 +1216,25 @@ Steps:
   because `rec_frag` now asks `rec_large` (opaque: a motive universe
   exists) until P1b admits Prop-only recursors. Renaming, substitution,
   local swap/close, level instantiation (`ls_is_zero`), signature
-  extension carry the premise and `iota_prop`.
-- **P1b: Prop-only recursors of non-indexed Prop inductives in the
-  signature condition.** `iota_ok` admits, besides `rec_frag`, a
-  recursor in scope (`rec_canon`, `ni == 0`) whose elimination level is
-  `Zero` and whose rules are typed (the `rule_typed` part of
-  `rec_model`). Soundness and adequacy of such an Iota go through proof
-  irrelevance on the P1a premise (`sound_irr`/`adeq_irr` style); the
-  recursor itself is not interpreted (bottom).
-- **P1c: subject reduction for them.** `iota_sr` without `canon_ok`: the
-  parameters' equalities by injectivity (`has_canon` suffices), the
-  fields at their types without the model's tables (the field kinds of
-  `rec_canon` and the rule's own typing).
+  extension carry the premise and `iota_prop`. (`rec_large` left
+  `rec_frag` again in P1b.)
+- **P1b: Prop-only recursors of non-indexed Prop inductives (done).**
+  `rec_frag` no longer asks `rec_large`; `rec_model` asks `never_prop`
+  only of a recursor eliminating into any universe, and `rec_hyps` (what
+  interprets a recursor, `code_ok`) asks `rec_large`, so a Prop-only
+  recursor denotes bottom. Soundness and adequacy of its Iota are proof
+  irrelevance on the P1a premise (`sound_irr`; `adeq_irr` also takes an
+  Iota node with `iota_prop`, its type premise at index 2); `sound_iota`
+  asks `!iota_prop`. Large eliminators of Prop inductives stay out
+  (`rec_model`'s `never_prop`), see "Open: large elimination out of Prop".
+- **P1c: subject reduction for them (done, before P1b).** `iota_sr`'s
+  lemmas ask `canon_sr`, the tables' syntactic half without `never_prop`.
+  Subject reduction and the relation build the Iota node on the bare
+  redex (`bare`: the spine up to the major) at the motive at the major
+  (`iota_end`), whose sort is the motive's level (`motive_at`: `Zero` for
+  a Prop-only recursor), then extend over the extra arguments
+  (`reconv_spine`). So the P1a side condition holds without sort
+  uniqueness along conversion chains.
 - **P2: indexed Prop families.** `rec_scope` without `ni == 0` for the
   Prop route: the recursor's telescope with the index binders, the major
   at the indices, the rule's type at the constructor's index terms.

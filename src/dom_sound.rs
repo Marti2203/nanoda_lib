@@ -2018,7 +2018,13 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
-        Rule::Iota(_) => {
+        Rule::Iota(l) => if crate::ti_syntax::iota_prop(sig, m) {
+            // a Prop-only recursor's: proof irrelevance
+            sound(sig, ps[0], rho);
+            sound(sig, ps[1], rho);
+            sound(sig, ps[2], rho);
+            sound_irr(sig, m, n, a, l, rho);
+        } else {
             sound(sig, ps[0], rho);
             // the recursor-stripped signature's derivations have no Iota node
             let ss = crate::ti_strip::strip(sig);

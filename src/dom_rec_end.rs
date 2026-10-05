@@ -229,10 +229,11 @@ pub proof fn tel_dom_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i:
 }
 
 /// WHAT THE RECURSOR'S END ASSUMES of the signature: Iota's signature
-/// condition, the model's facts about the recursor (`sig_rec`) and the
-/// recursor in the fragment.
+/// condition, the model's facts about the recursor (`sig_rec`), the
+/// recursor in the fragment and eliminating into any universe (a Prop-only
+/// recursor is not interpreted: its Iota is proof irrelevance).
 pub open spec fn rec_hyps(sig: Sig, c: u64) -> bool {
-    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c)
+    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c) && rec_large(sig, c)
 }
 
 /// A closed type: typed in the empty context.
@@ -272,7 +273,8 @@ pub open spec fn rule_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> boo
 /// the constants involved are semantic, the recursor's and constructors'
 /// types and the rules' bodies (in their binders) are typed without
 /// recursors (so without Iota: soundness's Iota case uses their soundness),
-/// the inductive is not a proposition, and its closed fields are ranked
+/// the inductive is not a proposition if the recursor eliminates into any
+/// universe, and its closed fields are ranked
 /// below it.
 pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
@@ -281,7 +283,7 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
         #[trigger] crate::dom_model::sem_const(sig, c, lv) && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sh.ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, sh.ind, ls)
     &&& ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
-    &&& crate::dom_code::never_prop(sig, sh.ind)
+    &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& crate::dom_levels::sig_lps(sig)
     &&& forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[sh.ind].lps.len() && 0 <= p < sh.nmin()
@@ -359,7 +361,8 @@ pub proof fn rec_canon_ok(sig: Sig, c: u64)
 /// The inductive is semantic at every instance.
 pub proof fn rec_model_at(sig: Sig, c: u64, ls: Seq<LevelSpec>)
     requires
-        rec_hyps(sig, c),
+        sig_rec(sig),
+        rec_frag(sig, c),
         ls.len() == sig.consts[crate::dom_rec_ty::rshape(sig, c).ind].lps.len(),
     ensures
         crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, c).ind, ls),
@@ -507,7 +510,6 @@ pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
-    &&& rec_large(sig, c)
 }
 
 /// The recursor eliminates into any universe (it has a motive universe).
@@ -608,7 +610,6 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     let sh = crate::dom_rec_ty::rshape(s1, c);
     assert(sh == crate::dom_rec_ty::rshape(s2, c));
     assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
-    assert(rec_large(s2, c)) by { reveal(rec_large); }
 }
 
 /// The fragment reads only the constants and the inductive tables.
