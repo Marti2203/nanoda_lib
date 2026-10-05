@@ -7,7 +7,7 @@ use crate::expr_model::ExprSpec;
 #[allow(unused_imports)]
 use crate::level_model::LevelSpec;
 #[cfg(verus_only)]
-use crate::level_model::{interp, subst_env, subst_level_spec, subst_levels_spec};
+use crate::level_model::{interp, subst_env, subst_level_spec, subst_levels_spec, find_level_idx};
 #[cfg(verus_only)]
 use crate::conv_cr::{lev_eq, levs_eq};
 #[cfg(verus_only)]
@@ -772,6 +772,56 @@ pub proof fn ls_pair_nil(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, ks: Se
     mk_d(sig, w);
     assert(lpair(sig, Seq::empty(), Seq::empty(), ks, vs, vs2)) by { reveal(lpair); }
     d_ls2(sig, d, Seq::empty(), ks, vs, vs2);
+}
+
+
+/// The position `find_level_idx` reports holds the parameter.
+pub proof fn find_level_idx_at(ks: Seq<u64>, q: u64)
+    ensures
+        find_level_idx(ks, q) matches Some(i) ==> i < ks.len() && ks[i as int] == q,
+    decreases ks.len(),
+{
+    if ks.len() > 0 && ks[0] != q {
+        find_level_idx_at(ks.subrange(1, ks.len() as int), q);
+    }
+}
+
+/// A level at its own parameters is itself.
+pub proof fn sl_params(l: LevelSpec, ks: Seq<u64>)
+    ensures
+        subst_level_spec(l, ks, crate::rec_canon::plevels(ks)) == l,
+    decreases l,
+{
+    match l {
+        LevelSpec::Succ(a) => sl_params(*a, ks),
+        LevelSpec::Max(a, b) => { sl_params(*a, ks); sl_params(*b, ks); },
+        LevelSpec::IMax(a, b) => { sl_params(*a, ks); sl_params(*b, ks); },
+        LevelSpec::Param(q) => find_level_idx_at(ks, q),
+        _ => {},
+    }
+}
+
+/// A term at its own parameters is itself.
+pub proof fn sle_params(e: ExprSpec, ks: Seq<u64>)
+    ensures
+        crate::expr_model::subst_expr_levels(e, ks, crate::rec_canon::plevels(ks)) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::Sort(l) => sl_params(l, ks),
+        ExprSpec::Const(id, ls) => {
+            assert(subst_levels_spec(ls, ks, crate::rec_canon::plevels(ks)) =~= ls) by {
+                assert forall|i: int| 0 <= i < ls.len() implies #[trigger] subst_levels_spec(ls, ks, crate::rec_canon::plevels(ks))[i] == ls[i] by {
+                    sl_params(ls[i], ks);
+                }
+            }
+        },
+        ExprSpec::App(f, a) => { sle_params(*f, ks); sle_params(*a, ks); },
+        ExprSpec::Bind(_, t, b) => { sle_params(*t, ks); sle_params(*b, ks); },
+        ExprSpec::Let(t, v, b) => { sle_params(*t, ks); sle_params(*v, ks); sle_params(*b, ks); },
+        ExprSpec::Proj(_, st) => sle_params(*st, ks),
+        _ => {},
+    }
 }
 
 } // verus!

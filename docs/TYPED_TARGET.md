@@ -1008,6 +1008,20 @@ Stages, each landing through the gate:
   then lifts `F[ls] ≡ F[ls2]` by `ls_pair_nil` (U1). Fields over the
   parameters (`pfield_ok`) stay monomorphic until U3c: their typing is in
   the parameters' context, whose sorts carry levels.
+  **U3b-1 (2ec89be):** `pconv` (and the type-former adequacy's
+  `tf_pconv`) carry `levs_eq` of the two sides' instances; the
+  adequacy's base case has it from `ConstAx`, every other producer from
+  relating a term to itself.
+  **U3b-2a: closed fields at two instances.** `closed_rel2` (the lifting
+  lemma's closed case at level-equivalent instances `F[ls1]`, `F[ls2]`),
+  `closed_below2` (its transfer), sharing `closed_pconv`; the two
+  instances convert by `closed_conv` (U1's `ls_pair_nil` in the empty
+  context, weakened), nested formers' instances are level-equivalent by
+  `lls_pair`, and a monomorphic nested former's parameter sorts are fixed
+  by the instance (`elp_none_id`). The model's new signature hypothesis
+  `sig_lps` (`sig_lp_ok` at every instance, as `export_sound` proves for
+  kernel signatures) feeds `d_ls2`. Helpers in `dom_levels`; `sle_params`
+  in `ti_ls2`.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

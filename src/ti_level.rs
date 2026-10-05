@@ -400,7 +400,7 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
 }
 
 /// A telescope's level parameters are its domains'.
-proof fn elp_binds(bk: crate::expr_model::BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, us: Seq<u64>)
+pub proof fn elp_binds(bk: crate::expr_model::BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, us: Seq<u64>)
     requires
         crate::level_inst::elp_in(crate::rec_canon::binds(bk, ds, b), us),
     ensures
