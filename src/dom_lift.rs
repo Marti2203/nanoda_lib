@@ -921,7 +921,9 @@ pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
 /// code read only the parameters.
 pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
     requires
-        canon_ok(sig, j),
+        has_canon(sig, j),
+        fields_typed(sig, j),
+        sig.consts[j].lps.len() == 0,
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,

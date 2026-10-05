@@ -1120,6 +1120,7 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
         sig.consts[crate::dom_rec_ty::rshape(sig, rid).ind].lps.len() == 0,
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
+        crate::dom_rec_minor::fields_lv(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
         crate::dom_tele::chain_ok(sig, mfds(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
             crate::dom_tele::exts(bot_env(), xs.subrange(0, (crate::dom_rec_ty::rshape(sig, rid).np + 1 + xs.last()->Nd_0->Con_1) as int)), dsf, xf),
     ensures ({
@@ -1191,10 +1192,28 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
                 assert(e1(i1) == e2(i2));
                 crate::dom_adeq_base::mem_var(sig, i1, e1, dsf[k]);
                 crate::dom_adeq_base::mem_var(sig, i2, e2, dsf[k]);
+            } else if !crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) {
+                // a type over the parameters: the same parameters' values in both
+                let f = sh.fields[p][k];
+                crate::dom_rec_ty::scope_ctor(sig, rid, p);
+                crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+                crate::ti_level::ls_lift((1 + p) as nat, k as nat, f, rd.uparams, lv);
+                crate::ti_level::ls_lift((1 + nmin) as nat, k as nat, f, rd.uparams, lv);
+                assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == f);
+                assert(mf[k] == crate::subst_algebra::lift((1 + p) as nat, k as nat, f));
+                assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, f));
+                assert forall|j: nat| j < np implies #[trigger] e1(j + (k as nat) + ((1 + p) as nat)) == e2(j + (k as nat) + ((1 + nmin) as nat)) by {
+                    let (i1, i2) = ((j + k + 1 + p) as nat, (j + k + 1 + nmin) as nat);
+                    let q = (np - 1 - j) as int;
+                    crate::dom_rec_ty::exts_at(rho, xf.subrange(0, k), i1);
+                    crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, mi), (i1 - k) as nat);
+                    crate::dom_rec_ty::exts_at(bot_env(), xl.subrange(0, i), i2);
+                    assert(xl[q] == xs[q]);
+                }
+                crate::dom_psimple::ps_mem_transfer(sig, sh.ind, sh.pdoms, np, k as nat, f, (1 + p) as nat, (1 + nmin) as nat, e1, e2, dsf[k]);
             } else {
                 crate::dom_rec_ty::scope_ctor(sig, rid, p);
                 crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-                crate::dom_rec_ty::scope_basic(sig, rid, p, k);
                 assert(crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]));
                 simple_closed(sig, sh.ind, sh.fields[p][k]);
                 crate::subst_algebra::lift_closed((1 + p) as nat, k as nat, sh.fields[p][k]);
@@ -1245,6 +1264,8 @@ pub proof fn iota_rhs_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: Le
     let fs = x->Nd_1;
     let (xf, dsf) = minor_mix(ss, sig, rid, lv, l, ds, xs);
     rhs_body_mem(ss, sig, rid, lv, l, ds, xs, xf);
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    assert(crate::dom_rec_minor::fields_lv(sig, rid, lv, p));
     rule_chain(sig, rid, lv, ds, xs, xf, dsf);
     let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
     let dl = ds.subrange(0, pre) + dsf;
@@ -1516,9 +1537,14 @@ pub open spec fn cf_fields_ok(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq
     &&& xf.len() == sh.fields[p].len()
     &&& ak.len() == xf.len()
     &&& crate::dom_code::aw(xf)
-    &&& forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) && !ispvar(sig, rid, p, k) ==>
+    &&& forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) && !ispvar(sig, rid, p, k)
+        && crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) ==>
         mem(sig, sh.fields[p][k], bot_env(), #[trigger] ak[k]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
         && crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+    &&& forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) && !ispvar(sig, rid, p, k)
+        && !crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) ==>
+        mem(sig, sh.fields[p][k], crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), #[trigger] ak[k])
+        && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
     &&& forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) ==>
         wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
     &&& forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) ==>
@@ -1604,7 +1630,6 @@ pub proof fn cf_chain(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<
                 ind_pv_mem_wf(sig, rid, dps, pv, xf, j);
             }
             crate::dom_canon::canon_fields(sig, ind, p, k);
-            crate::dom_rec_ty::scope_basic(sig, rid, p, k);
             if isrec(sig, rid, p, k) {
                 occ_plain(sig, rid, p, k);
                 assert forall|q: int| 0 <= q < np implies #[trigger] le(pv[q], env((k + np - 1 - q) as nat)) by {
@@ -1619,8 +1644,9 @@ pub proof fn cf_chain(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<
                 crate::dom_rec_ty::exts_at(bot_env(), xsc.subrange(0, i), v);
                 assert(xsc[q] == pv[q]);
                 crate::dom_adeq_base::mem_var(sig, v, env, ak[k]);
+            } else if !crate::rec_canon::simple_ty(sig, ind, sh.fields[p][k]) {
+                assert(xsc.subrange(0, i) =~= pv + xf.subrange(0, k));
             } else {
-                assert(crate::rec_canon::simple_ty(sig, ind, sh.fields[p][k]));
                 simple_closed(sig, ind, sh.fields[p][k]);
                 crate::dom_model::mem_closed_env(sig, sh.fields[p][k], env, ak[k]);
                 crate::dom_model::mem_closed_env(sig, sh.fields[p][k], bot_env(), ak[k]);
@@ -1655,6 +1681,58 @@ proof fn ind_pv_mem_wf(sig: Sig, rid: u64, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<
             typed_wf(pv[i], dps[i]);
         }
     }
+}
+
+/// A field over the parameters: its value typed at the table's entry,
+/// its type's code at the parameters' values.
+#[verifier::spinoff_prover]
+proof fn cf_ps_typed(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>, k: int)
+    requires
+        cf_fields_ok(sig, rid, p, dps, pv, xf, ak),
+        0 <= k < xf.len(),
+        !isrec(sig, rid, p, k),
+        !ispvar(sig, rid, p, k),
+        !crate::rec_canon::simple_ty(sig, crate::dom_rec_ty::rshape(sig, rid).ind, crate::dom_rec_ty::rshape(sig, rid).fields[p][k]),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pe = crate::dom_code::fpe(pv, sh.np, k as nat);
+        let cv = crate::dom_code::ceval(sig, crate::dom_code::rk(sig, sh.ind), sh.ind, Seq::empty(), pe, sh.fields[p][k]);
+        typed(xf[k], cv)
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let (ind, np) = (sh.ind, sh.np);
+    let e = sh.fields[p][k];
+    let pe = crate::dom_code::fpe(pv, np, k as nat);
+    let cv = crate::dom_code::ceval(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), pe, e);
+    crate::dom_rec_ty::scope_canon(sig, rid);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_lift::pfield_facts(sig, ind, p, k);
+    assert forall|i: int| 0 <= i < pv.len() implies #[trigger] wf(pv[i]) && typed(pv[i], Cpt::U) by {
+        assert(crate::dom_sound::dfit(sig, sh.pdoms[i], crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]));
+        typed_wf(pv[i], dps[i]);
+        let _s = sh.pdoms[i];
+        crate::dom_canon::sort_mem_typed(sig, sh.pdoms[i]->Sort_0, crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]);
+    }
+    let env = crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k));
+    assert forall|i: nat| #[trigger] wf(env(i)) by {
+        crate::dom_rec_ty::exts_at(bot_env(), pv + xf.subrange(0, k), i);
+    }
+    assert forall|q: int| 0 <= q < np implies le(env((k as nat + np - 1 - q) as nat), #[trigger] pe[q]) by {
+        crate::dom_rec_ty::exts_at(bot_env(), pv + xf.subrange(0, k), (k as nat + np - 1 - q) as nat);
+        assert((pv + xf.subrange(0, k))[q] == pv[q]);
+        assert(pe[q] == pv[q]);
+        le_refl(pv[q]);
+    }
+    crate::dom_code::fpe_aw(pv, np, k as nat);
+    crate::dom_canon::ps_bound(sig, ind, sh.pdoms, np, k as nat, Seq::empty(), pe, e, env, ak[k]);
+    crate::dom_sound::typed_basic();
+    assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
+        assert(pe[q] == pv[q]);
+        assert(wf(pv[q]) && typed(pv[q], Cpt::U));
+    }
+    crate::dom_canon::ps_ceval_typed(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), sh.pdoms, np, k as nat, pe, e);
+    typed_weak(xf[k], ak[k], cv);
 }
 
 /// THE VALUE, typed at the canonical code at the parameters' values.
@@ -1697,7 +1775,6 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq<Cpt
         assert(es[k] == crate::dom_code::centry_at(sig, ind, Seq::empty(), pv, p as nat, k as nat));
         assert(ht(xf[k]) < ht(val));
         crate::dom_canon::canon_fields(sig, ind, p, k);
-        crate::dom_rec_ty::scope_basic(sig, rid, p, k);
         if isrec(sig, rid, p, k) {
             typed_up(xf[k], dcan, n);
         } else {
@@ -1715,6 +1792,9 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, dps: Seq<Cpt>, pv: Seq<Cpt
                 assert(cv == pv[q]);
                 assert(typed(pv[q], Cpt::U));
                 typed_weak(xf[k], ak[k], cv);
+            } else if !crate::rec_canon::simple_ty(sig, ind, e) {
+                // a type over the parameters: below its code at their values
+                cf_ps_typed(sig, rid, p, dps, pv, xf, ak, k);
             } else {
                 crate::dom_canon::closed_bound(sig, ind, Seq::empty(), pe, e, bot_env(), ak[k]);
                 crate::dom_sound::typed_basic();
@@ -2233,6 +2313,7 @@ pub proof fn r2l_closed_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, cl
         0 <= k < crate::dom_rec_ty::rshape(sig, rid).fields[p].len(),
         !isrec(sig, rid, p, k),
         !ispvar(sig, rid, p, k),
+        crate::rec_canon::simple_ty(sig, crate::dom_rec_ty::rshape(sig, rid).ind, crate::dom_rec_ty::rshape(sig, rid).fields[p][k]),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         let i = (sh.np + 1 + sh.nmin() + k) as int;
@@ -2251,9 +2332,6 @@ pub proof fn r2l_closed_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, cl
     assert(tl[i] == ff[k]);
     let f = sh.fields[p][k];
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
-    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
-    assert(crate::rec_canon::simple_ty(sig, sh.ind, f));
     simple_closed(sig, sh.ind, f);
     crate::subst_algebra::lift_closed((1 + nmin) as nat, k as nat, f);
     assert(ff[k] == f);
@@ -2348,6 +2426,54 @@ pub proof fn r2l_rec_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: 
 }
 
 /// THE FIELD INPUTS of a typed chain along the rule's binders are what the
+/// A field over the parameters: a member of its type at the parameters'
+/// values and the earlier fields.
+pub proof fn r2l_ps_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
+    requires
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+        0 <= k < crate::dom_rec_ty::rshape(sig, rid).fields[p].len(),
+        !isrec(sig, rid, p, k),
+        !ispvar(sig, rid, p, k),
+        !crate::rec_canon::simple_ty(sig, crate::dom_rec_ty::rshape(sig, rid).ind, crate::dom_rec_ty::rshape(sig, rid).fields[p][k]),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        let pre = (sh.np + 1 + sh.nmin()) as int;
+        let i = pre + k;
+        let (pv, xf) = (xs.subrange(0, sh.np as int), xs.subrange(pre, xs.len() as int));
+        &&& mem(sig, sh.fields[p][k], crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), ds[i])
+        &&& typed(ds[i], Cpt::U) && typed(xs[i], ds[i])
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
+    let ff = ftds(sig, rid, lv, p);
+    let i = pre + k;
+    let (pv, xf) = (xs.subrange(0, np as int), xs.subrange(pre, xs.len() as int));
+    let e1 = crate::dom_tele::exts(bot_env(), xs.subrange(0, i));
+    let e2 = crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k));
+    assert(crate::dom_sound::dfit(sig, tl[i], e1, ds[i], xs[i]));
+    assert(tl[i] == ff[k]);
+    let f = sh.fields[p][k];
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+    assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == f);
+    crate::ti_level::ls_lift((1 + nmin) as nat, k as nat, f, rd.uparams, lv);
+    assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, f));
+    crate::subst_algebra::lift_zero(k as nat, f);
+    assert forall|j: nat| j < np implies #[trigger] e1(j + (k as nat) + ((1 + nmin) as nat)) == e2(j + (k as nat) + 0) by {
+        crate::dom_rec_ty::exts_at(bot_env(), xs.subrange(0, i), (j + k + 1 + nmin) as nat);
+        crate::dom_rec_ty::exts_at(bot_env(), pv + xf.subrange(0, k), (j + k) as nat);
+        assert((pv + xf.subrange(0, k))[np - 1 - j] == xs[np - 1 - j]);
+    }
+    crate::dom_psimple::ps_mem_transfer(sig, sh.ind, sh.pdoms, np, k as nat, f, (1 + nmin) as nat, 0, e1, e2, ds[i]);
+}
+
 /// constructor step needs, at the chain's parameter inputs.
 #[verifier::spinoff_prover]
 pub proof fn r2l_fields(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
@@ -2377,17 +2503,23 @@ pub proof fn r2l_fields(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
         assert(crate::dom_sound::dfit(sig, tl[pre + k], crate::dom_tele::exts(bot_env(), xs.subrange(0, pre + k)), ds[pre + k], xs[pre + k]));
         typed_wf(xs[pre + k], ds[pre + k]);
     }
-    assert forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) && !ispvar(sig, rid, p, k) implies
+    assert forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) && !ispvar(sig, rid, p, k)
+        && crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) implies
         mem(sig, sh.fields[p][k], bot_env(), #[trigger] ak[k]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
         && crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind)) by {
         r2l_closed_field(sig, rid, lv, p, clv, ds, xs, k);
+    }
+    assert forall|k: int| 0 <= k < xf.len() && !isrec(sig, rid, p, k) && !ispvar(sig, rid, p, k)
+        && !crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) implies
+        mem(sig, sh.fields[p][k], crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), #[trigger] ak[k])
+        && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+        r2l_ps_field(sig, rid, lv, p, clv, ds, xs, k);
     }
     assert forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) implies
         wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
         r2l_pvar_field(sig, rid, lv, p, clv, ds, xs, k);
         typed_wf(ak[k], Cpt::U);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-        crate::dom_rec_ty::scope_basic(sig, rid, p, k);
         assert(pv[pvq(sig, rid, p, k)] == xs[pvq(sig, rid, p, k)]);
     }
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies

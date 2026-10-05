@@ -352,4 +352,108 @@ pub proof fn der_diag(sig: Sig, g: crate::ti_syntax::Ctx, x: ExprSpec, x2: ExprS
     crate::ti_meta::mk_d(sig, r);
 }
 
+/// Lifted past `b`'s binders, a simple type over the parameters
+/// instantiates as before.
+pub proof fn plift_vsub(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec, s: nat,
+    a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
+    requires
+        psimple(sig, ind, pdoms, np, k, e) || psapp(sig, ind, pdoms, np, k, e),
+        a.len() == np,
+        b.len() == s,
+        c.len() == k,
+    ensures
+        vsub(crate::subst_algebra::lift(s, k, e), a + b + c) == vsub(e, a + c),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            if !psapp(sig, ind, pdoms, np, k, e) {
+                assert(pvar_field(pdoms, np, k, e));
+            }
+            plift_vsub(sig, ind, pdoms, np, k, *f, s, a, b, c);
+            plift_vsub(sig, ind, pdoms, np, k, *x, s, a, b, c);
+            crate::ti_spine::vsub_app(crate::subst_algebra::lift(s, k, *f), crate::subst_algebra::lift(s, k, *x), a + b + c);
+            crate::ti_spine::vsub_app(*f, *x, a + c);
+        },
+        ExprSpec::Var(i) => {
+            assert(pvar_field(pdoms, np, k, e));
+            crate::ti_spine::vsub_var(i + s, a + b + c);
+            crate::ti_spine::vsub_var(i, a + c);
+        },
+        ExprSpec::Const(j, ls) => {
+            crate::ti_spine::vsub_const(j, ls, a + b + c);
+            crate::ti_spine::vsub_const(j, ls, a + c);
+        },
+        _ => {},
+    }
+}
+
+/// A simple type over the parameters is its lowered form lifted past the
+/// earlier fields, and the lowered form reads only the parameters.
+pub proof fn plow_lift_id(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        psimple(sig, ind, pdoms, np, k, e) || psapp(sig, ind, pdoms, np, k, e),
+    ensures
+        e == crate::subst_algebra::lift(k, 0, plow(e, k)),
+        crate::expr_model::nlbv(plow(e, k)) <= np,
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            if !psapp(sig, ind, pdoms, np, k, e) {
+                assert(pvar_field(pdoms, np, k, e));
+            }
+            plow_lift_id(sig, ind, pdoms, np, k, *f);
+            plow_lift_id(sig, ind, pdoms, np, k, *x);
+        },
+        ExprSpec::Var(i) => {
+            assert(pvar_field(pdoms, np, k, e));
+        },
+        _ => {},
+    }
+}
+
+/// MEMBERS OF A SIMPLE TYPE OVER THE PARAMETERS, lifted past different
+/// blocks into two environments agreeing on the parameters' slots, are the
+/// same.
+pub proof fn ps_mem_transfer(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec, n1: nat, n2: nat,
+    e1: crate::dom_model::Env, e2: crate::dom_model::Env, d: Cpt)
+    requires
+        psimple(sig, ind, pdoms, np, k, e),
+        forall|i: nat| i < np ==> #[trigger] e1(i + k + n1) == e2(i + k + n2),
+    ensures
+        crate::dom_model::mem(sig, crate::subst_algebra::lift(n1, k, e), e1, d)
+            == crate::dom_model::mem(sig, crate::subst_algebra::lift(n2, k, e), e2, d),
+{
+    use crate::ti_subst::{lift_is_rn, lr};
+    use crate::dom_model::{mem, mem_w, mem_rn, mem_closed, env_rn, Wit};
+    let x = plow(e, k);
+    plow_lift_id(sig, ind, pdoms, np, k, e);
+    crate::subst_algebra::lift_lift(n1, k, 0, k, x);
+    crate::subst_algebra::lift_lift(n2, k, 0, k, x);
+    lift_is_rn(n1 + k, 0, x);
+    lift_is_rn(n2 + k, 0, x);
+    let (r1, r2) = (env_rn(e1, lr(n1 + k, 0)), env_rn(e2, lr(n2 + k, 0)));
+    assert forall|i: nat| i < np implies #[trigger] r1(i) == r2(i) by {
+        assert(e1(i + k + n1) == e2(i + k + n2));
+        assert(r1(i) == e1(i + (n1 + k)));
+        assert(r2(i) == e2(i + (n2 + k)));
+    }
+    reveal(mem);
+    if mem(sig, crate::subst_algebra::lift(n1, k, e), e1, d) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, crate::subst_algebra::lift(n1, k, e), e1, d, w);
+        mem_rn(sig, x, lr(n1 + k, 0), e1, d, w);
+        mem_closed(sig, x, r1, r2, np, d, w);
+        mem_rn(sig, x, lr(n2 + k, 0), e2, d, w);
+        assert(mem_w(sig, crate::subst_algebra::lift(n2, k, e), e2, d, w));
+    }
+    if mem(sig, crate::subst_algebra::lift(n2, k, e), e2, d) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, crate::subst_algebra::lift(n2, k, e), e2, d, w);
+        mem_rn(sig, x, lr(n2 + k, 0), e2, d, w);
+        mem_closed(sig, x, r1, r2, np, d, w);
+        mem_rn(sig, x, lr(n1 + k, 0), e1, d, w);
+        assert(mem_w(sig, crate::subst_algebra::lift(n1, k, e), e1, d, w));
+    }
+}
+
 } // verus!

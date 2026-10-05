@@ -920,9 +920,22 @@ Stages, each landing through the gate:
   (`prel` at `t2`); its callers have it (`par_ok` at the high stage,
   `rc_ptr`, `closed_rel`/`ps_rel` on the arguments). The constructor
   induction records each type parameter's typing (`pty_ok` in `pr_ok`),
-  which the substitution lemma needs. The recursor stage keeps the old
-  kinds through `rec_scope`'s opaque `fields_basic` (`scope_basic` at
-  each field case); lifting that is the recursor half of P3b.
+  which the substitution lemma needs.
+  **P3b-3: the recursor with formers over the parameters.** No extra
+  fragment clause: the typing cannot sit in `rec_frag` (typing →
+  `iota_ok` → `rec_frag` is a definitional cycle), so the recursor-side
+  lemmas that need it take `canon_ok` (`sr_ok`, `field_conv` &co, from
+  `rec_canon_ok`) or `fields_typed` (`cf_fields_ok`, `r2l_ok`, with
+  `scope_canon` tying `canon_shape` to `rshape`). Syntactic cases by
+  `plow_vsub`/`plift_vsub`; Iota's subject reduction by `ps_field_eq`
+  (substitution); the right-to-left chain by `ps_mem_transfer`
+  (membership through renaming, the environments agreeing on the
+  parameters' slots), `cf_fields_ok`'s third kind and `cf_ps_typed`; the
+  recursor's end by a third walk path, `pfa_at` (`rc_field`, `fa_ctx`,
+  `field_dom_ps`, `field_arg_ps` by `ps_below`).
+  **Parameters: done for type parameters and monomorphic formers over
+  them.** Open: value parameters; universe polymorphism (`Option.{u}`,
+  `List.{u}` — most real formers).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

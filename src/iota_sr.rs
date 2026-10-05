@@ -49,6 +49,7 @@ pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     &&& rec_scope(sig, rid)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& sig.consts[sh.ind].lps.len() == 0
+    &&& crate::dom_code::canon_ok(sig, sh.ind) && crate::dom_code::canon_shape(sig, sh.ind) == sh
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
     &&& 0 <= p < sh.nmin()
     &&& lv.len() == rd.uparams.len()
@@ -197,6 +198,46 @@ pub proof fn sr_major(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, c
     }
 }
 
+/// A FIELD OVER THE PARAMETERS at two parameter lists equal at their
+/// sorts: the two instances are equal at a sort (by substitution, the
+/// field typed in the parameters' context).
+proof fn ps_field_eq(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, fs: Seq<ExprSpec>, k: int) -> (l: LevelSpec)
+    requires
+        rec_scope(sig, rid),
+        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
+        0 <= p < rshape(sig, rid).nmin(),
+        ps.len() == rshape(sig, rid).np,
+        ps2.len() == rshape(sig, rid).np,
+        0 <= k < rshape(sig, rid).fields[p].len(),
+        k <= fs.len(),
+        !crate::rec_canon::direct_occ(rshape(sig, rid).fields[p][k], rshape(sig, rid).ind, rshape(sig, rid).us(), rshape(sig, rid).np,
+            rshape(sig, rid).ni, k as nat),
+        !crate::rec_canon::pvar_field(rshape(sig, rid).pdoms, rshape(sig, rid).np, k as nat, rshape(sig, rid).fields[p][k]),
+        !crate::rec_canon::simple_ty(sig, rshape(sig, rid).ind, rshape(sig, rid).fields[p][k]),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q], rshape(sig, rid).pdoms[q])),
+        derivable(sig, crate::ti_syntax::Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps + fs.subrange(0, k)),
+            crate::ti_spine::vsub(rshape(sig, rid).fields[p][k], ps2 + fs.subrange(0, k)), crate::ti_syntax::sort(l))),
+{
+    let sh = rshape(sig, rid);
+    let f = sh.fields[p][k];
+    let e = crate::rec_canon::plow(f, k as nat);
+    crate::dom_lift::pfield_facts(sig, sh.ind, p, k);
+    let c = fs.subrange(0, k);
+    crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, sh.np, k as nat, f, ps, c);
+    crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, sh.np, k as nat, f, ps2, c);
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
+    crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
+        && derivable(sig, eq(g, #[trigger] ps[q], ps2[q], sh.pdoms[q])) by {
+        let _s = sh.pdoms[q];
+    }
+    crate::dom_psimple::ps_inst(sig, g, sh.pdoms, e, crate::ti_syntax::sort(l), ps, ps2);
+    l
+}
+
 /// A pair at a field's type at the major's parameters is one at its type
 /// at the recursor's, the two parameter lists being equal at their sorts and the
 /// two inductive applications chained.
@@ -206,6 +247,8 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
     requires
         rec_scope(sig, rid),
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         ps.len() == rshape(sig, rid).np,
         ps2.len() == rshape(sig, rid).np,
@@ -224,7 +267,6 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
     let (xs, xs2) = (ps + fs.subrange(0, k), ps2 + fs.subrange(0, k));
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(sh.ind, Seq::empty());
         crate::beta_model::spine_recompose(f);
@@ -241,6 +283,13 @@ proof fn sr_field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ps
         crate::dom_iota::simple_closed(sig, sh.ind, f);
         vsub_closed(f, xs);
         vsub_closed(f, xs2);
+    } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
+        crate::dom_lift::eq_ctx_wf(sig, g, y, y2, crate::ti_spine::vsub(f, xs2));
+        let l = ps_field_eq(sig, g, rid, p, ps, ps2, fs, k);
+        crate::dom_adeq_syn::dsym(sig, g, crate::ti_spine::vsub(f, xs), crate::ti_spine::vsub(f, xs2), crate::ti_syntax::sort(l));
+        reveal(crate::ti_sub::tconvd);
+        crate::ti_chain::tchain_one(sig, g, crate::ti_spine::vsub(f, xs2), crate::ti_spine::vsub(f, xs));
+        crate::ti_chain::conv_chain(sig, g, y, y2, crate::ti_spine::vsub(f, xs2), crate::ti_spine::vsub(f, xs));
     } else {
         let v = f->Var_0;
         let q = (np + k - 1 - v) as int;
@@ -310,6 +359,8 @@ pub proof fn field_ty_chain(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec
     requires
         rec_scope(sig, rid),
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         ps.len() == rshape(sig, rid).np,
         ps2.len() == rshape(sig, rid).np,
@@ -330,7 +381,6 @@ pub proof fn field_ty_chain(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec
     ind_cong(sig, g, rid, ps, ps2, th);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-    crate::dom_rec_ty::scope_basic(sig, rid, p, k);
     if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k as nat) {
         let ci = ExprSpec::Const(sh.ind, Seq::empty());
         crate::beta_model::spine_recompose(f);
@@ -346,6 +396,12 @@ pub proof fn field_ty_chain(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec
         vsub_closed(f, xs);
         vsub_closed(f, xs2);
         crate::ti_chain::tchain_refl(sig, g, f);
+    } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
+        let ci = ExprSpec::Const(sh.ind, Seq::empty());
+        crate::dom_lift::eq_ctx_wf(sig, g, spine_app(ci, ps), spine_app(ci, ps), th);
+        let l = ps_field_eq(sig, g, rid, p, ps, ps2, fs, k);
+        reveal(crate::ti_sub::tconvd);
+        crate::ti_chain::tchain_one(sig, g, crate::ti_spine::vsub(f, xs), crate::ti_spine::vsub(f, xs2));
     } else {
         let v = f->Var_0;
         let q = (np + k - 1 - v) as int;
@@ -366,6 +422,8 @@ pub proof fn field_conv(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, p
     requires
         rec_scope(sig, rid),
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
+        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         ps.len() == rshape(sig, rid).np,
         ps2.len() == rshape(sig, rid).np,
@@ -482,7 +540,6 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
         assert(xk.len() == pre + k);
         crate::dom_rec_ty::scope_ctor(sig, rid, p);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-        crate::dom_rec_ty::scope_basic(sig, rid, p, k);
         let ks = rd.uparams;
         if crate::dom_iota::isrec(sig, rid, p, k) {
             let ci = ExprSpec::Const(sh.ind, Seq::empty());
@@ -507,6 +564,13 @@ proof fn sr_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, hea
             assert(ff[k] == f);
             vsub_closed(f, xk);
             vsub_closed(f, ys);
+        } else if !crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
+            crate::dom_rec_minor::field_vsub(sig, rid, p, k, (1 + nmin) as nat, heads.subrange(0, np as int),
+                heads.subrange(np as int, pre), cargs.subrange(0, k));
+            assert(heads.subrange(0, np as int) + heads.subrange(np as int, pre) + cargs.subrange(0, k) =~= xk);
+            crate::ti_level::ls_lift(1 + nmin, k as nat, f, ks, lv);
+            assert(sh.field_at(p, k, 1 + nmin) == crate::subst_algebra::lift(1 + nmin, k as nat, f));
+            assert(ff[k] == crate::subst_algebra::lift(1 + nmin, k as nat, f));
         } else {
             let v = f->Var_0;
             assert(crate::subst_algebra::lift(1 + nmin, k as nat, f) == ExprSpec::Var(v + 1 + nmin));
@@ -666,6 +730,8 @@ proof fn sr_inj_fields(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ca
         forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
         sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         crate::dom_model::sem_const(sig, rshape(sig, rid).ind, Seq::empty()),
+        crate::dom_code::canon_ok(sig, rshape(sig, rid).ind),
+        crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
         ps.len() == rshape(sig, rid).np,
         cargs.len() == rshape(sig, rid).np + rshape(sig, rid).fields[p].len(),
