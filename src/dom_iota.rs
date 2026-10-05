@@ -1116,11 +1116,10 @@ pub proof fn rhs_body_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: Le
 #[verifier::spinoff_prover]
 pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, xf: Seq<Cpt>, dsf: Seq<Cpt>)
     requires
+        crate::dom_rec_end::rec_hyps(sig, rid),
         crate::dom_rec_ty::rec_scope(sig, rid),
-        sig.consts[crate::dom_rec_ty::rshape(sig, rid).ind].lps.len() == 0,
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv), bot_env(), ds, xs),
         crate::dom_rec::rec_ok(sig, rid, xs),
-        crate::dom_rec_minor::fields_lv(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
         crate::dom_tele::chain_ok(sig, mfds(sig, rid, lv, xs.last()->Nd_0->Con_1 as int),
             crate::dom_tele::exts(bot_env(), xs.subrange(0, (crate::dom_rec_ty::rshape(sig, rid).np + 1 + xs.last()->Nd_0->Con_1) as int)), dsf, xf),
     ensures ({
@@ -1199,6 +1198,12 @@ pub proof fn rule_chain(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ds: Seq<Cpt>, xs
                 crate::dom_canon::canon_fields(sig, sh.ind, p, k);
                 crate::ti_level::ls_lift((1 + p) as nat, k as nat, f, rd.uparams, lv);
                 crate::ti_level::ls_lift((1 + nmin) as nat, k as nat, f, rd.uparams, lv);
+                // over the parameters, so without level parameters
+                crate::dom_rec_end::rec_canon_ok(sig, rid);
+                crate::dom_rec_ty::rec_lps_sub(sig, rid);
+                crate::dom_rec_ty::rec_elp_parts(sig, rid, p);
+                crate::dom_rec_ty::rinst_id(sig, rid, lv, f);
+                crate::iota_sr::ps_field_mono(sig, rid, p, k, crate::dom_rec_ty::rinst(sig, rid, lv));
                 assert(crate::expr_model::subst_expr_levels(f, rd.uparams, lv) == f);
                 assert(mf[k] == crate::subst_algebra::lift((1 + p) as nat, k as nat, f));
                 assert(ff[k] == crate::subst_algebra::lift((1 + nmin) as nat, k as nat, f));
@@ -1264,8 +1269,6 @@ pub proof fn iota_rhs_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: Le
     let fs = x->Nd_1;
     let (xf, dsf) = minor_mix(ss, sig, rid, lv, l, ds, xs);
     rhs_body_mem(ss, sig, rid, lv, l, ds, xs, xf);
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
-    assert(crate::dom_rec_minor::fields_lv(sig, rid, lv, p));
     rule_chain(sig, rid, lv, ds, xs, xf, dsf);
     let tl = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + ftds(sig, rid, lv, p);
     let dl = ds.subrange(0, pre) + dsf;

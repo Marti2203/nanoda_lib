@@ -125,14 +125,14 @@ pub proof fn ready_stuck(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<Expr
     crate::ti_hred_rec::const_spine_stuck(sig, y);
 }
 
-/// THE REDEX REDUCES to the minor at the fields and the recursive calls.
+/// THE REDEX REDUCES to the minor at the fields and the recursive calls,
+/// whatever the major's constructor's levels.
 #[verifier::spinoff_prover]
-pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec>, x: ExprSpec, j: int, pargs: Seq<ExprSpec>,
+pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>, heads: Seq<ExprSpec>, x: ExprSpec, j: int, pargs: Seq<ExprSpec>,
     cargs: Seq<ExprSpec>)
     requires
         rec_scope(sig, rid),
         pargs.len() == rshape(sig, rid).np,
-        sig.consts[rshape(sig, rid).ind].lps.len() == 0,
         lv.len() == sig.ienv.recs[rid].uparams.len(),
         !crate::ti_syntax::is_def(sig, rid, lv),
         forall|p: int| 0 <= p < rshape(sig, rid).nmin() ==> !sig.ienv.recs.contains_key(#[trigger] rshape(sig, rid).ctors[p]),
@@ -140,12 +140,13 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec
         crate::beta_model::rule_rhs_ok(sig.ienv, sig.ienv.recs[rid].rules[j]),
         heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
         cargs.len() == rshape(sig, rid).fields[j].len(),
-        hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], Seq::empty()), pargs + cargs)),
+        cl.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
+        hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)),
     ensures
         hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
             spine_app(heads[rshape(sig, rid).np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs))),
-        rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], Seq::empty()), pargs + cargs)))),
-        crate::beta_model::rec_result(sig.ienv, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], Seq::empty()), pargs + cargs))))
+        rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)))),
+        crate::beta_model::rec_result(sig.ienv, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs))))
             == spine_app(crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[j].rhs, sig.ienv.recs[rid].uparams, lv), heads + cargs),
 {
     let rd = sig.ienv.recs[rid];
@@ -153,7 +154,7 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec
     let h = ExprSpec::Const(rid, lv);
     let cid = sh.ctors[j];
     let ca = pargs + cargs;
-    let cx = spine_app(ExprSpec::Const(cid, Seq::empty()), ca);
+    let cx = spine_app(ExprSpec::Const(cid, cl), ca);
     assert(rd.major_idx == heads.len());
     // the major, in place
     assert forall|y: ExprSpec| #[trigger] rec_fire(sig, spine_app(h, heads.push(y))) implies stuck(sig, y) by {
@@ -166,8 +167,10 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec
     assert(heads.push(cx).subrange(0, heads.len() as int) =~= heads);
     crate::ti_hred_rec::rec_prefix_stuck(sig, rid, lv, heads);
     crate::beta_model::spine_destruct_app(h, heads.push(cx));
-    crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, Seq::empty()), ca);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, cl), ca);
     crate::dom_rec_ty::scope_ctor(sig, rid, j);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape(sig, sh.ind, j);
     crate::beta_model::find_rule_spec(rd.rules, cid);
     let ri = crate::beta_model::find_rule(rd.rules, cid)->Some_0;
     find_rule_at(rd.rules, cid, j);

@@ -318,6 +318,30 @@ pub proof fn rinst_id(sig: Sig, rid: u64, lv: Seq<LevelSpec>, e: ExprSpec)
     crate::level_inst::expr_compose(e, lps, crate::rec_canon::plevels(lps), up, lv);
 }
 
+/// The inductive's level parameters are distinct, as the recursor's are.
+pub proof fn rec_lps_distinct(sig: Sig, rid: u64)
+    requires
+        rec_scope(sig, rid),
+    ensures
+        crate::dom_levels::lps_distinct(sig.consts[rshape(sig, rid).ind].lps),
+{
+    let (sh, up) = (rshape(sig, rid), sig.ienv.recs[rid].uparams);
+    scope_ctor_ind(sig, rid);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(crate::rec_canon::rec_canon(sig, rid));
+    let lps = sig.consts[sh.ind].lps;
+    if up != lps {
+        assert(up.drop_first() == lps);
+        assert forall|a: int, b: int| #![trigger lps[a], lps[b]] 0 <= a < lps.len() && 0 <= b < lps.len() && lps[a] == lps[b] implies a == b by {
+            assert(up[a + 1] == lps[a] && up[b + 1] == lps[b]);
+        }
+    } else {
+        assert forall|a: int, b: int| #![trigger lps[a], lps[b]] 0 <= a < lps.len() && 0 <= b < lps.len() && lps[a] == lps[b] implies a == b by {
+            assert(up[a] == lps[a] && up[b] == lps[b]);
+        }
+    }
+}
+
 /// The inductive's level parameters are the recursor's (after the
 /// motive's universe, if any).
 pub proof fn rec_lps_sub(sig: Sig, rid: u64)

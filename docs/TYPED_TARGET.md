@@ -1098,6 +1098,28 @@ Stages, each landing through the gate:
   asking instead for the inductive semantic at `rinst` and the
   constructor's type closed. The monomorphic callers in `dom_rec_end` and
   `dom_rec_conv` bridge with `mono_at`.
+  **U4b-4: the recursor's end at every instance; `rec_frag` drops
+  `lps == 0`.** The relation's recursor case (`dom_rec_end`'s `Rc`) works
+  at the recursors' instances `ri`/`ri2` of the inductive and at the
+  majors' constructors' own instances `cl`/`cl2` (`rc_lv`: all four
+  equivalent). Inside the fundamental lemma injectivity is not available
+  (it is a corollary of it), so the levels come from the relation: the
+  constructor clause `cpar` now also states that a constructor head with
+  as many levels as the inductive is level-equivalent to its type's
+  instance (`cf_cpar` establishes it, `cpar_conv` carries it), and the
+  type clause's `pconv` relates `ri` and `ri2`. The constructor moves
+  between instances by `ctor_lv` (`ConstAx` on its closed type, split out
+  of `sr_switch`), a field's type by `cfu_conv` (`ind_lv` for a recursive
+  field, `closed_conv` for a closed one), a parameter equation by
+  `ptype_lv`, a field's bound by `fbnd_at` (codes ignore levels:
+  `sl_kinds`, `ceval_sl`, `fields_typed` at every instance).
+  `rec_conv_side` takes the major's instance `cl` with `levs_eq(rinst, cl)`
+  as a premise; `rec_red`, `minor_dom`/`minor_end`, `msds_at`,
+  `field_dom_bnd`, `ctor_mem_le`, `motive_form` and `rule_chain` take or
+  produce the instance. `rec_model` now gives the inductive semantic at
+  every instance and its type closed. Still assumed in `rec_frag`:
+  `pdoms_lv` and `fields_lv` (used by the model's right-in-left Iota
+  direction, `r2l_ok`, next).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

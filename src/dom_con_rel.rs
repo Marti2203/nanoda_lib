@@ -965,6 +965,20 @@ pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: 
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls2), xs2);
     if crate::dom_code::has_canon(sig, ind) {
+        // the levels: the type's instance is the constructor's own
+        let n = sig.consts[ind].lps.len();
+        let (it, it2) = (crate::dom_rel::iinst(sig, ind, t), crate::dom_rel::iinst(sig, ind, t2));
+        if ls.len() == n {
+            crate::dom_levels::sl_plevels_id(sig.consts[ind].lps, ls);
+            crate::dom_rel::lpad_id(ls, n);
+            assert(crate::conv_cr::levs_eq(ls, it));
+        }
+        if ls2.len() == n {
+            crate::dom_levels::sl_plevels_id(sig.consts[ind].lps, ls2);
+            crate::dom_rel::lpad_id(ls2, n);
+            assert(it2 == ls2);
+            crate::ti_ls2::levs_eq_sym(it, it2);
+        }
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, crate::dom_rel::ir(sig, t, ind)), q, xs[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
             assert(spine_args(t)[q] == xs[q]);

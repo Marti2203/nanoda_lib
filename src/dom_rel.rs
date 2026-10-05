@@ -206,11 +206,16 @@ pub proof fn peq_lv(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::Leve
 
 /// THE CONSTRUCTOR'S TYPE PARAMETERS are the type's: a constructor
 /// application's type-parameter arguments equal those of the application
-/// its type reduces to.
+/// its type reduces to, and its levels, as many as the inductive's, are
+/// that application's.
 pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> bool {
-    crate::dom_code::has_canon(sig, ind) ==> forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
-        && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
-        ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
+    crate::dom_code::has_canon(sig, ind) ==> {
+        &&& crate::beta_model::spine_head(x)->Const_1.len() == sig.consts[ind].lps.len()
+            ==> crate::conv_cr::levs_eq(crate::beta_model::spine_head(x)->Const_1, iinst(sig, ind, ir(sig, t, ind)))
+        &&& forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
+            && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
+            ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
+    }
 }
 
 /// THE TYPE PARAMETERS CONVERT: of a canonical inductive, the applications

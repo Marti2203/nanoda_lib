@@ -473,6 +473,10 @@ pub proof fn cpar_conv(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec, s: 
         crate::beta_model::spine_args(ir(sig, s, ind)));
     let (it, is) = (crate::dom_rel::iinst(sig, ind, ir(sig, t, ind)), crate::dom_rel::iinst(sig, ind, ir(sig, s, ind)));
     if crate::dom_code::has_canon(sig, ind) {
+        let xl = crate::beta_model::spine_head(x)->Const_1;
+        if xl.len() == sig.consts[ind].lps.len() {
+            crate::ti_ls2::levs_eq_trans(xl, it, is);
+        }
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies #[trigger] peq(sig, g, ind, is, q, a[q], c[q]) by {
             assert(peq(sig, g, ind, it, q, a[q], b[q]));
             assert(peq(sig, g, ind, it, q, b[q], c[q]));
