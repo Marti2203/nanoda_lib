@@ -191,9 +191,10 @@ pub open spec fn pargs_typed(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -
 pub open spec fn pdoms_typed(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = crate::dom_code::canon_shape(sig, h->Const_0);
-    h is Const && crate::dom_code::has_canon(sig, h->Const_0) && sig.consts[h->Const_0].lps.len() == 0 ==>
+    h is Const && crate::dom_code::has_canon(sig, h->Const_0) ==>
         forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
-            ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q], sh.pdoms[q]))
+            ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
+                crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
 }
 
 /// The parameters' values on two sides: types equal at their declared

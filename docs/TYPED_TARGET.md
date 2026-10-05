@@ -1069,6 +1069,19 @@ Stages, each landing through the gate:
   level-equivalent), then runs at one instance `us` for the inductive and
   its constructors; the iota_sr / dom_rec_end / dom_iota lemmas take `us`
   where they now write `Const(ind, [])`.
+  **U4b-1 (3aede90):** `rule_bty` and `motive_at` at `rinst`.
+  **U4b-2: the parameters' typed equality at every instance.** `peq`
+  takes the instance and states `x ≡ y : ptype(ind, ls, q)` (the declared
+  sort at `ls`) for every inductive, not only monomorphic ones: Iota's
+  premises need it for a polymorphic inductive, and injectivity
+  (`ind_inj_args`, which now also reports the instances' level
+  equivalence) reads it back. `pconv` and `cpar` use the left side's
+  `iinst`; `peq_lv` moves a `peq` between level-equivalent instances
+  (`pconv_symm`, `pconv_trans`, `cpar_conv`); `tf_pconv` states it at the
+  former's own instance; `sdoms_typed`/`pdoms_typed` (the field typing
+  hypotheses) give nested formers' parameters at their instanced sorts,
+  `former_args_typed` likewise for every former; `closed_pconv` composes
+  the instances (`lpad_sl`, `pdoms_elp`).
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

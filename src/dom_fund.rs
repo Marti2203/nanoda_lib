@@ -576,9 +576,11 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
         let sh = crate::dom_code::canon_shape(sig, ind);
         crate::dom_lift::former_args_typed(sig, g, ind, ls, xs, th);
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] peq(sig, g, ind, q, crate::beta_model::spine_args(t)[q], crate::beta_model::spine_args(t)[q]) by {
+            implies #[trigger] peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, crate::beta_model::spine_args(t)[q], crate::beta_model::spine_args(t)[q]) by {
             crate::ti_chain::tchain_refl(sig, g, crate::beta_model::spine_args(t)[q]);
+            crate::dom_rel::lpad_id(ls, sig.consts[ind].lps.len());
         }
+        crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
     } else {
         let c = ind_code_mem(sig, ind, ls, xs);
         let nn = cstage(c, Cpt::U);
@@ -605,8 +607,9 @@ pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: S
             crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), th)),
     ensures
         ys.len() >= crate::dom_code::canon_shape(sig, ind).np,
+        crate::conv_cr::levs_eq(ls, crate::dom_rel::lpad(ls2, sig.consts[ind].lps.len())),
         forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
-            ==> #[trigger] peq(sig, g, ind, q, xs[q], ys[q]),
+            ==> #[trigger] peq(sig, g, ind, ls, q, xs[q], ys[q]),
 {
     let t2 = crate::beta_model::spine_app(ExprSpec::Const(ind, ls2), ys);
     ind_inj_chain(sig, g, ind, ls, xs, t2, th);
@@ -615,6 +618,7 @@ pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: S
     crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls2), ys);
     crate::dom_lift::iapp_self(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs));
     crate::dom_lift::iapp_self(sig, t2);
+    crate::dom_rel::lpad_id(ls, sig.consts[ind].lps.len());
 }
 
 } // verus!

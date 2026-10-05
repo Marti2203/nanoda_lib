@@ -931,9 +931,9 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
     crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
     if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, spine_args(ty)[q], spine_args(t)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, ty), q, spine_args(ty)[q], spine_args(t)[q]) by {
             assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
-            assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(t)[q], spine_args(t)[q]));
+            assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t)[q]));
         }
     }
 }
@@ -966,15 +966,15 @@ pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: 
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls2), xs2);
     if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, xs[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, crate::dom_rel::ir(sig, t, ind)), q, xs[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
             assert(spine_args(t)[q] == xs[q]);
-            assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(t)[q], spine_args(t)[q]));
+            assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t)[q]));
         }
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, ind, q, xs2[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, crate::dom_rel::ir(sig, t, ind)), q, xs2[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
             assert(spine_args(t)[q] == xs[q] && spine_args(t2)[q] == xs2[q]);
-            assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(t)[q], spine_args(t2)[q]));
-            crate::dom_rel::peq_symm(sig, g, ind, q, xs[q], xs2[q]);
+            assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t2)[q]));
+            crate::dom_rel::peq_symm(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, xs[q], xs2[q]);
         }
     }
 }

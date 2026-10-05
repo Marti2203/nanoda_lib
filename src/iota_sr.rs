@@ -798,7 +798,9 @@ proof fn sr_inj_fields(sig: Sig, g: Ctx, rid: u64, p: int, ps: Seq<ExprSpec>, ca
     crate::dom_fund::ind_inj_args(sig, g, sh.ind, Seq::empty(), Seq::empty(), ps, ps2, crate::ti_syntax::sort(lt));
     assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], ps2[q], sh.pdoms[q])) by {
         assert(sh.pdoms[q] is Sort);
-        assert(crate::dom_rel::peq(sig, g, sh.ind, q, ps[q], ps2[q]));
+        assert(crate::dom_rel::peq(sig, g, sh.ind, Seq::empty(), q, ps[q], ps2[q]));
+        assert(sig.consts[sh.ind].lps =~= Seq::<u64>::empty());
+        crate::dom_canon::sl_none(sh.pdoms[q], Seq::empty());
     }
     assert forall|k: int| 0 <= k < fs.len() implies derivable(sig, eq(g, #[trigger] fs[k], fs[k],
         crate::ti_spine::vsub(sh.fields[p][k], ps + fs.subrange(0, k)))) by {

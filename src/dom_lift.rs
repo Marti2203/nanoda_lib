@@ -52,8 +52,8 @@ pub proof fn former_args_typed(sig: Sig, g: Ctx, j: u64, us: Seq<LevelSpec>, xs:
         xs.len() <= canon_shape(sig, j).np + canon_shape(sig, j).ni,
         derivable(sig, eq(g, spine_app(ExprSpec::Const(j, us), xs), spine_app(ExprSpec::Const(j, us), xs), th)),
     ensures
-        sig.consts[j].lps.len() == 0 ==> forall|q: int| 0 <= q < xs.len() && q < canon_shape(sig, j).np
-            && canon_shape(sig, j).pdoms[q] is Sort ==> derivable(sig, eq(g, #[trigger] xs[q], xs[q], canon_shape(sig, j).pdoms[q])),
+        forall|q: int| 0 <= q < xs.len() && q < canon_shape(sig, j).np && canon_shape(sig, j).pdoms[q] is Sort
+            ==> derivable(sig, eq(g, #[trigger] xs[q], xs[q], crate::dom_rel::ptype(sig, j, us, q))),
 {
     let sh = canon_shape(sig, j);
     let h = ExprSpec::Const(j, us);
@@ -71,16 +71,13 @@ pub proof fn former_args_typed(sig: Sig, g: Ctx, j: u64, us: Seq<LevelSpec>, xs:
         crate::ti_spine::tel_next(ds, b, xs, i);
     }
     crate::ti_spine::spine_ty(sig, g, h, tr, xs, th);
-    if lps.len() == 0 {
-        assert(lps =~= Seq::<u64>::empty());
-        assert forall|q: int| 0 <= q < xs.len() && q < sh.np && sh.pdoms[q] is Sort
-            implies derivable(sig, eq(g, #[trigger] xs[q], xs[q], sh.pdoms[q])) by {
-            crate::ti_spine::tel_next(ds, b, xs, q);
-            assert(ds[q] == crate::expr_model::subst_expr_levels((sh.pdoms + sh.idoms)[q], lps, us));
-            crate::dom_canon::sl_none(sh.pdoms[q], us);
-            crate::ti_spine::vsub_closed(sh.pdoms[q], xs.subrange(0, q));
-            assert(derivable(sig, eq(g, xs[q], xs[q], crate::ti_spine::sdom(tr, xs, q))));
-        }
+    assert forall|q: int| 0 <= q < xs.len() && q < sh.np && sh.pdoms[q] is Sort
+        implies derivable(sig, eq(g, #[trigger] xs[q], xs[q], crate::dom_rel::ptype(sig, j, us, q))) by {
+        crate::ti_spine::tel_next(ds, b, xs, q);
+        assert(ds[q] == crate::expr_model::subst_expr_levels((sh.pdoms + sh.idoms)[q], lps, us));
+        assert(ds[q] == crate::dom_rel::ptype(sig, j, us, q));
+        crate::ti_spine::vsub_closed(ds[q], xs.subrange(0, q));
+        assert(derivable(sig, eq(g, xs[q], xs[q], crate::ti_spine::sdom(tr, xs, q))));
     }
 }
 
@@ -436,15 +433,15 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
         assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, kk, q, spine_args(r)[q], spine_args(r)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, kk, crate::dom_rel::iinst(sig, kk, r), q, spine_args(r)[q], spine_args(r)[q]) by {
             let x = spine_args(r)[q];
+            let pt = crate::dom_rel::ptype(sig, kk, crate::dom_rel::iinst(sig, kk, r), q);
             crate::ti_chain::tchain_refl(sig, g, x);
-            if sig.consts[kk].lps.len() == 0 {
-                crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), x, x, sk.pdoms[q]));
-                crate::dom_iota::simple_closed(sig, j, x);
-                crate::ti_sr::wk_closed(sig, g, x, x, sk.pdoms[q]);
-            }
+            crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), x, x, pt));
+            crate::dom_iota::simple_closed(sig, j, x);
+            crate::ti_sr::wk_closed(sig, g, x, x, pt);
         }
+        crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, kk, r));
     }
     canon_rel(sig, n, g, r, r, cs, c);
 }
@@ -581,7 +578,7 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
         assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, kk, q, spine_args(x)[q], spine_args(x2)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, kk, crate::dom_rel::iinst(sig, kk, x), q, spine_args(x)[q], spine_args(x2)[q]) by {
             let ai = spine_args(e)[q];
             let (y, y2) = (crate::ti_spine::vsub(ai, a), crate::ti_spine::vsub(ai, a2));
             assert(crate::dom_psimple::ptyped(sig, sh.pdoms, ai));
@@ -590,10 +587,10 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, e: ExprSpec, a: Seq<ExprSpec>, a
             crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, sort(la), a, a2);
             assert(derivable(sig, eq(g, y, y2, sort(la))));
             crate::ti_chain::tchain_one(sig, g, y, y2);
-            if sig.consts[kk].lps.len() == 0 {
-                crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, ai, ai, sk.pdoms[q]));
-                crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, sk.pdoms[q], a, a2);
-            }
+            let pt = crate::dom_rel::ptype(sig, kk, crate::dom_rel::iinst(sig, kk, e), q);
+            assert(crate::dom_rel::iinst(sig, kk, x) == crate::dom_rel::iinst(sig, kk, e));
+            crate::ti_strip::strip_derivable(sig, eq(sh.pdoms, ai, ai, pt));
+            crate::dom_psimple::ps_inst(sig, g, sh.pdoms, ai, pt, a, a2);
         }
     }
 }
@@ -773,31 +770,33 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
         crate::ti_ls2::lls_pair(us, us, ks, ls1, ls2);
         crate::dom_levels::lpad_levs_eq(crate::level_model::subst_levels_spec(us, ks, ls1),
             crate::level_model::subst_levels_spec(us, ks, ls2), sig.consts[kk].lps.len());
+        let nk = sig.consts[kk].lps.len();
+        let ii = crate::dom_rel::iinst(sig, kk, r);
+        let i1 = crate::dom_rel::iinst(sig, kk, r1);
+        crate::dom_levels::lpad_sl(us, nk, ks, ls1);
         assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
-            implies #[trigger] crate::dom_rel::peq(sig, g, kk, q, spine_args(r1)[q], spine_args(r2)[q]) by {
+            implies #[trigger] crate::dom_rel::peq(sig, g, kk, i1, q, spine_args(r1)[q], spine_args(r2)[q]) by {
             let a = spine_args(r)[q];
             assert(styped(sig, a));
             crate::dom_iota::simple_closed(sig, j, a);
             let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, sort(l)));
             crate::dom_levels::closed_conv(sig, g, a, la, ks, ls1, ls2);
-            if sig.consts[kk].lps.len() == 0 {
-                let pd = sk.pdoms[q];
-                crate::dom_levels::sig_lps_at(sig, ks, ls1);
-                crate::dom_levels::sig_lps_at(sig, ks, ls2);
-                assert(sig.consts[kk].lps =~= Seq::<u64>::empty());
-                assert(crate::ti_strip::strip(sig).consts.contains_key(kk));
-                crate::ti_level::elp_binds(BinderKind::Pi, sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni),
-                    Seq::empty());
-                assert((sk.pdoms + sk.idoms)[q] == pd);
-                crate::dom_levels::elp_none_id(pd, ks, ls1);
-                crate::ti_ls2::ls_pair_nil(crate::ti_strip::strip(sig), a, a, pd, ks, ls1, ls2);
-                crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), crate::expr_model::subst_expr_levels(a, ks, ls1),
-                    crate::expr_model::subst_expr_levels(a, ks, ls2), pd));
-                crate::ti_level::ls_nlbv(a, ks, ls1);
-                crate::ti_level::ls_nlbv(a, ks, ls2);
-                crate::ti_sr::wk_closed(sig, g, crate::expr_model::subst_expr_levels(a, ks, ls1),
-                    crate::expr_model::subst_expr_levels(a, ks, ls2), pd);
-            }
+            let pd = sk.pdoms[q];
+            let pt = crate::dom_rel::ptype(sig, kk, ii, q);
+            assert(derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, pt)));
+            crate::dom_levels::sig_lps_at(sig, ks, ls1);
+            crate::dom_levels::sig_lps_at(sig, ks, ls2);
+            crate::dom_levels::pdoms_elp(sig, kk, q);
+            crate::level_inst::expr_compose(pd, sig.consts[kk].lps, ii, ks, ls1);
+            assert(crate::expr_model::subst_expr_levels(pt, ks, ls1) == crate::dom_rel::ptype(sig, kk, i1, q));
+            crate::ti_ls2::ls_pair_nil(crate::ti_strip::strip(sig), a, a, pt, ks, ls1, ls2);
+            let pt1 = crate::dom_rel::ptype(sig, kk, i1, q);
+            crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), crate::expr_model::subst_expr_levels(a, ks, ls1),
+                crate::expr_model::subst_expr_levels(a, ks, ls2), pt1));
+            crate::ti_level::ls_nlbv(a, ks, ls1);
+            crate::ti_level::ls_nlbv(a, ks, ls2);
+            crate::ti_sr::wk_closed(sig, g, crate::expr_model::subst_expr_levels(a, ks, ls1),
+                crate::expr_model::subst_expr_levels(a, ks, ls2), pt1);
         }
     }
 }
@@ -1116,7 +1115,10 @@ proof fn pfield_rel(sig: Sig, n: nat, g: Ctx, e: ExprSpec, e2: ExprSpec, pv: Seq
     assert(cf(sig, j, pv, p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), pv2, ex));
     assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
         && derivable(sig, eq(g, #[trigger] a[q], a2[q], sh.pdoms[q])) by {
-        assert(crate::dom_rel::peq(sig, g, j, q, spine_args(ir(sig, e, j))[q], spine_args(ir(sig, e2, j))[q]));
+        let ii = crate::dom_rel::iinst(sig, j, ir(sig, e, j));
+        assert(crate::dom_rel::peq(sig, g, j, ii, q, spine_args(ir(sig, e, j))[q], spine_args(ir(sig, e2, j))[q]));
+        assert(sig.consts[j].lps =~= Seq::<u64>::empty());
+        crate::dom_canon::sl_none(sh.pdoms[q], ii);
     }
     assert forall|q: int, c: Cpt| 0 <= q < pv2.len() && wf(c) && le(c, pv2[q]) && has_type(n, c, Cpt::U)
         implies #[trigger] rel_ty(sig, n, g, a[q], a2[q], c) by {
@@ -1287,7 +1289,10 @@ proof fn pfield_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, t: ExprSpec, t2
     assert(cf(sig, j, pv, p, i) == ceval(sig, rk(sig, j), j, Seq::empty(), pv2, ex));
     assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
         && derivable(sig, eq(g, #[trigger] a[q], a2[q], sh.pdoms[q])) by {
-        assert(crate::dom_rel::peq(sig, g, j, q, spine_args(ir(sig, t, j))[q], spine_args(ir(sig, t2, j))[q]));
+        let ii = crate::dom_rel::iinst(sig, j, ir(sig, t, j));
+        assert(crate::dom_rel::peq(sig, g, j, ii, q, spine_args(ir(sig, t, j))[q], spine_args(ir(sig, t2, j))[q]));
+        assert(sig.consts[j].lps =~= Seq::<u64>::empty());
+        crate::dom_canon::sl_none(sh.pdoms[q], ii);
     }
     assert forall|q: int| 0 <= q < sh.pdoms.len() implies sh.pdoms[q] is Sort
         && derivable(sig, eq(g, #[trigger] a2[q], a2[q], sh.pdoms[q])) by {

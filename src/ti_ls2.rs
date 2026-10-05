@@ -824,4 +824,17 @@ pub proof fn sle_params(e: ExprSpec, ks: Seq<u64>)
     }
 }
 
+pub proof fn levs_eq_trans(a: Seq<LevelSpec>, b: Seq<LevelSpec>, c: Seq<LevelSpec>)
+    requires
+        levs_eq(a, b),
+        levs_eq(b, c),
+    ensures
+        levs_eq(a, c),
+{
+    assert forall|i: int, r: Map<nat, nat>| 0 <= i < a.len() implies #[trigger] interp(a[i], r) == interp(c[i], r) by {
+        assert(interp(a[i], r) == interp(b[i], r));
+        assert(interp(b[i], r) == interp(c[i], r));
+    }
+}
+
 } // verus!

@@ -241,4 +241,41 @@ pub proof fn elp_mono(e: ExprSpec, a: Seq<u64>, b: Seq<u64>)
     }
 }
 
+/// An equation at one sort holds at an equivalent one (sort types).
+pub proof fn sort_retype2(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec, l: LevelSpec, l2: LevelSpec)
+    requires
+        derivable(sig, eq(g, x, y, sort(l2))),
+        crate::conv_cr::lev_eq(l2, l),
+    ensures
+        derivable(sig, eq(g, x, y, sort(l))),
+{
+    crate::ti_ls2::sort_retype(sig, g, x, y, l, l2);
+}
+
+/// Padding commutes with level substitution.
+pub proof fn lpad_sl(us: Seq<LevelSpec>, n: nat, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        subst_levels_spec(crate::dom_rel::lpad(us, n), ks, vs) == crate::dom_rel::lpad(subst_levels_spec(us, ks, vs), n),
+{
+    assert(subst_levels_spec(crate::dom_rel::lpad(us, n), ks, vs) =~= crate::dom_rel::lpad(subst_levels_spec(us, ks, vs), n));
+}
+
+/// A canonical former's parameter sorts mention only its level parameters.
+pub proof fn pdoms_elp(sig: Sig, j: u64, q: int)
+    requires
+        sig_lps(sig),
+        crate::dom_code::has_canon(sig, j),
+        0 <= q < crate::dom_code::canon_shape(sig, j).np,
+    ensures
+        crate::level_inst::elp_in(crate::dom_code::canon_shape(sig, j).pdoms[q], sig.consts[j].lps),
+{
+    let sh = crate::dom_code::canon_shape(sig, j);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, j);
+    sig_lps_at(sig, Seq::empty(), Seq::empty());
+    assert(crate::ti_strip::strip(sig).consts.contains_key(j));
+    let t = sig.consts[j].ty;
+    crate::ti_level::elp_binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(t, sh.np + sh.ni), sig.consts[j].lps);
+    assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+}
+
 } // verus!

@@ -148,40 +148,60 @@ pub open spec fn fq(sig: Sig, ind: u64, t: ExprSpec, p: int, k: int) -> ExprSpec
     crate::ti_spine::vsub(f, crate::beta_model::spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed))
 }
 
-/// Type parameter `q` of `ind` at `x` and `y`: they convert as types, and
-/// without level parameters are equal at the declared sort.
-pub open spec fn peq(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprSpec) -> bool {
-    &&& tchain(sig, g, x, y)
-    &&& sig.consts[ind].lps.len() == 0 ==> derivable(sig, eq(g, x, y, crate::dom_code::canon_shape(sig, ind).pdoms[q]))
+/// The declared sort of `ind`'s parameter `q` at the level instance `ls`.
+pub open spec fn ptype(sig: Sig, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int) -> ExprSpec {
+    crate::expr_model::subst_expr_levels(crate::dom_code::canon_shape(sig, ind).pdoms[q], sig.consts[ind].lps, ls)
 }
 
-pub proof fn peq_symm(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprSpec)
+/// Type parameter `q` of `ind` at `x` and `y`: they convert as types and
+/// are equal at the declared sort at the instance `ls`.
+pub open spec fn peq(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int, x: ExprSpec, y: ExprSpec) -> bool {
+    &&& tchain(sig, g, x, y)
+    &&& derivable(sig, eq(g, x, y, ptype(sig, ind, ls, q)))
+}
+
+pub proof fn peq_symm(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int, x: ExprSpec, y: ExprSpec)
     requires
-        peq(sig, g, ind, q, x, y),
+        peq(sig, g, ind, ls, q, x, y),
     ensures
-        peq(sig, g, ind, q, y, x),
-        peq(sig, g, ind, q, x, x),
-        peq(sig, g, ind, q, y, y),
+        peq(sig, g, ind, ls, q, y, x),
+        peq(sig, g, ind, ls, q, x, x),
+        peq(sig, g, ind, ls, q, y, y),
 {
     crate::ti_chain::tchain_sym(sig, g, x, y);
     crate::ti_chain::tchain_refl(sig, g, x);
     crate::ti_chain::tchain_refl(sig, g, y);
-    if sig.consts[ind].lps.len() == 0 {
-        crate::dom_adeq_syn::dsym(sig, g, x, y, crate::dom_code::canon_shape(sig, ind).pdoms[q]);
-    }
+    crate::dom_adeq_syn::dsym(sig, g, x, y, ptype(sig, ind, ls, q));
+    crate::dom_psimple::der_diag(sig, g, x, y, ptype(sig, ind, ls, q));
 }
 
-pub proof fn peq_trans(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprSpec, z: ExprSpec)
+pub proof fn peq_trans(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int, x: ExprSpec, y: ExprSpec, z: ExprSpec)
     requires
-        peq(sig, g, ind, q, x, y),
-        peq(sig, g, ind, q, y, z),
+        peq(sig, g, ind, ls, q, x, y),
+        peq(sig, g, ind, ls, q, y, z),
     ensures
-        peq(sig, g, ind, q, x, z),
+        peq(sig, g, ind, ls, q, x, z),
 {
     crate::ti_chain::tchain_trans(sig, g, x, y, z);
-    if sig.consts[ind].lps.len() == 0 {
-        crate::dom_adeq_syn::dtrans(sig, g, x, y, z, crate::dom_code::canon_shape(sig, ind).pdoms[q]);
-    }
+    crate::dom_adeq_syn::dtrans(sig, g, x, y, z, ptype(sig, ind, ls, q));
+}
+
+/// At a level-equivalent instance (the declared sort a sort).
+pub proof fn peq_lv(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::LevelSpec>, ls2: Seq<crate::level_model::LevelSpec>,
+    q: int, x: ExprSpec, y: ExprSpec)
+    requires
+        peq(sig, g, ind, ls, q, x, y),
+        crate::conv_cr::levs_eq(ls, ls2),
+        ls.len() == sig.consts[ind].lps.len(),
+        crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort,
+    ensures
+        peq(sig, g, ind, ls2, q, x, y),
+{
+    let l0 = crate::dom_code::canon_shape(sig, ind).pdoms[q]->Sort_0;
+    let lps = sig.consts[ind].lps;
+    let (l1, l2) = (crate::level_model::subst_level_spec(l0, lps, ls), crate::level_model::subst_level_spec(l0, lps, ls2));
+    crate::ti_ls2::ll_pair(l0, l0, lps, ls, ls2);
+    crate::dom_levels::sort_retype2(sig, g, x, y, l2, l1);
 }
 
 /// THE CONSTRUCTOR'S TYPE PARAMETERS are the type's: a constructor
@@ -190,7 +210,7 @@ pub proof fn peq_trans(sig: Sig, g: Ctx, ind: u64, q: int, x: ExprSpec, y: ExprS
 pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> bool {
     crate::dom_code::has_canon(sig, ind) ==> forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
         && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
-        ==> #[trigger] peq(sig, g, ind, q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
+        ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
 }
 
 /// THE TYPE PARAMETERS CONVERT: of a canonical inductive, the applications
@@ -201,7 +221,7 @@ pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) ->
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() >= sh.np
         && crate::conv_cr::levs_eq(iinst(sig, ind, ir(sig, t, ind)), iinst(sig, ind, ir(sig, t2, ind)))
-        && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, q, a[q], a2[q])
+        && forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q])
 }
 
 /// Marker trigger for the clauses' quantifiers (a same-group call inside a

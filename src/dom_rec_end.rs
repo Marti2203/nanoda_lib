@@ -989,7 +989,10 @@ proof fn major_par_at(sig: Sig, nn: nat, g: Ctx, c: u64, t0: ExprSpec, t02: Expr
     assert(pdoms_lv_at(sig, c, lv));
     {
         assert(sh.pdoms[q] is Sort);
-        assert(crate::dom_rel::peq(sig, g, ind, q, spine_args(cx)[q], spine_args(ci)[q]));
+        let ii = crate::dom_rel::iinst(sig, ind, ci);
+        assert(crate::dom_rel::peq(sig, g, ind, ii, q, spine_args(cx)[q], spine_args(ci)[q]));
+        assert(sig.consts[ind].lps =~= Seq::<u64>::empty());
+        crate::dom_canon::sl_none(sh.pdoms[q], ii);
         assert(spine_args(ci)[q] == xs[q]);
         crate::dom_adeq_syn::dsym(sig, g, spine_args(cx)[q], xs[q], sh.pdoms[q]);
         assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, q));
@@ -1490,7 +1493,8 @@ pub proof fn cxr_con(sig: Sig, rc: Rc)
     crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, Seq::empty()), ps);
     crate::dom_lift::iapp_self(sig, ci);
     assert(dm->Nd_0->Ty_0 == ind);
-    assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies #[trigger] crate::dom_rel::peq(sig, g, ind, q,
+    assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies #[trigger] crate::dom_rel::peq(sig, g, ind,
+        crate::dom_rel::iinst(sig, ind, crate::dom_rel::ir(sig, ci, ind)), q,
         spine_args(cxr)[q], spine_args(crate::dom_rel::ir(sig, ci, ind))[q]) by {
         assert(spine_args(cxr)[q] == ps[q] && spine_args(ci)[q] == ps[q]);
     }
