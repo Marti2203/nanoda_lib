@@ -776,11 +776,13 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let d1 = d_ren(sig, ps[1], w, dl, r);
     crate::ti_subst::psub_fire(q, sig, m);
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, m);
+    crate::ti_syntax::iota_pjs_none(sig, dl, psub(m, q));
     let ps2 = seq![d0, d1];
     assert(prems(ps2, seq![
         eq(dl, psub(m, q), psub(m, q), psub(a, q)),
         eq(dl, psub(n, q), psub(n, q), psub(a, q)),
-    ]));
+    ] + crate::ti_syntax::iota_pjs(sig, dl, psub(m, q))));
     valid_node(sig, Rule::Iota, j2, ps2);
     node(Rule::Iota, j2, ps2)
 }

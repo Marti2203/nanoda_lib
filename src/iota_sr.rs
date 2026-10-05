@@ -721,6 +721,7 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
         sr_ok(sig, spine_head(m)->Const_0, spine_head(m)->Const_1, fired_rule(sig, m)),
     ensures
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
+        forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]),
 {
     let h = spine_head(m);
     let (rid, lv) = (h->Const_0, h->Const_1);
@@ -770,6 +771,13 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let ps2 = cargs.subrange(0, np as int);
     let fs = cargs.subrange(np as int, cargs.len() as int);
     sr_inj_fields(sig, g, rid, p, ps, cargs);
+    // Iota's parameter premises
+    reveal(crate::ti_syntax::iota_pjs);
+    assert(rd.num_params == np);
+    assert forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() implies derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]) by {
+        assert(args[q] == ps[q]);
+        assert(crate::ti_syntax::iota_pjs(sig, g, m)[q] == eq(g, ps[q], cargs.subrange(0, np as int)[q], sh.pdoms[q]));
+    }
     // the rule's side
     let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
     let w = crate::ti_meta::d_wf(sig, dm);

@@ -180,6 +180,8 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
         },
         Rule::Iota => {
             rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
+            crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, j->Eq_1);
+            crate::ti_syntax::iota_pjs_none(sig2, j->Eq_0, j->Eq_1);
         },
         _ => {},
     }

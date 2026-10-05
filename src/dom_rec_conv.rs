@@ -286,8 +286,24 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, heads: 
     let d0 = crate::ti_sub::get(sig, eq(g, m1, m1, t));
     let d1 = crate::ti_sub::get(sig, eq(g, n1, n1, t));
     let jd = eq(g, m1, n1, t);
-    let ps2 = seq![d0, d1];
-    assert(crate::ti_syntax::prems(ps2, seq![eq(g, m1, m1, t), eq(g, n1, n1, t)]));
+    // the parameter premises: the recursor's parameters are the
+    // constructor's own
+    let pj = crate::ti_syntax::iota_pjs(sig, g, m1);
+    reveal(crate::ti_syntax::iota_pjs);
+    crate::beta_model::spine_destruct_app(h, xs1);
+    crate::beta_model::spine_destruct_app(cc, pargs + args);
+    assert(rd.num_params == np);
+    assert(rd.major_idx == pre);
+    assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
+        assert(xs1[q] == heads[q] && (pargs + args)[q] == pargs[q]);
+    }
+    let ps2 = seq![d0, d1] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
+    assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))
+        && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[q])) == pj[q] by {
+        let dq = crate::ti_sub::get(sig, pj[q]);
+        crate::ti_sub::pick_of(sig, dq);
+    }
+    assert(crate::ti_syntax::prems(ps2, seq![eq(g, m1, m1, t), eq(g, n1, n1, t)] + pj));
     crate::ti_meta::valid_node(sig, Rule::Iota, jd, ps2);
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(Rule::Iota, jd, ps2));
     crate::dom_adeq_syn::dtrans(sig, g, m, m1, n1, t);

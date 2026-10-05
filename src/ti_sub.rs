@@ -1026,11 +1026,13 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let bj = eq(dl, psub(m, s), psub(n, s), psub(a, s));
+    crate::ti_syntax::iota_pjs_none(sig, g, m);
+    crate::ti_syntax::iota_pjs_none(sig, dl, psub(m, s));
     let bp = seq![q0, q1];
     assert(prems(bp, seq![
         eq(dl, psub(m, s), psub(m, s), psub(a, s)),
         eq(dl, psub(n, s), psub(n, s), psub(a, s)),
-    ]));
+    ] + crate::ti_syntax::iota_pjs(sig, dl, psub(m, s))));
     valid_node(sig, Rule::Iota, bj, bp);
     let bd = node(Rule::Iota, bj, bp);
     let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));

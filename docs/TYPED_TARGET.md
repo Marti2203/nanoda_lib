@@ -844,6 +844,26 @@ Stages, each landing through the gate:
   dom_rec_end no longer reads `np == 0`; what still does: `rec_frag`
   itself (and `fields_plain`, which needs only its level-invariance half
   now), and dom_iota's constructor/right-to-left Iota chains.
+  **P4b-2i (adf1ec3)**: `rule_chain` handles parameter-typed fields.
+  **Finding (2026-10-01): Iota's soundness needs the parameters' equality
+  as premises.** Right-to-left Iota rebuilds the major `c ps' fs` as a
+  member: the constructor's step approximation must run at the
+  recursor's parameter values (a parameter-typed field's value is typed
+  only at its parameter's value; at bottom only bottom fits), so the
+  constructor application's own parameters `ps'` need members above them,
+  i.e. `ps ≡ ps'`. Soundness cannot get that by injectivity (soundness →
+  injectivity → fundamental lemma → soundness), and the Iota node's
+  premises (both sides typed) give no smaller derivation of it.
+  **P4b-2j (user's choice): `Rule::Iota` takes the parameter premises.**
+  `step_ok`'s Iota case asks `prems(ps, [m ≡ m : t, n ≡ n : t] ++
+  iota_pjs(sig, g, m))`, `iota_pjs` (opaque) being `eq(g, ps_q, ps'_q,
+  pdoms[q])` per parameter. Producers supply them: `iota_sr` (from
+  `sr_inj_fields`), `ti_sr::sr_iota`, `dom_rec_conv::rec_conv_side` (its
+  `heads[q] ≡ pargs[q]` hypothesis, from `cpar`). The derivation-walking
+  lemmas that rebuild or inspect Iota nodes (renaming, substitution,
+  signature extension, local swap/close) use `iota_pjs_none` (empty while
+  `rec_frag` asks `np == 0`); at the gate flip they rename/substitute the
+  premises instead.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

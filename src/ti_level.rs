@@ -412,6 +412,8 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     let qs = pls(sig, ps, ks, vs);
     assert(qs.len() == ps.len());
     crate::level_inst::li_fire(sig, j->Eq_1, ks, vs);
+    crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, j->Eq_1);
+    crate::ti_syntax::iota_pjs_none(sig, jls(j, ks, vs)->Eq_0, jls(j, ks, vs)->Eq_1);
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
 }

@@ -174,6 +174,8 @@ proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     crate::swap_model::fswap_fire(sig, j->Eq_1, x, y);
     crate::dom_rec_end::frag_congr(sig, s2);
     assert(crate::ti_hred::rec_fire(s2, crate::swap_model::fswap(j->Eq_1, x, y)));
+    crate::ti_syntax::iota_pjs_none(sig, j->Eq_0, j->Eq_1);
+    crate::ti_syntax::iota_pjs_none(s2, jswap(j, x, y)->Eq_0, crate::swap_model::fswap(j->Eq_1, x, y));
     assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
     assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
 }
@@ -197,6 +199,8 @@ proof fn step_close_iota(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
     crate::fclose::fclose_fire(k, j->Eq_0.len(), sig, j->Eq_1);
     crate::fclose::fclose_rec(k, j->Eq_0.len(), sig.ienv, j->Eq_1);
     crate::dom_rec_end::frag_congr(sig, s1);
+    crate::ti_syntax::iota_pjs_none(s1, j->Eq_0, j->Eq_1);
+    crate::ti_syntax::iota_pjs_none(sig, jclose(k, a, j)->Eq_0, jclose(k, a, j)->Eq_1);
     assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
     assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
 }

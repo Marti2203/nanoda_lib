@@ -368,7 +368,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         Rule::Iota => match j {
             Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::ti_hred::rec_fire(sig, m)
                 && n == crate::beta_model::rec_result(sig.ienv, m)
-                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t)]),
+                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t)] + iota_pjs(sig, g, m)),
             _ => false,
         },
         Rule::Irr(l) => match j {
@@ -380,6 +380,32 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
     }
+}
+
+/// Iota's parameter premises: the recursor's parameters equal the major
+/// constructor's own, at their declared sorts (what Iota drops; the
+/// model's soundness cannot recover it by injectivity).
+#[verifier::opaque]
+pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    let rd = sig.ienv.recs[rid];
+    let args = crate::beta_model::spine_args(m);
+    let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
+    let pdoms = crate::dom_rec_ty::rshape(sig, rid).pdoms;
+    Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], pdoms[q]))
+}
+
+/// Iota's parameter premises are none while the recursor fragment has no
+/// parameters.
+pub proof fn iota_pjs_none(sig: Sig, g: Ctx, m: ExprSpec)
+    requires
+        iota_ok(sig),
+        sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
+    ensures
+        iota_pjs(sig, g, m) =~= Seq::<Jd>::empty(),
+{
+    reveal(iota_pjs);
+    assert(crate::dom_rec_end::rec_frag(sig, crate::beta_model::spine_head(m)->Const_0));
 }
 
 /// A derivation is valid: every rule instance is correct.
