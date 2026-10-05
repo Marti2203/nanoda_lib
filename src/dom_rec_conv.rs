@@ -295,6 +295,7 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, heads: 
     assert(rd.num_params == np);
     assert(rd.major_idx == pre);
     assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
+        crate::ti_syntax::iota_pdom_id(sig, m1, q);
         assert(xs1[q] == heads[q] && (pargs + args)[q] == pargs[q]);
     }
     let ps2 = seq![d0, d1] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));

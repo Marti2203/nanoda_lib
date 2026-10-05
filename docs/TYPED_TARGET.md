@@ -1035,6 +1035,23 @@ Stages, each landing through the gate:
   move by `closed_rel2`/`closed_below2`. Formers over the parameters
   (`pfield_ok`, `pty_ok`) stay monomorphic (U3c); recursors stay
   monomorphic (`rec_frag`, U4).
+  **U4 worklist (2026-10-05 trial: `rec_frag` without `ind lps == 0`):**
+  21 functions — the recursor's end (`major_dom`, `major_side`,
+  `major_par_at`, `rc_field_intro`, `rc_fty_rec`, `rc_args2_typed`,
+  `cxr_field`, `ctor_arg_ty`, `field_dom_bnd`, `walk_shape`,
+  `walk_end_ty`, `walk_end_code`, `motive_form`, `motive_top`,
+  `sides_ty`, `rec_red_left/right`), `field_ctx`/`rec_conv_side`
+  (dom_rec_conv), `iota_rhs_mem` (dom_iota), `pjs_ls` (ti_level). The
+  pattern is U3b's: the inductive appears in the recursor's telescope at
+  the recursor's instance restricted to the inductive's parameters
+  (`lv` minus the motive's universe), and its codes are blind.
+  **U4a: Iota's parameter premises at the recursor's instance.**
+  `iota_pjs` types each premise at `subst_expr_levels(pdoms[q], uparams,
+  lv)`, as the recursor's own telescope reads its parameter domains at
+  `lv`; for the current (level-invariant) fragment that is `pdoms[q]`
+  (`iota_pdom_id`, from `rec_frag`'s `pdoms_lv`; `sr_ok` carries
+  `pdoms_lv` too), so the rule's producers and rebuild lemmas need only
+  that identity.
 - **P3, the lemmas.** PER, monotonicity, stability, head expansion,
   conversion, and the lifting lemma (a parameter related at `A` lifts to a
   field's simple type), then `tf_rel`, `cf_end`, constructor adequacy.

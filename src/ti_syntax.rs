@@ -383,7 +383,8 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 }
 
 /// Iota's parameter premises: the recursor's parameters equal the major
-/// constructor's own, at their declared sorts (what Iota drops; the
+/// constructor's own, at their declared sorts at the recursor's level
+/// instance (what Iota drops; the
 /// model's soundness cannot recover it by injectivity).
 #[verifier::opaque]
 pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
@@ -392,7 +393,8 @@ pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     let args = crate::beta_model::spine_args(m);
     let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
     let pdoms = crate::dom_rec_ty::rshape(sig, rid).pdoms;
-    Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], pdoms[q]))
+    let lv = crate::beta_model::spine_head(m)->Const_1;
+    Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, lv)))
 }
 
 /// A firing redex's major has at least the recursor's parameters as
@@ -433,6 +435,26 @@ pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
     }),
 {
     assert(crate::dom_rec_end::rec_frag(sig, crate::beta_model::spine_head(m)->Const_0));
+}
+
+/// Iota's premise types are the declared parameter sorts (level-invariant
+/// in the fragment).
+pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
+    requires
+        iota_ok(sig),
+        sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
+        0 <= q < crate::dom_rec_ty::rshape(sig, crate::beta_model::spine_head(m)->Const_0).np,
+    ensures ({
+        let rid = crate::beta_model::spine_head(m)->Const_0;
+        let pd = crate::dom_rec_ty::rshape(sig, rid).pdoms[q];
+        &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, crate::beta_model::spine_head(m)->Const_1) == pd
+        &&& pd is Sort
+    }),
+{
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    assert(crate::dom_rec_minor::pdoms_lv(sig, rid, crate::beta_model::spine_head(m)->Const_1));
+    let _p = crate::dom_rec_ty::rshape(sig, rid).pdoms[q];
 }
 
 /// A derivation is valid: every rule instance is correct.

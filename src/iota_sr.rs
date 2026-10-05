@@ -48,6 +48,7 @@ pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     let rd = sig.ienv.recs[rid];
     &&& rec_scope(sig, rid)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& crate::dom_rec_minor::pdoms_lv(sig, rid, lv)
     &&& sig.consts[sh.ind].lps.len() == 0
     &&& crate::dom_code::canon_ok(sig, sh.ind) && crate::dom_code::canon_shape(sig, sh.ind) == sh
     &&& crate::dom_model::sem_const(sig, sh.ind, Seq::empty())
@@ -873,6 +874,8 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     reveal(crate::ti_syntax::iota_pjs);
     assert(rd.num_params == np);
     assert forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() implies derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]) by {
+        assert(crate::dom_rec_minor::pdoms_lv(sig, rid, spine_head(m)->Const_1));
+        let _p = sh.pdoms[q];
         assert(args[q] == ps[q]);
         assert(crate::ti_syntax::iota_pjs(sig, g, m)[q] == eq(g, ps[q], cargs.subrange(0, np as int)[q], sh.pdoms[q]));
     }

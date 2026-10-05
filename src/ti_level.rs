@@ -453,6 +453,8 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(spine_head(m2)->Const_0 == rid);
     assert(crate::level_inst::sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jls(pj[q], ks, vs) by {
+        crate::ti_syntax::iota_pdom_id(sig, m, q);
+        crate::ti_syntax::iota_pdom_id(sig, m2, q);
         assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
         crate::level_inst::expr_closed(sh.pdoms[q], ks, vs);
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], sh.pdoms[q]));

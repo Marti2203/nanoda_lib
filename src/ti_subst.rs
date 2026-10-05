@@ -584,6 +584,8 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
     let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, g2, psub(m, t)));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q]
         == crate::ti_syntax::eq(g2, psub(pj[q]->Eq_1, t), psub(pj[q]->Eq_2, t), psub(pj[q]->Eq_3, t)) by {
+        crate::ti_syntax::iota_pdom_id(sig, m, q);
+        crate::ti_syntax::iota_pdom_id(sig, psub(m, t), q);
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pdoms[q]));
         assert(pdoms[q] is Sort);
         assert(psub(pdoms[q], t) == pdoms[q]);

@@ -189,6 +189,7 @@ proof fn pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
     assert(crate::swap_model::sswap(args, x, y)[rd.major_idx as int] == crate::swap_model::fswap(major, x, y));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jswap(pj[q], x, y) by {
         assert(pdoms[q] is Sort);
+        crate::ti_syntax::iota_pdom_id(sig, m, q);
         assert(crate::swap_model::fswap(pdoms[q], x, y) == pdoms[q]);
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pdoms[q]));
         assert(spine_args(crate::swap_model::fswap(m, x, y))[q] == crate::swap_model::fswap(args[q], x, y));
@@ -227,6 +228,7 @@ proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
     assert(crate::fclose::sclose(k, g.len(), args)[rd.major_idx as int] == crate::fclose::fclose(k, g.len(), major));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jclose(k, a, pj[q]) by {
         assert(pdoms[q] is Sort);
+        crate::ti_syntax::iota_pdom_id(s1, m, q);
         assert(crate::fclose::fclose(k, g.len(), pdoms[q]) == pdoms[q]);
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pdoms[q]));
         assert(spine_args(crate::fclose::fclose(k, g.len(), m))[q] == crate::fclose::fclose(k, g.len(), args[q]));
