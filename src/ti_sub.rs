@@ -1070,6 +1070,8 @@ proof fn d_sub_piota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[2], dl, s, s);
     d_sub(sig, ps[3], dl, s, s);
     d_sub(sig, ps[3], dl, s, s2);
+    d_sub(sig, ps[4], dl, s, s);
+    crate::ti_proj::proj_fty_psub(sig, m, s);
     crate::ti_proj::proj_fire_psub(sig, m, s);
     crate::ti_proj::proj_ty_unfold(sig, st, m->Proj_0 as nat, x);
     crate::ti_proj::proj_ty_psub(sig, st, m->Proj_0 as nat, x, s);
@@ -1077,12 +1079,15 @@ proof fn d_sub_piota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(st, s)));
     let q3 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    let fty = crate::ti_syntax::proj_fty(sig, m);
+    let q4 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(fty, s)));
     assert(psub(m, s) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, s))));
     crate::ti_subst::psub_spine_const(s, st);
     let ij = eq(dl, psub(m, s), psub(n, s), psub(a, s));
-    let ip = seq![q0, q1, q2, q3];
+    let ip = seq![q0, q1, q2, q3, q4];
     assert(prems(ip, seq![eq(dl, psub(m, s), psub(m, s), psub(a, s)), eq(dl, psub(n, s), psub(n, s), psub(a, s)),
-        eq(dl, psub(x, s), psub(x, s), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l))]));
+        eq(dl, psub(x, s), psub(x, s), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l)),
+        eq(dl, psub(n, s), psub(n, s), crate::ti_syntax::proj_fty(sig, psub(m, s)))]));
     assert(step_ok(sig, Rule::ProjIota(l), ij, ip)) by { reveal(crate::ti_syntax::proj_iota_ok); }
     valid_node(sig, Rule::ProjIota(l), ij, ip);
     mk_d(sig, node(Rule::ProjIota(l), ij, ip));

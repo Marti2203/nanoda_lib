@@ -538,6 +538,8 @@ proof fn step_ls_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
         assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
         assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
         assert(concl(qs[3]) == jls(concl(ps[3]), ks, vs));
+        crate::ti_proj::proj_fty_ls(sig, m, ks, vs);
+        assert(concl(qs[4]) == jls(concl(ps[4]), ks, vs));
     }
 }
 

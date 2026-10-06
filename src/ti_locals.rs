@@ -324,6 +324,9 @@ proof fn step_swap_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
         assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
         assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
         assert(concl(qs[3]) == jswap(concl(ps[3]), x, y));
+        crate::ti_proj::proj_fty_locals(sig, m, x, y, 0, 0);
+        crate::ti_proj::proj_fty_congr(sig, s2, mm);
+        assert(concl(qs[4]) == jswap(concl(ps[4]), x, y));
     }
 }
 
@@ -365,6 +368,9 @@ proof fn step_close_proj(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
         assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
         assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));
         assert(concl(qs[3]) == jclose(k, a, concl(ps[3])));
+        crate::ti_proj::proj_fty_congr(s1, sig, m);
+        crate::ti_proj::proj_fty_locals(sig, m, 0, 0, k, c);
+        assert(concl(qs[4]) == jclose(k, a, concl(ps[4])));
     }
 }
 

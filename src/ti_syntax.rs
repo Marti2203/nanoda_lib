@@ -406,20 +406,46 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 }
 
 /// A STRUCTURE: a canonical inductive with one constructor and no indices,
-/// its canonical recursor unique, each field a type parameter or a
-/// recursive occurrence (docs/TYPED_TARGET.md, "Structures stage plan":
-/// the first slice, whose table entries are the parameters' own codes).
+/// its canonical recursor unique, each field a type parameter
+/// (docs/TYPED_TARGET.md, "Structures stage plan": the first slice, whose
+/// table entries are the parameters' own codes); always a proposition, or
+/// a type at every instance whose fields' parameters are never
+/// propositions.
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
     &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
     &&& forall|k: int| 0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() ==>
         crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             #[trigger] crate::dom_code::canon_shape(sig, s).fields[0][k])
-        || crate::rec_canon::direct_occ(crate::dom_code::canon_shape(sig, s).fields[0][k], s, crate::dom_code::canon_shape(sig, s).us(),
-            crate::dom_code::canon_shape(sig, s).np, crate::dom_code::canon_shape(sig, s).ni, k as nat)
+    &&& always_prop(sig, s) || (crate::dom_code::never_prop(sig, s)
+        && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np ==>
+            never_zero(#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]->Sort_0))
     &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]
         crate::rec_canon::rec_canon(sig, r1) && crate::rec_canon::rec_ind(sig, r1) == s
         && crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s ==> r1 == r2
+}
+
+/// The inductive is a proposition at every instance.
+pub open spec fn always_prop(sig: Sig, s: u64) -> bool {
+    let t = sig.consts[s].ty;
+    crate::rec_canon::tbody(t, crate::rec_canon::tarity(t)) is Sort && is_zero(crate::rec_canon::tbody(t, crate::rec_canon::tarity(t))->Sort_0)
+}
+
+/// A level that is never zero.
+pub open spec fn never_zero(l: LevelSpec) -> bool {
+    forall|rho: Map<nat, nat>| #[trigger] interp(l, rho) > 0
+}
+
+/// The projected field's declared type at the constructor application's
+/// instance and arguments.
+#[verifier::opaque]
+pub open spec fn proj_fty(sig: Sig, m: ExprSpec) -> ExprSpec {
+    let x = *m->Proj_1;
+    let h = crate::beta_model::spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let i = m->Proj_0 as nat;
+    crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, h->Const_1),
+        crate::beta_model::spine_args(x).subrange(0, (crate::dom_code::canon_shape(sig, s).np + i) as int))
 }
 
 /// Projections' signature condition: for now no structures, so the
@@ -474,6 +500,7 @@ pub open spec fn proj_fire(sig: Sig, m: ExprSpec) -> bool {
         h is Const && sig.ienv.ctor_ind.contains_key(h->Const_0) && struct_of(sig, sig.ienv.ctor_ind[h->Const_0]) && {
             let sh = crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[h->Const_0]);
             h->Const_0 == sh.ctors[0] && crate::beta_model::spine_args(x).len() == sh.np + sh.fields[0].len() && i < sh.fields[0].len()
+                && h->Const_1.len() == sig.consts[sig.ienv.ctor_ind[h->Const_0]].lps.len()
         }
     }
 }
@@ -504,11 +531,12 @@ pub open spec fn proj_cong_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
 #[verifier::opaque]
 pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 4 && concl(ps[2]) is Eq && {
+        Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 5 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
             proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
                 && (proj_prop(sig, st) ==> is_zero(l))
-                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l))])
+                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l)),
+                    eq(g, n, n, proj_fty(sig, m))])
         },
         _ => false,
     }

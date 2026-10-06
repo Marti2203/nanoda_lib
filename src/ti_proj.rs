@@ -596,4 +596,180 @@ pub proof fn proj_fire_ls(sig: Sig, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec
     crate::level_inst::li_spine_const(*m->Proj_1, ks, vs);
 }
 
+/// The projected field's declared type, unfolded at a firing projection.
+proof fn proj_fty_facts(sig: Sig, m: ExprSpec)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures ({
+        let x = *m->Proj_1;
+        let h = spine_head(x);
+        let s = sig.ienv.ctor_ind[h->Const_0];
+        let i = m->Proj_0 as nat;
+        let np = crate::dom_code::canon_shape(sig, s).np;
+        let a = spine_args(x).subrange(0, (np + i) as int);
+        &&& m is Proj
+        &&& h is Const && crate::ti_syntax::struct_of(sig, s)
+        &&& h->Const_0 == crate::dom_code::canon_shape(sig, s).ctors[0]
+        &&& i < crate::dom_code::canon_shape(sig, s).fields[0].len()
+        &&& spine_args(x).len() == np + crate::dom_code::canon_shape(sig, s).fields[0].len()
+        &&& crate::ti_syntax::proj_fty(sig, m) == vsub(sfield(sig, s, i, h->Const_1), a)
+        &&& crate::expr_model::nlbv(sfield(sig, s, i, h->Const_1)) <= a.len()
+    }),
+{
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_fty);
+    let x = *m->Proj_1;
+    let h = spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let i = m->Proj_0 as nat;
+    let np = crate::dom_code::canon_shape(sig, s).np;
+    let a = spine_args(x).subrange(0, (np + i) as int);
+    reveal(crate::ti_syntax::struct_of);
+    sfield_vsub(sig, s, i, h->Const_1, a.subrange(0, np as int), a.subrange(np as int, a.len() as int), a.subrange(np as int, a.len() as int));
+}
+
+/// It commutes with substitution.
+pub proof fn proj_fty_psub(sig: Sig, m: ExprSpec, t: Sub)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        crate::ti_syntax::proj_fty(sig, psub(m, t)) == psub(crate::ti_syntax::proj_fty(sig, m), t),
+{
+    proj_fty_facts(sig, m);
+    proj_fire_psub(sig, m, t);
+    proj_fty_facts(sig, psub(m, t));
+    let x = *m->Proj_1;
+    crate::ti_subst::psub_spine_const(t, x);
+    assert(psub(m, t) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, t))));
+    proj_fty_facts(sig, psub(m, t));
+    let h = spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let np = crate::dom_code::canon_shape(sig, s).np;
+    let a = spine_args(x).subrange(0, (np + m->Proj_0 as nat) as int);
+    psub_vsub(sfield(sig, s, m->Proj_0 as nat, h->Const_1), a, t);
+    assert(crate::ti_subst::spsub(a, t) =~= spine_args(psub(x, t)).subrange(0, (np + m->Proj_0 as nat) as int));
+}
+
+/// It commutes with swapping and closing locals.
+pub proof fn proj_fty_locals(sig: Sig, m: ExprSpec, xx: nat, yy: nat, k: nat, c: nat)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        crate::ti_locals::sig_fv_free(sig),
+    ensures
+        crate::ti_syntax::proj_fty(sig, crate::swap_model::fswap(m, xx, yy)) == crate::swap_model::fswap(crate::ti_syntax::proj_fty(sig, m), xx, yy),
+        crate::ti_syntax::proj_fty(sig, crate::fclose::fclose(k, c, m)) == crate::fclose::fclose(k, c, crate::ti_syntax::proj_fty(sig, m)),
+{
+    proj_fty_swap(sig, m, xx, yy);
+    proj_fty_close(sig, m, k, c);
+}
+
+#[verifier::spinoff_prover]
+proof fn proj_fty_swap(sig: Sig, m: ExprSpec, xx: nat, yy: nat)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        crate::ti_locals::sig_fv_free(sig),
+    ensures
+        crate::ti_syntax::proj_fty(sig, crate::swap_model::fswap(m, xx, yy)) == crate::swap_model::fswap(crate::ti_syntax::proj_fty(sig, m), xx, yy),
+{
+    proj_fty_facts(sig, m);
+    proj_fire_locals(sig, m, xx, yy, 0, 0);
+    let x = *m->Proj_1;
+    crate::swap_model::fswap_spine(x, xx, yy);
+    assert(crate::swap_model::fswap(m, xx, yy) == ExprSpec::Proj(m->Proj_0, Box::new(crate::swap_model::fswap(x, xx, yy))));
+    proj_fty_facts(sig, crate::swap_model::fswap(m, xx, yy));
+    let h = spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let i = m->Proj_0 as nat;
+    let np = crate::dom_code::canon_shape(sig, s).np;
+    let a = spine_args(x).subrange(0, (np + i) as int);
+    let f = sfield(sig, s, i, h->Const_1);
+    reveal(crate::ti_syntax::struct_of);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    sfield_fv(sig, s, i, h->Const_1);
+    crate::kclaims::no_fv_absent(f, xx);
+    crate::kclaims::no_fv_absent(f, yy);
+    crate::swap_model::fswap_noop(f, xx, yy);
+    fswap_vsub(f, a, xx, yy);
+    assert(crate::swap_model::sswap(a, xx, yy) =~= spine_args(crate::swap_model::fswap(x, xx, yy)).subrange(0, (np + i) as int));
+}
+
+#[verifier::spinoff_prover]
+proof fn proj_fty_close(sig: Sig, m: ExprSpec, k: nat, c: nat)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        crate::ti_locals::sig_fv_free(sig),
+    ensures
+        crate::ti_syntax::proj_fty(sig, crate::fclose::fclose(k, c, m)) == crate::fclose::fclose(k, c, crate::ti_syntax::proj_fty(sig, m)),
+{
+    proj_fty_facts(sig, m);
+    proj_fire_locals(sig, m, 0, 0, k, c);
+    let x = *m->Proj_1;
+    crate::fclose::fclose_spine_const(k, c, x);
+    assert(crate::fclose::fclose(k, c, m) == ExprSpec::Proj(m->Proj_0, Box::new(crate::fclose::fclose(k, c, x))));
+    proj_fty_facts(sig, crate::fclose::fclose(k, c, m));
+    let h = spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let i = m->Proj_0 as nat;
+    let np = crate::dom_code::canon_shape(sig, s).np;
+    let a = spine_args(x).subrange(0, (np + i) as int);
+    let f = sfield(sig, s, i, h->Const_1);
+    reveal(crate::ti_syntax::struct_of);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    sfield_fv(sig, s, i, h->Const_1);
+    crate::fclose::fclose_closed(k, c + a.len(), f);
+    fclose_vsub(k, c, f, a);
+    assert(crate::fclose::sclose(k, c, a) =~= spine_args(crate::fclose::fclose(k, c, x)).subrange(0, (np + i) as int));
+}
+
+/// It commutes with level instantiation.
+pub proof fn proj_fty_ls(sig: Sig, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        crate::ti_level::sig_lp_ok(sig, ks, vs),
+    ensures
+        crate::ti_syntax::proj_fty(sig, crate::expr_model::subst_expr_levels(m, ks, vs))
+            == crate::expr_model::subst_expr_levels(crate::ti_syntax::proj_fty(sig, m), ks, vs),
+{
+    use crate::expr_model::subst_expr_levels;
+    proj_fty_facts(sig, m);
+    proj_fire_ls(sig, m, ks, vs);
+    proj_fty_facts(sig, subst_expr_levels(m, ks, vs));
+    let x = *m->Proj_1;
+    let h = spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let i = m->Proj_0 as nat;
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let np = sh.np;
+    let a = spine_args(x).subrange(0, (np + i) as int);
+    crate::level_inst::li_spine_const(x, ks, vs);
+    reveal(crate::ti_syntax::struct_of);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    let lps = sig.consts[s].lps;
+    let tc = sig.consts[sh.ctors[0]].ty;
+    let nf = sh.fields[0].len();
+    assert(crate::level_inst::elp_in(tc, lps));
+    crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.fields[0], crate::rec_canon::tbody(tc, sh.np + nf), lps);
+    assert((sh.pdoms + sh.fields[0])[(sh.np + i) as int] == sh.fields[0][i as int]);
+    reveal(crate::ti_syntax::proj_fire);
+    crate::level_inst::expr_compose(sh.fields[0][i as int], lps, h->Const_1, ks, vs);
+    let f = sfield(sig, s, i, h->Const_1);
+    ls_vsub(f, a, ks, vs);
+    assert(crate::level_inst::sli(a, ks, vs) =~= spine_args(subst_expr_levels(x, ks, vs)).subrange(0, (np + i) as int));
+}
+
+/// It reads only the constants and the inductive tables.
+pub proof fn proj_fty_congr(s1: Sig, s2: Sig, m: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+        crate::ti_syntax::proj_fire(s1, m),
+    ensures
+        crate::ti_syntax::proj_fty(s1, m) == crate::ti_syntax::proj_fty(s2, m),
+{
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_fty);
+    let h = spine_head(*m->Proj_1);
+    struct_congr(s1, s2, s1.ienv.ctor_ind[h->Const_0]);
+}
+
 } // verus!
