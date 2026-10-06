@@ -1226,6 +1226,10 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     assert(le(u, crate::dom_rec::recval(sig, c, fs)));
     crate::dom_rec::recval_wf(sig, c, fs);
     head_le(u, crate::dom_rec::recval(sig, c, fs));
+    if !crate::dom_rec::rec_ok(sig, c, fs) && crate::dom_rec::rec_bot_ok(sig, c, fs) {
+        // the irrefutable match needs the recursor's eta head step (E3)
+        crate::dom_code::smash_dead(sig, crate::rec_canon::rec_ind(sig, c));
+    }
     assert(crate::dom_rec::rec_ok(sig, c, fs));
     let wx = fs[pre];
     assert(fs.last() == wx);

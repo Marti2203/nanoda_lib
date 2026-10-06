@@ -34,9 +34,107 @@ pub open spec fn canon_rec(sig: Sig, ind: u64) -> u64 {
 }
 
 /// Whether `ind`'s values are smashed (docs/TYPED_TARGET.md, "The eta
-/// redesign"): not yet.
+/// redesign"): a structure's, once the redesign is switched on.
 pub open spec fn smash(sig: Sig, ind: u64) -> bool {
+    crate::ti_syntax::struct_of(sig, ind) && smash_on()
+}
+
+/// The eta redesign's switch, off while its stages land: opaque, so the
+/// model's proofs handle smashed structures without knowing it is off
+/// (only `smash_dead` looks inside).
+#[verifier::opaque]
+pub open spec fn smash_on() -> bool {
     false
+}
+
+/// While the switch is off nothing is smashed: the dismissal of the
+/// cases the redesign's later stages make real (docs/TYPED_TARGET.md,
+/// "The eta redesign"; it goes when the switch does).
+pub proof fn smash_dead(sig: Sig, ind: u64)
+    requires
+        smash(sig, ind),
+    ensures
+        false,
+{
+    reveal(smash_on);
+}
+
+/// A constructor's value at fields `fs`: its node, or bottom for a
+/// structure's all-bottom fields (smashed).
+pub open spec fn cval(ind: u64, pc: nat, sm: bool, fs: Seq<Cpt>) -> Cpt {
+    if sm && forall|k: int| 0 <= k < fs.len() ==> (#[trigger] fs[k]) is Bot {
+        Cpt::Bot
+    } else {
+        Cpt::Nd(NdKey::Con(ind, pc, sm), fs)
+    }
+}
+
+/// A well-formed constructor node is its own value.
+pub proof fn cval_node(v: Cpt)
+    requires
+        wf(v),
+        v is Nd && v->Nd_0 is Con,
+    ensures
+        cval(v->Nd_0->Con_0, v->Nd_0->Con_1, v->Nd_0->Con_2, v->Nd_1) == v,
+{
+    if v->Nd_0->Con_2 {
+        let k = choose|k: int| 0 <= k < v->Nd_1.len() && !(#[trigger] v->Nd_1[k] is Bot);
+    }
+}
+
+/// It is well formed at well-formed fields.
+pub proof fn cval_wf(ind: u64, pc: nat, sm: bool, fs: Seq<Cpt>)
+    requires
+        aw(fs),
+    ensures
+        wf(cval(ind, pc, sm, fs)),
+{
+    if !(cval(ind, pc, sm, fs) is Bot) {
+        if sm {
+            let k = choose|k: int| 0 <= k < fs.len() && !(#[trigger] fs[k] is Bot);
+        }
+        wf_nd(NdKey::Con(ind, pc, sm), fs);
+    }
+}
+
+/// It grows with the fields.
+pub proof fn cval_le(ind: u64, pc: nat, sm: bool, f1: Seq<Cpt>, f2: Seq<Cpt>)
+    requires
+        f1.len() == f2.len(),
+        forall|k: int| 0 <= k < f1.len() ==> le(#[trigger] f1[k], f2[k]),
+        aw(f1),
+        aw(f2),
+    ensures
+        le(cval(ind, pc, sm, f1), cval(ind, pc, sm, f2)),
+{
+    let (c1, c2) = (cval(ind, pc, sm, f1), cval(ind, pc, sm, f2));
+    cval_wf(ind, pc, sm, f2);
+    if c1 is Bot {
+        assert(crate::dom_compact::le(Cpt::Bot, c2));
+    } else {
+        if c2 is Bot {
+            let k = choose|k: int| 0 <= k < f1.len() && !(#[trigger] f1[k] is Bot);
+            crate::dom_compact::head_le(f1[k], f2[k]);
+        }
+        crate::dom_sem::nd_le(NdKey::Con(ind, pc, sm), f1, f2);
+    }
+}
+
+/// A node at those fields lies below it, or is not well formed.
+pub proof fn node_le_cval(ind: u64, pc: nat, sm: bool, fs: Seq<Cpt>, u: Cpt)
+    requires
+        wf(u),
+        le(u, Cpt::Nd(NdKey::Con(ind, pc, sm), fs)),
+    ensures
+        le(u, cval(ind, pc, sm, fs)),
+{
+    if cval(ind, pc, sm, fs) is Bot && !(u is Bot) {
+        crate::dom_compact::head_le(u, Cpt::Nd(NdKey::Con(ind, pc, sm), fs));
+        assert(u == Cpt::Nd(u->Nd_0, u->Nd_1));
+        crate::dom_sem::nd_le_inv(u->Nd_0, u->Nd_1, Cpt::Nd(NdKey::Con(ind, pc, sm), fs));
+        let k = choose|k: int| 0 <= k < u->Nd_1.len() && !(#[trigger] u->Nd_1[k] is Bot);
+        crate::dom_compact::head_le(u->Nd_1[k], fs[k]);
+    }
 }
 
 /// The shape of `ind`'s canonical recursor.

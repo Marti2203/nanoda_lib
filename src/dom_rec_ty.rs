@@ -87,7 +87,7 @@ pub proof fn minor_out(ss: Sig, sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<E
         typed(crate::dom_rec::apps(xn, fs + hs), e),
         typed(e, Cpt::U),
         le(e, app(rho((km - fds.len() - ihs.len()) as nat),
-            Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, crate::dom_code::smash(sig, sig.ienv.ctor_ind[c])), fs))),
+            crate::dom_code::cval(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, crate::dom_code::smash(sig, sig.ienv.ctor_ind[c]), fs))),
 {
     let (nf, nr) = (fds.len(), ihs.len());
     let ind = sig.ienv.ctor_ind[c];
@@ -121,14 +121,19 @@ pub proof fn minor_out(ss: Sig, sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<E
         assert(fl[i] == wa[np + i]);
         le_trans(fl[i], ws2[i], fs[i]);
     }
-    crate::dom_sem::nd_le(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fl, fs);
-    crate::dom_code::wf_nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fl);
-    crate::dom_code::wf_nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fs);
+    let sm = crate::dom_code::smash(sig, ind);
+    assert(crate::dom_code::aw(fl)) by {
+        assert forall|i: int| 0 <= i < fl.len() implies #[trigger] wf(fl[i]) by {}
+    }
+    crate::dom_code::cval_le(ind, pc, sm, fl, fs);
+    let (c1, c2) = (crate::dom_code::cval(ind, pc, sm, fl), crate::dom_code::cval(ind, pc, sm, fs));
+    crate::dom_code::cval_wf(ind, pc, sm, fl);
+    crate::dom_code::cval_wf(ind, pc, sm, fs);
     let m = rho((km - nf - nr) as nat);
     assert(wf(m));
     le_refl(m);
-    crate::dom_sound::app_mono(m, m, Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fl), Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fs));
-    le_trans(e, app(m, Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fl)), app(m, Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fs)));
+    crate::dom_sound::app_mono(m, m, c1, c2);
+    le_trans(e, app(m, c1), app(m, c2));
     e
 }
 
@@ -625,6 +630,86 @@ pub proof fn rec_minor(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: Level
     let e = minor_out(ss, sig, g, f2, i2, km, c, us2, pvars, li, rho, ds[mi], minor, fs, hs);
     exts_at(rho0, xs.subrange(0, mi), p as nat);
     assert(v == Cpt::Nd(NdKey::Con(ind, p as nat, crate::dom_code::smash(sig, ind)), fs));
+    crate::dom_code::cval_node(v);
+    e
+}
+
+/// THE MINOR'S OUTPUT at a smashed structure's irrefutable match: the
+/// only minor at bottom fields, typed below the motive at bottom, so at
+/// the major.
+#[verifier::spinoff_prover]
+pub proof fn rec_minor_bot(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelSpec, rho0: Env, ds: Seq<Cpt>, xs: Seq<Cpt>) -> (e: Cpt)
+    requires
+        crate::dom_sound::sound_oracle(ss, sig),
+        rec_scope(sig, rid),
+        derivable(ss, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
+        forall|i: nat| #[trigger] wf(rho0(i)),
+        crate::dom_tele::chain_ok(sig, rtds(sig, rid, ls), rho0, ds, xs),
+        !crate::dom_rec::rec_ok(sig, rid, xs),
+        crate::dom_rec::rec_bot_ok(sig, rid, xs),
+    ensures
+        typed(crate::dom_rec::recval(sig, rid, xs), e),
+        typed(e, Cpt::U),
+        le(e, app(xs[rshape(sig, rid).np as int], xs.last())),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    let lm = crate::rec_canon::elim_level(sig, rid, ind);
+    let (np, nmin) = (sh.np, sh.nmin());
+    let tds = rtds(sig, rid, ls);
+    rec_ty_split(sig, rid, ls);
+    let p: int = 0;
+    scope_ctor(sig, rid, p);
+    let nf = sh.fields[p].len();
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    let fs = crate::dom_rec::bot_fields(sig, rid);
+    let hs = Seq::<Cpt>::empty();
+    let c = sh.ctors[p];
+    let mi = np + 1 + p;
+    let minor = xs[mi];
+    assert(crate::dom_rec::recval(sig, rid, xs) == crate::dom_rec::apps(minor, fs));
+    assert(fs + hs =~= fs);
+    // no recursive fields
+    rec_pos_facts(sh.fields[p], sh.ind, sh.us(), np, sh.ni, nf);
+    if sh.rposj(p).len() > 0 {
+        let k = sh.rposj(p)[0] as int;
+        assert(crate::dom_rec::rec_field(sig, rid, p, k));
+    }
+    let nr = 0nat;
+    // the minor's type at the instance
+    assert(sh.head_doms(lm)[mi] == sh.minor_ty(p));
+    assert(tds[mi] == crate::expr_model::subst_expr_levels(sh.minor_ty(p), rd.uparams, ls));
+    let (f2, i2) = crate::dom_rec_shape::minor_shape(sh, p, rd.uparams, ls);
+    let us2 = crate::level_model::subst_levels_spec(sh.us(), rd.uparams, ls);
+    let km = (p + nf + nr) as nat;
+    let pvars = vars((1 + p + nf + nr) as nat, np);
+    let li = crate::dom_tele::tele_prefix(ss, sig, Seq::empty(), tds, rbody(sig, rid), l, rho0, ds, xs, mi);
+    let g = Seq::<ExprSpec>::empty() + tds.subrange(0, mi);
+    let rho = crate::dom_tele::exts(rho0, xs.subrange(0, mi));
+    assert(crate::dom_sound::dfit(sig, tds[mi], crate::dom_tele::exts(rho0, xs.subrange(0, mi)), ds[mi], xs[mi]));
+    // the constructor's arity
+    let tc = sig.consts[c].ty;
+    assert(tc == binds(BinderKind::Pi, sh.pdoms + sh.fields[p], crate::rec_canon::tbody(tc, np + nf)));
+    spine_const_nonbind(ind, sh.us(), vars(nf, np) + sh.tss[p]);
+    crate::dom_rec_shape::tarity_binds(sh.pdoms + sh.fields[p], crate::rec_canon::tbody(tc, np + nf));
+    crate::dom_rec_shape::tarity_sl(tc, sig.consts[c].lps, us2);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] wf(xs[i]) by {
+        assert(crate::dom_sound::dfit(sig, tds[i], crate::dom_tele::exts(rho0, xs.subrange(0, i)), ds[i], xs[i]));
+        typed_wf(xs[i], ds[i]);
+    }
+    assert(crate::dom_code::aw(fs));
+    assert(crate::dom_code::aw(hs));
+    let e = minor_out(ss, sig, g, f2, i2, km, c, us2, pvars, li, rho, ds[mi], minor, fs, hs);
+    exts_at(rho0, xs.subrange(0, mi), p as nat);
+    // the constructor's value at bottom fields is bottom
+    let sm = crate::dom_code::smash(sig, ind);
+    assert(crate::dom_code::cval(ind, p as nat, sm, fs) == Cpt::Bot);
+    let mo = xs[np as int];
+    assert(wf(mo) && wf(xs.last()));
+    le_refl(mo);
+    crate::dom_sound::app_mono(mo, mo, Cpt::Bot, xs.last());
+    le_trans(e, app(mo, Cpt::Bot), app(mo, xs.last()));
     e
 }
 
@@ -707,7 +792,7 @@ pub proof fn rec_step(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelS
         derivable(ss, eq(Seq::empty(), dty_at(sig, rid, ls), dty_at(sig, rid, ls), sort(l))),
         forall|i: nat| #[trigger] wf(rho0(i)),
         crate::dom_tele::chain_ok(sig, rtds(sig, rid, ls), rho0, ds, xs),
-        crate::dom_rec::rec_ok(sig, rid, xs),
+        crate::dom_rec::rec_ok(sig, rid, xs) || crate::dom_rec::rec_bot_ok(sig, rid, xs),
     ensures
         mem(sig, dty_at(sig, rid, ls), rho0, r.0),
         typed(r.0, Cpt::U),
@@ -717,7 +802,11 @@ pub proof fn rec_step(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: LevelS
 {
     let np = rshape(sig, rid).np;
     let rv = crate::dom_rec::recval(sig, rid, xs);
-    let e = rec_minor(ss, sig, rid, ls, l, rho0, ds, xs);
+    let e = if crate::dom_rec::rec_ok(sig, rid, xs) {
+        rec_minor(ss, sig, rid, ls, l, rho0, ds, xs)
+    } else {
+        rec_minor_bot(ss, sig, rid, ls, l, rho0, ds, xs)
+    };
     rec_motive(ss, sig, rid, ls, l, rho0, ds, xs);
     let tv = app(xs[np as int], xs.last());
     typed_weak(rv, e, tv);

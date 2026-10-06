@@ -592,6 +592,10 @@ pub proof fn proj_iota_sup(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
     crate::dom_iota::con_major(sig, rid, 0, us, dps, pv, xf, ak, args, rho, xf);
     crate::beta_model::spine_recompose(x);
     let node = Cpt::Nd(NdKey::Con(s, 0, crate::dom_code::smash(sig, s)), xf);
+    // the projected field is not bottom, so the value is the node
+    crate::dom_compact::head_le(u, v2);
+    assert(!(xf[i as int] is Bot));
+    assert(crate::dom_code::cval(s, 0, crate::dom_code::smash(sig, s), xf) == node);
     proj_intro(sig, i, x, rho, node);
     assert(node->Nd_1[i as int] == v2);
     crate::dom_model::mem_down_e(sig, m, rho, v2, u);

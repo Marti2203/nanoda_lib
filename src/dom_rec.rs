@@ -70,18 +70,41 @@ pub open spec fn rec_ok(sig: Sig, rid: u64, ins: Seq<Cpt>) -> bool {
     &&& rd.num_params + rd.num_motives + ins.last()->Nd_0->Con_1 < ins.len()
 }
 
-/// THE RECURSOR'S CODE FUNCTION at its inputs.
+/// A smashed structure's recursor matches irrefutably: a major that is
+/// not its constructor's value (bottom, above all) counts as the
+/// constructor at bottom fields.
+pub open spec fn rec_bot_ok(sig: Sig, rid: u64, ins: Seq<Cpt>) -> bool {
+    let rd = sig.ienv.recs[rid];
+    &&& sig.ienv.recs.contains_key(rid)
+    &&& ins.len() == rd.major_idx + 1
+    &&& rec_pre(rd) <= rd.major_idx
+    &&& crate::dom_code::smash(sig, rec_ind(sig, rid))
+    &&& rd.rules.len() == 1
+    &&& forall|k: int| 0 <= k < rd.rules[0].nfields ==> !#[trigger] rec_field(sig, rid, 0, k)
+    &&& rd.num_params + rd.num_motives < ins.len()
+}
+
+/// Bottom fields, as many as the structure's constructor has.
+pub open spec fn bot_fields(sig: Sig, rid: u64) -> Seq<Cpt> {
+    Seq::new(sig.ienv.recs[rid].rules[0].nfields, |k: int| Cpt::Bot)
+}
+
+/// THE RECURSOR'S CODE FUNCTION at its inputs: the major's minor at its
+/// fields and the recursive results, a structure's at bottom fields when
+/// the major is bottom.
 pub open spec fn recval(sig: Sig, rid: u64, ins: Seq<Cpt>) -> Cpt
     decreases (if ins.len() > 0 { ht(ins.last()) } else { 0 }), 1int,
 {
     let rd = sig.ienv.recs[rid];
-    if !rec_ok(sig, rid, ins) {
-        Cpt::Bot
-    } else {
+    if rec_ok(sig, rid, ins) {
         let p = ins.last()->Nd_0->Con_1;
         let fs = ins.last()->Nd_1;
         let minor = ins[(rd.num_params + rd.num_motives + p) as int];
         apps(apps(minor, fs), rec_ihs(sig, rid, ins, fs.len()))
+    } else if rec_bot_ok(sig, rid, ins) {
+        apps(ins[(rd.num_params + rd.num_motives) as int], bot_fields(sig, rid))
+    } else {
+        Cpt::Bot
     }
 }
 
@@ -233,6 +256,23 @@ pub proof fn recval_wf(sig: Sig, rid: u64, ins: Seq<Cpt>)
         apps_wf(minor, fs);
         rec_ihs_wf(sig, rid, ins, fs.len());
         apps_wf(apps(minor, fs), rec_ihs(sig, rid, ins, fs.len()));
+    } else if rec_bot_ok(sig, rid, ins) {
+        assert(wf(ins[(rd.num_params + rd.num_motives) as int]));
+        apps_wf(ins[(rd.num_params + rd.num_motives) as int], bot_fields(sig, rid));
+    }
+}
+
+/// Without recursive fields there are no recursive results.
+pub proof fn rec_ihs_none(sig: Sig, rid: u64, ins: Seq<Cpt>, k: nat)
+    requires
+        forall|j: int| 0 <= j < k ==> !#[trigger] rec_field(sig, rid, ins.last()->Nd_0->Con_1 as int, j),
+    ensures
+        rec_ihs(sig, rid, ins, k) == Seq::<Cpt>::empty(),
+    decreases k,
+{
+    if k > 0 {
+        rec_ihs_none(sig, rid, ins, (k - 1) as nat);
+        assert(!rec_field(sig, rid, ins.last()->Nd_0->Con_1 as int, k - 1));
     }
 }
 
@@ -288,6 +328,9 @@ pub proof fn recval_mono(sig: Sig, rid: u64, ins1: Seq<Cpt>, ins2: Seq<Cpt>)
 {
     let rd = sig.ienv.recs[rid];
     recval_wf(sig, rid, ins2);
+    if !rec_ok(sig, rid, ins1) && rec_bot_ok(sig, rid, ins1) {
+        recval_bot_mono(sig, rid, ins1, ins2);
+    }
     if rec_ok(sig, rid, ins1) {
         rec_ok_mono(sig, rid, ins1, ins2);
         let (m1, m2) = (ins1.last(), ins2.last());
@@ -307,6 +350,43 @@ pub proof fn recval_mono(sig: Sig, rid: u64, ins1: Seq<Cpt>, ins2: Seq<Cpt>)
         rec_ihs_wf(sig, rid, ins1, fs1.len());
         rec_ihs_wf(sig, rid, ins2, fs2.len());
         apps_mono(apps(n1, fs1), apps(n2, fs2), h1, h2);
+    }
+}
+
+/// From a bottom major: the larger major is bottom too, or the
+/// structure's constructor at fields above bottom.
+proof fn recval_bot_mono(sig: Sig, rid: u64, ins1: Seq<Cpt>, ins2: Seq<Cpt>)
+    requires
+        pre_le(ins1, ins2),
+        all_wf(ins1),
+        all_wf(ins2),
+        !rec_ok(sig, rid, ins1),
+        rec_bot_ok(sig, rid, ins1),
+    ensures
+        le(recval(sig, rid, ins1), recval(sig, rid, ins2)),
+{
+    let rd = sig.ienv.recs[rid];
+    let mi = (rd.num_params + rd.num_motives) as int;
+    let (n1, n2) = (ins1[mi], ins2[mi]);
+    let bs = bot_fields(sig, rid);
+    assert(le(n1, n2) && wf(n1) && wf(n2));
+    assert forall|i: int| 0 <= i < bs.len() implies #[trigger] wf(bs[i]) by {}
+    let m2 = ins2.last();
+    assert(wf(ins2[ins2.len() - 1]));
+    if !rec_ok(sig, rid, ins2) {
+        assert(rec_bot_ok(sig, rid, ins2));
+        assert forall|i: int| 0 <= i < bs.len() implies le(#[trigger] bs[i], bs[i]) by {
+            le_refl(bs[i]);
+        }
+        apps_mono(n1, n2, bs, bs);
+    } else {
+        let fs2 = m2->Nd_1;
+        assert(m2->Nd_0->Con_1 == 0);
+        assert forall|i: int| 0 <= i < fs2.len() implies #[trigger] wf(fs2[i]) by {}
+        assert forall|i: int| 0 <= i < bs.len() implies le(#[trigger] bs[i], fs2[i]) by {}
+        apps_mono(n1, n2, bs, fs2);
+        rec_ihs_none(sig, rid, ins2, fs2.len());
+        assert(apps(apps(n2, fs2), Seq::<Cpt>::empty()) == apps(n2, fs2));
     }
 }
 
