@@ -96,7 +96,8 @@ pub proof fn fire_inst_interp(sig: Sig, a: ExprSpec)
 
 /// One head step, if any: beta, delta, zeta, reduction in function
 /// position, then iota at a recursor whose major premise is a constructor
-/// application, or reduction of that major premise.
+/// application, or reduction of that major premise; a projection of a
+/// constructor application, or reduction of its subject.
 pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
     decreases t,
 {
@@ -119,6 +120,14 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
         },
         ExprSpec::Const(c, ls) => if crate::ti_syntax::is_def(sig, c, ls) { Some(crate::ti_syntax::dval(sig, c, ls)) } else { None },
         ExprSpec::Let(_, v, b) => Some(inst(0, *v, *b)),
+        ExprSpec::Proj(i, x) => if crate::ti_syntax::proj_fire(sig, t) {
+            Some(crate::ti_syntax::proj_result(sig, t))
+        } else {
+            match hstep(sig, *x) {
+                Some(x2) => Some(ExprSpec::Proj(i, Box::new(x2))),
+                None => None,
+            }
+        },
         _ => None,
     }
 }
