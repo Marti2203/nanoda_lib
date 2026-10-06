@@ -23,7 +23,7 @@ use crate::dom_con_rel::trest;
 #[cfg(verus_only)]
 use crate::ti_chain::tchain;
 #[cfg(verus_only)]
-use crate::dom_rec_ty::{rshape, rtds, rbody, rec_scope};
+use crate::dom_rec_ty::{rshape, rtds, rbody, rec_scope, rec_scope_g};
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -343,7 +343,7 @@ pub proof fn const_ax(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
 /// type at the first (`ConstAx`, its premise from the closed type).
 pub proof fn ctor_lv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, clv: Seq<LevelSpec>)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
         crate::dom_levels::sig_lps(sig),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         0 <= p < rshape(sig, rid).nmin(),
@@ -384,7 +384,7 @@ pub proof fn ctor_lv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, clv
 pub proof fn sr_switch(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, us: Seq<LevelSpec>, cargs: Seq<ExprSpec>, tm: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
         crate::dom_levels::sig_lps(sig),
         0 <= p < rshape(sig, rid).nmin(),
         crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),

@@ -297,7 +297,7 @@ pub open spec fn cbody(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>) -> ExprS
 /// which is no binder.
 pub proof fn ctor_ty_split(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>)
     requires
-        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_rec_ty::rec_scope_g(sig, rid),
         0 <= p < crate::dom_rec_ty::rshape(sig, rid).nmin(),
     ensures
         crate::ti_syntax::dty_at(sig, crate::dom_rec_ty::rshape(sig, rid).ctors[p], clv)

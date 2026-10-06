@@ -257,6 +257,8 @@ pub proof fn tpair_spair(sig: Sig, dl: Ctx, ds: Seq<ExprSpec>, xs: Seq<ExprSpec>
         k <= ds.len(),
     ensures
         crate::ti_sub::spair(sig, ds.subrange(0, k as int), dl, tsub(xs, k), tsub(xs2, k)),
+        forall|q: int| 0 <= q < k ==> #[trigger] crate::ti_sub::tconvd(sig, dl,
+            crate::ti_subst::psub(ds[q], tsub(xs, q as nat)), crate::ti_subst::psub(ds[q], tsub(xs2, q as nat))),
     decreases k,
 {
     if k == 0 {
@@ -278,6 +280,35 @@ pub proof fn tpair_spair(sig: Sig, dl: Ctx, ds: Seq<ExprSpec>, xs: Seq<ExprSpec>
     crate::ti_sub::d_sub(sig, da, dl, s, s2);
     assert(derivable(sig, eq(dl, xs[k0 as int], xs2[k0 as int], crate::ti_subst::psub(a, s))));
     crate::ti_sub::spair_cons(sig, ck, dl, s, s2, a, xs[k0 as int], xs2[k0 as int], l1);
+    assert(crate::ti_sub::tconvd(sig, dl, crate::ti_subst::psub(a, s), crate::ti_subst::psub(a, s2))) by {
+        reveal(crate::ti_sub::tconvd);
+    }
+}
+
+/// Substituting past binders a term was lifted over: they drop out.
+pub proof fn vsub_lift_mid(e: ExprSpec, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
+    ensures
+        crate::ti_spine::vsub(crate::subst_algebra::lift(b.len(), c.len(), e), a + b + c) == crate::ti_spine::vsub(e, a + c),
+{
+    use crate::ti_subst::{psub, rn, comp_ss, psub_psub, psub_ext, lift_is_rn, lr};
+    let (xs, ys) = (a + b + c, a + c);
+    let (n, m) = (xs.len(), ys.len());
+    let (bl, cl) = (b.len(), c.len());
+    lift_is_rn(bl, cl, e);
+    psub_psub(e, rn(lr(bl, cl)), tsub(xs, n));
+    assert forall|i: nat| #[trigger] comp_ss(rn(lr(bl, cl)), tsub(xs, n))(i) == tsub(ys, m)(i) by {
+        let j = lr(bl, cl)(i);
+        tsub_at(xs, n, j);
+        tsub_at(ys, m, i);
+        if i < cl {
+            assert(xs[n - 1 - i] == ys[m - 1 - i]);
+        } else if i < m {
+            assert(xs[n - 1 - (i + bl)] == ys[m - 1 - i]);
+        }
+    }
+    psub_ext(e, comp_ss(rn(lr(bl, cl)), tsub(xs, n)), tsub(ys, m));
+    vsub_tsub(crate::subst_algebra::lift(bl, cl, e), xs);
+    vsub_tsub(e, ys);
 }
 
 /// The substitution, pointwise.
