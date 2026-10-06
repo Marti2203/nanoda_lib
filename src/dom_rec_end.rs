@@ -819,7 +819,7 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     &&& crate::dom_rec::rec_ok(sig, rc.c, rc.fs)
     &&& le(rc.u, crate::dom_rec::recval(sig, rc.c, rc.fs))
     &&& 0 <= rc.j < sh.nmin()
-    &&& rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(sh.ind, rc.j as nat, false)
+    &&& rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind))
     &&& rc.fsm(sig).len() == rc.nf(sig)
     &&& rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig)
     &&& rc.pargs.len() == sh.np && rc.pargs2.len() == sh.np
@@ -970,7 +970,7 @@ proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
         rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig),
         dm == rc.ds[rc.pre(sig)],
         dm is Nd && dm->Nd_0 is Ty,
-        rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.j as nat, false),
+        rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.j as nat, crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind)),
         rc.fsm(sig).len() == rc.nf(sig),
         has_type(rc.nn, rc.wx(sig), dm),
         has_type(rc.nn, dm, Cpt::U),
@@ -2340,14 +2340,14 @@ pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, us: Seq<LevelSpec>, pa: nat, 
         crate::dom_model::mem(sig, spine_app(ExprSpec::Const(crate::dom_rec_ty::rshape(sig, c).ctors[j], us),
             crate::rec_canon::vars(pa, crate::dom_rec_ty::rshape(sig, c).np) + crate::rec_canon::vars(from, bnd.len())), rho, ux),
     ensures
-        le(ux, Cpt::Nd(NdKey::Con(crate::dom_rec_ty::rshape(sig, c).ind, j as nat, false), bnd)),
+        le(ux, Cpt::Nd(NdKey::Con(crate::dom_rec_ty::rshape(sig, c).ind, j as nat, crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind)), bnd)),
 {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let np = sh.np;
     let cj = sh.ctors[j];
     let h = ExprSpec::Const(cj, us);
     let args = crate::rec_canon::vars(pa, np) + crate::rec_canon::vars(from, bnd.len());
-    let top = Cpt::Nd(NdKey::Con(sh.ind, j as nat, false), bnd);
+    let top = Cpt::Nd(NdKey::Con(sh.ind, j as nat, crate::dom_code::smash(sig, sh.ind)), bnd);
     let (hc, vs) = crate::dom_bound::spine_mem(sig, h, args, rho, ux);
     assert(crate::dom_bound::args_w(sig, args, rho, vs));
     assert forall|i: int| 0 <= i < vs.len() implies #[trigger] wf(vs[i]) by {
@@ -2361,8 +2361,8 @@ pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, us: Seq<LevelSpec>, pa: nat, 
         assert(wf(bnd[i]));
         le_trans(vs[np + i], rho((from + bnd.len() - 1 - i) as nat), bnd[i]);
     }
-    crate::dom_sem::nd_le(NdKey::Con(sh.ind, j as nat, false), fv, bnd);
-    let mid = Cpt::Nd(NdKey::Con(sh.ind, j as nat, false), fv);
+    crate::dom_sem::nd_le(NdKey::Con(sh.ind, j as nat, crate::dom_code::smash(sig, sh.ind)), fv, bnd);
+    let mid = Cpt::Nd(NdKey::Con(sh.ind, j as nat, crate::dom_code::smash(sig, sh.ind)), fv);
     crate::dom_rec_ty::scope_ctor(sig, c, j);
     reveal(crate::dom_model::mem);
     let wit = choose|wit: crate::dom_model::Wit| #[trigger] crate::dom_model::mem_w(sig, h, rho, hc, wit);
@@ -2392,7 +2392,7 @@ pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, us: Seq<LevelSpec>, pa: nat, 
     crate::dom_iota::ctor_ty_split(sig, c, j, us);
     let body = crate::dom_iota::cbody(sig, c, j, us);
     assert(crate::dom_code::aw(vs));
-    crate::dom_iota::cf_apps(sh.ind, j as nat, np, crate::dom_iota::ctds(sig, c, j, us), body, Seq::empty(), 0, v, vs);
+    crate::dom_iota::cf_apps(sh.ind, j as nat, crate::dom_code::smash(sig, sh.ind), np, crate::dom_iota::ctds(sig, c, j, us), body, Seq::empty(), 0, v, vs);
     assert(crate::dom_iota::cacc(Seq::empty(), vs, 0, np) =~= fv);
     le_refl(Cpt::Bot);
     assert(crate::dom_rec::all_wf(vs));
@@ -2457,7 +2457,7 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
             assert(crate::dom_model::mem(sig, spine_app(cj, vs), rho, ux));
             ctor_mem_le(sig, rc.c, rc.j, us, pa, nr, rho, ux, fsm);
             let wx = rc.wx(sig);
-            assert(wx == Cpt::Nd(NdKey::Con(sh.ind, rc.j as nat, false), fsm));
+            assert(wx == Cpt::Nd(NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind)), fsm));
             crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
             assert(crate::dom_rec::all_wf(rc.fs)) by {
                 assert(crate::dom_con_rel::flds_ok(sig, rc.nn, rc.g, rc.t0(sig), rc.t02(sig), rc.xs, rc.xs2, rc.ds, rc.fs, 0));

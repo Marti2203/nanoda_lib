@@ -170,7 +170,7 @@ pub open spec fn canon_code(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cp
     } else {
         Seq::empty()
     };
-    Cpt::Nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls), false), code_args(sig, ind, args) + seq![Cpt::Nd(NdKey::Tag(2), blocks)])
+    Cpt::Nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls), crate::dom_code::smash(sig, ind)), code_args(sig, ind, args) + seq![Cpt::Nd(NdKey::Tag(2), blocks)])
 }
 
 /// The table's first `j` blocks.
@@ -328,7 +328,7 @@ pub proof fn canon_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
             assert(comps[i] == ca[i]);
         }
     }
-    wf_nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls), false), comps);
+    wf_nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls), crate::dom_code::smash(sig, ind)), comps);
 }
 
 pub proof fn cblocks_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat)
@@ -847,7 +847,7 @@ pub proof fn canon_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2
     pre_le_push2(c1, c2, Cpt::Nd(NdKey::Tag(2), b1), Cpt::Nd(NdKey::Tag(2), b2));
     assert(c1.push(Cpt::Nd(NdKey::Tag(2), b1)) =~= c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)]);
     assert(c2.push(Cpt::Nd(NdKey::Tag(2), b2)) =~= c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
-    nd_le(NdKey::Ty(ind, is_prop_at(sig, ind, ls), false), c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)], c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
+    nd_le(NdKey::Ty(ind, is_prop_at(sig, ind, ls), crate::dom_code::smash(sig, ind)), c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)], c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
 }
 
 pub proof fn cblocks_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>, j: nat)

@@ -178,14 +178,14 @@ pub proof fn tf_spine(sig: Sig, c: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>,
 }
 
 /// Constructor approximations are closed downward.
-pub proof fn cf_down(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, u: Cpt, v: Cpt)
+pub proof fn cf_down(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, u: Cpt, v: Cpt)
     requires
-        cf_fun(ind, pc, np, t, fs, k, v),
+        cf_fun(ind, pc, sm, np, t, fs, k, v),
         le(u, v),
         wf(u),
         wf(v),
     ensures
-        cf_fun(ind, pc, np, t, fs, k, u),
+        cf_fun(ind, pc, sm, np, t, fs, k, u),
     decreases t,
 {
     if u is Bot {
@@ -196,7 +196,7 @@ pub proof fn cf_down(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: n
         ExprSpec::Bind(BinderKind::Pi, a, b) => {
             let f = u->Lam_0;
             assert forall|i: int| 0 <= i < f.len() implies
-                cf_fun(ind, pc, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
+                cf_fun(ind, pc, sm, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
                 let e = f[i];
                 assert(f.contains(e));
                 assert(steps(u, true) == f);
@@ -204,13 +204,13 @@ pub proof fn cf_down(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: n
                 parts_lower(u);
                 appk_mono_fun(u, v, e.0, true);
                 le_trans(e.1, app(u, e.0), app(v, e.0));
-                crate::dom_con_rel::cf_app(ind, pc, np, *a, *b, fs, k, v, e.0);
+                crate::dom_con_rel::cf_app(ind, pc, sm, np, *a, *b, fs, k, v, e.0);
                 appk_wf(v, e.0, true);
-                cf_down(ind, pc, np, *b, if k < np { fs } else { fs.push(e.0) }, k + 1, e.1, app(v, e.0));
+                cf_down(ind, pc, sm, np, *b, if k < np { fs } else { fs.push(e.0) }, k + 1, e.1, app(v, e.0));
             }
         },
         _ => {
-            le_trans(u, v, Cpt::Nd(NdKey::Con(ind, pc, false), fs));
+            le_trans(u, v, Cpt::Nd(NdKey::Con(ind, pc, sm), fs));
         },
     }
 }
@@ -232,7 +232,7 @@ pub proof fn cf_spine(sig: Sig, c: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>,
     ensures
         args_w(sig, args, rho, ws),
         wf(u),
-        cf_fun(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat,
+        cf_fun(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, crate::dom_code::smash(sig, sig.ienv.ctor_ind[c]),
             crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[c]).np,
             tbody(dty_at(sig, c, ls), args.len()), flds(ws, crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[c]).np),
             args.len(), u),
@@ -249,7 +249,7 @@ pub proof fn cf_spine(sig: Sig, c: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>,
             let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] sem_mem(sig, c, ls, u, a, v);
             typed_wf(v, a);
             head_le(u, v);
-            cf_down(ind, pc, np, t, Seq::empty(), 0, u, v);
+            cf_down(ind, pc, crate::dom_code::smash(sig, ind), np, t, Seq::empty(), 0, u, v);
         }
         assert(flds(Seq::<Cpt>::empty(), np) =~= Seq::<Cpt>::empty());
         return Seq::empty();
@@ -274,9 +274,9 @@ pub proof fn cf_spine(sig: Sig, c: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>,
         }
     } else {
         assert(wf_ is Lam);
-        crate::dom_con_rel::cf_app(ind, pc, np, *tk->Bind_1, *tk->Bind_2, f0, (k - 1) as nat, wf_, wx);
+        crate::dom_con_rel::cf_app(ind, pc, crate::dom_code::smash(sig, ind), np, *tk->Bind_1, *tk->Bind_2, f0, (k - 1) as nat, wf_, wx);
         appk_wf(wf_, wx, true);
-        cf_down(ind, pc, np, tbody(t, k as nat), flds(ws, np), k as nat, u, app(wf_, wx));
+        cf_down(ind, pc, crate::dom_code::smash(sig, ind), np, tbody(t, k as nat), flds(ws, np), k as nat, u, app(wf_, wx));
     }
     ws
 }
@@ -332,7 +332,7 @@ pub proof fn motive_bound(sig: Sig, k: nat, c: u64, us: Seq<LevelSpec>, args: Se
         args.len() == tarity(dty_at(sig, c, us)),
     ensures
         args_w(sig, args, rho, ws),
-        le(e, app(rho(k), Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, false),
+        le(e, app(rho(k), Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, crate::dom_code::smash(sig, sig.ienv.ctor_ind[c])),
             flds(ws, crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[c]).np)))),
 {
     let ind = sig.ienv.ctor_ind[c];
@@ -362,8 +362,8 @@ pub proof fn motive_bound(sig: Sig, k: nat, c: u64, us: Seq<LevelSpec>, args: Se
         assert(fl[i] == ws[np + i]);
         assert(mem(sig, args[np + i], rho, ws[np + i]));
     }
-    let node = Cpt::Nd(NdKey::Con(ind, pc, false), fl);
-    crate::dom_code::wf_nd(NdKey::Con(ind, pc, false), fl);
+    let node = Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fl);
+    crate::dom_code::wf_nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fl);
     assert(le(wx, node));
     crate::dom_sound::app_mono(wf_, rho(k), wx, node);
     le_trans(e, app(wf_, wx), app(rho(k), node));

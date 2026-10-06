@@ -116,17 +116,17 @@ pub open spec fn tf_fun(sig: Sig, c: u64, ls: Seq<LevelSpec>, t: ExprSpec, pre: 
 /// whose entries' outputs approximate it at one more input, and at the end
 /// (an application of the inductive, past the parameters) the value, the
 /// constructor's position over the fields.
-pub open spec fn cf_fun(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt) -> bool
+pub open spec fn cf_fun(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt) -> bool
     decreases t,
 {
     v is Bot || match t {
         ExprSpec::Bind(BinderKind::Pi, _, b) => match v {
             Cpt::Lam(f) => forall|i: int| 0 <= i < f.len() ==>
-                cf_fun(ind, pc, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1),
+                cf_fun(ind, pc, sm, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1),
             _ => false,
         },
         _ => k >= np && crate::beta_model::spine_head(t) is Const && crate::beta_model::spine_head(t)->Const_0 == ind
-            && le(v, Cpt::Nd(NdKey::Con(ind, pc, false), fs)),
+            && le(v, Cpt::Nd(NdKey::Con(ind, pc, sm), fs)),
     }
 }
 
@@ -166,7 +166,7 @@ pub open spec fn code_ok(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v: Cpt) -
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
         v is Bot || (ctor_of(sig, ind, c) && crate::dom_code::canon_ok(sig, ind)
-            && cf_fun(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v))
+            && cf_fun(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::smash(sig, ind), crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v))
     } else if sig.ienv.recs.contains_key(c) {
         v is Bot || (crate::dom_rec_end::rec_hyps(sig, c) && rf_fun(sig, c, t, Seq::empty(), v))
     } else {

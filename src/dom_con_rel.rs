@@ -228,26 +228,26 @@ pub proof fn rel_down(sig: Sig, lo: nat, hi: nat, g: Ctx, m: ExprSpec, m2: ExprS
 
 /// Applying a constructor approximation gives one, the argument recorded
 /// as a field past the parameters.
-pub proof fn cf_app(ind: u64, pc: nat, np: nat, ta: ExprSpec, b: ExprSpec, fs: Seq<Cpt>, k: nat, u: Cpt, w: Cpt)
+pub proof fn cf_app(ind: u64, pc: nat, sm: bool, np: nat, ta: ExprSpec, b: ExprSpec, fs: Seq<Cpt>, k: nat, u: Cpt, w: Cpt)
     requires
-        cf_fun(ind, pc, np, ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(b)), fs, k, u),
+        cf_fun(ind, pc, sm, np, ExprSpec::Bind(BinderKind::Pi, Box::new(ta), Box::new(b)), fs, k, u),
         u is Lam,
         wf(u),
         wf(w),
     ensures
-        cf_fun(ind, pc, np, b, if k < np { fs } else { fs.push(w) }, k + 1, app(u, w)),
+        cf_fun(ind, pc, sm, np, b, if k < np { fs } else { fs.push(w) }, k + 1, app(u, w)),
 {
     let t = seq![u];
     assert(t[0] == u);
     let f = u->Lam_0;
     let fw = if k < np { fs } else { fs.push(w) };
-    let sm = selk(t, w, ht(u), true);
+    let sel = selk(t, w, ht(u), true);
     appk_wf(u, w, true);
-    assert forall|y: Cpt| #[trigger] sm.contains(y) implies cf_fun(ind, pc, np, b, fw, k + 1, y) by {
+    assert forall|y: Cpt| #[trigger] sel.contains(y) implies cf_fun(ind, pc, sm, np, b, fw, k + 1, y) by {
         sel_lam_mem(t, w, ht(u), 1, y);
         let q = choose|q: int| 0 <= q < f.len() && #[trigger] f[q].1 == y && le(f[q].0, w);
         let x = f[q].0;
-        assert(cf_fun(ind, pc, np, b, if k < np { fs } else { fs.push(x) }, k + 1, y));
+        assert(cf_fun(ind, pc, sm, np, b, if k < np { fs } else { fs.push(x) }, k + 1, y));
         assert forall|i: int| 0 <= i < fs.len() implies le(#[trigger] fs[i], fs[i]) by {
             le_refl(fs[i]);
         }
@@ -255,34 +255,34 @@ pub proof fn cf_app(ind: u64, pc: nat, np: nat, ta: ExprSpec, b: ExprSpec, fs: S
         if k >= np {
             pre_le_push(fs, fs, x, w);
         }
-        cf_mono(ind, pc, np, b, if k < np { fs } else { fs.push(x) }, fw, k + 1, y);
+        cf_mono(ind, pc, sm, np, b, if k < np { fs } else { fs.push(x) }, fw, k + 1, y);
     }
     // join the selected outputs
-    cf_jall(ind, pc, np, b, fw, k + 1, sm, sm.len() as int);
+    cf_jall(ind, pc, sm, np, b, fw, k + 1, sel, sel.len() as int);
 }
 
-pub proof fn cf_jall(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, s: Seq<Cpt>, j: int)
+pub proof fn cf_jall(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, s: Seq<Cpt>, j: int)
     requires
         pw(s),
         0 <= j <= s.len(),
-        forall|y: Cpt| #[trigger] s.contains(y) ==> cf_fun(ind, pc, np, t, fs, k, y),
+        forall|y: Cpt| #[trigger] s.contains(y) ==> cf_fun(ind, pc, sm, np, t, fs, k, y),
     ensures
-        cf_fun(ind, pc, np, t, fs, k, joinall(s, j)),
+        cf_fun(ind, pc, sm, np, t, fs, k, joinall(s, j)),
     decreases j,
 {
     if j > 0 {
-        cf_jall(ind, pc, np, t, fs, k, s, j - 1);
+        cf_jall(ind, pc, sm, np, t, fs, k, s, j - 1);
         jall_pw(s, j - 1);
         let x = s[j - 1];
         assert(s.contains(x));
-        cf_join(ind, pc, np, t, fs, k, joinall(s, j - 1), x);
+        cf_join(ind, pc, sm, np, t, fs, k, joinall(s, j - 1), x);
     }
 }
 
 /// A constructor approximation above bottom fixes the telescope's shape.
-pub proof fn cf_shape(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt) -> (r: nat)
+pub proof fn cf_shape(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt) -> (r: nat)
     requires
-        cf_fun(ind, pc, np, t, fs, k, v),
+        cf_fun(ind, pc, sm, np, t, fs, k, v),
         !(v is Bot),
         wf(v),
     ensures
@@ -295,7 +295,7 @@ pub proof fn cf_shape(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: 
             let f = v->Lam_0;
             let i = choose|i: int| 0 <= i < f.len() && !(#[trigger] f[i].1 is Bot);
             assert(wf(f[i].1));
-            let r = cf_shape(ind, pc, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
+            let r = cf_shape(ind, pc, sm, np, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
             r + 1
         },
         _ => 0,
@@ -486,7 +486,7 @@ pub open spec fn cf_inv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Level
     &&& !sig.ienv.recs.contains_key(c)
     &&& tshape(t, ind, r) && tshape(t2, ind, r) && xs.len() + r >= np
     &&& xs.len() + r == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len()
-    &&& cf_fun(ind, pc, np, t, fs, xs.len() as nat, u)
+    &&& cf_fun(ind, pc, crate::dom_code::smash(sig, ind), np, t, fs, xs.len() as nat, u)
     &&& has_type(n, u, a) && has_type(n, a, Cpt::U) && n <= nn
     &&& rel_ty(sig, n, g, t, t2, a) && rel_ty(sig, n, g, t, t, a) && rel_ty(sig, n, g, t2, t2, a)
     &&& derivable(sig, eq(g, m, m2, t)) && derivable(sig, eq(g, m2, m2, t2))
@@ -1038,14 +1038,14 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     let (t0, t02) = (crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2));
     let (t, t2) = (trest(t0, xs), trest(t02, xs2));
     let (m, m2) = (spine_app(ExprSpec::Const(c, ls), xs), spine_app(ExprSpec::Const(c, ls2), xs2));
-    let node = Cpt::Nd(NdKey::Con(ind, pc, false), fs);
+    let node = Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fs);
     assert(wf(u)) by {
         typed_facts_wf(n, u, a);
     }
     head_le(u, node);
     let us = u->Nd_1;
     crate::dom_sem::nd_le_inv(u->Nd_0, us, node);
-    assert(u->Nd_0 == NdKey::Con(ind, pc, false));
+    assert(u->Nd_0 == NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)));
     val_code(n, u, a);
     tm_ind(sig, n, g, m, m2, t, u, a);
     con_tm_unfold(sig, n, g, m, m2, t, u, a);
@@ -1084,8 +1084,8 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
     requires
         cf_inv(sig, nn, n, g, c, ls, ls2, ind, pc, np, 0, xs, xs2, a, ds, fs, u, pv),
         !(u is Bot),
-        u == Cpt::Nd(NdKey::Con(ind, pc, false), u->Nd_1),
-        le(u, Cpt::Nd(NdKey::Con(ind, pc, false), fs)),
+        u == Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), u->Nd_1),
+        le(u, Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fs)),
         wf(u),
         a is Nd && a->Nd_0 is Ty,
         crate::dom_lift::tbl_canon(sig, ind, pv, a),
@@ -1122,7 +1122,7 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
     if us[i] is Bot {
         return;
     }
-    crate::dom_sem::nd_le_inv(u->Nd_0, us, Cpt::Nd(NdKey::Con(ind, pc, false), fs));
+    crate::dom_sem::nd_le_inv(u->Nd_0, us, Cpt::Nd(NdKey::Con(ind, pc, crate::dom_code::smash(sig, ind)), fs));
     assert(le(us[i], w));
     assert(wf(us[i]));
     head_le(us[i], w);
@@ -1479,7 +1479,7 @@ pub proof fn ctor_adeq_core(sig: Sig, nn: nat, n: nat, dl: Ctx, c: u64, ls: Seq<
     crate::ti_spine::const_typed(sig, dl, c, ls, t0);
     crate::ti_spine::const_typed(sig, dl, c, ls2, t0);
     let e: Seq<Cpt> = Seq::empty();
-    let r = cf_shape(ind, pc as nat, np, t0, e, 0, v);
+    let r = cf_shape(ind, pc as nat, crate::dom_code::smash(sig, ind), np, t0, e, 0, v);
     // the telescope's bound, from the joined code's membership
     ctor_tel_bound(sig, c, ls, ind, pc as nat, r, ab);
     crate::conv_cr::lveq_sel(sig.consts[c].ty, sig.consts[c].lps, ls, ls2);
@@ -1552,21 +1552,21 @@ pub proof fn sa_push(h: ExprSpec, xs: Seq<ExprSpec>, x: ExprSpec)
 }
 
 /// The code function sees a telescope only through its shape.
-pub proof fn cf_shape_eq(ind: u64, pc: nat, np: nat, t: ExprSpec, t2: ExprSpec, r: nat, fs: Seq<Cpt>, k: nat, v: Cpt)
+pub proof fn cf_shape_eq(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, t2: ExprSpec, r: nat, fs: Seq<Cpt>, k: nat, v: Cpt)
     requires
-        cf_fun(ind, pc, np, t, fs, k, v),
+        cf_fun(ind, pc, sm, np, t, fs, k, v),
         tshape(t, ind, r),
         tshape(t2, ind, r),
     ensures
-        cf_fun(ind, pc, np, t2, fs, k, v),
+        cf_fun(ind, pc, sm, np, t2, fs, k, v),
     decreases r,
 {
     if !(v is Bot) && r > 0 {
         let (b, b2) = (*t->Bind_2, *t2->Bind_2);
         let f = v->Lam_0;
         assert forall|i: int| 0 <= i < f.len() implies
-            cf_fun(ind, pc, np, b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
-            cf_shape_eq(ind, pc, np, b, b2, (r - 1) as nat, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
+            cf_fun(ind, pc, sm, np, b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
+            cf_shape_eq(ind, pc, sm, np, b, b2, (r - 1) as nat, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
         }
     }
 }
@@ -1599,7 +1599,7 @@ pub proof fn step_facts(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Level
         &&& tchain(sig, g, t, pi(ta, tb)) && tchain(sig, g, t2, pi(ta2, tb2)) && tchain(sig, g, ta, ta2)
         &&& crate::dom_rel::pi_typed(sig, g, ta, tb) && crate::dom_rel::pi_typed(sig, g, ta2, tb2)
         &&& tshape(tb, ind, (r - 1) as nat) && tshape(tb2, ind, (r - 1) as nat)
-        &&& cf_fun(ind, pc, np, tb, if xs.len() < np { fs } else { fs.push(w) }, xs.len() as nat + 1, crate::dom_compact::app(u, w))
+        &&& cf_fun(ind, pc, crate::dom_code::smash(sig, ind), np, tb, if xs.len() < np { fs } else { fs.push(w) }, xs.len() as nat + 1, crate::dom_compact::app(u, w))
         &&& has_type(k1, crate::dom_compact::app(u, w), b) && has_type(k1, b, Cpt::U)
         &&& has_type(nn, w, d0) && has_type(nn, d0, Cpt::U) && wf(w) && wf(d0)
         &&& derivable(sig, eq(g, x, x, ta)) && derivable(sig, eq(g, x2, x2, ta))
@@ -1645,7 +1645,7 @@ pub proof fn step_facts(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Level
     crate::dom_proj::app_typed_at(n, u, a, w);
     typed_facts_wf(k1, w, d0);
     typed_facts_wf(n, u, a);
-    cf_app(ind, pc, np, ta, tb, fs, k, u, w);
+    cf_app(ind, pc, crate::dom_code::smash(sig, ind), np, ta, tb, fs, k, u, w);
     cod_ty_elim(sig, k1, g, a, ta, tb, tb2, x, x2, w);
     cod_ty_elim(sig, k1, g, a, ta, tb, tb2, x, x, w);
     cod_ty_elim(sig, k1, g, a, ta, tb, tb2, x2, x2, w);
@@ -1688,7 +1688,7 @@ pub proof fn cf_next(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
     sa_push(ExprSpec::Const(c, ls2), xs2, x2);
     tshape_inst(tb, ind, (r - 1) as nat, 0, x);
     tshape_inst(tb2, ind, (r - 1) as nat, 0, x2);
-    crate::dom_sem::cf_inst(ind, pc, np, 0, x, tb, fz, k + 1, crate::dom_compact::app(u, w));
+    crate::dom_sem::cf_inst(ind, pc, crate::dom_code::smash(sig, ind), np, 0, x, tb, fz, k + 1, crate::dom_compact::app(u, w));
     crate::dom_sem_rel::app_pair(sig, g, m, m2, t, ta, tb, x, x2);
     crate::dom_sem_rel::app_pair(sig, g, m2, m2, t2, ta2, tb2, x2, x2);
     tel_dom_trest(t0, ys, k);
@@ -1729,7 +1729,7 @@ pub proof fn cf_diag_l(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelS
     sa_push(ExprSpec::Const(c, ls), xs, x2);
     tshape_inst(tb, ind, (r - 1) as nat, 0, x);
     tshape_inst(tb, ind, (r - 1) as nat, 0, x2);
-    crate::dom_sem::cf_inst(ind, pc, np, 0, x, tb, fz, k + 1, crate::dom_compact::app(u, w));
+    crate::dom_sem::cf_inst(ind, pc, crate::dom_code::smash(sig, ind), np, 0, x, tb, fz, k + 1, crate::dom_compact::app(u, w));
     crate::dom_adeq_syn::dsym(sig, g, m, m2, t);
     crate::dom_sem_rel::app_pair(sig, g, m, m, t, ta, tb, x, x2);
     crate::dom_sem_rel::app_pair(sig, g, m, m, t, ta, tb, x2, x2);
@@ -1775,8 +1775,8 @@ pub proof fn cf_diag_r(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelS
     sa_push(ExprSpec::Const(c, ls2), xs2, x2);
     tshape_inst(tb2, ind, (r - 1) as nat, 0, x);
     tshape_inst(tb2, ind, (r - 1) as nat, 0, x2);
-    cf_shape_eq(ind, pc, np, tb, tb2, (r - 1) as nat, fz, k + 1, v);
-    crate::dom_sem::cf_inst(ind, pc, np, 0, x, tb2, fz, k + 1, v);
+    cf_shape_eq(ind, pc, crate::dom_code::smash(sig, ind), np, tb, tb2, (r - 1) as nat, fz, k + 1, v);
+    crate::dom_sem::cf_inst(ind, pc, crate::dom_code::smash(sig, ind), np, 0, x, tb2, fz, k + 1, v);
     crate::dom_sem_rel::app_pair(sig, g, m2, m2, t2, ta2, tb2, x, x2);
     crate::dom_sem_rel::app_pair(sig, g, m2, m2, t2, ta2, tb2, x2, x2);
     tel_dom_trest(t02, ys, k);

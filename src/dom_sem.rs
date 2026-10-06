@@ -259,20 +259,20 @@ pub proof fn lveq_head(t1: ExprSpec, t2: ExprSpec)
 
 /// The constructor's code function sees its type only through its Pis and
 /// final head.
-pub proof fn cf_lveq(ind: u64, pc: nat, np: nat, t1: ExprSpec, t2: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt)
+pub proof fn cf_lveq(ind: u64, pc: nat, sm: bool, np: nat, t1: ExprSpec, t2: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt)
     requires
         crate::conv_cr::lveq(t1, t2),
     ensures
-        cf_fun(ind, pc, np, t1, fs, k, v) == cf_fun(ind, pc, np, t2, fs, k, v),
+        cf_fun(ind, pc, sm, np, t1, fs, k, v) == cf_fun(ind, pc, sm, np, t2, fs, k, v),
     decreases t1,
 {
     match (t1, t2) {
         (ExprSpec::Bind(k1, _, b1), ExprSpec::Bind(k2, _, b2)) => {
             if let Cpt::Lam(f) = v {
                 assert forall|i: int| 0 <= i < f.len() implies
-                    cf_fun(ind, pc, np, *b1, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1)
-                    == cf_fun(ind, pc, np, *b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1) by {
-                    cf_lveq(ind, pc, np, *b1, *b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
+                    cf_fun(ind, pc, sm, np, *b1, if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1)
+                    == cf_fun(ind, pc, sm, np, *b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1) by {
+                    cf_lveq(ind, pc, sm, np, *b1, *b2, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
                 }
             }
         },
@@ -283,11 +283,11 @@ pub proof fn cf_lveq(ind: u64, pc: nat, np: nat, t1: ExprSpec, t2: ExprSpec, fs:
 }
 
 /// Instantiation keeps the code function's view of a type.
-pub proof fn cf_inst(ind: u64, pc: nat, np: nat, j: nat, x: ExprSpec, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt)
+pub proof fn cf_inst(ind: u64, pc: nat, sm: bool, np: nat, j: nat, x: ExprSpec, t: ExprSpec, fs: Seq<Cpt>, k: nat, v: Cpt)
     requires
-        cf_fun(ind, pc, np, t, fs, k, v),
+        cf_fun(ind, pc, sm, np, t, fs, k, v),
     ensures
-        cf_fun(ind, pc, np, crate::subst_algebra::inst(j, x, t), fs, k, v),
+        cf_fun(ind, pc, sm, np, crate::subst_algebra::inst(j, x, t), fs, k, v),
     decreases t,
 {
     if v is Bot {
@@ -299,8 +299,8 @@ pub proof fn cf_inst(ind: u64, pc: nat, np: nat, j: nat, x: ExprSpec, t: ExprSpe
             assert(crate::subst_algebra::inst(j, x, t) == ExprSpec::Bind(BinderKind::Pi,
                 Box::new(crate::subst_algebra::inst(j, x, *ta)), Box::new(crate::subst_algebra::inst(j + 1, x, *b))));
             assert forall|i: int| 0 <= i < f.len() implies
-                cf_fun(ind, pc, np, crate::subst_algebra::inst(j + 1, x, *b), if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
-                cf_inst(ind, pc, np, j + 1, x, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
+                cf_fun(ind, pc, sm, np, crate::subst_algebra::inst(j + 1, x, *b), if k < np { fs } else { fs.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
+                cf_inst(ind, pc, sm, np, j + 1, x, *b, if k < np { fs } else { fs.push(f[i].0) }, k + 1, f[i].1);
             }
         },
         _ => {
@@ -349,12 +349,12 @@ pub proof fn pre_le_concat(a1: Seq<Cpt>, a2: Seq<Cpt>, p1: Seq<Cpt>, p2: Seq<Cpt
 }
 
 /// Larger fields: still an approximation.
-pub proof fn cf_mono(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: Seq<Cpt>, k: nat, v: Cpt)
+pub proof fn cf_mono(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: Seq<Cpt>, k: nat, v: Cpt)
     requires
-        cf_fun(ind, pc, np, t, f1, k, v),
+        cf_fun(ind, pc, sm, np, t, f1, k, v),
         pre_le(f1, f2),
     ensures
-        cf_fun(ind, pc, np, t, f2, k, v),
+        cf_fun(ind, pc, sm, np, t, f2, k, v),
     decreases t,
 {
     if v is Bot {
@@ -364,17 +364,17 @@ pub proof fn cf_mono(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: 
         ExprSpec::Bind(BinderKind::Pi, _, b) => {
             let f = v->Lam_0;
             assert forall|i: int| 0 <= i < f.len() implies
-                cf_fun(ind, pc, np, *b, if k < np { f2 } else { f2.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
+                cf_fun(ind, pc, sm, np, *b, if k < np { f2 } else { f2.push(f[i].0) }, k + 1, #[trigger] f[i].1) by {
                 let x = f[i].0;
                 if k >= np {
                     le_refl(x);
                     pre_le_push(f1, f2, x, x);
                 }
-                cf_mono(ind, pc, np, *b, if k < np { f1 } else { f1.push(x) }, if k < np { f2 } else { f2.push(x) }, k + 1, f[i].1);
+                cf_mono(ind, pc, sm, np, *b, if k < np { f1 } else { f1.push(x) }, if k < np { f2 } else { f2.push(x) }, k + 1, f[i].1);
             }
         },
         _ => {
-            let key = NdKey::Con(ind, pc, false);
+            let key = NdKey::Con(ind, pc, sm);
             nd_le(key, f1, f2);
             le_trans(v, Cpt::Nd(key, f1), Cpt::Nd(key, f2));
         },
@@ -382,10 +382,10 @@ pub proof fn cf_mono(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: 
 }
 
 /// Constructor approximations at compatible fields are compatible.
-pub proof fn cf_compat(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
+pub proof fn cf_compat(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
     requires
-        cf_fun(ind, pc, np, t, f1, k, y1),
-        cf_fun(ind, pc, np, t, f2, k, y2),
+        cf_fun(ind, pc, sm, np, t, f1, k, y1),
+        cf_fun(ind, pc, sm, np, t, f2, k, y2),
         wf(y1),
         wf(y2),
         pre_ok(f1, f2),
@@ -415,17 +415,29 @@ pub proof fn cf_compat(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2
                 if k >= np {
                     pre_ok_push(fi, fj, l[i].0, l[j].0);
                 }
-                cf_compat(ind, pc, np, *b, if k < np { fi } else { fi.push(l[i].0) }, if k < np { fj } else { fj.push(l[j].0) },
+                cf_compat(ind, pc, sm, np, *b, if k < np { fi } else { fi.push(l[i].0) }, if k < np { fj } else { fj.push(l[j].0) },
                     k + 1, l[i].1, l[j].1);
             }
         },
         _ => {
-            let key = NdKey::Con(ind, pc, false);
+            let key = NdKey::Con(ind, pc, sm);
             let (n1, n2) = (Cpt::Nd(key, f1), Cpt::Nd(key, f2));
             assert forall|i: int| 0 <= i < f1.len() implies compat(#[trigger] f1[i], f2[i]) by {}
             assert forall|i: int| 0 <= i < f1.len() implies #[trigger] wf(f1[i]) by {}
             assert forall|i: int| 0 <= i < f2.len() implies #[trigger] wf(f2[i]) by {
                 assert(wf(f1[i]));
+            }
+            // a smashed bound has the value's non-bottom field
+            head_le(y1, n1);
+            head_le(y2, n2);
+            assert(y1 == Cpt::Nd(y1->Nd_0, y1->Nd_1) && y2 == Cpt::Nd(y2->Nd_0, y2->Nd_1));
+            nd_le_inv(y1->Nd_0, y1->Nd_1, n1);
+            nd_le_inv(y2->Nd_0, y2->Nd_1, n2);
+            if sm {
+                let q1 = choose|q: int| 0 <= q < y1->Nd_1.len() && !(#[trigger] y1->Nd_1[q] is Bot);
+                head_le(y1->Nd_1[q1], f1[q1]);
+                let q2 = choose|q: int| 0 <= q < y2->Nd_1.len() && !(#[trigger] y2->Nd_1[q] is Bot);
+                head_le(y2->Nd_1[q2], f2[q2]);
             }
             join_ub(n1, n2);
             let jn = join(n1, n2);
@@ -437,15 +449,15 @@ pub proof fn cf_compat(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2
 }
 
 /// Constructor approximations at the same fields join.
-pub proof fn cf_join(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
+pub proof fn cf_join(ind: u64, pc: nat, sm: bool, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: nat, y1: Cpt, y2: Cpt)
     requires
-        cf_fun(ind, pc, np, t, fs, k, y1),
-        cf_fun(ind, pc, np, t, fs, k, y2),
+        cf_fun(ind, pc, sm, np, t, fs, k, y1),
+        cf_fun(ind, pc, sm, np, t, fs, k, y2),
         wf(y1),
         wf(y2),
         compat(y1, y2),
     ensures
-        cf_fun(ind, pc, np, t, fs, k, join(y1, y2)),
+        cf_fun(ind, pc, sm, np, t, fs, k, join(y1, y2)),
     decreases t,
 {
     if y1 is Bot || y2 is Bot {
@@ -458,7 +470,7 @@ pub proof fn cf_join(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: n
             let l = g1 + g2;
             assert(join(y1, y2) == Cpt::Lam(l));
             assert forall|i: int| 0 <= i < l.len() implies
-                cf_fun(ind, pc, np, *b, if k < np { fs } else { fs.push(l[i].0) }, k + 1, #[trigger] l[i].1) by {
+                cf_fun(ind, pc, sm, np, *b, if k < np { fs } else { fs.push(l[i].0) }, k + 1, #[trigger] l[i].1) by {
                 if i < g1.len() {
                     assert(l[i] == g1[i]);
                 } else {
@@ -467,7 +479,7 @@ pub proof fn cf_join(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: n
             }
         },
         _ => {
-            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, pc, false), fs));
+            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, pc, sm), fs));
         },
     }
 }
@@ -495,7 +507,7 @@ pub proof fn code_lveq(sig: Sig, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>
     crate::conv_cr::lveq_sel(sig.consts[c].ty, sig.consts[c].lps, ls, ls2);
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
-        cf_lveq(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t1, t2, Seq::empty(), 0, v);
+        cf_lveq(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::smash(sig, ind), crate::dom_code::canon_shape(sig, ind).np, t1, t2, Seq::empty(), 0, v);
     }
     crate::dom_rec::rf_lveq(sig, c, t1, t2, Seq::empty(), v);
     tf_lveq(sig, c, ls, ls2, t1, t2, Seq::empty(), v);
@@ -529,7 +541,7 @@ pub proof fn code_compat(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, 
     }
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
-        cf_compat(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), Seq::empty(), 0, v1, v2);
+        cf_compat(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::smash(sig, ind), crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), Seq::empty(), 0, v1, v2);
     } else if sig.ienv.recs.contains_key(c) {
         assert(pre_ok(Seq::<Cpt>::empty(), Seq::<Cpt>::empty()));
         crate::dom_rec::rf_compat(sig, c, t, Seq::empty(), Seq::empty(), v1, v2);
@@ -554,7 +566,7 @@ pub proof fn code_join(sig: Sig, c: u64, ls: Seq<LevelSpec>, a: Cpt, v1: Cpt, v2
     }
     if sig.ienv.ctor_ind.contains_key(c) {
         let ind = sig.ienv.ctor_ind[c];
-        cf_join(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v1, v2);
+        cf_join(ind, ctor_pos(sig, ind, c) as nat, crate::dom_code::smash(sig, ind), crate::dom_code::canon_shape(sig, ind).np, t, Seq::empty(), 0, v1, v2);
     } else if sig.ienv.recs.contains_key(c) {
         crate::dom_rec::rf_join(sig, c, t, Seq::empty(), v1, v2);
     } else {

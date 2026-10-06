@@ -516,7 +516,7 @@ proof fn ind_code_mem(sig: Sig, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>)
     ensures
         mem(sig, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), bot_env(), c),
         typed(c, Cpt::U),
-        c is Nd && c->Nd_0 == crate::dom_compact::NdKey::Ty(ind, crate::dom_code::is_prop_at(sig, ind, ls), false),
+        c is Nd && c->Nd_0 == crate::dom_compact::NdKey::Ty(ind, crate::dom_code::is_prop_at(sig, ind, ls), crate::dom_code::smash(sig, ind)),
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
