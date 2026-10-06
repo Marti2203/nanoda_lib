@@ -506,20 +506,34 @@ proof fn sr_rec_eta(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec, a1:
         assert(cargs.subrange((cargs.len() - nf) as int, cargs.len() as int) =~= crate::ti_syntax::projs(x, nf));
         assert(a2.subrange((rd.major_idx + 1) as int, a2.len() as int) =~= Seq::<ExprSpec>::empty());
     }
-    // the eta step's instance
-    crate::ti_chain::inst_conv(sig, g, a1, b1, l2, x, x);
-    let q0 = get(sig, eq(g, m, m, tt));
-    let q1 = get(sig, eq(g, n, n, tt));
-    let q2 = get(sig, eq(g, tt, tt, sort(l2)));
-    let rj = eq(g, m, n, tt);
-    let rp = seq![q0, q1, q2];
-    assert(prems(rp, seq![eq(g, m, m, tt), eq(g, n, n, tt), eq(g, tt, tt, sort(l2))]));
+    // the eta step's instance, at the motive at the expansion
+    crate::iota_sr::bare_facts(sig, g, m2);
+    assert(crate::beta_model::spine_args(m2).subrange(0, (rd.major_idx + 1) as int) =~= crate::beta_model::spine_args(m2));
+    crate::beta_model::spine_recompose(m2);
+    let e = crate::iota_sr::iota_end(sig, m2);
+    let lm = crate::ti_syntax::iota_lm(sig, m2);
+    crate::ti_hred::fire_inst_head(sig, m2, m);
+    uniq(sig, g, m2, tt, e);
+    conv_chain(sig, g, m, m, tt, e);
+    conv_chain(sig, g, n, n, tt, e);
+    assert(crate::ti_hred::reta_exp(sig, m) == m2);
+    let q0 = get(sig, eq(g, m, m, e));
+    let q1 = get(sig, eq(g, n, n, e));
+    let q2 = get(sig, eq(g, e, e, sort(lm)));
+    let q3 = get(sig, eq(g, x, cx, st));
+    let q4 = get(sig, eq(g, m2, m2, e));
+    let rj = eq(g, m, n, e);
+    let rp = seq![q0, q1, q2, q3, q4];
+    assert(prems(rp, seq![eq(g, m, m, e), eq(g, n, n, e), eq(g, e, e, sort(lm)), eq(g, x, cx, st), eq(g, m2, m2, e)]));
     assert(crate::ti_hred::rec_smashed(sig, m));
-    assert(step_ok(sig, Rule::RecEta(l2), rj, rp)) by { reveal(crate::ti_syntax::rec_eta_ok); }
-    valid_node(sig, Rule::RecEta(l2), rj, rp);
-    mk_d(sig, node(Rule::RecEta(l2), rj, rp));
+    assert(a0[rd.major_idx as int] == x);
+    assert(step_ok(sig, Rule::RecEta(lm), rj, rp)) by { reveal(crate::ti_syntax::rec_eta_ok); }
+    valid_node(sig, Rule::RecEta(lm), rj, rp);
+    mk_d(sig, node(Rule::RecEta(lm), rj, rp));
+    tchain_sym(sig, g, tt, e);
     tchain_sym(sig, g, t, tt);
-    conv_chain(sig, g, m, n, tt, t);
+    crate::ti_chain::tchain_trans(sig, g, e, tt, t);
+    conv_chain(sig, g, m, n, e, t);
 }
 
 /// A PROJECTION OF A CONSTRUCTOR APPLICATION converts with its field: the

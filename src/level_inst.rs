@@ -493,6 +493,7 @@ pub proof fn li_quot(export: nat, sp: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>
 }
 
 /// PARALLEL REDUCTION IS STABLE UNDER LEVEL INSTANTIATION.
+#[verifier::spinoff_prover]
 pub proof fn li_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
         env_lp_ok(env),
@@ -903,11 +904,18 @@ pub proof fn elp_in_spine(h: ExprSpec, args: Seq<ExprSpec>, us: Seq<u64>)
 pub proof fn li_reta(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
         env_lp_ok(sig.ienv),
+        crate::ti_syntax::iota_ok(sig),
         ks.len() == vs.len(),
         crate::ti_hred::rec_smashed(sig, sp),
     ensures
         crate::ti_hred::rec_smashed(sig, subst_expr_levels(sp, ks, vs)),
         subst_expr_levels(crate::ti_hred::rec_eta_result(sig, sp), ks, vs) == crate::ti_hred::rec_eta_result(sig, subst_expr_levels(sp, ks, vs)),
+        crate::beta_model::spine_head(subst_expr_levels(sp, ks, vs))->Const_0 == crate::beta_model::spine_head(sp)->Const_0,
+        subst_expr_levels(crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(sp)), ks, vs)
+            == crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(subst_expr_levels(sp, ks, vs))->Const_1, crate::beta_model::spine_args(subst_expr_levels(sp, ks, vs))),
+        subst_expr_levels(crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(sp)), ks, vs)
+            == crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(subst_expr_levels(sp, ks, vs))->Const_1, crate::beta_model::spine_args(subst_expr_levels(sp, ks, vs))),
+        subst_expr_levels(crate::ti_hred::reta_exp(sig, sp), ks, vs) == crate::ti_hred::reta_exp(sig, subst_expr_levels(sp, ks, vs)),
 {
     li_spine_const(sp, ks, vs);
     let args = spine_args(sp);
@@ -926,6 +934,25 @@ pub proof fn li_reta(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs:
     assert(sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(x, ks, vs));
     li_spine_app(body, pre, ks, vs);
     li_spine_app(spine_app(body, pre), pj, ks, vs);
+    // the eta expansion, its structure application and its redex
+    crate::ti_eta::eta_index(sig, rid);
+    crate::ti_syntax::frag_of(sig, rid);
+    crate::dom_rec_ty::rinst_ls(sig, rid, lv, ks, vs);
+    let lv2 = crate::level_model::subst_levels_spec(lv, ks, vs);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let a2 = sli(args, ks, vs);
+    let nf = sh.fields[0].len();
+    let ps = args.subrange(0, sh.np as int);
+    let ea = ps + crate::ti_syntax::projs(args[(sh.np + 1 + sh.nmin()) as int], nf);
+    sli_subrange(args, 0, sh.np as int, ks, vs);
+    assert(sli(ea, ks, vs) =~= a2.subrange(0, sh.np as int) + crate::ti_syntax::projs(a2[(sh.np + 1 + sh.nmin()) as int], nf));
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    li_spine_app(ExprSpec::Const(sh.ctors[0], us), ea, ks, vs);
+    li_spine_app(ExprSpec::Const(sh.ind, us), ps, ks, vs);
+    let cx = crate::ti_eta::eta_cx(sig, rid, lv, args);
+    sli_subrange(args, 0, rd.major_idx as int, ks, vs);
+    assert(sli(args.subrange(0, rd.major_idx as int).push(cx), ks, vs) =~= a2.subrange(0, rd.major_idx as int).push(subst_expr_levels(cx, ks, vs)));
+    li_spine_app(ExprSpec::Const(rid, lv), args.subrange(0, rd.major_idx as int).push(cx), ks, vs);
 }
 
 /// Level instantiation keeps a recursor redex firing.

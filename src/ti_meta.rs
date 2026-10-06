@@ -976,14 +976,24 @@ proof fn d_ren_reta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let d0 = d_ren(sig, ps[0], w, dl, r);
     let d1 = d_ren(sig, ps[1], w, dl, r);
     let d2 = d_ren(sig, ps[2], w, dl, r);
+    let d3 = d_ren(sig, ps[3], w, dl, r);
+    let d4 = d_ren(sig, ps[4], w, dl, r);
     assert(psub(sort(l), q) == sort(l));
     crate::ti_subst::psub_reta(q, sig, m);
+    crate::ti_hred::fire_inst_head(sig, psub(m, q), m);
+    let (rid, lv, a0) = (crate::beta_model::spine_head(m)->Const_0, crate::beta_model::spine_head(m)->Const_1, crate::beta_model::spine_args(m));
+    let mi = sig.ienv.recs[rid].major_idx as int;
+    let (x, cx, st, e) = (a0[mi], crate::ti_eta::eta_cx(sig, rid, lv, a0), crate::ti_eta::eta_st(sig, rid, lv, a0), crate::ti_hred::reta_exp(sig, m));
+    let a1 = crate::beta_model::spine_args(psub(m, q));
+    assert(a1[mi] == psub(x, q));
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
-    let ps2 = seq![d0, d1, d2];
+    let ps2 = seq![d0, d1, d2, d3, d4];
     assert(prems(ps2, seq![
         eq(dl, psub(m, q), psub(m, q), psub(a, q)),
         eq(dl, psub(n, q), psub(n, q), psub(a, q)),
         eq(dl, psub(a, q), psub(a, q), sort(l)),
+        eq(dl, psub(x, q), psub(cx, q), psub(st, q)),
+        eq(dl, psub(e, q), psub(e, q), psub(a, q)),
     ]));
     assert(step_ok(sig, Rule::RecEta(l), j2, ps2)) by { reveal(crate::ti_syntax::rec_eta_ok); }
     valid_node(sig, Rule::RecEta(l), j2, ps2);

@@ -556,10 +556,18 @@ pub proof fn psub_rec(t: Sub, env: crate::expr_arena_bridge::EnvSpec, sp: ExprSp
 /// eta step's result commutes with it.
 pub proof fn psub_reta(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_smashed(sig, sp),
     ensures
         crate::ti_hred::rec_smashed(sig, psub(sp, t)),
         psub(crate::ti_hred::rec_eta_result(sig, sp), t) == crate::ti_hred::rec_eta_result(sig, psub(sp, t)),
+        crate::beta_model::spine_head(psub(sp, t)) == crate::beta_model::spine_head(sp),
+        crate::beta_model::spine_args(psub(sp, t)) == spsub(crate::beta_model::spine_args(sp), t),
+        psub(crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(sp)), t)
+            == crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(psub(sp, t))),
+        psub(crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(sp)), t)
+            == crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(psub(sp, t))),
+        psub(crate::ti_hred::reta_exp(sig, sp), t) == crate::ti_hred::reta_exp(sig, psub(sp, t)),
 {
     use crate::beta_model::{spine_app, spine_head, spine_args, rec_prefix};
     psub_spine_const(t, sp);
@@ -578,6 +586,22 @@ pub proof fn psub_reta(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     assert(spsub(args, t)[rd.major_idx as int] == psub(x, t));
     psub_spine_app(t, body, pre);
     psub_spine_app(t, spine_app(body, pre), pj);
+    // the eta expansion, its structure application and its redex
+    crate::ti_eta::eta_index(sig, rid);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let a2 = spsub(args, t);
+    let nf = sh.fields[0].len();
+    let ps = args.subrange(0, sh.np as int);
+    let ea = ps + crate::ti_syntax::projs(args[(sh.np + 1 + sh.nmin()) as int], nf);
+    spsub_subrange(args, t, 0, sh.np as int);
+    assert(spsub(ea, t) =~= a2.subrange(0, sh.np as int) + crate::ti_syntax::projs(a2[(sh.np + 1 + sh.nmin()) as int], nf));
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    psub_spine_app(t, ExprSpec::Const(sh.ctors[0], us), ea);
+    psub_spine_app(t, ExprSpec::Const(sh.ind, us), ps);
+    let cx = crate::ti_eta::eta_cx(sig, rid, lv, args);
+    spsub_subrange(args, t, 0, rd.major_idx as int);
+    assert(spsub(args.subrange(0, rd.major_idx as int).push(cx), t) =~= a2.subrange(0, rd.major_idx as int).push(psub(cx, t)));
+    psub_spine_app(t, ExprSpec::Const(rid, lv), args.subrange(0, rd.major_idx as int).push(cx));
 }
 
 /// Substitution keeps a recursor redex firing: ready, and its major of

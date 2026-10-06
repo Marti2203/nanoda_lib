@@ -53,6 +53,85 @@ pub proof fn eta_never_prop(sig: Sig, s: u64, st: ExprSpec)
     }
 }
 
+/// The eta expansion's indices are the recursor's: the major follows the
+/// parameters, the motive and the single minor.
+pub proof fn eta_index(sig: Sig, rid: u64)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        sig.ienv.recs.contains_key(rid),
+        crate::dom_rec_end::rec_interp(sig, rid),
+    ensures
+        rshape(sig, rid).np + 1 + rshape(sig, rid).nmin() == sig.ienv.recs[rid].major_idx,
+        rshape(sig, rid).np == sig.ienv.recs[rid].num_params,
+{
+    crate::ti_syntax::frag_of(sig, rid);
+    assert(crate::dom_rec_end::rec_frag_l(sig, rid)) by {
+        reveal(crate::dom_rec_end::rec_interp);
+    }
+    crate::dom_iota::major_form(sig, rid, Seq::empty());
+}
+
+/// THE REDEX AT THE EXPANSION fits its rule, whose instance is the eta
+/// step's result.
+pub proof fn reta_fits(sig: Sig, m: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::iota_ok(sig),
+        crate::ti_hred::rec_smashed(sig, m),
+    ensures ({
+        let h = spine_head(m);
+        let a0 = spine_args(m);
+        let rd = sig.ienv.recs[h->Const_0];
+        let cx = eta_cx(sig, h->Const_0, h->Const_1, a0);
+        let m2 = crate::ti_hred::reta_exp(sig, m);
+        &&& crate::ti_hred::rec_fits(sig, m2)
+        &&& crate::beta_model::rec_result(sig.ienv, m2) == crate::ti_hred::rec_eta_result(sig, m)
+        &&& spine_head(m2) == h
+        &&& spine_args(m2) == a0.subrange(0, rd.major_idx as int).push(cx)
+        &&& m == ExprSpec::App(Box::new(spine_app(h, a0.subrange(0, rd.major_idx as int))), Box::new(a0[rd.major_idx as int]))
+        &&& m2 == ExprSpec::App(Box::new(spine_app(h, a0.subrange(0, rd.major_idx as int))), Box::new(cx))
+        &&& forall|q: int| 0 <= q < rd.num_params ==> #[trigger] spine_args(cx)[q] == a0[q]
+        &&& crate::conv_cr::levs_eq(rinst(sig, h->Const_0, h->Const_1), spine_head(cx)->Const_1)
+    }),
+{
+    let h = spine_head(m);
+    let (rid, lv) = (h->Const_0, h->Const_1);
+    let a0 = spine_args(m);
+    let rd = sig.ienv.recs[rid];
+    let sh = rshape(sig, rid);
+    assert(eta_ok(sig, rid, lv, a0));
+    eta_facts(sig, rid, lv, a0);
+    eta_index(sig, rid);
+    let pre = (sh.np + 1 + sh.nmin()) as int;
+    crate::beta_model::spine_recompose(m);
+    crate::dom_bound::spine_push(h, a0);
+    let x = a0[pre];
+    let cx = eta_cx(sig, rid, lv, a0);
+    let us = rinst(sig, rid, lv);
+    let c = sh.ctors[0];
+    let nf = sh.fields[0].len();
+    let cargs = a0.subrange(0, sh.np as int) + crate::ti_syntax::projs(x, nf);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, us), cargs);
+    let a2 = a0.subrange(0, pre).push(cx);
+    crate::dom_bound::spine_push(h, a2);
+    assert(a2.subrange(0, pre) =~= a0.subrange(0, pre));
+    crate::beta_model::spine_destruct_app(h, a2);
+    crate::beta_model::find_rule_spec(rd.rules, c);
+    crate::dom_rec_ty::scope_ctor(sig, rid, 0);
+    assert(sh.ctors[0] == rd.rules[0].ctor_id);
+    assert(crate::beta_model::find_rule(rd.rules, c) == Some(0int)) by {
+        reveal_with_fuel(crate::beta_model::find_rule, 2);
+    }
+    let m2 = crate::ti_hred::reta_exp(sig, m);
+    assert(crate::ti_hred::fire_inst(sig, m2)) by { reveal(crate::ti_hred::fire_inst); }
+    assert(crate::ti_hred::rec_fits(sig, m2));
+    assert(crate::beta_model::rec_result(sig.ienv, m2) == crate::ti_hred::rec_eta_result(sig, m)) by {
+        assert(cargs.subrange((cargs.len() - nf) as int, cargs.len() as int) =~= crate::ti_syntax::projs(x, nf));
+        assert(a2.subrange((rd.major_idx + 1) as int, a2.len() as int) =~= Seq::<ExprSpec>::empty());
+    }
+    crate::ti_ls2::levs_eq_refl(us);
+}
+
 /// What the eta step's typing needs of the redex's recursor.
 pub open spec fn eta_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>) -> bool {
     let rd = sig.ienv.recs[rid];

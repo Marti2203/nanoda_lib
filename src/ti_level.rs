@@ -532,10 +532,27 @@ proof fn step_ls_reta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     reveal(crate::ti_syntax::rec_eta_ok);
     let qs = pls(sig, ps, ks, vs);
     assert(qs.len() == ps.len());
-    crate::level_inst::li_reta(sig, j->Eq_1, ks, vs);
+    let m = j->Eq_1;
+    crate::level_inst::li_reta(sig, m, ks, vs);
+    crate::level_inst::li_spine_const(m, ks, vs);
+    let (rid, lv) = (crate::beta_model::spine_head(m)->Const_0, crate::beta_model::spine_head(m)->Const_1);
+    let mi = sig.ienv.recs[rid].major_idx as int;
+    assert(crate::beta_model::spine_args(le_(m, ks, vs))[mi] == le_(crate::beta_model::spine_args(m)[mi], ks, vs));
+    crate::ti_syntax::frag_of(sig, rid);
+    crate::ti_syntax::iota_lm_ls(sig, rid, lv, ks, vs);
+    reveal(crate::ti_syntax::iota_lm);
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
+    assert(concl(qs[3]) == jls(concl(ps[3]), ks, vs));
+    assert(concl(qs[4]) == jls(concl(ps[4]), ks, vs));
+    let m2 = le_(m, ks, vs);
+    let l = r->RecEta_0;
+    assert(crate::beta_model::spine_head(m2) == ExprSpec::Const(rid, crate::level_model::subst_levels_spec(lv, ks, vs)));
+    assert(ll_(l, ks, vs) == crate::ti_syntax::iota_lm(sig, m2));
+    assert(crate::ti_hred::rec_smashed(sig, m2));
+    assert(le_(j->Eq_2, ks, vs) == crate::ti_hred::rec_eta_result(sig, m2));
+    assert(step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), qs)) by { reveal(crate::ti_syntax::rec_eta_ok); }
 }
 
 /// The projection instances at a level instance.

@@ -86,7 +86,7 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
         crate::dom_rec_end::sig_sr(sig),
         crate::dom_sound::sound_oracle(crate::ti_strip::strip(sig), sig),
         crate::ti_syntax::iota_ok(sig),
-        crate::ti_hred::rec_fire(sig, m),
+        crate::ti_hred::rec_fits(sig, m),
         crate::ti_syntax::iota_lv(sig, m),
         !crate::ti_syntax::iota_prop(sig, m),
         derivable(sig, eq(g, m, m, t)),

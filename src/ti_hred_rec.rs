@@ -214,6 +214,32 @@ pub proof fn const_spine_stuck(sig: Sig, y: ExprSpec)
     }
 }
 
+/// A smashed structure's redex steps by its eta step.
+pub proof fn reta_hstep(sig: Sig, t: ExprSpec)
+    requires
+        rec_smashed(sig, t),
+        rec_smash(sig, t),
+        !crate::ti_syntax::is_def(sig, spine_head(t)->Const_0, spine_head(t)->Const_1),
+    ensures
+        hstep(sig, t) == Some(rec_eta_result(sig, t)),
+{
+    let h = spine_head(t);
+    let (rid, lv) = (h->Const_0, h->Const_1);
+    let args = spine_args(t);
+    let rd = sig.ienv.recs[rid];
+    crate::beta_model::spine_recompose(t);
+    crate::beta_model::spine_destruct_app(h, args);
+    let n = args.len() - 1;
+    let init = args.subrange(0, n);
+    crate::dom_bound::spine_push(h, args);
+    crate::beta_model::spine_destruct_app(h, init);
+    rec_prefix_stuck(sig, rid, lv, init);
+    if init.len() > 0 {
+        crate::dom_bound::spine_push(h, init);
+    }
+    assert(rec_eta(sig, t));
+}
+
 /// A FIRING REDEX takes one head step to its rule instance, with or
 /// without extra arguments.
 pub proof fn fire_hstep(sig: Sig, t: ExprSpec)

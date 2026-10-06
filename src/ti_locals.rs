@@ -277,11 +277,19 @@ proof fn step_swap_reta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     let s2 = sig_swap(sig, x, y);
     let qs = pswap(sig, ps, x, y);
     assert(qs.len() == ps.len());
-    crate::swap_model::fswap_reta(sig, j->Eq_1, x, y);
-    crate::ti_hred::reta_sig(sig, s2, crate::swap_model::fswap(j->Eq_1, x, y));
+    let m = j->Eq_1;
+    crate::swap_model::fswap_reta(sig, m, x, y);
+    crate::ti_hred::reta_sig(sig, s2, crate::swap_model::fswap(m, x, y));
+    crate::swap_model::fswap_spine(m, x, y);
+    crate::ti_hred::fire_inst_head(sig, crate::swap_model::fswap(m, x, y), m);
+    crate::dom_rec_end::frag_congr(sig, s2);
+    let mi = sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0].major_idx as int;
+    assert(crate::beta_model::spine_args(crate::swap_model::fswap(m, x, y))[mi] == crate::swap_model::fswap(crate::beta_model::spine_args(m)[mi], x, y));
     assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
     assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
     assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
+    assert(concl(qs[3]) == jswap(concl(ps[3]), x, y));
+    assert(concl(qs[4]) == jswap(concl(ps[4]), x, y));
 }
 
 /// The recursor's eta step, closed.
@@ -299,11 +307,20 @@ proof fn step_close_reta(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
     let s1 = sig_with(sig, k, a);
     let qs = pclose(sig, k, a, ps);
     assert(qs.len() == ps.len());
-    crate::ti_hred::reta_sig(sig, s1, j->Eq_1);
-    crate::fclose::fclose_reta(k, j->Eq_0.len(), sig, j->Eq_1);
+    let m = j->Eq_1;
+    let c = j->Eq_0.len();
+    crate::ti_hred::reta_sig(sig, s1, m);
+    crate::dom_rec_end::frag_congr(sig, s1);
+    crate::fclose::fclose_reta(k, c, sig, m);
+    crate::fclose::fclose_spine_const(k, c, m);
+    crate::ti_hred::fire_inst_head(sig, crate::fclose::fclose(k, c, m), m);
+    let mi = sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0].major_idx as int;
+    assert(crate::beta_model::spine_args(crate::fclose::fclose(k, c, m))[mi] == crate::fclose::fclose(k, c, crate::beta_model::spine_args(m)[mi]));
     assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
     assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
     assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));
+    assert(concl(qs[3]) == jclose(k, a, concl(ps[3])));
+    assert(concl(qs[4]) == jclose(k, a, concl(ps[4])));
 }
 
 /// The Iota instance, swapped.

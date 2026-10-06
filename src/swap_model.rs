@@ -1014,10 +1014,17 @@ pub open spec fn dty_fv_free(dty: Map<u64, (Seq<u64>, ExprSpec)>) -> bool {
 pub proof fn fswap_reta(sig: crate::ti_syntax::Sig, s: ExprSpec, x: nat, y: nat)
     requires
         env_fv_free(sig.ienv),
+        crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_smashed(sig, s),
     ensures
         crate::ti_hred::rec_smashed(sig, fswap(s, x, y)),
         fswap(crate::ti_hred::rec_eta_result(sig, s), x, y) == crate::ti_hred::rec_eta_result(sig, fswap(s, x, y)),
+        crate::beta_model::spine_head(fswap(s, x, y))->Const_0 == crate::beta_model::spine_head(s)->Const_0,
+        fswap(crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(s)->Const_0, crate::beta_model::spine_head(s)->Const_1, crate::beta_model::spine_args(s)), x, y)
+            == crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(s)->Const_0, crate::beta_model::spine_head(fswap(s, x, y))->Const_1, crate::beta_model::spine_args(fswap(s, x, y))),
+        fswap(crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(s)->Const_0, crate::beta_model::spine_head(s)->Const_1, crate::beta_model::spine_args(s)), x, y)
+            == crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(s)->Const_0, crate::beta_model::spine_head(fswap(s, x, y))->Const_1, crate::beta_model::spine_args(fswap(s, x, y))),
+        fswap(crate::ti_hred::reta_exp(sig, s), x, y) == crate::ti_hred::reta_exp(sig, fswap(s, x, y)),
 {
     fswap_spine(s, x, y);
     let args = spine_args(s);
@@ -1037,6 +1044,22 @@ pub proof fn fswap_reta(sig: crate::ti_syntax::Sig, s: ExprSpec, x: nat, y: nat)
     assert(sswap(args, x, y)[rd.major_idx as int] == fswap(z, x, y));
     fswap_spine_app(body, pre, x, y);
     fswap_spine_app(spine_app(body, pre), pj, x, y);
+    // the eta expansion, its structure application and its redex
+    crate::ti_eta::eta_index(sig, rid);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let a2 = sswap(args, x, y);
+    let nf = sh.fields[0].len();
+    let ps = args.subrange(0, sh.np as int);
+    let ea = ps + crate::ti_syntax::projs(args[(sh.np + 1 + sh.nmin()) as int], nf);
+    sswap_subrange(args, 0, sh.np as int, x, y);
+    assert(sswap(ea, x, y) =~= a2.subrange(0, sh.np as int) + crate::ti_syntax::projs(a2[(sh.np + 1 + sh.nmin()) as int], nf));
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    fswap_spine_app(ExprSpec::Const(sh.ctors[0], us), ea, x, y);
+    fswap_spine_app(ExprSpec::Const(sh.ind, us), ps, x, y);
+    let cx = crate::ti_eta::eta_cx(sig, rid, lv, args);
+    sswap_subrange(args, 0, rd.major_idx as int, x, y);
+    assert(sswap(args.subrange(0, rd.major_idx as int).push(cx), x, y) =~= a2.subrange(0, rd.major_idx as int).push(fswap(cx, x, y)));
+    fswap_spine_app(ExprSpec::Const(rid, lv), args.subrange(0, rd.major_idx as int).push(cx), x, y);
 }
 
 /// Swapping locals keeps a recursor redex firing.

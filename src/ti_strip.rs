@@ -21,7 +21,7 @@ pub open spec fn iota_free(d: Deriv) -> bool
     decreases d,
 {
     match d {
-        Deriv::Node(r, _, ps) => !(r is Iota) && forall|k: int| 0 <= k < ps.len() ==> iota_free(#[trigger] ps[k]),
+        Deriv::Node(r, _, ps) => !(r is Iota) && !(r is RecEta) && forall|k: int| 0 <= k < ps.len() ==> iota_free(#[trigger] ps[k]),
     }
 }
 

@@ -514,10 +514,17 @@ pub proof fn pstep_star_inst_arg(env: EnvSpec, j: nat, a: ExprSpec, a2: ExprSpec
 pub proof fn fclose_reta(k: nat, c: nat, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     requires
         env_fv_free(sig.ienv),
+        crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_smashed(sig, sp),
     ensures
         crate::ti_hred::rec_smashed(sig, fclose(k, c, sp)),
         fclose(k, c, crate::ti_hred::rec_eta_result(sig, sp)) == crate::ti_hred::rec_eta_result(sig, fclose(k, c, sp)),
+        crate::beta_model::spine_head(fclose(k, c, sp))->Const_0 == crate::beta_model::spine_head(sp)->Const_0,
+        fclose(k, c, crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(sp)))
+            == crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(fclose(k, c, sp))->Const_1, crate::beta_model::spine_args(fclose(k, c, sp))),
+        fclose(k, c, crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(sp)->Const_1, crate::beta_model::spine_args(sp)))
+            == crate::ti_eta::eta_st(sig, crate::beta_model::spine_head(sp)->Const_0, crate::beta_model::spine_head(fclose(k, c, sp))->Const_1, crate::beta_model::spine_args(fclose(k, c, sp))),
+        fclose(k, c, crate::ti_hred::reta_exp(sig, sp)) == crate::ti_hred::reta_exp(sig, fclose(k, c, sp)),
 {
     fclose_spine_const(k, c, sp);
     let args = spine_args(sp);
@@ -538,6 +545,22 @@ pub proof fn fclose_reta(k: nat, c: nat, sig: crate::ti_syntax::Sig, sp: ExprSpe
     assert(sclose(k, c, args)[rd.major_idx as int] == fclose(k, c, x));
     fclose_spine_app(k, c, body, pre);
     fclose_spine_app(k, c, spine_app(body, pre), pj);
+    // the eta expansion, its structure application and its redex
+    crate::ti_eta::eta_index(sig, rid);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let a2 = sclose(k, c, args);
+    let nf = sh.fields[0].len();
+    let ps = args.subrange(0, sh.np as int);
+    let ea = ps + crate::ti_syntax::projs(args[(sh.np + 1 + sh.nmin()) as int], nf);
+    sclose_subrange(k, c, args, 0, sh.np as int);
+    assert(sclose(k, c, ea) =~= a2.subrange(0, sh.np as int) + crate::ti_syntax::projs(a2[(sh.np + 1 + sh.nmin()) as int], nf));
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    fclose_spine_app(k, c, ExprSpec::Const(sh.ctors[0], us), ea);
+    fclose_spine_app(k, c, ExprSpec::Const(sh.ind, us), ps);
+    let cx = crate::ti_eta::eta_cx(sig, rid, lv, args);
+    sclose_subrange(k, c, args, 0, rd.major_idx as int);
+    assert(sclose(k, c, args.subrange(0, rd.major_idx as int).push(cx)) =~= a2.subrange(0, rd.major_idx as int).push(fclose(k, c, cx)));
+    fclose_spine_app(k, c, ExprSpec::Const(rid, lv), args.subrange(0, rd.major_idx as int).push(cx));
 }
 
 /// Closing a local keeps a recursor redex firing.

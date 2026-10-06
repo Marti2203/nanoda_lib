@@ -597,12 +597,22 @@ pub open spec fn struct_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) ->
 }
 
 /// Rule `RecEta`'s instance: a smashed structure's recursor redex and its
-/// eta step's result, both typed at a type at the sort.
+/// eta step's result, both typed at a type at the motive's sort; the major
+/// converts with its eta expansion, and the redex there is typed too (the
+/// step is the rule's Iota instance at the expansion).
 #[verifier::opaque]
 pub open spec fn rec_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => crate::ti_hred::rec_smashed(sig, m) && n == crate::ti_hred::rec_eta_result(sig, m)
-            && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]),
+        Jd::Eq(g, m, n, t) => {
+            let rid = crate::beta_model::spine_head(m)->Const_0;
+            let lv = crate::beta_model::spine_head(m)->Const_1;
+            let a0 = crate::beta_model::spine_args(m);
+            let x = a0[sig.ienv.recs[rid].major_idx as int];
+            &&& iota_ok(sig) && crate::ti_hred::rec_smashed(sig, m) && n == crate::ti_hred::rec_eta_result(sig, m) && l == iota_lm(sig, m)
+            &&& prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l)),
+                eq(g, x, crate::ti_eta::eta_cx(sig, rid, lv, a0), crate::ti_eta::eta_st(sig, rid, lv, a0)),
+                eq(g, crate::ti_hred::reta_exp(sig, m), crate::ti_hred::reta_exp(sig, m), t)])
+        },
         _ => false,
     }
 }
@@ -730,7 +740,7 @@ pub proof fn iota_lm_ls(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ks: Seq<u64>, vs
 /// model interprets.
 pub proof fn fire_interp(sig: Sig, m: ExprSpec)
     requires
-        crate::ti_hred::rec_fire(sig, m),
+        crate::ti_hred::rec_fits(sig, m),
         !iota_prop(sig, m),
     ensures
         crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(m)->Const_0),

@@ -2031,12 +2031,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             sound(sig, ps[4], rho);
             crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
         },
-        Rule::RecEta(_) => {
-            // the recursor's eta step: sound by the irrefutable recursor
-            // (stage E4c)
-            reveal(crate::ti_syntax::rec_eta_ok);
-            crate::dom_code::smash_dead(sig, crate::rec_canon::rec_ind(sig, crate::beta_model::spine_head(j->Eq_1)->Const_0));
-        },
+        Rule::RecEta(_) => sound_reta_d(sig, d, rho),
         Rule::StructEta(_) => {
             reveal(crate::ti_syntax::struct_eta_ok);
             sound(sig, ps[0], rho);
@@ -2083,6 +2078,51 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             crate::dom_iota_sound::sound_iota(sig, g, m, a, rho);
         },
         _ => {},
+    }
+}
+
+/// The recursor's eta step: the redex denotes as the redex at the major's
+/// eta expansion, whose rule instance is the step's result.
+#[verifier::spinoff_prover]
+proof fn sound_reta_d(sig: Sig, d: Deriv, rho: Env)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        valid(sig, d),
+        concl(d) is Eq,
+        fits_env(sig, concl(d)->Eq_0, rho),
+        d->Node_0 is RecEta,
+    ensures
+        sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
+    decreases crate::ti_strip::inode(d), d, 0int,
+{
+    valid_prems(sig, d);
+    crate::ti_strip::inode_prems(d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->RecEta_0;
+    reveal(crate::ti_syntax::rec_eta_ok);
+    sound(sig, ps[0], rho);
+    sound(sig, ps[1], rho);
+    sound(sig, ps[2], rho);
+    sound(sig, ps[3], rho);
+    sound(sig, ps[4], rho);
+    if crate::ti_syntax::iota_prop(sig, m) {
+        crate::ti_syntax::prop_zero(sig, m, l);
+        sound_irr(sig, m, n, a, l, rho);
+    } else {
+        // the recursor-stripped signature's derivations have no recursor
+        // node
+        let ss = crate::ti_strip::strip(sig);
+        reveal(sound_oracle);
+        assert forall|d2: Deriv, rho2: Env| #[trigger] sound_at(ss, sig, d2, rho2) by {
+            if valid(ss, d2) && concl(d2) is Eq && fits_env(sig, concl(d2)->Eq_0, rho2) {
+                crate::ti_strip::strip_valid(sig, d2);
+                sound(sig, d2, rho2);
+            }
+        }
+        crate::ti_meta::mk_d(sig, ps[1]);
+        crate::ti_meta::mk_d(sig, ps[4]);
+        sound_reta(sig, g, m, a, rho);
     }
 }
 
@@ -2451,6 +2491,51 @@ proof fn sound_zeta_d(sig: Sig, d: Deriv, rho: Env)
         assert(sem_eq(sig, a, a, rho));
         sound_transfer(sig, n, m, a, a, rho);
     }
+}
+
+/// THE RECURSOR'S ETA STEP IS SOUND: its redex denotes as the redex at the
+/// major's eta expansion (the major and the expansion denote alike), and
+/// that redex as its rule's instance, the step's result (Iota's soundness).
+#[verifier::spinoff_prover]
+proof fn sound_reta(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, rho: Env)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::iota_ok(sig),
+        sound_oracle(crate::ti_strip::strip(sig), sig),
+        crate::ti_hred::rec_smashed(sig, m),
+        !crate::ti_syntax::iota_prop(sig, m),
+        fits_env(sig, g, rho),
+        sound_ok(sig, m, m, a, rho),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, crate::ti_hred::rec_eta_result(sig, m), crate::ti_hred::rec_eta_result(sig, m), a)),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, crate::ti_hred::reta_exp(sig, m), crate::ti_hred::reta_exp(sig, m), a)),
+        sem_eq(sig, crate::beta_model::spine_args(m)[sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0].major_idx as int],
+            crate::ti_eta::eta_cx(sig, crate::beta_model::spine_head(m)->Const_0, crate::beta_model::spine_head(m)->Const_1, crate::beta_model::spine_args(m)), rho),
+    ensures
+        sound_ok(sig, m, crate::ti_hred::rec_eta_result(sig, m), a, rho),
+{
+    let h = crate::beta_model::spine_head(m);
+    let a0 = crate::beta_model::spine_args(m);
+    let rd = sig.ienv.recs[h->Const_0];
+    let mi = rd.major_idx as int;
+    let f = crate::beta_model::spine_app(h, a0.subrange(0, mi));
+    let cx = crate::ti_eta::eta_cx(sig, h->Const_0, h->Const_1, a0);
+    let m2 = crate::ti_hred::reta_exp(sig, m);
+    let n = crate::ti_hred::rec_eta_result(sig, m);
+    crate::ti_eta::reta_fits(sig, m);
+    // the redex and the redex at the expansion
+    sem_eq_refl(sig, f, rho);
+    app_sem_eq(sig, f, a0[mi], f, cx, rho);
+    // the rule's instance there
+    crate::ti_hred::fire_inst_head(sig, m2, m);
+    assert(crate::ti_syntax::iota_lv(sig, m2)) by { reveal(crate::ti_syntax::iota_lv); }
+    let cargs = crate::beta_model::spine_args(cx);
+    assert forall|q: int| 0 <= q < rd.num_params implies #[trigger] sem_eq(sig, crate::beta_model::spine_args(m2)[q],
+        crate::beta_model::spine_args(crate::beta_model::spine_args(m2)[mi])[q], rho) by {
+        assert(crate::beta_model::spine_args(m2)[mi] == cx);
+        assert(crate::beta_model::spine_args(m2)[q] == a0[q]);
+        sem_eq_refl(sig, a0[q], rho);
+    }
+    crate::dom_iota_sound::sound_iota(sig, g, m2, a, rho);
 }
 
 } // verus!

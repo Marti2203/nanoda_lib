@@ -218,12 +218,7 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::ProjCong(_) => adeq_pcong(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ProjIota(_) => adeq_piota(sig, d, rho, dl, s, s2, n, u, a),
         Rule::StructEta(_) => adeq_seta(sig, d, rho, dl, s, s2, n, u, a),
-        Rule::RecEta(_) => {
-            // one head step, once Iota excludes smashed structures (stage E4c)
-            crate::ti_meta::valid_prems(sig, d);
-            reveal(crate::ti_syntax::rec_eta_ok);
-            crate::dom_code::smash_dead(sig, crate::rec_canon::rec_ind(sig, crate::beta_model::spine_head(concl(d)->Eq_1)->Const_0));
-        },
+        Rule::RecEta(_) => adeq_reta(sig, d, rho, dl, s, s2, n, u, a),
         _ => {},
     }
 }
@@ -1455,6 +1450,45 @@ proof fn adeq_def(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         hred_refl(sig, v1);
         expand_tm(sig, n, dl, v1, v1, m, v1, t, u, a);
     }
+}
+
+/// THE RECURSOR'S ETA STEP: the redex head-reduces to the step's result,
+/// which has the same members (soundness) and which the premise relates.
+#[verifier::spinoff_prover]
+proof fn adeq_reta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is RecEta,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    reveal(crate::ti_syntax::rec_eta_ok);
+    // the step's result has the same members
+    crate::dom_sound::sound(sig, d, rho);
+    assert(mem(sig, m2, rho, u));
+    adeq(sig, ps[1], rho, dl, s, s2, n, u, a);
+    // one head step, typed
+    related_left(sig, g, rho, dl, s, s2);
+    reveal(spair);
+    crate::ti_sub::d_sub(sig, d, dl, s, s);
+    crate::ti_sub::d_sub(sig, ps[1], dl, s, s2);
+    dsym(sig, dl, psub(m2, s), psub(m2, s2), psub(t, s));
+    crate::ti_subst::psub_reta(s, sig, m);
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    crate::ti_syntax::frag_of(sig, rid);
+    crate::ti_subst::psub_spine_const(s, m);
+    assert(crate::ti_hred::rec_smash(sig, psub(m, s))) by {
+        reveal(crate::ti_hred::rec_smash);
+    }
+    crate::ti_hred_rec::reta_hstep(sig, psub(m, s));
+    crate::ti_hred::hred_step(sig, psub(m, s));
+    hred_refl(sig, psub(m2, s2));
+    expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
 }
 
 /// IOTA: the redex head-reduces to its rule instance, which has the same

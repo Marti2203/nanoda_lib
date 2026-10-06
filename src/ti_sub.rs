@@ -1233,17 +1233,29 @@ proof fn d_sub_reta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[1], dl, s, s);
     d_sub(sig, ps[1], dl, s, s2);
     d_sub(sig, ps[2], dl, s, s);
+    d_sub(sig, ps[3], dl, s, s);
+    d_sub(sig, ps[4], dl, s, s);
     assert(psub(sort(l), s) == sort(l));
     crate::ti_subst::psub_reta(s, sig, m);
+    crate::ti_hred::fire_inst_head(sig, psub(m, s), m);
+    let (rid, lv, a0) = (crate::beta_model::spine_head(m)->Const_0, crate::beta_model::spine_head(m)->Const_1, crate::beta_model::spine_args(m));
+    let mi = sig.ienv.recs[rid].major_idx as int;
+    let (x, cx, st, e) = (a0[mi], crate::ti_eta::eta_cx(sig, rid, lv, a0), crate::ti_eta::eta_st(sig, rid, lv, a0), crate::ti_hred::reta_exp(sig, m));
+    let a1 = crate::beta_model::spine_args(psub(m, s));
+    assert(a1[mi] == psub(x, s));
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let q2 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    let q3 = get(sig, eq(dl, psub(x, s), psub(cx, s), psub(st, s)));
+    let q4 = get(sig, eq(dl, psub(e, s), psub(e, s), psub(a, s)));
     let bj = eq(dl, psub(m, s), psub(n, s), psub(a, s));
-    let bp = seq![q0, q1, q2];
+    let bp = seq![q0, q1, q2, q3, q4];
     assert(prems(bp, seq![
         eq(dl, psub(m, s), psub(m, s), psub(a, s)),
         eq(dl, psub(n, s), psub(n, s), psub(a, s)),
         eq(dl, psub(a, s), psub(a, s), sort(l)),
+        eq(dl, psub(x, s), psub(cx, s), psub(st, s)),
+        eq(dl, psub(e, s), psub(e, s), psub(a, s)),
     ]));
     assert(step_ok(sig, Rule::RecEta(l), bj, bp)) by { reveal(crate::ti_syntax::rec_eta_ok); }
     valid_node(sig, Rule::RecEta(l), bj, bp);

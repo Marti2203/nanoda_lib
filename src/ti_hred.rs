@@ -75,8 +75,15 @@ pub proof fn reta_sig(s1: Sig, s2: Sig, a: ExprSpec)
     ensures
         rec_smashed(s1, a) == rec_smashed(s2, a),
         rec_eta_result(s1, a) == rec_eta_result(s2, a),
+        crate::ti_eta::eta_cx(s1, crate::beta_model::spine_head(a)->Const_0, crate::beta_model::spine_head(a)->Const_1, crate::beta_model::spine_args(a))
+            == crate::ti_eta::eta_cx(s2, crate::beta_model::spine_head(a)->Const_0, crate::beta_model::spine_head(a)->Const_1, crate::beta_model::spine_args(a)),
+        crate::ti_eta::eta_st(s1, crate::beta_model::spine_head(a)->Const_0, crate::beta_model::spine_head(a)->Const_1, crate::beta_model::spine_args(a))
+            == crate::ti_eta::eta_st(s2, crate::beta_model::spine_head(a)->Const_0, crate::beta_model::spine_head(a)->Const_1, crate::beta_model::spine_args(a)),
+        reta_exp(s1, a) == reta_exp(s2, a),
+        crate::ti_syntax::iota_lm(s1, a) == crate::ti_syntax::iota_lm(s2, a),
 {
     let rid = crate::beta_model::spine_head(a)->Const_0;
+    assert(crate::dom_rec_ty::rshape(s1, rid) == crate::dom_rec_ty::rshape(s2, rid));
     fire_inst_sig(s1, s2, a);
     assert(crate::rec_canon::rec_ind(s1, rid) == crate::rec_canon::rec_ind(s2, rid));
     let ind = crate::rec_canon::rec_ind(s1, rid);
@@ -162,6 +169,16 @@ pub proof fn fire_inst_interp(sig: Sig, a: ExprSpec)
 /// iota), without reducing the major first.
 pub open spec fn rec_eta(sig: Sig, t: ExprSpec) -> bool {
     !rec_fire(sig, t) && rec_smashed(sig, t)
+}
+
+/// The eta step's redex at the major's eta expansion (the constructor at
+/// the parameters and the major's projections), where the rule's Iota
+/// instance is the step's result.
+pub open spec fn reta_exp(sig: Sig, t: ExprSpec) -> ExprSpec {
+    let h = crate::beta_model::spine_head(t);
+    let a0 = crate::beta_model::spine_args(t);
+    let rd = sig.ienv.recs[h->Const_0];
+    crate::beta_model::spine_app(h, a0.subrange(0, rd.major_idx as int).push(crate::ti_eta::eta_cx(sig, h->Const_0, h->Const_1, a0)))
 }
 
 /// A smashed structure's recursor, interpreted by the model, applied up to
