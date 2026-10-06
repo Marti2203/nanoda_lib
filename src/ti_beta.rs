@@ -285,6 +285,19 @@ pub proof fn tpair_spair(sig: Sig, dl: Ctx, ds: Seq<ExprSpec>, xs: Seq<ExprSpec>
     }
 }
 
+/// Substituting a prefix in turn is the prefix's simultaneous
+/// substitution.
+pub proof fn vsub_pre(e: ExprSpec, xs: Seq<ExprSpec>, k: nat)
+    requires
+        k <= xs.len(),
+    ensures
+        crate::ti_spine::vsub(e, xs.subrange(0, k as int)) == crate::ti_subst::psub(e, tsub(xs, k)),
+{
+    vsub_tsub(e, xs.subrange(0, k as int));
+    tsub_prefix(xs, k);
+    crate::ti_subst::psub_ext(e, tsub(xs, k), tsub(xs.subrange(0, k as int), k));
+}
+
 /// Substituting past binders a term was lifted over: they drop out.
 pub proof fn vsub_lift_mid(e: ExprSpec, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
     ensures
