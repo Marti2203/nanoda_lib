@@ -1585,15 +1585,8 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
     let pre = rc.pre(sig);
     let fsm = rc.fsm(sig);
     crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
-    if rc.wx(sig) is Bot {
-        rc_smash_norec(sig, rc);
-        assert(!crate::dom_rec::rec_ok(sig, rc.c, rc.fs));
-        assert(crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf) =~= Seq::<Cpt>::empty());
-    } else {
-        crate::dom_rec_ty::rec_ihs_at(sig, rc.c, rc.fs, nf);
-    }
+    walk_hs(sig, rc);
     let hs = crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf);
-    assert(sh.rposj(rc.j) == crate::rec_canon::rec_pos(sh.fields[rc.j], sh.ind, sh.us(), sh.np, sh.ni, nf));
     let (_, _) = crate::dom_rec_minor::minor_split(sig, rc.c, rc.sm.0, rc.j);
     let (t0, t02) = (rc.t0(sig), rc.t02(sig));
     assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, pre));
@@ -1614,6 +1607,36 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
             crate::dom_rec::ih_in(sig.ienv.recs[rc.c], rc.fs, fsm[sh.rposj(rc.j)[r] as int])) by {
         assert(w.ws[nf + r] == hs[r]);
     }
+}
+
+/// The recursive calls' values: one per recursive field, each the
+/// recursor's value at that field (none at a bottom major).
+#[verifier::spinoff_prover]
+proof fn walk_hs(sig: Sig, rc: Rc)
+    requires
+        rc_core(sig, rc),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+        let nf = rc.nf(sig);
+        let hs = crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf);
+        &&& hs.len() == sh.rposj(rc.j).len()
+        &&& forall|r: int| 0 <= r < hs.len() ==> #[trigger] sh.rposj(rc.j)[r] < nf
+            && hs[r] == crate::dom_rec::recval(sig, rc.c, crate::dom_rec::ih_in(sig.ienv.recs[rc.c], rc.fs, rc.fsm(sig)[sh.rposj(rc.j)[r] as int]))
+    }),
+{
+    reveal(rc_major);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let nf = rc.nf(sig);
+    crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
+    if rc.wx(sig) is Bot {
+        rc_smash_norec(sig, rc);
+        assert(!crate::dom_rec::rec_ok(sig, rc.c, rc.fs));
+        assert(crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf) =~= Seq::<Cpt>::empty());
+    } else {
+        crate::dom_rec_ty::rec_ihs_at(sig, rc.c, rc.fs, nf);
+        assert(rc.fs.last() == rc.wx(sig));
+    }
+    assert(sh.rposj(rc.j) == crate::rec_canon::rec_pos(sh.fields[rc.j], sh.ind, sh.us(), sh.np, sh.ni, nf));
 }
 
 /// The walk's minor applied to its values is the recursor's value.

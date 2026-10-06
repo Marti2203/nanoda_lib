@@ -1473,7 +1473,13 @@ case:
   recursor (a projection of a constructor value is its field, of
   anything else bottom). The kernel's Iota at a structure's constructor
   application becomes RecEta followed by ProjIota at each field, derived
-  outside adequacy where inversion is available.
+  outside adequacy where inversion is available. RecEta also asks the
+  major to convert with its expansion and the redex there to be typed,
+  so its soundness is Iota's at the expansion (E4c-5). Landed through
+  E4c-6: the smashed end goes through the major's projections
+  (src/dom_rec_eta.rs). E6, the flip: the staging switch is gone, every
+  structure (whose field count fits a projection index) is smashed, so
+  StructEta (structure and unit eta) and RecEta hold in the judgment.
 - **T3: structure eta.** Rule `x ≡ c ps (Proj(0, x)) .. (Proj(n-1, x)) :
   S ps`. Soundness by the join-closure of `x`'s denotation; adequacy
   because a related `x` reduces to a constructor application whose

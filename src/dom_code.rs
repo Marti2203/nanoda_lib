@@ -34,19 +34,11 @@ pub open spec fn canon_rec(sig: Sig, ind: u64) -> u64 {
 }
 
 /// Whether `ind`'s values are smashed (docs/TYPED_TARGET.md, "The eta
-/// redesign"): a structure's, once the redesign is switched on, whose
-/// fields a projection index can reach (so its recursor's eta step fires).
+/// redesign"): a structure's whose fields a projection index can reach
+/// (so its recursor's eta step fires).
 pub open spec fn smash(sig: Sig, ind: u64) -> bool {
     &&& crate::ti_syntax::struct_of(sig, ind)
     &&& canon_shape(sig, ind).fields[0].len() <= usize::MAX
-    &&& smash_on()
-}
-
-/// The eta redesign's switch, off until its flip: opaque, so the model's
-/// proofs handle smashed structures without knowing it is off.
-#[verifier::opaque]
-pub open spec fn smash_on() -> bool {
-    false
 }
 
 /// A constructor's value at fields `fs`: its node, or bottom for a
