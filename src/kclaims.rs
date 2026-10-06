@@ -335,6 +335,7 @@ pub proof fn gen_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map
     let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
     let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
     crate::ti_gen::gen(sig, de);
+    crate::ti_gen::gen_proj_dead(sig, Seq::empty(), idx as nat, s, t);
 }
 
 pub proof fn cw_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
@@ -2587,6 +2588,9 @@ pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
         let sig = jsig(dty, denv, d);
         let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
         crate::ti_gen::gen(sig, de);
+        if e is Proj {
+            crate::ti_gen::gen_proj_dead(sig, Seq::empty(), e->Proj_0 as nat, *e->Proj_1, t);
+        }
     }
 }
 

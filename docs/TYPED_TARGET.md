@@ -1352,6 +1352,16 @@ case:
   `iota_gen`); T2e the model and soundness; T2f adequacy; T2g the flip of
   `proj_ok` to a real condition (structures in scope, their facts in the
   model's hypothesis).
+  Done through T2d's generation (`gen_proj`): substitution, renaming,
+  local swap/close, level instantiation and pairs, validity, scoping,
+  constants, generation are real. Still dismissed by the gate
+  (`proj_dead`, `gen_proj_dead`): signature extension, uniqueness and
+  subject reduction (their projection cases need injectivity at the
+  structure, i.e. the flipped `proj_ok` carrying per-structure facts such
+  as `sem_const` and the constructor's closed type), the kernel port's
+  "projections are typed nowhere" (`kclaims::gen_proj`,
+  `untypable_untyped`, `jkernel::sr_pstep`/`lveq_conv`: S6.6 at the flip),
+  soundness and adequacy.
 - **T2: the model.** `mem_w` gives `Proj(i, x)` the `i`-th field value of
   `x`'s constructor values (bottom otherwise); soundness of both rules
   (a constructor application's members are constructor nodes whose

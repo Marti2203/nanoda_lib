@@ -63,6 +63,32 @@ pub open spec fn gen_const(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, t: Expr
     sig.consts.contains_key(c) && ls.len() == sig.consts[c].lps.len() && tchain(sig, g, t, dty_at(sig, c, ls))
 }
 
+/// A projection: its subject at a structure application, its type the
+/// field's there, a type (a proposition when the structure may be one).
+pub open spec fn gen_proj(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec) -> bool {
+    exists|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
+        && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i, x) is Some
+        && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0, l)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+        && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0)
+}
+
+/// While there are no structures (`proj_ok`), no projection is typed.
+pub proof fn gen_proj_dead(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
+    requires
+        gen_proj(sig, g, i, x, t),
+    ensures
+        false,
+{
+    let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
+        && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i, x) is Some
+        && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0, l)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+        && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0);
+    reveal(crate::ti_syntax::proj_ty);
+    assert(crate::ti_syntax::struct_of(sig, crate::beta_model::spine_head(st)->Const_0));
+}
+
 /// GENERATION: what a typing of `m` at `t` says about `m`'s parts.
 pub open spec fn gen_ok(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> bool {
     match m {
@@ -73,6 +99,7 @@ pub open spec fn gen_ok(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> bool {
         ExprSpec::Bind(bk, a, b) => if bk == BinderKind::Pi { gen_pi(sig, g, *a, *b, t) } else { gen_lam(sig, g, *a, *b, t) },
         ExprSpec::App(f, x) => gen_app(sig, g, *f, *x, t),
         ExprSpec::Let(a, v, b) => gen_let(sig, g, *a, *v, *b, t),
+        ExprSpec::Proj(i, x) => gen_proj(sig, g, i as nat, *x, t),
         _ => false,
     }
 }
@@ -126,6 +153,15 @@ pub proof fn gen_conv(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, t: ExprSpec)
             tchain_trans(sig, g, t, a, tt);
             assert(gmark(tt, *v, l1, l1));
         },
+        ExprSpec::Proj(i, x) => {
+            let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
+                && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
+                && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && tchain(sig, g, a, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
+            tchain_trans(sig, g, t, a, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
+            assert(gmark(st, *x, l, l));
+        },
         _ => {},
     }
 }
@@ -158,9 +194,6 @@ pub proof fn gen(sig: Sig, d: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     match rule {
         Rule::Var(i) => {
@@ -296,6 +329,25 @@ pub proof fn gen(sig: Sig, d: Deriv)
             gen(sig, ps[2]);
         },
         Rule::Iota(_) => {
+            gen(sig, ps[0]);
+            gen(sig, ps[1]);
+        },
+        Rule::ProjCong(l) => {
+            reveal(crate::ti_syntax::proj_cong_ok);
+            let st = concl(ps[0])->Eq_3;
+            let (i, x, x2) = (m->Proj_0 as nat, *m->Proj_1, *n->Proj_1);
+            tchain_refl(sig, g, t);
+            let d0l = d_left(sig, ps[0]);
+            let d0r = d_right(sig, ps[0]);
+            mk_d(sig, d0l);
+            mk_d(sig, d0r);
+            mk_d(sig, ps[1]);
+            crate::ti_proj::proj_ty_indep(sig, st, i, x, x2);
+            assert(gmark(st, x, l, l));
+            assert(gmark(st, x2, l, l));
+        },
+        Rule::ProjIota(_) => {
+            reveal(crate::ti_syntax::proj_iota_ok);
             gen(sig, ps[0]);
             gen(sig, ps[1]);
         },

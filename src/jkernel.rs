@@ -117,6 +117,9 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     }
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
+    if m is Proj {
+        crate::ti_gen::gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
+    }
     match m {
         ExprSpec::App(f, x) => sr_app(dty, denv, lctx, g, *f, *x, m2, t),
         ExprSpec::Bind(bk, a, b) => sr_bind(dty, denv, lctx, g, bk, *a, *b, m2, t),
@@ -549,6 +552,9 @@ pub proof fn lveq_conv(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
     }
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
+    if m is Proj {
+        crate::ti_gen::gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
+    }
     match m {
         ExprSpec::Sort(l) => {
             let l2 = m2->Sort_0;

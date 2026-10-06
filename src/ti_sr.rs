@@ -133,6 +133,9 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
     let db = get(sig, eq(g, m, m, tb));
     gen(sig, da);
     gen(sig, db);
+    if m is Proj {
+        gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, ta);
+    }
     match m {
         ExprSpec::Var(i) => {
             tchain_meet(sig, g, ta, tb, var_ty(g, i));
@@ -381,6 +384,9 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
 {
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
+    if m is Proj {
+        gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
+    }
     let w = d_wf(sig, dm);
     mk_d(sig, w);
     match m {
