@@ -448,13 +448,6 @@ pub open spec fn proj_fty(sig: Sig, m: ExprSpec) -> ExprSpec {
         crate::beta_model::spine_args(x).subrange(0, (crate::dom_code::canon_shape(sig, s).np + i) as int))
 }
 
-/// Projections' signature condition: for now no structures, so the
-/// projection rules are dead until the model interprets them
-/// (docs/TYPED_TARGET.md, "Structures stage plan", T2).
-pub open spec fn proj_ok(sig: Sig) -> bool {
-    no_structs(sig)
-}
-
 /// The signature has no structures.
 pub open spec fn no_structs(sig: Sig) -> bool {
     forall|s: u64| !#[trigger] struct_of(sig, s)
@@ -541,7 +534,7 @@ pub open spec fn proj_cong_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
         Jd::Eq(g, m, n, t) => m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
             let st = concl(ps[0])->Eq_3;
             let (x, x2) = (*m->Proj_1, *n->Proj_1);
-            proj_ok(sig) && proj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
+            proj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, x, x2, st), eq(g, t, t, sort(l))])
         },
         _ => false,
@@ -554,7 +547,7 @@ pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
     match j {
         Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 5 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
-            proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
+            proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
                 && crate::beta_model::spine_head(st)->Const_0 == sig.ienv.ctor_ind[crate::beta_model::spine_head(*m->Proj_1)->Const_0]
                 && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l)),

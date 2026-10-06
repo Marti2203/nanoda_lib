@@ -2021,7 +2021,6 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::ProjCong(_) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             sound(sig, ps[0], rho);
-            crate::dom_proj_sound::proj_ok_sem(sig);
             crate::dom_proj_sound::sound_proj_cong(sig, m->Proj_0, *m->Proj_1, *n->Proj_1, concl(ps[0])->Eq_3, a, rho);
         },
         Rule::ProjIota(l) => {
@@ -2030,7 +2029,6 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             sound(sig, ps[1], rho);
             sound(sig, ps[3], rho);
             sound(sig, ps[4], rho);
-            crate::dom_proj_sound::proj_ok_sem(sig);
             crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
         },
         Rule::Iota(l) => if crate::ti_syntax::iota_prop(sig, m) {

@@ -1399,6 +1399,7 @@ pub proof fn cwh_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
             let s2 = LevelSpec::Succ(Box::new(l2));
             crate::jkernel::typed_sort(dty, denv, d, l1);
             crate::jkernel::typed_sort(dty, denv, d, l2);
+            crate::dom_rec_end::norecs_sr(sig);
             crate::ti_sr::uniq(sig, g0, x, t, ExprSpec::Sort(s1));
             crate::jkernel::wf_nil(sig);
             let w = crate::ti_sub::get(sig, crate::ti_syntax::Jd::Wf(g0));
@@ -1690,6 +1691,7 @@ pub proof fn ci_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
             let (a1, b1, l2) = choose|a1: ExprSpec, b1: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a1, b1, l2, l2)
                 && derivable(sig, eq(g0, f, f, crate::ti_syntax::pi(a1, b1))) && derivable(sig, eq(g0, a, a, a1))
                 && crate::ti_gen::typ(sig, g0.push(a1), b1, l2) && crate::ti_chain::tchain(sig, g0, te, crate::subst_algebra::inst(0, a, b1));
+            crate::dom_rec_end::norecs_sr(sig);
             crate::ti_sr::uniq(sig, g0, f, crate::ti_syntax::pi(a1, b1), p);
             crate::dom_fund::pi_inj_chain(sig, g0, a1, b1, pa, pb);
             crate::ti_chain::conv_chain(sig, g0, a, a, a1, pa);
@@ -1972,6 +1974,7 @@ pub proof fn jconv_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map
     let sig = jsig(dty, denv, d);
     let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), x, y, t0));
     crate::dom_adeq_syn::dsym(sig, Seq::empty(), x, y, t0);
+    crate::dom_rec_end::norecs_sr(sig);
     crate::ti_sr::uniq(sig, Seq::empty(), x, t0, t);
     crate::ti_chain::conv_chain(sig, Seq::empty(), x, y, t0, t);
     crate::dom_adeq_syn::dsym(sig, Seq::empty(), x, y, t);
@@ -2407,6 +2410,7 @@ proof fn bind_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat,
         body_move(sig, t2, t1, l1, b1, b2, cc0);
     }
     crate::dom_adeq_syn::dsym(sig, seq![t1], b1, b2, cc0);
+    crate::dom_rec_end::norecs_sr(sig);
     crate::ti_sr::uniq(sig, seq![t1], b1, cc0, c1);
     crate::ti_chain::conv_chain(sig, seq![t1], b1, b2, cc0, c1);
     body_move(sig, t1, t2, l1, b1, b2, c1);

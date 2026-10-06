@@ -225,6 +225,7 @@ pub proof fn proj_ty_psub(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, t: Sub)
             None => None::<ExprSpec>,
         },
         crate::ti_syntax::proj_prop(sig, psub(st, t)) == crate::ti_syntax::proj_prop(sig, st),
+        spine_head(psub(st, t)) == spine_head(st),
 {
     let (h, ps) = (spine_head(st), spine_args(st));
     crate::ti_subst::psub_spine_const(t, st);
@@ -249,6 +250,7 @@ pub proof fn proj_fire_psub(sig: Sig, m: ExprSpec, t: Sub)
     ensures
         crate::ti_syntax::proj_fire(sig, psub(m, t)),
         crate::ti_syntax::proj_result(sig, psub(m, t)) == psub(crate::ti_syntax::proj_result(sig, m), t),
+        spine_head(psub(*m->Proj_1, t)) == spine_head(*m->Proj_1),
 {
     reveal(crate::ti_syntax::proj_fire);
     reveal(crate::ti_syntax::proj_result);
@@ -367,31 +369,6 @@ pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
     }
 }
 
-/// Projections' signature condition reads only the constants and the
-/// inductive tables.
-pub proof fn proj_ok_congr(s1: Sig, s2: Sig)
-    requires
-        s1.consts == s2.consts,
-        s1.ienv == s2.ienv,
-    ensures
-        crate::ti_syntax::proj_ok(s1) == crate::ti_syntax::proj_ok(s2),
-{
-    if crate::ti_syntax::proj_ok(s1) {
-        assert forall|s: u64| !#[trigger] crate::ti_syntax::struct_of(s2, s) by {
-            if crate::ti_syntax::struct_of(s2, s) {
-                struct_congr(s2, s1, s);
-            }
-        }
-    }
-    if crate::ti_syntax::proj_ok(s2) {
-        assert forall|s: u64| !#[trigger] crate::ti_syntax::struct_of(s1, s) by {
-            if crate::ti_syntax::struct_of(s1, s) {
-                struct_congr(s1, s2, s);
-            }
-        }
-    }
-}
-
 /// The projection rules read only the constants and the inductive tables.
 pub proof fn proj_sig_congr(s1: Sig, s2: Sig, st: ExprSpec, i: nat, x: ExprSpec, m: ExprSpec)
     requires
@@ -439,6 +416,7 @@ pub proof fn proj_ty_fswap(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, xx: nat,
                 None => None::<ExprSpec>,
             },
         crate::ti_syntax::proj_prop(sig, crate::swap_model::fswap(st, xx, yy)) == crate::ti_syntax::proj_prop(sig, st),
+        spine_head(crate::swap_model::fswap(st, xx, yy)) == spine_head(st),
 {
     let (h, ps) = (spine_head(st), spine_args(st));
     crate::swap_model::fswap_spine(st, xx, yy);
@@ -472,6 +450,7 @@ pub proof fn proj_ty_fclose(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, k: nat,
                 None => None::<ExprSpec>,
             },
         crate::ti_syntax::proj_prop(sig, crate::fclose::fclose(k, c, st)) == crate::ti_syntax::proj_prop(sig, st),
+        spine_head(crate::fclose::fclose(k, c, st)) == spine_head(st),
 {
     let (h, ps) = (spine_head(st), spine_args(st));
     crate::fclose::fclose_spine_const(k, c, st);
@@ -500,6 +479,8 @@ pub proof fn proj_fire_locals(sig: Sig, m: ExprSpec, xx: nat, yy: nat, k: nat, c
         crate::ti_syntax::proj_result(sig, crate::swap_model::fswap(m, xx, yy)) == crate::swap_model::fswap(crate::ti_syntax::proj_result(sig, m), xx, yy),
         crate::ti_syntax::proj_fire(sig, crate::fclose::fclose(k, c, m)),
         crate::ti_syntax::proj_result(sig, crate::fclose::fclose(k, c, m)) == crate::fclose::fclose(k, c, crate::ti_syntax::proj_result(sig, m)),
+        spine_head(crate::swap_model::fswap(*m->Proj_1, xx, yy)) == spine_head(*m->Proj_1),
+        spine_head(crate::fclose::fclose(k, c, *m->Proj_1)) == spine_head(*m->Proj_1),
 {
     reveal(crate::ti_syntax::proj_fire);
     reveal(crate::ti_syntax::proj_result);
@@ -535,6 +516,7 @@ pub proof fn proj_ty_ls(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, ks: Seq<u64
             },
         crate::ti_syntax::proj_ty(sig, st, i, x) is Some ==>
             (crate::ti_syntax::proj_prop(sig, crate::expr_model::subst_expr_levels(st, ks, vs)) ==> crate::ti_syntax::proj_prop(sig, st)),
+        spine_head(crate::expr_model::subst_expr_levels(st, ks, vs))->Const_0 == spine_head(st)->Const_0,
 {
     use crate::expr_model::subst_expr_levels;
     let (h, ps) = (spine_head(st), spine_args(st));
@@ -590,6 +572,7 @@ pub proof fn proj_fire_ls(sig: Sig, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec
         crate::ti_syntax::proj_fire(sig, crate::expr_model::subst_expr_levels(m, ks, vs)),
         crate::ti_syntax::proj_result(sig, crate::expr_model::subst_expr_levels(m, ks, vs))
             == crate::expr_model::subst_expr_levels(crate::ti_syntax::proj_result(sig, m), ks, vs),
+        spine_head(crate::expr_model::subst_expr_levels(*m->Proj_1, ks, vs))->Const_0 == spine_head(*m->Proj_1)->Const_0,
 {
     reveal(crate::ti_syntax::proj_fire);
     reveal(crate::ti_syntax::proj_result);

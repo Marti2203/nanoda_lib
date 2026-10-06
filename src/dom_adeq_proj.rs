@@ -114,7 +114,6 @@ pub proof fn pfield_vsub(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>, xs: Seq<E
 pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t: ExprSpec, l: LevelSpec)
     requires
         proj_sem(sig),
-        crate::ti_syntax::proj_ok(sig),
         crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
         crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l),
         derivable(sig, eq(dl, t, t, sort(l))),
@@ -165,6 +164,7 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
     crate::beta_model::spine_recompose(cx);
     let th = crate::dom_iota::spine_gen(sig, dl, hc, a, st);
     crate::ti_spine::const_typed(sig, dl, c, cl, th);
+    reveal(crate::ti_syntax::struct_of);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
     // head reduction: to the constructor application, then the field
     let k = choose|k: nat| #[trigger] hiter(sig, x, k) == cx;
@@ -289,7 +289,6 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     l: LevelSpec, u: Cpt, a: Cpt, v2: Cpt, b: Cpt)
     requires
         proj_sem(sig),
-        crate::ti_syntax::proj_ok(sig),
         crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
         crate::ti_syntax::proj_ty(sig, sst, i as nat, xx) == Some(tt),
         spine_head(sst) == spine_head(st),
@@ -336,6 +335,7 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     assert(crate::dom_model::mem(sig, t, rho, ec));
     // the subjects' relation: constructor applications, field i related
     crate::dom_rel::tm_ind(sig, nn, dl, xx, xx2, sst, v2, b);
+    crate::dom_rel::ty_ind(sig, nn, dl, sst, sst, b);
     crate::dom_rel::con_tm_unfold(sig, nn, dl, xx, xx2, sst, v2, b);
     let (cx, cx2) = (cr(sig, xx), cr(sig, xx2));
     let (aa, aa2) = (spine_args(cx), spine_args(cx2));

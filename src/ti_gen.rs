@@ -69,7 +69,7 @@ pub open spec fn gen_proj(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec) ->
     exists|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i, x) is Some
         && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0, l)
-        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l))
         && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0)
 }
 
@@ -84,7 +84,7 @@ pub proof fn gen_proj_norecs(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i, x) is Some
         && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0, l)
-        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l))
         && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0);
     reveal(crate::ti_syntax::proj_ty);
     let s = crate::beta_model::spine_head(st)->Const_0;
@@ -162,7 +162,7 @@ pub proof fn gen_conv(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, t: ExprSpec)
             let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
                 && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
                 && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
-                && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l))
                 && tchain(sig, g, a, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
             tchain_trans(sig, g, t, a, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
             assert(gmark(st, *x, l, l));

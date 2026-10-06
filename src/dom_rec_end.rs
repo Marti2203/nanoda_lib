@@ -233,7 +233,7 @@ pub proof fn tel_dom_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i:
 /// recursor in the fragment and eliminating into any universe (a Prop-only
 /// recursor is not interpreted: its Iota is proof irrelevance).
 pub open spec fn rec_hyps(sig: Sig, c: u64) -> bool {
-    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c) && rec_interp(sig, c)
+    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c) && rec_interp(sig, c) && crate::dom_proj_sound::proj_sem(sig)
 }
 
 /// A closed type: typed in the empty context.
@@ -318,10 +318,22 @@ pub open spec fn rec_model_p(sig: Sig, c: u64) -> bool {
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
 }
 
-/// The hypothesis soundness and adequacy take: vacuous without recursors
-/// or outside the fragment.
+/// The hypothesis soundness and adequacy take: the recursors' facts
+/// (vacuous without recursors or outside the fragment) and the structures'
+/// (`dom_proj_sound::proj_sem`).
 pub open spec fn sig_sr(sig: Sig) -> bool {
-    crate::ti_syntax::iota_ok(sig) && !crate::ti_syntax::no_recs(sig) ==> sig_rec(sig)
+    &&& (crate::ti_syntax::iota_ok(sig) && !crate::ti_syntax::no_recs(sig) ==> sig_rec(sig))
+    &&& crate::dom_proj_sound::proj_sem(sig)
+}
+
+/// Without recursors the hypothesis holds: no recursors and no structures.
+pub proof fn norecs_sr(sig: Sig)
+    requires
+        crate::ti_syntax::no_recs(sig),
+    ensures
+        sig_sr(sig),
+{
+    crate::ti_syntax::norecs_no_structs(sig);
 }
 
 /// The minor's field binders are the field types at the recursor's

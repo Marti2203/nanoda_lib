@@ -129,6 +129,7 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
             assert(is_def(sig, id, ls));
             assert(dval(sig, id, ls) == m2);
             assert(crate::ti_syntax::iota_ok(sig)) by { reveal(crate::ti_syntax::iota_ok); }
+            crate::dom_rec_end::norecs_sr(sig);
             crate::ti_sr::sr(sig, g, m, t);
         },
         _ => {},
@@ -263,6 +264,7 @@ proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
     let (bt, j1, j2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, body, l1, l2)
         && typ(sig, g, aa, l1) && derivable(sig, eq(g.push(aa), body, body, bt)) && typ(sig, g.push(aa), bt, l2)
         && tchain(sig, g, pi(a1, b1), pi(aa, bt));
+    crate::dom_rec_end::norecs_sr(sig);
     crate::dom_fund::pi_inj_chain(sig, g, a1, b1, aa, bt);
     assert(f == ExprSpec::Bind(BinderKind::Lam, Box::new(aa), Box::new(body)));
     assert(m == ExprSpec::App(Box::new(f), Box::new(x)));
@@ -455,6 +457,7 @@ pub proof fn join_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx:
     sr_star(dty, denv, lctx, g, y, z, ty);
     crate::dom_adeq_syn::dsym(sig, g, x, z, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, z, ty);
+    crate::dom_rec_end::norecs_sr(sig);
     crate::ti_sr::uniq(sig, g, z, ty, tx);
     conv_chain(sig, g, y, z, ty, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, z, tx);
@@ -590,7 +593,7 @@ proof fn lveq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, t: Exp
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some
         && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0, l)
-        && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l))
         && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0);
     let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0;
     let (m, m2) = (ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)));
@@ -704,6 +707,7 @@ pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
     crate::dom_adeq_syn::dsym(sig, g, y, y2, ty);
     lveq_conv(sig, g, x2, y2, tx);
     crate::dom_adeq_syn::dsym(sig, g, x2, y2, tx);
+    crate::dom_rec_end::norecs_sr(sig);
     crate::ti_sr::uniq(sig, g, y2, ty, tx);
     conv_chain(sig, g, y, y2, ty, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, y2, tx);

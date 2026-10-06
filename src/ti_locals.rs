@@ -302,7 +302,6 @@ proof fn step_swap_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     assert(qs.len() == ps.len());
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
-    crate::ti_proj::proj_ok_congr(sig, s2);
     let (m, n, t) = (j->Eq_1, j->Eq_2, j->Eq_3);
     if r is ProjCong {
         let st = concl(ps[0])->Eq_3;
@@ -346,7 +345,6 @@ proof fn step_close_proj(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
     assert(qs.len() == ps.len());
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
-    crate::ti_proj::proj_ok_congr(sig, s1);
     let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     let c = g.len();
     if r is ProjCong {

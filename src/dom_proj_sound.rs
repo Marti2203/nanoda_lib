@@ -460,15 +460,6 @@ pub open spec fn proj_sem(sig: Sig) -> bool {
     forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) ==> struct_sem(sig, s)
 }
 
-/// The projection gate gives the model's structure facts.
-pub proof fn proj_ok_sem(sig: Sig)
-    requires
-        crate::ti_syntax::proj_ok(sig),
-    ensures
-        proj_sem(sig),
-{
-}
-
 /// PROJECTION IOTA, LEFT IN RIGHT: a member of a constructor
 /// application's projection lies below the constructor's field there, so
 /// it is a member of the projected argument.

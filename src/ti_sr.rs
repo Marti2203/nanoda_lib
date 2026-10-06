@@ -122,7 +122,6 @@ pub proof fn pi_chain_cod(sig: Sig, g: Ctx, a: ExprSpec, l1: LevelSpec, c1: Expr
 proof fn uniq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, ta: ExprSpec, tb: ExprSpec, st1: ExprSpec, st2: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::ti_syntax::proj_ok(sig),
         tchain(sig, g, st1, st2),
         crate::ti_syntax::proj_ty(sig, st1, i as nat, x) is Some,
         crate::ti_syntax::proj_ty(sig, st2, i as nat, x) is Some,
@@ -132,7 +131,6 @@ proof fn uniq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, ta: ExprSpec, tb: Ex
         tchain(sig, g, ta, tb),
 {
     use crate::beta_model::{spine_head, spine_args};
-    crate::dom_proj_sound::proj_ok_sem(sig);
     crate::ti_proj::proj_ty_unfold(sig, st1, i as nat, x);
     crate::ti_proj::proj_ty_unfold(sig, st2, i as nat, x);
     let (s1, us1, xs) = (spine_head(st1)->Const_0, spine_head(st1)->Const_1, spine_args(st1));
@@ -183,12 +181,12 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
             let (st1, l1) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
                 && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
                 && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
-                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l))
                 && tchain(sig, g, ta, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
             let (st2, l2) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
                 && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
                 && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
-                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l))
                 && tchain(sig, g, tb, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
             uniq(sig, g, *x, st1, st2);
             uniq_proj(sig, g, i, *x, ta, tb, st1, st2);
@@ -431,7 +429,6 @@ proof fn mchain_typed_k(sig: Sig, g: Ctx, ch: Seq<ExprSpec>, k: int, t: ExprSpec
 proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, st: ExprSpec, l: LevelSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::ti_syntax::proj_ok(sig),
         crate::ti_syntax::proj_fire(sig, ExprSpec::Proj(i, Box::new(x))),
         derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x)), t)),
         derivable(sig, eq(g, x, x, st)),
@@ -445,7 +442,6 @@ proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, st: 
     use crate::beta_model::{spine_head, spine_args, spine_app};
     let m = ExprSpec::Proj(i, Box::new(x));
     let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0;
-    crate::dom_proj_sound::proj_ok_sem(sig);
     reveal(crate::ti_syntax::proj_fire);
     reveal(crate::ti_syntax::proj_result);
     let (c, cl) = (spine_head(x)->Const_0, spine_head(x)->Const_1);
@@ -545,7 +541,7 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
             let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
                 && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
                 && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
-                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l))
                 && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
             let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0;
             if crate::ti_syntax::proj_fire(sig, m) {

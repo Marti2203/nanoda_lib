@@ -1372,7 +1372,20 @@ case:
   Prop test on the subject's type speaks of the projected structure).
   `struct_of` now asks every field to be a type parameter, and a
   structure that may be a proposition always to be one, or else its sort
-  parameters never to be propositions. Adequacy: ProjIota is the Iota
+  parameters never to be propositions (so `Prod`, `MProd` and `And` are in,
+  `PProd`, whose parameters are `Sort u`, is not yet).
+  **T2g, the flip (2026-10-06): the projection rules are live.** The
+  rules' gate is gone; the model's structure facts (`proj_sem`) are a
+  conjunct of `sig_sr` (and so of `rec_hyps`), the hypothesis soundness,
+  adequacy, uniqueness and subject reduction already take. Uniqueness
+  reads the subjects' structure off the chain between their types
+  (`dom_fund::ind_head_chain`, cycle-free); subject reduction builds
+  ProjIota for a firing projection (`ti_sr::sr_proj_fire`). The kernel
+  port has no recursors (`frag_env`), so no structures
+  (`gen_proj_norecs`, `dom_rec_end::norecs_sr`); signature extension asks
+  the smaller signature to have none (`sig_ext`). The flip exposed that
+  the rule transports had verified vacuously under the gate; they now
+  carry the subject heads through the operations. Adequacy: ProjIota is the Iota
   pattern; ProjCong (`dom_adeq_proj`) takes the subjects' relation at a
   constructor value above the witness, moves the projected arguments'
   relation at the field's table entry to the witness (`arg_adeq`), and

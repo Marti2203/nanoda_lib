@@ -1507,7 +1507,6 @@ proof fn adeq_pcong(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: n
     reveal(crate::ti_syntax::proj_cong_ok);
     let st = concl(ps[0])->Eq_3;
     let (i, x, x2) = (m->Proj_0, *m->Proj_1, *m2->Proj_1);
-    crate::dom_proj_sound::proj_ok_sem(sig);
     // the type
     adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
     related_left(sig, g, rho, dl, s, s2);
