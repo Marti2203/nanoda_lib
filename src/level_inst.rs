@@ -902,6 +902,8 @@ pub proof fn elp_in_spine(h: ExprSpec, args: Seq<ExprSpec>, us: Seq<u64>)
 pub proof fn li_fire(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
         env_lp_ok(sig.ienv),
+        crate::ti_syntax::iota_ok(sig),
+        ks.len() == vs.len(),
         crate::ti_hred::rec_fire(sig, sp),
     ensures
         crate::ti_hred::rec_fire(sig, subst_expr_levels(sp, ks, vs)),
@@ -913,6 +915,16 @@ pub proof fn li_fire(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs:
     let major = spine_args(sp)[rd.major_idx as int];
     li_spine_const(major, ks, vs);
     assert(sli(spine_args(sp), ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
+    // a proposition motive stays one
+    let rid = spine_head(sp)->Const_0;
+    crate::ti_syntax::frag_of(sig, rid);
+    crate::ti_syntax::iota_lm_ls(sig, rid, spine_head(sp)->Const_1, ks, vs);
+    reveal(crate::ti_hred::fire_inst);
+    reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
+    if crate::ti_syntax::iota_prop(sig, sp) {
+        crate::ti_level::ls_is_zero(crate::ti_syntax::iota_lm(sig, sp), ks, vs);
+    }
 }
 
 } // verus!

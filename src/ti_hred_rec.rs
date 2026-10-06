@@ -241,6 +241,7 @@ pub proof fn fire_hstep(sig: Sig, t: ExprSpec)
         }
     } else {
         assert(init[rd.major_idx as int] == args[rd.major_idx as int]);
+        crate::ti_hred::fire_inst_head(sig, f, t);
         assert(rec_fire(sig, f));
         fire_hstep(sig, f);
         if init.len() > 0 {

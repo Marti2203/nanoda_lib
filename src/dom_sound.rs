@@ -2019,7 +2019,8 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
         Rule::Iota(l) => if crate::ti_syntax::iota_prop(sig, m) {
-            // a Prop-only recursor's: proof irrelevance
+            // a proposition motive's: proof irrelevance
+            crate::ti_syntax::prop_zero(sig, m, l);
             sound(sig, ps[0], rho);
             sound(sig, ps[1], rho);
             sound(sig, ps[2], rho);
@@ -2040,6 +2041,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             // the parameter premises: the recursor's parameters and the
             // constructor's own denote alike
             reveal(crate::ti_syntax::iota_pjs);
+            crate::ti_syntax::fire_interp(sig, m);
             let rd = sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0];
             let args = crate::beta_model::spine_args(m);
             let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);

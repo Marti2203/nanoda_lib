@@ -1079,7 +1079,7 @@ pub proof fn iota_sr_g(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> (l: LevelS
         &&& derivable(sig, eq(g, x1, x1, e))
         &&& derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, x1), crate::beta_model::rec_result(sig.ienv, x1), e))
         &&& derivable(sig, eq(g, e, e, crate::ti_syntax::sort(l)))
-        &&& (crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)) is Zero ==> l == LevelSpec::Zero)
+        &&& l == crate::ti_syntax::iota_lm(sig, m)
         &&& crate::ti_syntax::iota_lv(sig, m)
     }),
 {
@@ -1140,6 +1140,7 @@ pub proof fn iota_sr_g(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> (l: LevelS
     retype_spine(sig, g, x1, n1, e, extra, t);
     let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
     let lp = crate::level_model::subst_level_spec(lm, rd.uparams, lv);
+    reveal(crate::ti_syntax::iota_lm);
     lp
 }
 

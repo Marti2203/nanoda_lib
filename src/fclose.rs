@@ -523,6 +523,7 @@ pub proof fn fclose_fire(k: nat, c: nat, sig: crate::ti_syntax::Sig, sp: ExprSpe
     let major = spine_args(sp)[rd.major_idx as int];
     fclose_spine_const(k, c, major);
     assert(sclose(k, c, spine_args(sp))[rd.major_idx as int] == fclose(k, c, major));
+    crate::ti_hred::fire_inst_head(sig, fclose(k, c, sp), sp);
 }
 
 } // verus!

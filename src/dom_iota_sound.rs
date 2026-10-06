@@ -107,10 +107,8 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(!crate::ti_syntax::no_recs(sig)) by {
         assert(sig.ienv.recs.contains_key(rid));
     }
-    assert(crate::dom_rec_end::rec_large(sig, rid)) by {
-        reveal(crate::ti_syntax::iota_prop);
-        reveal(crate::dom_rec_end::rec_large);
-    }
+    crate::ti_syntax::fire_interp(sig, m);
+    reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, rid));
     assert(crate::dom_rec_end::rec_hyps(sig, rid));

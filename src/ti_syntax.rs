@@ -382,7 +382,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         Rule::Iota(l) => match j {
             Jd::Eq(g, m, n, t) => iota_ok(sig) && crate::ti_hred::rec_fire(sig, m)
                 && n == crate::beta_model::rec_result(sig.ienv, m) && iota_lv(sig, m)
-                && (iota_prop(sig, m) ==> is_zero(l))
+                && l == iota_lm(sig, m)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + iota_pjs(sig, g, m)),
             _ => false,
         },
@@ -397,11 +397,19 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
     }
 }
 
-/// The redex's recursor eliminates only into Prop (no motive universe).
+/// The redex's motive level: the recursor's elimination level at its
+/// instance.
+#[verifier::opaque]
+pub open spec fn iota_lm(sig: Sig, m: ExprSpec) -> LevelSpec {
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    crate::level_model::subst_level_spec(crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)),
+        sig.ienv.recs[rid].uparams, crate::beta_model::spine_head(m)->Const_1)
+}
+
+/// The redex's motive is a proposition: its motive level is zero.
 #[verifier::opaque]
 pub open spec fn iota_prop(sig: Sig, m: ExprSpec) -> bool {
-    let rid = crate::beta_model::spine_head(m)->Const_0;
-    crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)) is Zero
+    is_zero(iota_lm(sig, m))
 }
 
 /// Iota's level condition: the recursor's instance of the inductive is
@@ -429,21 +437,70 @@ pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
     let pdoms = crate::dom_rec_ty::rshape(sig, rid).pdoms;
     let lv = crate::beta_model::spine_head(m)->Const_1;
-    if iota_prop(sig, m) {
+    if !crate::dom_rec_end::rec_interp(sig, rid) {
         Seq::empty()
     } else {
         Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, lv)))
     }
 }
 
-/// A Prop-only redex is one of a recursor not eliminating into every
-/// universe.
-pub proof fn prop_large(sig: Sig, m: ExprSpec)
+/// The motive level, instantiated: the elimination level at the
+/// instantiated instance.
+pub proof fn iota_lm_ls(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::rec_canon::rec_canon(sig, rid),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+    ensures ({
+        let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
+        let up = sig.ienv.recs[rid].uparams;
+        crate::level_model::subst_level_spec(crate::level_model::subst_level_spec(lm, up, lv), ks, vs)
+            == crate::level_model::subst_level_spec(lm, up, crate::level_model::subst_levels_spec(lv, ks, vs))
+    }),
+{
+    let up = sig.ienv.recs[rid].uparams;
+    let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
+    if up.len() == sig.consts[crate::rec_canon::rec_ind(sig, rid)].lps.len() + 1 {
+        assert(up.contains(up[0]));
+        crate::level_inst::find_level_idx_contains(up, up[0]);
+    }
+    crate::level_inst::lvl_compose(lm, up, lv, ks, vs);
+}
+
+/// A firing redex whose motive is not a proposition is of a recursor the
+/// model interprets.
+pub proof fn fire_interp(sig: Sig, m: ExprSpec)
+    requires
+        crate::ti_hred::rec_fire(sig, m),
+        !iota_prop(sig, m),
     ensures
-        iota_prop(sig, m) == !crate::dom_rec_end::rec_large(sig, crate::beta_model::spine_head(m)->Const_0),
+        crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(m)->Const_0),
+{
+    reveal(crate::ti_hred::fire_inst);
+}
+
+/// At its motive level, a proposition redex's Iota is in Prop.
+pub proof fn prop_zero(sig: Sig, m: ExprSpec, l: LevelSpec)
+    requires
+        iota_prop(sig, m),
+        l == iota_lm(sig, m),
+    ensures
+        is_zero(l),
 {
     reveal(iota_prop);
+}
+
+/// A recursor without a motive universe has a proposition motive at every
+/// instance.
+pub proof fn prop_only(sig: Sig, m: ExprSpec)
+    requires
+        !crate::dom_rec_end::rec_large(sig, crate::beta_model::spine_head(m)->Const_0),
+    ensures
+        iota_prop(sig, m),
+{
+    reveal(iota_prop);
+    reveal(iota_lm);
     reveal(crate::dom_rec_end::rec_large);
+    assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(iota_lm(sig, m), rho) == 0 by {}
 }
 
 /// A firing redex's major has at least the recursor's parameters as
@@ -480,11 +537,10 @@ pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
-        !iota_prop(sig, m) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
+        crate::dom_rec_end::rec_interp(sig, rid) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
     }),
 {
     crate::ti_syntax::frag_of(sig, crate::beta_model::spine_head(m)->Const_0);
-    prop_large(sig, m);
 }
 
 /// Iota's premise types: the declared parameter sorts at the recursor's
@@ -494,7 +550,7 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
         iota_ok(sig),
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
         0 <= q < crate::dom_rec_ty::rshape(sig, crate::beta_model::spine_head(m)->Const_0).np,
-        !iota_prop(sig, m),
+        crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(m)->Const_0),
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
         let lv = crate::beta_model::spine_head(m)->Const_1;
@@ -511,7 +567,6 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     let lv = crate::beta_model::spine_head(m)->Const_1;
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     crate::ti_syntax::frag_of(sig, rid);
-    prop_large(sig, m);
     let pd = sh.pdoms[q];
     crate::dom_rec_ty::rec_elp_pdoms(sig, rid);
     crate::dom_rec_ty::rinst_id(sig, rid, lv, pd);

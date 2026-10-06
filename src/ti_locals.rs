@@ -172,6 +172,7 @@ proof fn pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
                 == jswap(crate::ti_syntax::iota_pjs(sig, g, m)[q], x, y),
         crate::ti_syntax::iota_lv(sig, m) ==> crate::ti_syntax::iota_lv(sig_swap(sig, x, y), crate::swap_model::fswap(m, x, y)),
         crate::ti_syntax::iota_prop(sig_swap(sig, x, y), crate::swap_model::fswap(m, x, y)) == crate::ti_syntax::iota_prop(sig, m),
+        crate::ti_syntax::iota_lm(sig_swap(sig, x, y), crate::swap_model::fswap(m, x, y)) == crate::ti_syntax::iota_lm(sig, m),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
@@ -193,6 +194,9 @@ proof fn pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
     assert(spine_head(crate::swap_model::fswap(major, x, y)) == spine_head(major));
     reveal(crate::ti_syntax::iota_lv);
     reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
+    crate::ti_hred::fire_inst_sig(sig, s2, m);
+    crate::ti_hred::fire_inst_head(s2, crate::swap_model::fswap(m, x, y), m);
     assert(crate::dom_rec_ty::rinst(s2, rid, spine_head(m)->Const_1) == crate::dom_rec_ty::rinst(sig, rid, spine_head(m)->Const_1));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jswap(pj[q], x, y) by {
         crate::ti_syntax::iota_pdom_id(sig, m, q);
@@ -220,6 +224,7 @@ proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
                 == jclose(k, a, crate::ti_syntax::iota_pjs(sig_with(sig, k, a), g, m)[q]),
         crate::ti_syntax::iota_lv(sig_with(sig, k, a), m) ==> crate::ti_syntax::iota_lv(sig, crate::fclose::fclose(k, g.len(), m)),
         crate::ti_syntax::iota_prop(sig, crate::fclose::fclose(k, g.len(), m)) == crate::ti_syntax::iota_prop(sig_with(sig, k, a), m),
+        crate::ti_syntax::iota_lm(sig, crate::fclose::fclose(k, g.len(), m)) == crate::ti_syntax::iota_lm(sig_with(sig, k, a), m),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
@@ -241,6 +246,9 @@ proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
     assert(spine_head(crate::fclose::fclose(k, g.len(), major)) == spine_head(major));
     reveal(crate::ti_syntax::iota_lv);
     reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
+    crate::ti_hred::fire_inst_sig(s1, sig, m);
+    crate::ti_hred::fire_inst_head(sig, crate::fclose::fclose(k, g.len(), m), m);
     assert(crate::dom_rec_ty::rinst(s1, rid, spine_head(m)->Const_1) == crate::dom_rec_ty::rinst(sig, rid, spine_head(m)->Const_1));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jclose(k, a, pj[q]) by {
         crate::ti_syntax::iota_pdom_id(s1, m, q);
@@ -270,6 +278,7 @@ proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     assert(qs.len() == ps.len());
     crate::swap_model::fswap_fire(sig, j->Eq_1, x, y);
     crate::dom_rec_end::frag_congr(sig, s2);
+    crate::ti_hred::fire_inst_sig(sig, s2, crate::swap_model::fswap(j->Eq_1, x, y));
     assert(crate::ti_hred::rec_fire(s2, crate::swap_model::fswap(j->Eq_1, x, y)));
     pjs_swap(sig, j->Eq_0, j->Eq_1, x, y);
     assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
@@ -291,6 +300,7 @@ proof fn step_close_iota(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
     let s1 = sig_with(sig, k, a);
     let qs = pclose(sig, k, a, ps);
     assert(qs.len() == ps.len());
+    crate::ti_hred::fire_inst_sig(sig, s1, j->Eq_1);
     assert(crate::ti_hred::rec_fire(sig, j->Eq_1) == crate::ti_hred::rec_fire(s1, j->Eq_1));
     assert(crate::beta_model::rec_result(sig.ienv, j->Eq_1) == crate::beta_model::rec_result(s1.ienv, j->Eq_1));
     crate::fclose::fclose_fire(k, j->Eq_0.len(), sig, j->Eq_1);

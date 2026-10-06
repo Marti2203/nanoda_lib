@@ -569,6 +569,7 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
                 psub(crate::ti_syntax::iota_pjs(sig, g, m)[q]->Eq_2, t), psub(crate::ti_syntax::iota_pjs(sig, g, m)[q]->Eq_3, t)),
         crate::ti_syntax::iota_lv(sig, m) ==> crate::ti_syntax::iota_lv(sig, psub(m, t)),
         crate::ti_syntax::iota_prop(sig, psub(m, t)) == crate::ti_syntax::iota_prop(sig, m),
+        crate::ti_syntax::iota_lm(sig, psub(m, t)) == crate::ti_syntax::iota_lm(sig, m),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
@@ -585,6 +586,7 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
     assert(spine_head(psub(major, t)) == spine_head(major));
     reveal(crate::ti_syntax::iota_lv);
     reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
     let cargs = spine_args(major);
     let pdoms = crate::dom_rec_ty::rshape(sig, rid).pdoms;
     let (pj, pj2) = (crate::ti_syntax::iota_pjs(sig, g, m), crate::ti_syntax::iota_pjs(sig, g2, psub(m, t)));
@@ -615,6 +617,7 @@ pub proof fn psub_fire(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     let major = spine_args(sp)[rd.major_idx as int];
     psub_spine_const(t, major);
     assert(spsub(spine_args(sp), t)[rd.major_idx as int] == psub(major, t));
+    crate::ti_hred::fire_inst_head(sig, psub(sp, t), sp);
 }
 
 } // verus!

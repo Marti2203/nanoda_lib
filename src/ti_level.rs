@@ -432,7 +432,7 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
             ==> #[trigger] crate::ti_syntax::iota_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs))[q]
                 == jls(crate::ti_syntax::iota_pjs(sig, g, m)[q], ks, vs),
         crate::ti_syntax::iota_lv(sig, m) ==> crate::ti_syntax::iota_lv(sig, subst_expr_levels(m, ks, vs)),
-        crate::ti_syntax::iota_prop(sig, subst_expr_levels(m, ks, vs)) == crate::ti_syntax::iota_prop(sig, m),
+        crate::ti_syntax::iota_lm(sig, subst_expr_levels(m, ks, vs)) == ll_(crate::ti_syntax::iota_lm(sig, m), ks, vs),
 {
     use crate::beta_model::{spine_head, spine_args};
     reveal(crate::ti_syntax::iota_pjs);
@@ -454,7 +454,9 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(crate::level_inst::sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(major, ks, vs));
     // the level condition, instantiated alike on both sides
     reveal(crate::ti_syntax::iota_lv);
-    reveal(crate::ti_syntax::iota_prop);
+    crate::ti_syntax::iota_lm_ls(sig, rid, spine_head(m)->Const_1, ks, vs);
+    reveal(crate::ti_syntax::iota_lm);
+    assert(spine_head(m2)->Const_1 == subst_levels_spec(spine_head(m)->Const_1, ks, vs));
     if crate::ti_syntax::iota_lv(sig, m) {
         let lv = spine_head(m)->Const_1;
         let clv = spine_head(major)->Const_1;
@@ -492,9 +494,6 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
-    if crate::ti_syntax::iota_prop(sig, j->Eq_1) {
-        ls_is_zero(r->Iota_0, ks, vs);
-    }
 }
 
 /// DERIVATIONS SURVIVE LEVEL INSTANTIATION.

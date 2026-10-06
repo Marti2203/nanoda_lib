@@ -246,7 +246,7 @@ proof fn iota_node(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, e: ExprSpec, l: L
         crate::dom_rec_end::sig_sr(sig),
         crate::ti_hred::rec_fire(sig, m),
         crate::ti_syntax::iota_lv(sig, m),
-        crate::ti_syntax::iota_prop(sig, m) ==> crate::ti_syntax::is_zero(l),
+        l == crate::ti_syntax::iota_lm(sig, m),
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
         derivable(sig, eq(g, crate::iota_sr::bare(sig, m), crate::iota_sr::bare(sig, m), e)),
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, crate::iota_sr::bare(sig, m)),
@@ -297,10 +297,9 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let pr = crate::iota_sr::fired_rule(sig, m);
     crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
     crate::ti_syntax::frag_of(sig, rid);
-    crate::ti_syntax::prop_large(sig, m);
-    if crate::ti_syntax::iota_prop(sig, m) {
-        // Prop-only: generic subject reduction, no parameter premises
-        let sh = crate::dom_rec_ty::rshape(sig, rid);
+    if !crate::dom_rec_end::rec_interp(sig, rid) {
+        // not interpreted by the model: generic subject reduction, no
+        // parameter premises
         assert(!crate::ti_syntax::no_recs(sig)) by {
             assert(sig.ienv.recs.contains_key(rid));
         }
@@ -314,13 +313,9 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
         crate::iota_sr::bare_facts(sig, g, m);
         assert(crate::iota_gen::iota_end_g(sig, crate::iota_sr::bare(sig, m)) == crate::iota_gen::iota_end_g(sig, m)) by {
             let args = crate::beta_model::spine_args(m);
-            let rd = sig.ienv.recs[rid];
             assert(args.subrange(0, (rd.major_idx + 1) as int).subrange(crate::beta_model::rec_prefix(rd) as int, (rd.major_idx + 1) as int)
                 =~= args.subrange(crate::beta_model::rec_prefix(rd) as int, (rd.major_idx + 1) as int));
         }
-        reveal(crate::ti_syntax::iota_prop);
-        assert(l == LevelSpec::Zero);
-        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {}
         reveal(crate::ti_syntax::iota_pjs);
         iota_node(sig, g, m, t, crate::iota_gen::iota_end_g(sig, m), l);
     } else {

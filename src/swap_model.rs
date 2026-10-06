@@ -1023,6 +1023,7 @@ pub proof fn fswap_fire(sig: crate::ti_syntax::Sig, s: ExprSpec, x: nat, y: nat)
     let major = spine_args(s)[rd.major_idx as int];
     fswap_spine(major, x, y);
     assert(sswap(spine_args(s), x, y)[rd.major_idx as int] == fswap(major, x, y));
+    crate::ti_hred::fire_inst_head(sig, fswap(s, x, y), s);
 }
 
 } // verus!

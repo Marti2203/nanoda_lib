@@ -1286,10 +1286,25 @@ Steps:
     Prop inductives, still outside (`rec_model` asks `never_prop`; see
     "Open: large elimination out of Prop"). V2 admits the indexed Prop
     families with Prop-only elimination (`Nat.le`, `List.Mem`-like
-    families with several constructors). A follow-up could admit large
-    recursors of Prop inductives at instances whose motive level is zero
-    (Iota there is irrelevance, subject reduction generic), by making
-    `rec_fire` refuse their other instances.
+    families with several constructors).
+  - **V3 (done 2026-10-06): large recursors of Prop inductives into
+    Prop.** `rec_interp` (a large recursor of an inductive that is a type
+    at every instance) is what the model interprets (`rec_hyps`,
+    `sig_rec`'s `rec_model`, `rec_frag_l`); every other recursor gets
+    `rec_model_p`, no parameter premises, and generic subject reduction.
+    `iota_prop` is per instance: the redex's motive level (`iota_lm`, the
+    elimination level at the instance, opaque) is zero. `rec_fire` asks
+    `fire_inst` (opaque): an interpreted recursor, or a proposition motive.
+    So `Eq.rec`/`HEq.rec` reduce exactly at instances with a Prop motive,
+    and their Iota is irrelevance; into Type they are stuck in the typed
+    judgment (S6.6 must treat the kernel's such reductions as outside the
+    fragment). The rule's level is pinned, `Iota(l)` with
+    `l == iota_lm(m)`: level instantiation transports it by `lvl_compose`
+    (`iota_lm_ls`), which `iota_prop ==> is_zero(l)` could not survive once
+    `iota_prop` depends on the instance. A zero instance of an interpreted
+    recursor (`Nat.rec.{0}`) is irrelevance too, its subject reduction
+    still `iota_sr`'s. `Acc` stays out: its accessibility field is a
+    function into `Acc` (not a field kind of `rec_canon`).
 
 ### Open: large elimination out of Prop
 

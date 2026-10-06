@@ -1010,6 +1010,8 @@ pub proof fn motive_at(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, ps: Seq<E
         crate::ti_spine::vsub(rtds(sig, rid, lv)[rshape(sig, rid).np as int], ps)
             == crate::ti_syntax::pi(spine_app(ExprSpec::Const(rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv)), ps), crate::ti_syntax::sort(l)),
         crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)) is Zero ==> l == LevelSpec::Zero,
+        l == crate::level_model::subst_level_spec(crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)),
+            sig.ienv.recs[rid].uparams, lv),
 {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
@@ -1220,8 +1222,7 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> (l: LevelSpe
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, bare(sig, m)), crate::beta_model::rec_result(sig.ienv, bare(sig, m)),
             iota_end(sig, m))),
         derivable(sig, eq(g, iota_end(sig, m), iota_end(sig, m), crate::ti_syntax::sort(l))),
-        crate::rec_canon::elim_level(sig, spine_head(m)->Const_0, crate::rec_canon::rec_ind(sig, spine_head(m)->Const_0)) is Zero
-            ==> l == LevelSpec::Zero,
+        l == crate::ti_syntax::iota_lm(sig, m),
         forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]),
         crate::ti_syntax::iota_lv(sig, m),
 {
@@ -1348,6 +1349,7 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> (l: LevelSpe
     crate::ti_chain::tchain_refl(sig, g, mt);
     crate::dom_sem_rel::app_pair(sig, g, a0[np as int], a0[np as int], mt, ip, crate::ti_syntax::sort(l), major, major);
     assert(crate::subst_algebra::inst(0, major, crate::ti_syntax::sort(l)) == crate::ti_syntax::sort(l));
+    reveal(crate::ti_syntax::iota_lm);
     l
 }
 
@@ -1383,6 +1385,7 @@ pub proof fn bare_facts(sig: Sig, g: Ctx, m: ExprSpec)
         crate::ti_syntax::iota_pjs(sig, g, bare(sig, m)) == crate::ti_syntax::iota_pjs(sig, g, m),
         crate::ti_syntax::iota_lv(sig, bare(sig, m)) == crate::ti_syntax::iota_lv(sig, m),
         crate::ti_syntax::iota_prop(sig, bare(sig, m)) == crate::ti_syntax::iota_prop(sig, m),
+        crate::ti_syntax::iota_lm(sig, bare(sig, m)) == crate::ti_syntax::iota_lm(sig, m),
         fired_rule(sig, bare(sig, m)) == fired_rule(sig, m),
         iota_end(sig, bare(sig, m)) == iota_end(sig, m),
         extra(sig, bare(sig, m)) == Seq::<ExprSpec>::empty(),
@@ -1406,6 +1409,7 @@ pub proof fn bare_facts(sig: Sig, g: Ctx, m: ExprSpec)
     reveal(crate::ti_syntax::iota_pjs);
     reveal(crate::ti_syntax::iota_lv);
     reveal(crate::ti_syntax::iota_prop);
+    crate::ti_hred::fire_inst_head(sig, x1, m);
     assert(crate::ti_syntax::iota_pjs(sig, g, x1) =~= crate::ti_syntax::iota_pjs(sig, g, m));
 }
 

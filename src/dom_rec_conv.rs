@@ -301,11 +301,7 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     assert(rd.num_params == np);
     assert(rd.major_idx == pre);
     assert(crate::ti_syntax::iota_lv(sig, m1)) by { reveal(crate::ti_syntax::iota_lv); }
-    if crate::ti_syntax::iota_prop(sig, m1) {
-        reveal(crate::ti_syntax::iota_prop);
-        assert(l == LevelSpec::Zero);
-        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {}
-    }
+    assert(l == crate::ti_syntax::iota_lm(sig, m1)) by { reveal(crate::ti_syntax::iota_lm); }
     assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
         crate::ti_syntax::iota_pdom_id(sig, m1, q);
         let _pq = crate::dom_rec_ty::rshape(sig, c).pdoms[q];
@@ -332,7 +328,7 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
         crate::dom_rec_end::sig_sr(sig),
         crate::ti_syntax::iota_ok(sig),
         sig.ienv.recs.contains_key(rid),
-        crate::dom_rec_end::rec_large(sig, rid),
+        crate::dom_rec_end::rec_interp(sig, rid),
         lv.len() == sig.ienv.recs[rid].uparams.len(),
         0 <= p < rshape(sig, rid).nmin(),
     ensures

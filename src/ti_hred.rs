@@ -37,9 +37,61 @@ pub open spec fn rec_arity(sig: Sig, t: ExprSpec) -> bool {
     }
 }
 
-/// A recursor redex the typed judgment reduces.
+/// A recursor redex the typed judgment reduces: a recursor the model
+/// interprets at any instance, any other where its motive is a
+/// proposition.
 pub open spec fn rec_fire(sig: Sig, t: ExprSpec) -> bool {
-    crate::beta_model::rec_ready(sig.ienv, t) && rec_arity(sig, t)
+    crate::beta_model::rec_ready(sig.ienv, t) && rec_arity(sig, t) && fire_inst(sig, t)
+}
+
+/// The redex's instance reduces: its recursor is interpreted, or its
+/// motive is a proposition.
+#[verifier::opaque]
+pub open spec fn fire_inst(sig: Sig, t: ExprSpec) -> bool {
+    crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(t)->Const_0) || crate::ti_syntax::iota_prop(sig, t)
+}
+
+/// It reads only the head.
+pub proof fn fire_inst_head(sig: Sig, a: ExprSpec, b: ExprSpec)
+    requires
+        crate::beta_model::spine_head(a) == crate::beta_model::spine_head(b),
+    ensures
+        fire_inst(sig, a) == fire_inst(sig, b),
+        crate::ti_syntax::iota_prop(sig, a) == crate::ti_syntax::iota_prop(sig, b),
+        crate::ti_syntax::iota_lm(sig, a) == crate::ti_syntax::iota_lm(sig, b),
+{
+    reveal(fire_inst);
+    reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
+}
+
+/// It reads only the constants and the inductive tables.
+pub proof fn fire_inst_sig(s1: Sig, s2: Sig, a: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        fire_inst(s1, a) == fire_inst(s2, a),
+        crate::ti_syntax::iota_prop(s1, a) == crate::ti_syntax::iota_prop(s2, a),
+        crate::ti_syntax::iota_lm(s1, a) == crate::ti_syntax::iota_lm(s2, a),
+        crate::dom_rec_end::rec_interp(s1, crate::beta_model::spine_head(a)->Const_0)
+            == crate::dom_rec_end::rec_interp(s2, crate::beta_model::spine_head(a)->Const_0),
+{
+    reveal(fire_inst);
+    reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
+    reveal(crate::dom_rec_end::rec_interp);
+    reveal(crate::dom_rec_end::rec_large);
+}
+
+/// An interpreted recursor's redexes reduce at every instance.
+pub proof fn fire_inst_interp(sig: Sig, a: ExprSpec)
+    requires
+        crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(a)->Const_0),
+    ensures
+        fire_inst(sig, a),
+{
+    reveal(fire_inst);
 }
 
 /// One head step, if any: beta, delta, zeta, reduction in function

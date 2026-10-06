@@ -132,6 +132,7 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
     cargs: Seq<ExprSpec>)
     requires
         rec_scope(sig, rid),
+        crate::dom_rec_end::rec_interp(sig, rid),
         pargs.len() == rshape(sig, rid).np,
         lv.len() == sig.ienv.recs[rid].uparams.len(),
         !crate::ti_syntax::is_def(sig, rid, lv),
@@ -180,6 +181,7 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
     assert(sh.fields[j].len() == rd.rules[j].nfields);
     assert(sig.ienv.ctor_np[cid] as nat == sh.np);
     assert(crate::beta_model::rec_ready(sig.ienv, t1));
+    crate::ti_hred::fire_inst_interp(sig, t1);
     assert(rec_fire(sig, t1));
     if heads.len() > 0 {
         crate::dom_bound::spine_push(h, heads);

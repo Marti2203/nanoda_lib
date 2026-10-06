@@ -161,10 +161,15 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
         crate::ti_syntax::iota_pjs(sig2, g, m) == crate::ti_syntax::iota_pjs(sig, g, m),
         crate::ti_syntax::iota_lv(sig2, m) == crate::ti_syntax::iota_lv(sig, m),
         crate::ti_syntax::iota_prop(sig2, m) == crate::ti_syntax::iota_prop(sig, m),
+        crate::ti_syntax::iota_lm(sig2, m) == crate::ti_syntax::iota_lm(sig, m),
+        crate::dom_rec_end::rec_interp(sig2, crate::beta_model::spine_head(m)->Const_0) == crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(m)->Const_0),
 {
     reveal(crate::ti_syntax::iota_pjs);
     reveal(crate::ti_syntax::iota_lv);
     reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_syntax::iota_lm);
+    reveal(crate::dom_rec_end::rec_interp);
+    reveal(crate::dom_rec_end::rec_large);
     let rid = crate::beta_model::spine_head(m)->Const_0;
     crate::ti_syntax::frag_of(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid));
@@ -208,6 +213,7 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
         Rule::Iota(_) => {
             rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
             pjs_ext(sig, sig2, j->Eq_0, j->Eq_1);
+            reveal(crate::ti_hred::fire_inst);
         },
         _ => {},
     }

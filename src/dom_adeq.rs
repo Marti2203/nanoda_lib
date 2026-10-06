@@ -494,6 +494,9 @@ proof fn adeq_irr(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::Iota(l) => (2int, l),
         _ => (0int, rule->Irr_0),
     };
+    if rule is Iota {
+        crate::ti_syntax::prop_zero(sig, m, l);
+    }
     assert(concl(ps[k]) == eq(g, t, t, ExprSpec::Sort(l)) && is_zero(l));
     sound(sig, ps[k], rho);
     let a2 = type_elem(sig, t, rho, l, a);

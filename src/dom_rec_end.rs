@@ -233,7 +233,7 @@ pub proof fn tel_dom_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i:
 /// recursor in the fragment and eliminating into any universe (a Prop-only
 /// recursor is not interpreted: its Iota is proof irrelevance).
 pub open spec fn rec_hyps(sig: Sig, c: u64) -> bool {
-    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c) && rec_large(sig, c)
+    crate::ti_syntax::iota_ok(sig) && sig_rec(sig) && rec_frag(sig, c) && rec_interp(sig, c)
 }
 
 /// A closed type: typed in the empty context.
@@ -300,7 +300,7 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
 #[verifier::opaque]
 pub open spec fn sig_rec(sig: Sig) -> bool {
     forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==>
-        (rec_large(sig, c) ==> rec_model(sig, c)) && (!rec_large(sig, c) ==> rec_model_p(sig, c))
+        (rec_interp(sig, c) ==> rec_model(sig, c)) && (!rec_interp(sig, c) ==> rec_model_p(sig, c))
 }
 
 /// What subject reduction assumes of a Prop-only recursor (which the model
@@ -363,6 +363,7 @@ pub proof fn rec_canon_ok(sig: Sig, c: u64)
         crate::dom_code::canon_shape(sig, crate::dom_rec_ty::rshape(sig, c).ind) == crate::dom_rec_ty::rshape(sig, c),
 {
     reveal(sig_rec);
+    reveal(rec_interp);
     assert(rec_model(sig, c));
     crate::dom_rec_ty::rec_lps_distinct(sig, c);
     let sh = crate::dom_rec_ty::rshape(sig, c);
@@ -379,7 +380,7 @@ pub proof fn rec_model_at(sig: Sig, c: u64, ls: Seq<LevelSpec>)
     requires
         sig_rec(sig),
         rec_frag(sig, c),
-        rec_large(sig, c),
+        rec_interp(sig, c),
         ls.len() == sig.consts[crate::dom_rec_ty::rshape(sig, c).ind].lps.len(),
     ensures
         crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, c).ind, ls),
@@ -525,7 +526,7 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, us: Seq<LevelSpec>,
 pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     &&& crate::dom_rec_ty::rec_scope_g(sig, c)
-    &&& (rec_large(sig, c) ==> rec_frag_l(sig, c))
+    &&& (rec_interp(sig, c) ==> rec_frag_l(sig, c))
     &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
     &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
 }
@@ -536,6 +537,15 @@ pub open spec fn rec_frag_l(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     &&& crate::dom_rec_ty::rec_scope(sig, c)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+}
+
+/// THE MODEL INTERPRETS the recursor: it eliminates into any universe, and
+/// its inductive is a type at every instance. A large recursor of a Prop
+/// inductive (`Eq.rec`) is not interpreted: it reduces only where its
+/// motive is a proposition (`ti_hred::rec_fire`), its Iota irrelevance.
+#[verifier::opaque]
+pub open spec fn rec_interp(sig: Sig, c: u64) -> bool {
+    rec_large(sig, c) && crate::dom_code::never_prop(sig, crate::dom_rec_ty::rshape(sig, c).ind)
 }
 
 /// The recursor eliminates into any universe (it has a motive universe).
@@ -635,7 +645,7 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     scope_dir(s1, s2, c);
     let sh = crate::dom_rec_ty::rshape(s1, c);
     assert(sh == crate::dom_rec_ty::rshape(s2, c));
-    assert(rec_large(s1, c) == rec_large(s2, c)) by { reveal(rec_large); }
+    assert(rec_interp(s1, c) == rec_interp(s2, c)) by { reveal(rec_interp); reveal(rec_large); }
     assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
 }
 
