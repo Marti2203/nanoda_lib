@@ -286,6 +286,88 @@ proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
 }
 
+/// The projection instances, swapped.
+#[verifier::spinoff_prover]
+proof fn step_swap_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
+    requires
+        sig_fv_free(sig),
+        step_ok(sig, r, j, ps),
+        r is ProjCong || r is ProjIota,
+        forall|k: int| 0 <= k < ps.len() ==> concl(#[trigger] pswap(sig, ps, x, y)[k]) == jswap(concl(ps[k]), x, y),
+    ensures
+        step_ok(sig_swap(sig, x, y), r, jswap(j, x, y), pswap(sig, ps, x, y)),
+{
+    let s2 = sig_swap(sig, x, y);
+    let qs = pswap(sig, ps, x, y);
+    assert(qs.len() == ps.len());
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_iota_ok);
+    crate::ti_proj::proj_ok_congr(sig, s2);
+    let (m, n, t) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    if r is ProjCong {
+        let st = concl(ps[0])->Eq_3;
+        let i = m->Proj_0 as nat;
+        crate::ti_proj::proj_ty_unfold(sig, st, i, *m->Proj_1);
+        crate::ti_proj::proj_ty_fswap(sig, st, i, *m->Proj_1, x, y);
+        crate::ti_proj::proj_sig_congr(sig, s2, crate::swap_model::fswap(st, x, y), i, crate::swap_model::fswap(*m->Proj_1, x, y), m);
+        assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+        assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+    } else {
+        let st = concl(ps[2])->Eq_3;
+        let mm = crate::swap_model::fswap(m, x, y);
+        crate::ti_proj::proj_fire_locals(sig, m, x, y, 0, 0);
+        crate::ti_proj::proj_ty_unfold(sig, st, m->Proj_0 as nat, *m->Proj_1);
+        crate::ti_proj::proj_ty_fswap(sig, st, m->Proj_0 as nat, *m->Proj_1, x, y);
+        crate::ti_proj::proj_sig_congr(sig, s2, crate::swap_model::fswap(st, x, y), m->Proj_0 as nat, crate::swap_model::fswap(*m->Proj_1, x, y), mm);
+        crate::swap_model::fswap_spine(st, x, y);
+        assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+        assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+        assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
+        assert(concl(qs[3]) == jswap(concl(ps[3]), x, y));
+    }
+}
+
+/// The projection instances, closed.
+#[verifier::spinoff_prover]
+proof fn step_close_proj(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        close_ok(sig, k, a),
+        step_ok(sig_with(sig, k, a), r, j, ps),
+        r is ProjCong || r is ProjIota,
+        forall|i: int| 0 <= i < ps.len() ==> concl(#[trigger] pclose(sig, k, a, ps)[i]) == jclose(k, a, concl(ps[i])),
+    ensures
+        step_ok(sig, r, jclose(k, a, j), pclose(sig, k, a, ps)),
+{
+    let s1 = sig_with(sig, k, a);
+    let qs = pclose(sig, k, a, ps);
+    assert(qs.len() == ps.len());
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_iota_ok);
+    crate::ti_proj::proj_ok_congr(sig, s1);
+    let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let c = g.len();
+    if r is ProjCong {
+        let st = concl(ps[0])->Eq_3;
+        let i = m->Proj_0 as nat;
+        crate::ti_proj::proj_ty_unfold(s1, st, i, *m->Proj_1);
+        crate::ti_proj::proj_sig_congr(s1, sig, st, i, *m->Proj_1, m);
+        crate::ti_proj::proj_ty_fclose(sig, st, i, *m->Proj_1, k, c);
+        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+    } else {
+        let st = concl(ps[2])->Eq_3;
+        crate::ti_proj::proj_sig_congr(s1, sig, st, m->Proj_0 as nat, *m->Proj_1, m);
+        crate::ti_proj::proj_fire_locals(sig, m, 0, 0, k, c);
+        crate::ti_proj::proj_ty_unfold(s1, st, m->Proj_0 as nat, *m->Proj_1);
+        crate::ti_proj::proj_ty_fclose(sig, st, m->Proj_0 as nat, *m->Proj_1, k, c);
+        crate::fclose::fclose_spine_const(k, c, st);
+        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+        assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));
+        assert(concl(qs[3]) == jclose(k, a, concl(ps[3])));
+    }
+}
+
 /// The Iota instance, closed.
 #[verifier::spinoff_prover]
 proof fn step_close_iota(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv>)
@@ -497,7 +579,7 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
         Rule::Iota(_) => step_swap_iota(sig, r, j, ps, x, y),
-        Rule::ProjCong(_) | Rule::ProjIota(_) => crate::ti_syntax::proj_dead(sig, r, j, ps),
+        Rule::ProjCong(_) | Rule::ProjIota(_) => step_swap_proj(sig, r, j, ps, x, y),
         Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;
             let ls = j->Eq_1->Const_1;
@@ -646,7 +728,8 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
         step_ok(sig, r, jclose(k, a, j), pclose(sig, k, a, ps)),
 {
     if r is ProjCong || r is ProjIota {
-        crate::ti_syntax::proj_dead(sig_with(sig, k, a), r, j, ps);
+        step_close_proj(sig, k, a, r, j, ps);
+        return;
     }
     if r is CtxNil || r is CtxCons || r is Var || r is Univ || r is Sym || r is Trans || r is Conv || r is Irr {
         step_close_ctx(sig, k, a, r, j, ps);

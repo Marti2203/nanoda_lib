@@ -405,10 +405,14 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
     }
 }
 
-/// A STRUCTURE: a canonical inductive with one constructor and no indices.
+/// A STRUCTURE: a canonical inductive with one constructor and no indices,
+/// its canonical recursor unique.
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
-    crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
+    &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
+    &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]
+        crate::rec_canon::rec_canon(sig, r1) && crate::rec_canon::rec_ind(sig, r1) == s
+        && crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s ==> r1 == r2
 }
 
 /// Projections' signature condition: for now no structures, so the
@@ -495,7 +499,7 @@ pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
     match j {
         Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 4 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
-            proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && crate::beta_model::spine_head(st) is Const
+            proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
                 && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l))])
         },

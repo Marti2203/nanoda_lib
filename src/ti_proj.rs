@@ -256,4 +256,344 @@ pub proof fn proj_fire_psub(sig: Sig, m: ExprSpec, t: Sub)
     crate::ti_subst::psub_spine_const(t, x);
 }
 
+/// Swapping two locals commutes with instantiating a telescope.
+pub proof fn fswap_vsub(e: ExprSpec, xs: Seq<ExprSpec>, x: nat, y: nat)
+    ensures
+        crate::swap_model::fswap(vsub(e, xs), x, y) == vsub(crate::swap_model::fswap(e, x, y), crate::swap_model::sswap(xs, x, y)),
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        let m = (xs.len() - 1) as nat;
+        crate::ti_locals::fswap_inst(m, xs[0], e, x, y);
+        fswap_vsub(crate::subst_algebra::inst(m, xs[0], e), xs.drop_first(), x, y);
+        assert(crate::swap_model::sswap(xs, x, y).drop_first() =~= crate::swap_model::sswap(xs.drop_first(), x, y));
+    }
+}
+
+/// Closing a local commutes with instantiating a telescope.
+pub proof fn fclose_vsub(k: nat, c: nat, e: ExprSpec, xs: Seq<ExprSpec>)
+    ensures
+        crate::fclose::fclose(k, c, vsub(e, xs)) == vsub(crate::fclose::fclose(k, c + xs.len(), e), crate::fclose::sclose(k, c, xs)),
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        let m = (xs.len() - 1) as nat;
+        let e1 = crate::subst_algebra::inst(m, xs[0], e);
+        fclose_vsub(k, c, e1, xs.drop_first());
+        crate::fclose::fclose_inst(k, c + m, m, xs[0], e);
+        assert(crate::fclose::sclose(k, c, xs).drop_first() =~= crate::fclose::sclose(k, c, xs.drop_first()));
+        assert((c + m + 1) as nat == c + xs.len());
+    }
+}
+
+/// Level substitution commutes with instantiating a telescope.
+pub proof fn ls_vsub(e: ExprSpec, xs: Seq<ExprSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        crate::expr_model::subst_expr_levels(vsub(e, xs), ks, vs)
+            == vsub(crate::expr_model::subst_expr_levels(e, ks, vs), crate::level_inst::sli(xs, ks, vs)),
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        let m = (xs.len() - 1) as nat;
+        crate::ti_level::ls_inst(m, xs[0], e, ks, vs);
+        ls_vsub(crate::subst_algebra::inst(m, xs[0], e), xs.drop_first(), ks, vs);
+        assert(crate::level_inst::sli(xs, ks, vs).drop_first() =~= crate::level_inst::sli(xs.drop_first(), ks, vs));
+    }
+}
+
+/// A telescope's domains have no local when it has none.
+pub proof fn binds_fv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, j: int)
+    requires
+        !crate::expr_model::has_fv(crate::rec_canon::binds(bk, ds, b)),
+        0 <= j < ds.len(),
+    ensures
+        !crate::expr_model::has_fv(ds[j]),
+    decreases ds.len(),
+{
+    if j > 0 {
+        binds_fv(bk, ds.drop_first(), b, j - 1);
+    }
+}
+
+/// A structure's field has no local when its constructor's type has none.
+pub proof fn sfield_fv(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>)
+    requires
+        crate::dom_code::has_canon(sig, s),
+        crate::dom_code::canon_shape(sig, s).nmin() == 1,
+        i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        !crate::expr_model::has_fv(sig.consts[crate::dom_code::canon_shape(sig, s).ctors[0]].ty),
+    ensures
+        !crate::expr_model::has_fv(sfield(sig, s, i, us)),
+{
+    let sh = crate::dom_code::canon_shape(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    let t = sig.consts[sh.ctors[0]].ty;
+    let nf = sh.fields[0].len();
+    binds_fv(BinderKind::Pi, sh.pdoms + sh.fields[0], crate::rec_canon::tbody(t, sh.np + nf), (sh.np + i) as int);
+    assert((sh.pdoms + sh.fields[0])[(sh.np + i) as int] == sh.fields[0][i as int]);
+    crate::expr_model::subst_expr_levels_has_fv(sh.fields[0][i as int], sig.consts[s].lps, us);
+}
+
+/// A structure's canonical recursor is the same in a signature with the
+/// same constants and inductive tables (it is unique there).
+pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+        crate::ti_syntax::struct_of(s1, s),
+    ensures
+        crate::ti_syntax::struct_of(s2, s),
+        crate::dom_code::canon_rec(s1, s) == crate::dom_code::canon_rec(s2, s),
+        crate::dom_code::canon_shape(s1, s) == crate::dom_code::canon_shape(s2, s),
+{
+    reveal(crate::ti_syntax::struct_of);
+    assert forall|rid: u64| #[trigger] crate::rec_canon::rec_canon(s1, rid) == crate::rec_canon::rec_canon(s2, rid)
+        && crate::rec_canon::rec_ind(s1, rid) == crate::rec_canon::rec_ind(s2, rid) by {
+        crate::dom_rec_end::canon_congr(s1, s2, rid);
+    }
+    let r1 = crate::dom_code::canon_rec(s1, s);
+    assert(crate::rec_canon::rec_canon(s1, r1) && crate::rec_canon::rec_ind(s1, r1) == s);
+    assert(crate::rec_canon::rec_canon(s2, r1) && crate::rec_canon::rec_ind(s2, r1) == s);
+    assert(crate::dom_code::has_canon(s2, s));
+    let r2 = crate::dom_code::canon_rec(s2, s);
+    assert(crate::rec_canon::rec_canon(s2, r2) && crate::rec_canon::rec_ind(s2, r2) == s);
+    assert(crate::rec_canon::rec_canon(s1, r2) && crate::rec_canon::rec_ind(s1, r2) == s);
+    assert(r1 == r2);
+    assert(crate::dom_code::canon_shape(s1, s) == crate::dom_code::canon_shape(s2, s));
+    assert forall|a1: u64, a2: u64| #![trigger crate::rec_canon::rec_canon(s2, a1), crate::rec_canon::rec_canon(s2, a2)]
+        crate::rec_canon::rec_canon(s2, a1) && crate::rec_canon::rec_ind(s2, a1) == s
+        && crate::rec_canon::rec_canon(s2, a2) && crate::rec_canon::rec_ind(s2, a2) == s implies a1 == a2 by {
+        assert(crate::rec_canon::rec_canon(s1, a1) && crate::rec_canon::rec_canon(s1, a2));
+    }
+}
+
+/// Projections' signature condition reads only the constants and the
+/// inductive tables.
+pub proof fn proj_ok_congr(s1: Sig, s2: Sig)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::ti_syntax::proj_ok(s1) == crate::ti_syntax::proj_ok(s2),
+{
+    if crate::ti_syntax::proj_ok(s1) {
+        assert forall|s: u64| !#[trigger] crate::ti_syntax::struct_of(s2, s) by {
+            if crate::ti_syntax::struct_of(s2, s) {
+                struct_congr(s2, s1, s);
+            }
+        }
+    }
+    if crate::ti_syntax::proj_ok(s2) {
+        assert forall|s: u64| !#[trigger] crate::ti_syntax::struct_of(s1, s) by {
+            if crate::ti_syntax::struct_of(s1, s) {
+                struct_congr(s1, s2, s);
+            }
+        }
+    }
+}
+
+/// The projection rules read only the constants and the inductive tables.
+pub proof fn proj_sig_congr(s1: Sig, s2: Sig, st: ExprSpec, i: nat, x: ExprSpec, m: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::ti_syntax::proj_ty(s1, st, i, x) == crate::ti_syntax::proj_ty(s2, st, i, x),
+        crate::ti_syntax::proj_prop(s1, st) == crate::ti_syntax::proj_prop(s2, st),
+        crate::ti_syntax::proj_fire(s1, m) == crate::ti_syntax::proj_fire(s2, m),
+        crate::ti_syntax::proj_fire(s1, m) ==> crate::ti_syntax::proj_result(s1, m) == crate::ti_syntax::proj_result(s2, m),
+{
+    reveal(crate::ti_syntax::proj_ty);
+    reveal(crate::ti_syntax::proj_prop);
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    let h = spine_head(st);
+    if h is Const {
+        if crate::ti_syntax::struct_of(s1, h->Const_0) {
+            struct_congr(s1, s2, h->Const_0);
+        } else if crate::ti_syntax::struct_of(s2, h->Const_0) {
+            struct_congr(s2, s1, h->Const_0);
+        }
+    }
+    let x0 = *m->Proj_1;
+    let hc = spine_head(x0);
+    if m is Proj && hc is Const && s1.ienv.ctor_ind.contains_key(hc->Const_0) {
+        let ind = s1.ienv.ctor_ind[hc->Const_0];
+        if crate::ti_syntax::struct_of(s1, ind) {
+            struct_congr(s1, s2, ind);
+        } else if crate::ti_syntax::struct_of(s2, ind) {
+            struct_congr(s2, s1, ind);
+        }
+    }
+}
+
+/// A projection's type, swapped.
+pub proof fn proj_ty_fswap(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, xx: nat, yy: nat)
+    requires
+        spine_head(st) is Const,
+        crate::ti_locals::sig_fv_free(sig),
+    ensures
+        crate::ti_syntax::proj_ty(sig, crate::swap_model::fswap(st, xx, yy), i, crate::swap_model::fswap(x, xx, yy))
+            == match crate::ti_syntax::proj_ty(sig, st, i, x) {
+                Some(ty) => Some(crate::swap_model::fswap(ty, xx, yy)),
+                None => None::<ExprSpec>,
+            },
+        crate::ti_syntax::proj_prop(sig, crate::swap_model::fswap(st, xx, yy)) == crate::ti_syntax::proj_prop(sig, st),
+{
+    let (h, ps) = (spine_head(st), spine_args(st));
+    crate::swap_model::fswap_spine(st, xx, yy);
+    proj_ty_unfold(sig, st, i, x);
+    proj_ty_unfold(sig, crate::swap_model::fswap(st, xx, yy), i, crate::swap_model::fswap(x, xx, yy));
+    reveal(crate::ti_syntax::proj_prop);
+    if crate::ti_syntax::proj_ty(sig, st, i, x) is Some {
+        reveal(crate::ti_syntax::struct_of);
+        let sh = crate::dom_code::canon_shape(sig, h->Const_0);
+        let f = sfield(sig, h->Const_0, i, h->Const_1);
+        let xs = ps + crate::ti_syntax::projs(x, i);
+        crate::dom_ctor_bound::ctor_shape(sig, h->Const_0, 0);
+        sfield_fv(sig, h->Const_0, i, h->Const_1);
+        crate::kclaims::no_fv_absent(f, xx);
+        crate::kclaims::no_fv_absent(f, yy);
+        crate::swap_model::fswap_noop(f, xx, yy);
+        fswap_vsub(f, xs, xx, yy);
+        assert(crate::swap_model::sswap(xs, xx, yy) =~= crate::swap_model::sswap(ps, xx, yy) + crate::ti_syntax::projs(crate::swap_model::fswap(x, xx, yy), i));
+    }
+}
+
+/// A projection's type, closed.
+pub proof fn proj_ty_fclose(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, k: nat, c: nat)
+    requires
+        spine_head(st) is Const,
+        crate::ti_locals::sig_fv_free(sig),
+    ensures
+        crate::ti_syntax::proj_ty(sig, crate::fclose::fclose(k, c, st), i, crate::fclose::fclose(k, c, x))
+            == match crate::ti_syntax::proj_ty(sig, st, i, x) {
+                Some(ty) => Some(crate::fclose::fclose(k, c, ty)),
+                None => None::<ExprSpec>,
+            },
+        crate::ti_syntax::proj_prop(sig, crate::fclose::fclose(k, c, st)) == crate::ti_syntax::proj_prop(sig, st),
+{
+    let (h, ps) = (spine_head(st), spine_args(st));
+    crate::fclose::fclose_spine_const(k, c, st);
+    proj_ty_unfold(sig, st, i, x);
+    proj_ty_unfold(sig, crate::fclose::fclose(k, c, st), i, crate::fclose::fclose(k, c, x));
+    reveal(crate::ti_syntax::proj_prop);
+    if crate::ti_syntax::proj_ty(sig, st, i, x) is Some {
+        reveal(crate::ti_syntax::struct_of);
+        let f = sfield(sig, h->Const_0, i, h->Const_1);
+        let xs = ps + crate::ti_syntax::projs(x, i);
+        crate::dom_ctor_bound::ctor_shape(sig, h->Const_0, 0);
+        sfield_fv(sig, h->Const_0, i, h->Const_1);
+        sfield_vsub(sig, h->Const_0, i, h->Const_1, ps, crate::ti_syntax::projs(x, i), crate::ti_syntax::projs(x, i));
+        crate::fclose::fclose_closed(k, c + xs.len(), f);
+        fclose_vsub(k, c, f, xs);
+        assert(crate::fclose::sclose(k, c, xs) =~= crate::fclose::sclose(k, c, ps) + crate::ti_syntax::projs(crate::fclose::fclose(k, c, x), i));
+    }
+}
+
+/// The projection redex, swapped and closed.
+pub proof fn proj_fire_locals(sig: Sig, m: ExprSpec, xx: nat, yy: nat, k: nat, c: nat)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        crate::ti_syntax::proj_fire(sig, crate::swap_model::fswap(m, xx, yy)),
+        crate::ti_syntax::proj_result(sig, crate::swap_model::fswap(m, xx, yy)) == crate::swap_model::fswap(crate::ti_syntax::proj_result(sig, m), xx, yy),
+        crate::ti_syntax::proj_fire(sig, crate::fclose::fclose(k, c, m)),
+        crate::ti_syntax::proj_result(sig, crate::fclose::fclose(k, c, m)) == crate::fclose::fclose(k, c, crate::ti_syntax::proj_result(sig, m)),
+{
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    let x = *m->Proj_1;
+    crate::swap_model::fswap_spine(x, xx, yy);
+    crate::fclose::fclose_spine_const(k, c, x);
+}
+
+/// A telescope's body mentions only the telescope's level parameters.
+pub proof fn elp_binds_body(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, us: Seq<u64>)
+    requires
+        crate::level_inst::elp_in(crate::rec_canon::binds(bk, ds, b), us),
+    ensures
+        crate::level_inst::elp_in(b, us),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        elp_binds_body(bk, ds.drop_first(), b, us);
+    }
+}
+
+/// A projection's type, at a level instance; a structure that may be a
+/// proposition there may be one before.
+pub proof fn proj_ty_ls(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        spine_head(st) is Const,
+        crate::ti_level::sig_lp_ok(sig, ks, vs),
+    ensures
+        crate::ti_syntax::proj_ty(sig, crate::expr_model::subst_expr_levels(st, ks, vs), i, crate::expr_model::subst_expr_levels(x, ks, vs))
+            == match crate::ti_syntax::proj_ty(sig, st, i, x) {
+                Some(ty) => Some(crate::expr_model::subst_expr_levels(ty, ks, vs)),
+                None => None::<ExprSpec>,
+            },
+        crate::ti_syntax::proj_ty(sig, st, i, x) is Some ==>
+            (crate::ti_syntax::proj_prop(sig, crate::expr_model::subst_expr_levels(st, ks, vs)) ==> crate::ti_syntax::proj_prop(sig, st)),
+{
+    use crate::expr_model::subst_expr_levels;
+    let (h, ps) = (spine_head(st), spine_args(st));
+    let st2 = subst_expr_levels(st, ks, vs);
+    crate::level_inst::li_spine_const(st, ks, vs);
+    proj_ty_unfold(sig, st, i, x);
+    proj_ty_unfold(sig, st2, i, subst_expr_levels(x, ks, vs));
+    if crate::ti_syntax::proj_ty(sig, st, i, x) is Some {
+        reveal(crate::ti_syntax::struct_of);
+        let (s, us) = (h->Const_0, h->Const_1);
+        let us2 = crate::level_model::subst_levels_spec(us, ks, vs);
+        let sh = crate::dom_code::canon_shape(sig, s);
+        let lps = sig.consts[s].lps;
+        crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+        let c = sh.ctors[0];
+        let tc = sig.consts[c].ty;
+        let nf = sh.fields[0].len();
+        // the field at the instantiated instance
+        assert(crate::level_inst::elp_in(tc, lps));
+        crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.fields[0], crate::rec_canon::tbody(tc, sh.np + nf), lps);
+        assert((sh.pdoms + sh.fields[0])[(sh.np + i) as int] == sh.fields[0][i as int]);
+        crate::level_inst::expr_compose(sh.fields[0][i as int], lps, us, ks, vs);
+        let f = sfield(sig, s, i, us);
+        assert(subst_expr_levels(f, ks, vs) == sfield(sig, s, i, us2));
+        let xs = ps + crate::ti_syntax::projs(x, i);
+        ls_vsub(f, xs, ks, vs);
+        assert(crate::level_inst::sli(xs, ks, vs) =~= crate::level_inst::sli(ps, ks, vs) + crate::ti_syntax::projs(subst_expr_levels(x, ks, vs), i));
+        // the sort
+        reveal(crate::ti_syntax::proj_prop);
+        let ts = sig.consts[s].ty;
+        crate::dom_ctor_bound::ctor_shape_ind(sig, s);
+        crate::dom_rec_shape::tarity_binds(sh.pdoms + sh.idoms, crate::rec_canon::tbody(ts, sh.np + sh.ni));
+        assert(crate::level_inst::elp_in(ts, lps));
+        elp_binds_body(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(ts, sh.np + sh.ni), lps);
+        let l0 = crate::rec_canon::tbody(ts, crate::rec_canon::tarity(ts))->Sort_0;
+        assert(crate::level_inst::lp_in(l0, lps));
+        crate::level_inst::lvl_compose(l0, lps, us, ks, vs);
+        let l1 = crate::level_model::subst_level_spec(l0, lps, us);
+        if crate::ti_syntax::proj_prop(sig, st2) {
+            let rho = choose|rho: Map<nat, nat>| !(crate::level_model::interp(crate::level_model::subst_level_spec(l0, lps, us2), rho) > 0);
+            crate::level_model::subst_level_spec_interp(l1, ks, vs, rho);
+            let rho2 = crate::level_model::subst_env(rho, ks, vs);
+            assert(!(crate::level_model::interp(l1, rho2) > 0));
+        }
+    }
+}
+
+/// The projection redex at a level instance.
+pub proof fn proj_fire_ls(sig: Sig, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        crate::ti_syntax::proj_fire(sig, crate::expr_model::subst_expr_levels(m, ks, vs)),
+        crate::ti_syntax::proj_result(sig, crate::expr_model::subst_expr_levels(m, ks, vs))
+            == crate::expr_model::subst_expr_levels(crate::ti_syntax::proj_result(sig, m), ks, vs),
+{
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    crate::level_inst::li_spine_const(*m->Proj_1, ks, vs);
+}
+
 } // verus!

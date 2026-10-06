@@ -1071,7 +1071,8 @@ proof fn d_sub_piota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[3], dl, s, s);
     d_sub(sig, ps[3], dl, s, s2);
     crate::ti_proj::proj_fire_psub(sig, m, s);
-    crate::ti_proj::proj_ty_psub(sig, st, 0, x, s);
+    crate::ti_proj::proj_ty_unfold(sig, st, m->Proj_0 as nat, x);
+    crate::ti_proj::proj_ty_psub(sig, st, m->Proj_0 as nat, x, s);
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(st, s)));

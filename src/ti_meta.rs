@@ -713,7 +713,8 @@ proof fn d_ren_piota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> n
     let d2 = d_ren(sig, ps[2], w, dl, r);
     let d3 = d_ren(sig, ps[3], w, dl, r);
     crate::ti_proj::proj_fire_psub(sig, m, q);
-    crate::ti_proj::proj_ty_psub(sig, st, 0, x, q);
+    crate::ti_proj::proj_ty_unfold(sig, st, m->Proj_0 as nat, x);
+    crate::ti_proj::proj_ty_psub(sig, st, m->Proj_0 as nat, x, q);
     crate::ti_subst::psub_spine_const(q, st);
     assert(psub(m, q) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, q))));
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));

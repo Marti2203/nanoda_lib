@@ -498,6 +498,49 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
 }
 
+/// The projection instances at a level instance.
+#[verifier::spinoff_prover]
+proof fn step_ls_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        step_ok(sig, r, j, ps),
+        pls_ok(sig, ps, ks, vs),
+        r is ProjCong || r is ProjIota,
+    ensures
+        step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
+{
+    let qs = pls(sig, ps, ks, vs);
+    assert(qs.len() == ps.len());
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_iota_ok);
+    let m = j->Eq_1;
+    let (i, x) = (m->Proj_0 as nat, *m->Proj_1);
+    if r is ProjCong {
+        let l = r->ProjCong_0;
+        let st = concl(ps[0])->Eq_3;
+        crate::ti_proj::proj_ty_unfold(sig, st, i, x);
+        crate::ti_proj::proj_ty_ls(sig, st, i, x, ks, vs);
+        if crate::ti_syntax::proj_prop(sig, subst_expr_levels(st, ks, vs)) {
+            ls_is_zero(l, ks, vs);
+        }
+        assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+        assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+    } else {
+        let l = r->ProjIota_0;
+        let st = concl(ps[2])->Eq_3;
+        crate::ti_proj::proj_fire_ls(sig, m, ks, vs);
+        crate::ti_proj::proj_ty_unfold(sig, st, i, x);
+        crate::ti_proj::proj_ty_ls(sig, st, i, x, ks, vs);
+        if crate::ti_syntax::proj_prop(sig, subst_expr_levels(st, ks, vs)) {
+            ls_is_zero(l, ks, vs);
+        }
+        assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+        assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+        assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
+        assert(concl(qs[3]) == jls(concl(ps[3]), ks, vs));
+    }
+}
+
 /// DERIVATIONS SURVIVE LEVEL INSTANTIATION.
 pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
@@ -509,9 +552,6 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
 {
     valid_prems(sig, d);
     let Deriv::Node(r, j, ps) = d;
-    if r is ProjCong || r is ProjIota {
-        crate::ti_syntax::proj_dead(sig, r, j, ps);
-    }
     let qs = pls(sig, ps, ks, vs);
     assert forall|k: int| 0 <= k < ps.len() implies valid(sig, #[trigger] qs[k]) && concl(qs[k]) == jls(concl(ps[k]), ks, vs) by {
         d_ls(sig, ps[k], ks, vs);
@@ -523,6 +563,8 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
         step_ls_bind(sig, r, j, ps, ks, vs);
     } else if r is Iota {
         step_ls_iota(sig, r, j, ps, ks, vs);
+    } else if r is ProjCong || r is ProjIota {
+        step_ls_proj(sig, r, j, ps, ks, vs);
     } else {
         step_ls_cst(sig, r, j, ps, ks, vs);
     }

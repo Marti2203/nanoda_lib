@@ -299,9 +299,6 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     let g = j->Eq_0;
     match rule {
         Rule::Var(i) => {
@@ -324,6 +321,11 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
         Rule::Beta(_, _) => d_ls2_via(sig, d, dl, ks, vs, vs2, 4),
         Rule::Zeta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Iota(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 1),
+        Rule::ProjCong(_) => d_ls2_pcong(sig, d, dl, ks, vs, vs2),
+        Rule::ProjIota(_) => {
+            reveal(crate::ti_syntax::proj_iota_ok);
+            d_ls2_via(sig, d, dl, ks, vs, vs2, 1)
+        },
         Rule::Eta(..) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Irr(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Delta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
@@ -331,6 +333,50 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
         Rule::Local(_) => d_ls2_local(sig, d, dl, ks, vs, vs2),
         _ => {},
     }
+}
+
+/// A projection's congruence at two instances: its subject's pair.
+#[verifier::spinoff_prover]
+proof fn d_ls2_pcong(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>, vs2: Seq<LevelSpec>)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        lpair(sig, concl(d)->Eq_0, dl, ks, vs, vs2),
+        d->Node_0 is ProjCong,
+    ensures
+        derivable(sig, eq(dl, le_(concl(d)->Eq_1, ks, vs), le_(concl(d)->Eq_2, ks, vs2), le_(concl(d)->Eq_3, ks, vs))),
+        tconvd(sig, dl, le_(concl(d)->Eq_3, ks, vs), le_(concl(d)->Eq_3, ks, vs2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (m, n, a) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->ProjCong_0;
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(lpair);
+    let st = concl(ps[0])->Eq_3;
+    let (i, x, x2) = (m->Proj_0, *m->Proj_1, *n->Proj_1);
+    d_ls2(sig, ps[0], dl, ks, vs, vs2);
+    d_ls2(sig, ps[1], dl, ks, vs, vs2);
+    crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
+    crate::ti_proj::proj_ty_ls(sig, st, i as nat, x, ks, vs);
+    let ll = ll_(l, ks, vs);
+    assert(le_(sort(l), ks, vs) == sort(ll));
+    if crate::ti_syntax::proj_prop(sig, le_(st, ks, vs)) {
+        crate::ti_level::ls_is_zero(l, ks, vs);
+    }
+    let a0 = get(sig, eq(dl, le_(a, ks, vs), le_(a, ks, vs2), sort(ll)));
+    let a1 = crate::ti_meta::d_left(sig, a0);
+    let q0 = get(sig, eq(dl, le_(x, ks, vs), le_(x2, ks, vs2), le_(st, ks, vs)));
+    let ij = eq(dl, le_(m, ks, vs), le_(n, ks, vs2), le_(a, ks, vs));
+    let ip = seq![q0, a1];
+    assert(le_(m, ks, vs) == ExprSpec::Proj(i, Box::new(le_(x, ks, vs))));
+    assert(le_(n, ks, vs2) == ExprSpec::Proj(i, Box::new(le_(x2, ks, vs2))));
+    assert(prems(ip, seq![eq(dl, le_(x, ks, vs), le_(x2, ks, vs2), le_(st, ks, vs)), eq(dl, le_(a, ks, vs), le_(a, ks, vs), sort(ll))]));
+    assert(step_ok(sig, Rule::ProjCong(ll), ij, ip)) by { reveal(crate::ti_syntax::proj_cong_ok); }
+    valid_node(sig, Rule::ProjCong(ll), ij, ip);
+    mk_d(sig, node(Rule::ProjCong(ll), ij, ip));
+    mk_t(sig, a0, ll);
 }
 
 /// A rule with the premise `n ≡ n : a`: its first instance, then that
