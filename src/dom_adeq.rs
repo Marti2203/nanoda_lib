@@ -217,11 +217,7 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         },
         Rule::ProjCong(_) => adeq_pcong(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ProjIota(_) => adeq_piota(sig, d, rho, dl, s, s2, n, u, a),
-        Rule::StructEta(_) => {
-            // structure eta needs the smashed model (stage E4)
-            reveal(crate::ti_syntax::struct_eta_ok);
-            crate::dom_code::smash_dead(sig, crate::beta_model::spine_head(concl(d)->Eq_3)->Const_0);
-        },
+        Rule::StructEta(_) => adeq_seta(sig, d, rho, dl, s, s2, n, u, a),
         _ => {},
     }
 }
@@ -1488,6 +1484,72 @@ proof fn adeq_iota(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     crate::ti_hred::hred_step(sig, psub(m, s));
     hred_refl(sig, psub(m2, s2));
     expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
+}
+
+/// STRUCTURE ETA: at bottom, the type's relation; above, both sides' own
+/// relations (the right one's member by soundness) and the projections'
+/// relations at each field (`dom_adeq_proj::seta_tail`).
+#[verifier::spinoff_prover]
+proof fn adeq_seta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is StructEta,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    use crate::dom_typing::{ecode, is_centry};
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    reveal(crate::ti_syntax::struct_eta_ok);
+    // the type
+    adeq_type(sig, ps[2], rho, dl, s, s2, n, a);
+    related_left(sig, g, rho, dl, s, s2);
+    adeq_type(sig, ps[2], rho, dl, s, s, n, a);
+    let (mm, mb, n1, nn, tt) = (psub(m, s), psub(m, s2), psub(m2, s), psub(m2, s2), psub(t, s));
+    if u is Bot {
+        crate::dom_rel_per::bot_tm(sig, n, dl, mm, nn, tt, a);
+        return;
+    }
+    // the right side has the left's members, and both are related
+    crate::dom_sound::sound(sig, d, rho);
+    crate::dom_sound::sound(sig, ps[0], rho);
+    let (v, _b) = crate::dom_proj_sound::struct_val(sig, t, m, rho, u);
+    adeq(sig, ps[0], rho, dl, s, s2, n, u, a);
+    assert(mem(sig, m2, rho, u));
+    adeq(sig, ps[1], rho, dl, s, s2, n, u, a);
+    crate::ti_proj::struct_ty_psub(sig, t, s);
+    let nf = crate::ti_syntax::struct_nf(sig, t);
+    let es = crate::dom_rel::cblock(u, a);
+    reveal(spair);
+    // each projection: related at the field's entry, and derivably equal
+    assert forall|i: int| 0 <= i < nf && !(u->Nd_1[i] is Bot) && is_centry(es[i]) implies
+        #[trigger] crate::dom_rel::rel_tm(sig, n, dl, ExprSpec::Proj(i as usize, Box::new(mm)), ExprSpec::Proj(i as usize, Box::new(nn)),
+            crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0, u->Nd_1[i], ecode(es[i])) by {
+        let h = crate::beta_model::spine_head(t);
+        assert(crate::dom_proj_sound::struct_sem(sig, h->Const_0));
+        assert(crate::dom_model::sem_const(sig, h->Const_0, h->Const_1));
+        crate::dom_proj_sound::con_stage(n, u, a, i);
+        crate::dom_model::typed_down(a, Cpt::U, n);
+        crate::beta_model::spine_recompose(t);
+        crate::dom_proj_sound::proj_entry(sig, h->Const_0, h->Const_1, crate::beta_model::spine_args(t), rho, a, i as nat, m);
+        crate::ti_proj::proj_ty_unfold(sig, t, i as nat, m);
+        crate::dom_proj_sound::proj_intro(sig, i as usize, m, rho, u);
+        assert(concl(ps[3 + i]) == eq(g, ExprSpec::Proj(i as usize, Box::new(m)), ExprSpec::Proj(i as usize, Box::new(m2)),
+            crate::ti_syntax::proj_ty(sig, t, i as nat, m)->Some_0));
+        adeq(sig, ps[3 + i], rho, dl, s, s2, n, u->Nd_1[i], ecode(es[i]));
+        crate::ti_proj::proj_ty_psub(sig, t, i as nat, m, s);
+    }
+    assert forall|i: int| 0 <= i < nf implies
+        #[trigger] derivable(sig, eq(dl, ExprSpec::Proj(i as usize, Box::new(mm)), ExprSpec::Proj(i as usize, Box::new(nn)),
+            crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0)) by {
+        crate::ti_sub::d_sub(sig, ps[3 + i], dl, s, s2);
+        crate::ti_proj::proj_ty_unfold(sig, t, i as nat, m);
+        crate::ti_proj::proj_ty_psub(sig, t, i as nat, m, s);
+    }
+    crate::dom_adeq_proj::seta_tail(sig, n, dl, rho, t, mm, mb, n1, nn, tt, u, a);
 }
 
 /// PROJECTION CONGRUENCE: the subjects are related at a constructor value

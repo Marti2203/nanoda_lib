@@ -981,4 +981,76 @@ pub proof fn sound_seta(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, rho: En
     }
 }
 
+/// A constructor node typed at a stage: its fields at their entries'
+/// codes, and those codes types, at the same stage.
+pub proof fn con_stage(n: nat, u: Cpt, a: Cpt, k: int)
+    requires
+        crate::dom_typing::has_type(n, u, a),
+        u is Nd && u->Nd_0 is Con,
+        0 <= k < u->Nd_1.len(),
+    ensures ({
+        let es = tbl(a->Nd_1)[u->Nd_0->Con_1 as int]->Nd_1;
+        &&& a is Nd && a->Nd_0 is Ty && (u->Nd_0->Con_1 as int) < tbl(a->Nd_1).len() && tbl(a->Nd_1)[u->Nd_0->Con_1 as int] is Nd
+        &&& crate::dom_typing::has_type(n, a, Cpt::U)
+        &&& es.len() == u->Nd_1.len()
+        &&& is_centry(es[k]) && !(u->Nd_1[k] is Bot) ==> crate::dom_typing::has_type(n, u->Nd_1[k], ecode(es[k]))
+            && crate::dom_typing::has_type(n, ecode(es[k]), Cpt::U)
+    }),
+{
+    let es = tbl(a->Nd_1)[u->Nd_0->Con_1 as int]->Nd_1;
+    assert(crate::dom_typing::has_type(n, a, Cpt::U));
+    if is_centry(es[k]) {
+        let p = u->Nd_0->Con_1 as int;
+        assert(tbl(a->Nd_1)[p] is Nd && 0 <= k < tbl(a->Nd_1)[p]->Nd_1.len());
+    }
+}
+
+/// A CONSTRUCTOR VALUE at a structure application's code: the structure
+/// is a type there, so (being in the slice) never a proposition.
+#[verifier::spinoff_prover]
+pub proof fn seta_prop_free(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>, rho: Env, a: Cpt, n: nat, u: Cpt)
+    requires
+        crate::ti_syntax::struct_of(sig, s),
+        crate::dom_model::sem_const(sig, s, us),
+        !sig.ienv.ctor_ind.contains_key(s),
+        !sig.ienv.recs.contains_key(s),
+        ps.len() == canon_shape(sig, s).np,
+        mem(sig, spine_app(ExprSpec::Const(s, us), ps), rho, a),
+        crate::dom_typing::has_type(n, u, a),
+        u is Nd && u->Nd_0 is Con,
+    ensures
+        !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, us), ps)),
+        !crate::ti_syntax::always_prop(sig, s),
+{
+    proj_one_ctor(sig, s, us, ps, rho, a);
+    assert(a is Nd && !a->Nd_0->Ty_1);
+    assert(!crate::dom_code::is_prop_at(sig, s, us));
+    reveal(crate::ti_syntax::struct_of);
+    let sh = canon_shape(sig, s);
+    let lps = sig.consts[s].lps;
+    let ty = sig.consts[s].ty;
+    crate::dom_ctor_bound::ctor_shape_ind(sig, s);
+    let tb0 = crate::rec_canon::tbody(ty, sh.np + sh.ni);
+    assert(sh.pdoms + sh.idoms =~= sh.pdoms);
+    crate::dom_rec_shape::tarity_binds(sh.pdoms, tb0);
+    crate::dom_iota::tbody_binds(sh.pdoms, tb0);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms, tb0, lps, us);
+    let tds = crate::dom_rec_shape::sls(sh.pdoms, lps, us);
+    let srt = crate::expr_model::subst_expr_levels(tb0, lps, us);
+    crate::dom_rec_shape::tarity_binds(tds, srt);
+    crate::dom_iota::tbody_binds(tds, srt);
+    let l0 = tb0->Sort_0;
+    if crate::ti_syntax::always_prop(sig, s) {
+        crate::ti_level::ls_is_zero(l0, lps, us);
+        assert(false);
+    }
+    // never a proposition: its level is positive at every instance
+    let t = spine_app(ExprSpec::Const(s, us), ps);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(s, us), ps);
+    reveal(crate::ti_syntax::proj_prop);
+    assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(crate::level_model::subst_level_spec(l0, lps, us), r) > 0 by {
+        crate::level_model::subst_level_spec_interp(l0, lps, us, r);
+    }
+}
+
 } // verus!

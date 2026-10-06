@@ -371,4 +371,190 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
         ExprSpec::Proj(i, Box::new(xx2)), tt, u, a);
 }
 
+/// FIELDS OF ETA-RELATED STRUCTURES: each side's field is related to
+/// itself, so to its projection (head expansion); the projections are
+/// related, so the fields are (symmetry and transitivity).
+pub proof fn seta_field(sig: Sig, n: nat, dl: Ctx, a: ExprSpec, a2: ExprSpec, b1: ExprSpec, b: ExprSpec,
+    pm: ExprSpec, pn: ExprSpec, ft: ExprSpec, w: Cpt, c: Cpt)
+    requires
+        crate::dom_rel::rel_tm(sig, n, dl, a, a2, ft, w, c),
+        crate::dom_rel::rel_tm(sig, n, dl, b1, b, ft, w, c),
+        crate::dom_rel::rel_tm(sig, n, dl, pm, pn, ft, w, c),
+        hred(sig, pm, a),
+        hred(sig, pn, b),
+        derivable(sig, eq(dl, pm, a, ft)),
+        derivable(sig, eq(dl, pn, b, ft)),
+    ensures
+        crate::dom_rel::rel_tm(sig, n, dl, a, b, ft, w, c),
+{
+    use crate::dom_rel_per::{per_diag, symm_tm, trans_tm};
+    per_diag(sig, n, dl, a, a2, ft, w, c);
+    per_diag(sig, n, dl, b1, b, ft, w, c);
+    crate::dom_adeq_syn::dsym(sig, dl, pm, a, ft);
+    crate::dom_adeq_syn::dsym(sig, dl, pn, b, ft);
+    crate::ti_hred::hred_refl(sig, a);
+    crate::ti_hred::hred_refl(sig, b);
+    crate::dom_rel_hexp::expand_tm(sig, n, dl, a, a, pm, a, ft, w, c);
+    crate::dom_rel_hexp::expand_tm(sig, n, dl, b, b, pn, b, ft, w, c);
+    symm_tm(sig, n, dl, pm, a, ft, w, c);
+    trans_tm(sig, n, dl, a, pm, pn, ft, w, c);
+    trans_tm(sig, n, dl, a, pn, b, ft, w, c);
+}
+
+/// STRUCTURE ETA'S ADEQUACY, ONE FIELD: the constructor clause's field
+/// for the left side's and the right side's constructor applications.
+#[verifier::spinoff_prover]
+pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::Env, t: ExprSpec,
+    mm: ExprSpec, m2: ExprSpec, n1: ExprSpec, nn: ExprSpec, tt: ExprSpec, u: Cpt, a: Cpt, i: int)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_ty(sig, t),
+        crate::ti_syntax::struct_ty(sig, tt),
+        spine_head(tt) == spine_head(t),
+        !crate::ti_syntax::proj_prop(sig, tt),
+        crate::dom_model::mem(sig, t, rho, a),
+        crate::dom_typing::has_type(n, u, a),
+        u is Nd && u->Nd_0 is Con && u->Nd_0->Con_1 == 0,
+        u->Nd_1.len() == crate::ti_syntax::struct_nf(sig, t),
+        0 <= i < crate::ti_syntax::struct_nf(sig, t),
+        a is Nd && a->Nd_0 is Ty && a->Nd_0->Ty_0 == spine_head(t)->Const_0,
+        crate::dom_rel::rel_ty(sig, n, dl, tt, tt, a),
+        crate::dom_rel::con_body(sig, n, dl, mm, m2, tt, u, a),
+        crate::dom_rel::con_body(sig, n, dl, n1, nn, tt, u, a),
+        derivable(sig, eq(dl, mm, crate::dom_rel::cr(sig, mm), tt)),
+        derivable(sig, eq(dl, nn, crate::dom_rel::cr(sig, nn), tt)),
+        !(u->Nd_1[i] is Bot) && crate::dom_typing::is_centry(crate::dom_rel::cblock(u, a)[i]) ==>
+            crate::dom_rel::rel_tm(sig, n, dl, ExprSpec::Proj(i as usize, Box::new(mm)), ExprSpec::Proj(i as usize, Box::new(nn)),
+                crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0, u->Nd_1[i], crate::dom_typing::ecode(crate::dom_rel::cblock(u, a)[i])),
+        derivable(sig, eq(dl, ExprSpec::Proj(i as usize, Box::new(mm)), ExprSpec::Proj(i as usize, Box::new(nn)),
+            crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0)),
+    ensures
+        crate::dom_rel::con_field(sig, n, dl, crate::dom_rel::cr(sig, mm), crate::dom_rel::cr(sig, nn), tt, u->Nd_1,
+            crate::dom_rel::cblock(u, a), crate::dom_code::canon_shape(sig, spine_head(t)->Const_0).np, 0, a, i),
+{
+    use crate::dom_rel::{cr, con_field, peq};
+    use crate::dom_typing::{ecode, is_centry};
+    let h = spine_head(t);
+    let (s, us) = (h->Const_0, h->Const_1);
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let (np, nf) = (sh.np, sh.fields[0].len());
+    let (x, x2, xa, x1) = (cr(sig, mm), cr(sig, nn), cr(sig, m2), cr(sig, n1));
+    let (aa, bb, aa2, bb1) = (spine_args(x), spine_args(x2), spine_args(xa), spine_args(x1));
+    let fs = u->Nd_1;
+    let es = crate::dom_rel::cblock(u, a);
+    let ui = i as usize;
+    assert(struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, us));
+    reveal(crate::ti_syntax::struct_of);
+    // the field and its parameter
+    pfield(sig, s, i as nat, us);
+    let q = (np + i - 1 - sh.fields[0][i]->Var_0) as int;
+    crate::dom_rel::ty_ind(sig, n, dl, tt, tt, a);
+    fq_field(sig, s, i as nat, tt);
+    crate::ti_proj::proj_ty_unfold(sig, tt, i as nat, mm);
+    pfield_vsub(sig, s, i as nat, spine_head(tt)->Const_1, spine_args(tt) + crate::ti_syntax::projs(mm, i as nat));
+    assert((spine_args(tt) + crate::ti_syntax::projs(mm, i as nat))[q] == spine_args(tt)[q]);
+    let ti = crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0;
+    assert(ti == spine_args(tt)[q]);
+    // the constructor applications: the structure's only constructor
+    assert(crate::dom_rel::con_field(sig, n, dl, x, xa, tt, fs, es, np, 0, a, i));
+    assert(crate::dom_rel::con_field(sig, n, dl, x1, x2, tt, fs, es, np, 0, a, i));
+    assert(spine_head(x)->Const_0 == sh.ctors[0]);
+    assert(spine_head(x2)->Const_0 == sh.ctors[0]);
+    arg_ty_field(sig, s, i as nat, x);
+    arg_ty_field(sig, s, i as nat, x2);
+    arg_ty_field(sig, s, i as nat, x1);
+    let (tx, tx2, txa, tx1) = (crate::dom_rel::arg_ty(sig, x, (np + i) as nat), crate::dom_rel::arg_ty(sig, x2, (np + i) as nat),
+        crate::dom_rel::arg_ty(sig, xa, (np + i) as nat), crate::dom_rel::arg_ty(sig, x1, (np + i) as nat));
+    assert(peq(sig, dl, s, us, q, aa[q], spine_args(tt)[q]));
+    assert(peq(sig, dl, s, us, q, bb[q], spine_args(tt)[q]));
+    // each side's field typed at its parameter
+    let (fa, fb, fa2, fb1) = (aa[np + i], bb[np + i], aa2[np + i], bb1[np + i]);
+    crate::dom_adeq_syn::dsym(sig, dl, fa, fa2, tx);
+    crate::ti_chain::conv_chain(sig, dl, fb1, fb, tx1, tx2);
+    crate::dom_adeq_syn::dsym(sig, dl, fb1, fb, tx2);
+    // the projections' type is a type
+    let dp = crate::ti_sub::get(sig, eq(dl, ExprSpec::Proj(ui, Box::new(mm)), ExprSpec::Proj(ui, Box::new(nn)), ti));
+    crate::ti_valid::d_ty(sig, dp);
+    let (lt, _dt) = crate::ti_sub::get_t(sig, dl, ti, ti);
+    crate::ti_meta::mk_d(sig, _dt);
+    // the projections reduce to the fields, derivably
+    proj_side(sig, dl, ui, mm, tt, ti, lt);
+    crate::ti_proj::proj_ty_indep(sig, tt, i as nat, mm, nn);
+    proj_side(sig, dl, ui, nn, tt, ti, lt);
+    // the declared types chain, and the fields convert
+    crate::ti_chain::tchain_sym(sig, dl, bb[q], spine_args(tt)[q]);
+    crate::ti_chain::tchain_trans(sig, dl, aa[q], spine_args(tt)[q], bb[q]);
+    crate::ti_chain::tchain_sym(sig, dl, aa[q], spine_args(tt)[q]);
+    crate::dom_adeq_syn::dsym(sig, dl, ExprSpec::Proj(ui, Box::new(mm)), fa, ti);
+    crate::dom_adeq_syn::dtrans(sig, dl, fa, ExprSpec::Proj(ui, Box::new(mm)), ExprSpec::Proj(ui, Box::new(nn)), ti);
+    crate::dom_adeq_syn::dtrans(sig, dl, fa, ExprSpec::Proj(ui, Box::new(nn)), fb, ti);
+    crate::ti_chain::conv_chain(sig, dl, fa, fb, ti, aa[q]);
+    // the field's relation
+    if !(fs[i] is Bot) {
+        crate::dom_proj_sound::con_stage(n, u, a, i);
+        crate::dom_model::typed_down(a, Cpt::U, n);
+        crate::beta_model::spine_recompose(t);
+        crate::dom_proj_sound::proj_entry(sig, s, us, spine_args(t), rho, a, i as nat, mm);
+        assert(es[i] != crate::dom_typing::rmark());
+        assert(is_centry(es[i]));
+        seta_field(sig, n, dl, fa, fa2, fb1, fb, ExprSpec::Proj(ui, Box::new(mm)), ExprSpec::Proj(ui, Box::new(nn)), ti, fs[i], ecode(es[i]));
+    }
+}
+
+/// STRUCTURE ETA'S ADEQUACY above bottom: the left side's and the right
+/// side's relations both reduce to constructor applications of the
+/// structure, whose fields the projections' relations relate.
+#[verifier::spinoff_prover]
+pub proof fn seta_tail(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::Env, t: ExprSpec,
+    mm: ExprSpec, m2: ExprSpec, n1: ExprSpec, nn: ExprSpec, tt: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_ty(sig, t),
+        crate::ti_syntax::struct_ty(sig, tt),
+        spine_head(tt) == spine_head(t),
+        crate::dom_model::mem(sig, t, rho, a),
+        crate::dom_typing::has_type(n, u, a),
+        u is Nd && u->Nd_0 == crate::dom_compact::NdKey::Con(spine_head(t)->Const_0, 0, crate::dom_code::smash(sig, spine_head(t)->Const_0)),
+        u->Nd_1.len() == crate::ti_syntax::struct_nf(sig, t),
+        crate::dom_rel::rel_tm(sig, n, dl, mm, m2, tt, u, a),
+        crate::dom_rel::rel_tm(sig, n, dl, n1, nn, tt, u, a),
+        forall|i: int| 0 <= i < crate::ti_syntax::struct_nf(sig, t) && !(u->Nd_1[i] is Bot)
+            && crate::dom_typing::is_centry(crate::dom_rel::cblock(u, a)[i]) ==>
+            #[trigger] crate::dom_rel::rel_tm(sig, n, dl, ExprSpec::Proj(i as usize, Box::new(mm)), ExprSpec::Proj(i as usize, Box::new(nn)),
+                crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0, u->Nd_1[i], crate::dom_typing::ecode(crate::dom_rel::cblock(u, a)[i])),
+        forall|i: int| 0 <= i < crate::ti_syntax::struct_nf(sig, t) ==>
+            #[trigger] derivable(sig, eq(dl, ExprSpec::Proj(i as usize, Box::new(mm)), ExprSpec::Proj(i as usize, Box::new(nn)),
+                crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0)),
+    ensures
+        crate::dom_rel::rel_tm(sig, n, dl, mm, nn, tt, u, a),
+{
+    use crate::dom_rel::cr;
+    let h = spine_head(t);
+    let (s, us) = (h->Const_0, h->Const_1);
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let np = sh.np;
+    assert(struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, us));
+    crate::dom_con_rel::val_code(n, u, a);
+    crate::dom_rel::tm_ind(sig, n, dl, mm, m2, tt, u, a);
+    crate::dom_rel::tm_ind(sig, n, dl, n1, nn, tt, u, a);
+    crate::dom_rel::con_tm_unfold(sig, n, dl, mm, m2, tt, u, a);
+    crate::dom_rel::con_tm_unfold(sig, n, dl, n1, nn, tt, u, a);
+    crate::beta_model::spine_recompose(t);
+    crate::dom_proj_sound::seta_prop_free(sig, s, us, spine_args(t), rho, a, n, u);
+    assert(!crate::ti_syntax::proj_prop(sig, tt)) by { reveal(crate::ti_syntax::proj_prop); }
+    let (x, x2) = (cr(sig, mm), cr(sig, nn));
+    let fs = u->Nd_1;
+    let es = crate::dom_rel::cblock(u, a);
+    assert forall|i: int| 0 <= i < fs.len() implies #[trigger] crate::dom_rel::con_field(sig, n, dl, x, x2, tt, fs, es, np, 0, a, i) by {
+        seta_tail_field(sig, n, dl, rho, t, mm, m2, n1, nn, tt, u, a, i);
+    }
+    reveal(crate::ti_syntax::struct_of);
+    assert(spine_head(cr(sig, n1))->Const_0 == sh.ctors[0]);
+    assert(crate::dom_rel::con_body(sig, n, dl, mm, nn, tt, u, a));
+    crate::dom_rel::con_tm_unfold(sig, n, dl, mm, nn, tt, u, a);
+    crate::dom_rel::tm_ind(sig, n, dl, mm, nn, tt, u, a);
+}
+
 } // verus!
