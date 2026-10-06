@@ -152,6 +152,10 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
             reveal(crate::ti_syntax::proj_iota_ok);
             d_wf(sig, ps[0])
         },
+        Rule::StructEta(_) => {
+            reveal(crate::ti_syntax::struct_eta_ok);
+            d_wf(sig, ps[0])
+        },
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
@@ -176,6 +180,8 @@ pub proof fn d_wf_last(sig: Sig, d: Deriv) -> (r: (LevelSpec, Deriv))
     let Deriv::Node(rule, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
+    reveal(crate::ti_syntax::struct_eta_ok);
+    reveal(crate::ti_syntax::struct_eta_ok);
     match rule {
         Rule::CtxCons(l) => (l, ps[1]),
         _ => {
@@ -314,6 +320,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::Iota(_) => d_ren_iota(sig, d, w, dl, r),
         Rule::ProjCong(_) => d_ren_pcong(sig, d, w, dl, r),
         Rule::ProjIota(_) => d_ren_piota(sig, d, w, dl, r),
+        Rule::StructEta(_) => d_ren_seta(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
         Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
@@ -885,6 +892,60 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     ] + pj2));
     valid_node(sig, Rule::Iota(l), j2, ps2);
     node(Rule::Iota(l), j2, ps2)
+}
+
+/// Structure eta, renamed.
+#[verifier::spinoff_prover]
+proof fn d_ren_seta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is StructEta,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let l = rule->StructEta_0;
+    let (m, n, a) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    let q = rn(r);
+    reveal(crate::ti_syntax::struct_eta_ok);
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    let d2 = d_ren(sig, ps[2], w, dl, r);
+    assert(psub(sort(l), q) == sort(l));
+    let (m1, n1, a1) = (psub(m, q), psub(n, q), psub(a, q));
+    crate::ti_proj::struct_ty_psub(sig, a, q);
+    let nf = crate::ti_syntax::struct_nf(sig, a);
+    let pj = Seq::new(nf, |k: int| eq(dl, ExprSpec::Proj(k as usize, Box::new(m1)), ExprSpec::Proj(k as usize, Box::new(n1)),
+        crate::ti_syntax::proj_ty(sig, a1, k as nat, m1)->Some_0));
+    assert forall|k: int| 0 <= k < nf implies valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
+        && concl(crate::ti_sub::pick(sig, pj[k])) == pj[k] by {
+        let dk = d_ren(sig, ps[3 + k], w, dl, r);
+        crate::ti_proj::proj_ty_unfold(sig, a, k as nat, m);
+        crate::ti_proj::proj_ty_psub(sig, a, k as nat, m, q);
+        assert(psub(ExprSpec::Proj(k as usize, Box::new(m)), q) == ExprSpec::Proj(k as usize, Box::new(m1)));
+        assert(psub(ExprSpec::Proj(k as usize, Box::new(n)), q) == ExprSpec::Proj(k as usize, Box::new(n1)));
+        crate::ti_sub::pick_of(sig, dk);
+    }
+    let ps2 = seq![d0, d1, d2] + Seq::new(nf, |k: int| crate::ti_sub::pick(sig, pj[k]));
+    let j2 = eq(dl, m1, n1, a1);
+    assert forall|k: int| 0 <= k < ps2.len() implies valid(sig, #[trigger] ps2[k]) by {
+        if k >= 3 { assert(ps2[k] == crate::ti_sub::pick(sig, pj[k - 3])); }
+    }
+    assert(step_ok(sig, Rule::StructEta(l), j2, ps2)) by {
+        reveal(crate::ti_syntax::struct_eta_ok);
+        assert forall|k: int| 0 <= k < nf implies #[trigger] concl(ps2[3 + k]) == pj[k] by {
+            assert(ps2[3 + k] == crate::ti_sub::pick(sig, pj[k]));
+        }
+    }
+    valid_node(sig, Rule::StructEta(l), j2, ps2);
+    node(Rule::StructEta(l), j2, ps2)
 }
 
 } // verus!

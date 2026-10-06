@@ -2031,6 +2031,11 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             sound(sig, ps[4], rho);
             crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
         },
+        Rule::StructEta(_) => {
+            // structure eta needs the smashed model (stage E4)
+            reveal(crate::ti_syntax::struct_eta_ok);
+            crate::dom_code::smash_dead(sig, crate::beta_model::spine_head(a)->Const_0);
+        },
         Rule::Iota(l) => if crate::ti_syntax::iota_prop(sig, m) {
             // a proposition motive's: proof irrelevance
             crate::ti_syntax::prop_zero(sig, m, l);

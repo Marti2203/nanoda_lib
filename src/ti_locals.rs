@@ -329,6 +329,40 @@ proof fn step_swap_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
     }
 }
 
+/// The structure-eta instance, swapped.
+#[verifier::spinoff_prover]
+proof fn step_swap_seta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
+    requires
+        sig_fv_free(sig),
+        step_ok(sig, r, j, ps),
+        r is StructEta,
+        forall|k: int| 0 <= k < ps.len() ==> concl(#[trigger] pswap(sig, ps, x, y)[k]) == jswap(concl(ps[k]), x, y),
+    ensures
+        step_ok(sig_swap(sig, x, y), r, jswap(j, x, y), pswap(sig, ps, x, y)),
+{
+    let s2 = sig_swap(sig, x, y);
+    let qs = pswap(sig, ps, x, y);
+    assert(qs.len() == ps.len());
+    reveal(crate::ti_syntax::struct_eta_ok);
+    let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let (m2, n2, t2) = (crate::swap_model::fswap(m, x, y), crate::swap_model::fswap(n, x, y), crate::swap_model::fswap(t, x, y));
+    crate::ti_proj::struct_ty_fswap(sig, t, x, y);
+    crate::ti_proj::seta_sig_congr(sig, s2, t2);
+    let nf = crate::ti_syntax::struct_nf(sig, t);
+    assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+    assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+    assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
+    assert forall|k: int| 0 <= k < nf implies #[trigger] concl(qs[3 + k])
+        == eq(sswap(g, x, y), ExprSpec::Proj(k as usize, Box::new(m2)), ExprSpec::Proj(k as usize, Box::new(n2)),
+            crate::ti_syntax::proj_ty(s2, t2, k as nat, m2)->Some_0) by {
+        assert(concl(qs[3 + k]) == jswap(concl(ps[3 + k]), x, y));
+        crate::ti_proj::proj_ty_unfold(sig, t, k as nat, m);
+        crate::ti_proj::proj_ty_fswap(sig, t, k as nat, m, x, y);
+        crate::ti_proj::proj_sig_congr(sig, s2, t2, k as nat, m2, m2);
+    }
+    assert(step_ok(s2, r, jswap(j, x, y), qs)) by { reveal(crate::ti_syntax::struct_eta_ok); }
+}
+
 /// The projection instances, closed.
 #[verifier::spinoff_prover]
 proof fn step_close_proj(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv>)
@@ -584,6 +618,7 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
         },
         Rule::Iota(_) => step_swap_iota(sig, r, j, ps, x, y),
         Rule::ProjCong(_) | Rule::ProjIota(_) => step_swap_proj(sig, r, j, ps, x, y),
+        Rule::StructEta(_) => step_swap_seta(sig, r, j, ps, x, y),
         Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;
             let ls = j->Eq_1->Const_1;
@@ -735,6 +770,10 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
         step_close_proj(sig, k, a, r, j, ps);
         return;
     }
+    if r is StructEta {
+        step_close_seta(sig, k, a, r, j, ps);
+        return;
+    }
     if r is CtxNil || r is CtxCons || r is Var || r is Univ || r is Sym || r is Trans || r is Conv || r is Irr {
         step_close_ctx(sig, k, a, r, j, ps);
     } else if r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta {
@@ -744,6 +783,41 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
     } else {
         step_close_cst(sig, k, a, r, j, ps);
     }
+}
+
+/// The structure-eta instance, closed.
+#[verifier::spinoff_prover]
+proof fn step_close_seta(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        close_ok(sig, k, a),
+        step_ok(sig_with(sig, k, a), r, j, ps),
+        r is StructEta,
+        forall|i: int| 0 <= i < ps.len() ==> concl(#[trigger] pclose(sig, k, a, ps)[i]) == jclose(k, a, concl(ps[i])),
+    ensures
+        step_ok(sig, r, jclose(k, a, j), pclose(sig, k, a, ps)),
+{
+    let s1 = sig_with(sig, k, a);
+    let qs = pclose(sig, k, a, ps);
+    assert(qs.len() == ps.len());
+    reveal(crate::ti_syntax::struct_eta_ok);
+    let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let c = g.len();
+    let (m2, n2, t2) = (crate::fclose::fclose(k, c, m), crate::fclose::fclose(k, c, n), crate::fclose::fclose(k, c, t));
+    crate::ti_proj::seta_sig_congr(s1, sig, t);
+    crate::ti_proj::struct_ty_fclose(sig, t, k, c);
+    let nf = crate::ti_syntax::struct_nf(sig, t);
+    assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+    assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+    assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));
+    assert forall|i: int| 0 <= i < nf implies #[trigger] concl(qs[3 + i])
+        == eq(gclose(k, a, g), ExprSpec::Proj(i as usize, Box::new(m2)), ExprSpec::Proj(i as usize, Box::new(n2)),
+            crate::ti_syntax::proj_ty(sig, t2, i as nat, m2)->Some_0) by {
+        assert(concl(qs[3 + i]) == jclose(k, a, concl(ps[3 + i])));
+        crate::ti_proj::proj_sig_congr(s1, sig, t, i as nat, m, m);
+        crate::ti_proj::proj_ty_unfold(sig, t, i as nat, m);
+        crate::ti_proj::proj_ty_fclose(sig, t, i as nat, m, k, c);
+    }
+    assert(step_ok(sig, r, jclose(k, a, j), qs)) by { reveal(crate::ti_syntax::struct_eta_ok); }
 }
 
 #[verifier::spinoff_prover]

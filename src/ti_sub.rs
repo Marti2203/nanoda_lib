@@ -371,6 +371,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::Iota(_) => d_sub_iota(sig, d, dl, s, s2),
         Rule::ProjCong(_) => d_sub_pcong(sig, d, dl, s, s2),
         Rule::ProjIota(_) => d_sub_piota(sig, d, dl, s, s2),
+        Rule::StructEta(_) => d_sub_seta(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => d_sub_sig(sig, d, dl, s, s2),
@@ -822,6 +823,66 @@ proof fn d_sub_eta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         let z = d_trans(sig, ed, nn);
         mk_d(sig, z);
     }
+}
+
+/// Structure eta, substituted: the instance at the left substitution, then
+/// the right side's own conversion.
+#[verifier::spinoff_prover]
+proof fn d_sub_seta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is StructEta,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->StructEta_0;
+    reveal(crate::ti_syntax::struct_eta_ok);
+    spair_left(sig, g, dl, s, s2);
+    d_sub(sig, ps[0], dl, s, s);
+    d_sub(sig, ps[0], dl, s, s2);
+    d_sub(sig, ps[1], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s2);
+    d_sub(sig, ps[2], dl, s, s);
+    let (m1, n1, a1) = (psub(m, s), psub(n, s), psub(a, s));
+    crate::ti_proj::struct_ty_psub(sig, a, s);
+    let nf = crate::ti_syntax::struct_nf(sig, a);
+    let pj = Seq::new(nf, |k: int| eq(dl, ExprSpec::Proj(k as usize, Box::new(m1)), ExprSpec::Proj(k as usize, Box::new(n1)),
+        crate::ti_syntax::proj_ty(sig, a1, k as nat, m1)->Some_0));
+    assert forall|k: int| 0 <= k < nf implies valid(sig, #[trigger] pick(sig, pj[k])) && concl(pick(sig, pj[k])) == pj[k] by {
+        d_sub(sig, ps[3 + k], dl, s, s);
+        crate::ti_proj::proj_ty_unfold(sig, a, k as nat, m);
+        crate::ti_proj::proj_ty_psub(sig, a, k as nat, m, s);
+        assert(psub(ExprSpec::Proj(k as usize, Box::new(m)), s) == ExprSpec::Proj(k as usize, Box::new(m1)));
+        assert(psub(ExprSpec::Proj(k as usize, Box::new(n)), s) == ExprSpec::Proj(k as usize, Box::new(n1)));
+        let dk = get(sig, pj[k]);
+        pick_of(sig, dk);
+    }
+    let q0 = get(sig, eq(dl, m1, m1, a1));
+    let q1 = get(sig, eq(dl, n1, n1, a1));
+    let q2 = get(sig, eq(dl, a1, a1, sort(l)));
+    let bp = seq![q0, q1, q2] + Seq::new(nf, |k: int| pick(sig, pj[k]));
+    let bj = eq(dl, m1, n1, a1);
+    assert forall|k: int| 0 <= k < bp.len() implies valid(sig, #[trigger] bp[k]) by {
+        if k >= 3 { assert(bp[k] == pick(sig, pj[k - 3])); }
+    }
+    assert(step_ok(sig, Rule::StructEta(l), bj, bp)) by {
+        reveal(crate::ti_syntax::struct_eta_ok);
+        assert forall|k: int| 0 <= k < nf implies #[trigger] concl(bp[3 + k]) == pj[k] by {
+            assert(bp[3 + k] == pick(sig, pj[k]));
+        }
+    }
+    valid_node(sig, Rule::StructEta(l), bj, bp);
+    let bd = node(Rule::StructEta(l), bj, bp);
+    let bb = get(sig, eq(dl, n1, psub(n, s2), a1));
+    let z = d_trans(sig, bd, bb);
+    mk_d(sig, z);
 }
 
 #[verifier::spinoff_prover]

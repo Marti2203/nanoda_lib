@@ -204,6 +204,9 @@ pub enum Rule {
     /// A projection of a constructor application unfolds to its field,
     /// both sides typed.
     ProjIota(LevelSpec),
+    /// Structure eta: two terms of a (smashed) structure type whose
+    /// projections convert convert (unit eta when it has no fields).
+    StructEta(LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -394,6 +397,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         },
         Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),
         Rule::ProjIota(l) => proj_iota_ok(sig, l, j, ps),
+        Rule::StructEta(l) => struct_eta_ok(sig, l, j, ps),
         Rule::Irr(l) => match j {
             Jd::Eq(g, m, n, a) => is_zero(l) && prems(ps, seq![
                 eq(g, a, a, sort(l)),
@@ -555,6 +559,48 @@ pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
         },
         _ => false,
     }
+}
+
+/// An application of a structure to its parameters, at as many levels as
+/// it has.
+pub open spec fn struct_ty(sig: Sig, t: ExprSpec) -> bool {
+    let h = crate::beta_model::spine_head(t);
+    &&& h is Const && struct_of(sig, h->Const_0)
+    &&& crate::beta_model::spine_args(t).len() == crate::dom_code::canon_shape(sig, h->Const_0).np
+    &&& h->Const_1.len() == sig.consts[h->Const_0].lps.len()
+}
+
+/// The number of fields of the structure `t` applies.
+pub open spec fn struct_nf(sig: Sig, t: ExprSpec) -> nat {
+    crate::dom_code::canon_shape(sig, crate::beta_model::spine_head(t)->Const_0).fields[0].len()
+}
+
+/// Rule `StructEta`'s instance: both sides typed at a smashed structure's
+/// application, which is a type at the sort, and each projection of one
+/// converts with the other's.
+#[verifier::opaque]
+pub open spec fn struct_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
+    match j {
+        Jd::Eq(g, m, n, t) => struct_ty(sig, t) && crate::dom_code::smash(sig, crate::beta_model::spine_head(t)->Const_0)
+            && ps.len() == 3 + struct_nf(sig, t)
+            && concl(ps[0]) == eq(g, m, m, t) && concl(ps[1]) == eq(g, n, n, t) && concl(ps[2]) == eq(g, t, t, sort(l))
+            && forall|k: int| 0 <= k < struct_nf(sig, t) ==> #[trigger] concl(ps[3 + k])
+                == eq(g, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), proj_ty(sig, t, k as nat, m)->Some_0),
+        _ => false,
+    }
+}
+
+/// Structure eta is dead in a signature without structures.
+pub proof fn seta_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        step_ok(sig, r, j, ps),
+        r is StructEta,
+        no_structs(sig),
+    ensures
+        false,
+{
+    reveal(struct_eta_ok);
+    assert(struct_of(sig, crate::beta_model::spine_head(j->Eq_3)->Const_0));
 }
 
 /// The projection rules are dead in a signature without structures.

@@ -55,7 +55,8 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
 {
     crate::ti_meta::valid_prems(strip(sig), d);
     let Deriv::Node(r, j, ps) = d;
-    if r is ProjCong || r is ProjIota {
+    if r is ProjCong || r is ProjIota || r is StructEta {
+        reveal(crate::ti_syntax::struct_eta_ok);
         reveal(crate::ti_syntax::proj_cong_ok);
         reveal(crate::ti_syntax::proj_iota_ok);
         reveal(crate::ti_syntax::proj_ty);

@@ -356,6 +356,11 @@ pub proof fn gen(sig: Sig, d: Deriv)
             gen(sig, ps[0]);
             gen(sig, ps[1]);
         },
+        Rule::StructEta(_) => {
+            reveal(crate::ti_syntax::struct_eta_ok);
+            gen(sig, ps[0]);
+            gen(sig, ps[1]);
+        },
         _ => {},
     }
 }

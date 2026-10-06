@@ -217,6 +217,11 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         },
         Rule::ProjCong(_) => adeq_pcong(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ProjIota(_) => adeq_piota(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::StructEta(_) => {
+            // structure eta needs the smashed model (stage E4)
+            reveal(crate::ti_syntax::struct_eta_ok);
+            crate::dom_code::smash_dead(sig, crate::beta_model::spine_head(concl(d)->Eq_3)->Const_0);
+        },
         _ => {},
     }
 }

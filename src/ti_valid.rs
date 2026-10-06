@@ -102,6 +102,12 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
             let r = get(sig, eq(g, t, t, sort(l)));
             mk_t(sig, r, l);
         },
+        Rule::StructEta(l) => {
+            reveal(crate::ti_syntax::struct_eta_ok);
+            mk_d(sig, ps[2]);
+            let r = get(sig, eq(g, t, t, sort(l)));
+            mk_t(sig, r, l);
+        },
         Rule::Beta(l1, l2) => {
             let a = concl(ps[0])->Eq_1;
             let b = concl(ps[1])->Eq_3;
@@ -205,6 +211,9 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
 {
     if r is ProjCong || r is ProjIota {
         crate::ti_syntax::proj_dead_ns(sig, r, j, ps);
+    }
+    if r is StructEta {
+        crate::ti_syntax::seta_dead_ns(sig, r, j, ps);
     }
     match r {
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Delta(_) => {

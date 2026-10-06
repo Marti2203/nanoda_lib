@@ -242,6 +242,12 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
             d_scope(sig, ps[1]);
             assert(scoped(j));
         },
+        Rule::StructEta(_) => {
+            reveal(crate::ti_syntax::struct_eta_ok);
+            d_scope(sig, ps[0]);
+            d_scope(sig, ps[1]);
+            assert(scoped(j));
+        },
     }
 }
 

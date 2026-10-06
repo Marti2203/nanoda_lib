@@ -58,6 +58,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::Iota(l) => Rule::Iota(ll_(l, ks, vs)),
         Rule::ProjCong(l) => Rule::ProjCong(ll_(l, ks, vs)),
         Rule::ProjIota(l) => Rule::ProjIota(ll_(l, ks, vs)),
+        Rule::StructEta(l) => Rule::StructEta(ll_(l, ks, vs)),
         Rule::ConstAx(l) => Rule::ConstAx(ll_(l, ks, vs)),
         Rule::ConstDef(l) => Rule::ConstDef(ll_(l, ks, vs)),
         Rule::Local(l) => Rule::Local(ll_(l, ks, vs)),
@@ -499,6 +500,37 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
 }
 
 /// The projection instances at a level instance.
+/// The structure-eta instance at a level instance.
+#[verifier::spinoff_prover]
+proof fn step_ls_seta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        step_ok(sig, r, j, ps),
+        pls_ok(sig, ps, ks, vs),
+        r is StructEta,
+    ensures
+        step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
+{
+    let qs = pls(sig, ps, ks, vs);
+    assert(qs.len() == ps.len());
+    reveal(crate::ti_syntax::struct_eta_ok);
+    let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let (m2, n2, t2) = (le_(m, ks, vs), le_(n, ks, vs), le_(t, ks, vs));
+    crate::ti_proj::struct_ty_ls(sig, t, ks, vs);
+    let nf = crate::ti_syntax::struct_nf(sig, t);
+    assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+    assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+    assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
+    assert forall|i: int| 0 <= i < nf implies #[trigger] concl(qs[3 + i])
+        == eq(gls(g, ks, vs), ExprSpec::Proj(i as usize, Box::new(m2)), ExprSpec::Proj(i as usize, Box::new(n2)),
+            crate::ti_syntax::proj_ty(sig, t2, i as nat, m2)->Some_0) by {
+        assert(concl(qs[3 + i]) == jls(concl(ps[3 + i]), ks, vs));
+        crate::ti_proj::proj_ty_unfold(sig, t, i as nat, m);
+        crate::ti_proj::proj_ty_ls(sig, t, i as nat, m, ks, vs);
+    }
+    assert(step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), qs)) by { reveal(crate::ti_syntax::struct_eta_ok); }
+}
+
 #[verifier::spinoff_prover]
 proof fn step_ls_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
@@ -567,6 +599,8 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
         step_ls_iota(sig, r, j, ps, ks, vs);
     } else if r is ProjCong || r is ProjIota {
         step_ls_proj(sig, r, j, ps, ks, vs);
+    } else if r is StructEta {
+        step_ls_seta(sig, r, j, ps, ks, vs);
     } else {
         step_ls_cst(sig, r, j, ps, ks, vs);
     }
@@ -650,6 +684,7 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
     let Deriv::Node(r, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
+    reveal(crate::ti_syntax::struct_eta_ok);
     let k = ps.len();
     if k > 0 { d_consts(sig, ps[0]); }
     if k > 1 { d_consts(sig, ps[1]); }

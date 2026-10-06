@@ -755,4 +755,76 @@ pub proof fn proj_fty_congr(s1: Sig, s2: Sig, m: ExprSpec)
     struct_congr(s1, s2, s1.ienv.ctor_ind[h->Const_0]);
 }
 
+/// Structure applications read only the constants and the inductive
+/// tables.
+pub proof fn seta_sig_congr(s1: Sig, s2: Sig, t: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::ti_syntax::struct_ty(s1, t) == crate::ti_syntax::struct_ty(s2, t),
+        crate::ti_syntax::struct_ty(s1, t) ==> crate::ti_syntax::struct_nf(s1, t) == crate::ti_syntax::struct_nf(s2, t)
+            && crate::dom_code::smash(s1, spine_head(t)->Const_0) == crate::dom_code::smash(s2, spine_head(t)->Const_0),
+{
+    let h = spine_head(t);
+    if h is Const {
+        if crate::ti_syntax::struct_of(s1, h->Const_0) {
+            struct_congr(s1, s2, h->Const_0);
+        } else if crate::ti_syntax::struct_of(s2, h->Const_0) {
+            struct_congr(s2, s1, h->Const_0);
+        }
+    }
+}
+
+/// Swapping locals keeps a structure application one, of the same
+/// structure.
+pub proof fn struct_ty_fswap(sig: Sig, t: ExprSpec, x: nat, y: nat)
+    requires
+        crate::ti_syntax::struct_ty(sig, t),
+    ensures
+        crate::ti_syntax::struct_ty(sig, crate::swap_model::fswap(t, x, y)),
+        spine_head(crate::swap_model::fswap(t, x, y)) == spine_head(t),
+        crate::ti_syntax::struct_nf(sig, crate::swap_model::fswap(t, x, y)) == crate::ti_syntax::struct_nf(sig, t),
+{
+    crate::swap_model::fswap_spine(t, x, y);
+}
+
+/// Substitution keeps a structure application one, of the same structure.
+pub proof fn struct_ty_psub(sig: Sig, t: ExprSpec, q: Sub)
+    requires
+        crate::ti_syntax::struct_ty(sig, t),
+    ensures
+        crate::ti_syntax::struct_ty(sig, psub(t, q)),
+        spine_head(psub(t, q)) == spine_head(t),
+        crate::ti_syntax::struct_nf(sig, psub(t, q)) == crate::ti_syntax::struct_nf(sig, t),
+{
+    crate::ti_subst::psub_spine_const(q, t);
+}
+
+/// Closing a local keeps a structure application one, of the same
+/// structure.
+pub proof fn struct_ty_fclose(sig: Sig, t: ExprSpec, k: nat, c: nat)
+    requires
+        crate::ti_syntax::struct_ty(sig, t),
+    ensures
+        crate::ti_syntax::struct_ty(sig, crate::fclose::fclose(k, c, t)),
+        spine_head(crate::fclose::fclose(k, c, t)) == spine_head(t),
+        crate::ti_syntax::struct_nf(sig, crate::fclose::fclose(k, c, t)) == crate::ti_syntax::struct_nf(sig, t),
+{
+    crate::fclose::fclose_spine_const(k, c, t);
+}
+
+/// A level instance keeps a structure application one, of the same
+/// structure.
+pub proof fn struct_ty_ls(sig: Sig, t: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::ti_syntax::struct_ty(sig, t),
+    ensures
+        crate::ti_syntax::struct_ty(sig, crate::expr_model::subst_expr_levels(t, ks, vs)),
+        spine_head(crate::expr_model::subst_expr_levels(t, ks, vs))->Const_0 == spine_head(t)->Const_0,
+        crate::ti_syntax::struct_nf(sig, crate::expr_model::subst_expr_levels(t, ks, vs)) == crate::ti_syntax::struct_nf(sig, t),
+{
+    crate::level_inst::li_spine_const(t, ks, vs);
+}
+
 } // verus!

@@ -326,6 +326,10 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
             reveal(crate::ti_syntax::proj_iota_ok);
             d_ls2_via(sig, d, dl, ks, vs, vs2, 1)
         },
+        Rule::StructEta(_) => {
+            reveal(crate::ti_syntax::struct_eta_ok);
+            d_ls2_via(sig, d, dl, ks, vs, vs2, 1)
+        },
         Rule::Eta(..) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Irr(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Delta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),

@@ -256,6 +256,7 @@ pub proof fn d_wf_init(sig: Sig, d: Deriv) -> (r: Deriv)
     let Deriv::Node(rule, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
+    reveal(crate::ti_syntax::struct_eta_ok);
     match rule {
         Rule::CtxCons(_) => ps[0],
         _ => {
