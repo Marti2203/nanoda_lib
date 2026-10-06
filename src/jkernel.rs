@@ -727,6 +727,7 @@ pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     let s1 = jsig(dty, denv, lctx);
     reveal(crate::ti_syntax::iota_ok);
     crate::ti_syntax::norecs_no_structs(s0);
+    crate::ti_syntax::norecs_no_structs(s1);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls) by {
         assert(is_def(s0, c, ls));
         assert(def_ok(s0, c, ls));

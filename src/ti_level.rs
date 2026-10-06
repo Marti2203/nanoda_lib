@@ -267,7 +267,7 @@ proof fn step_ls_bind(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
         sig_lp_ok(sig, ks, vs),
         step_ok(sig, r, j, ps),
         pls_ok(sig, ps, ks, vs),
-        r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta,
+        r is PiCong || r is LamCong || r is AppCong,
     ensures
         step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
 {
@@ -298,6 +298,24 @@ proof fn step_ls_bind(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
             assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
             assert(concl(qs[3]) == jls(concl(ps[3]), ks, vs));
         },
+        _ => {},
+    }
+}
+
+/// The beta, zeta and eta instances at a level instance.
+#[verifier::spinoff_prover]
+proof fn step_ls_beta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        step_ok(sig, r, j, ps),
+        pls_ok(sig, ps, ks, vs),
+        r is Beta || r is Zeta || r is Eta,
+    ensures
+        step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
+{
+    let qs = pls(sig, ps, ks, vs);
+    assert(qs.len() == ps.len());
+    match r {
         Rule::Beta(..) => {
             let g = j->Eq_0;
             let a = concl(ps[0])->Eq_1;
@@ -614,8 +632,10 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
     }
     if r is CtxNil || r is CtxCons || r is Var || r is Univ || r is Sym || r is Trans || r is Conv || r is Irr {
         step_ls_ctx(sig, r, j, ps, ks, vs);
-    } else if r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta {
+    } else if r is PiCong || r is LamCong || r is AppCong {
         step_ls_bind(sig, r, j, ps, ks, vs);
+    } else if r is Beta || r is Zeta || r is Eta {
+        step_ls_beta(sig, r, j, ps, ks, vs);
     } else if r is Iota {
         step_ls_iota(sig, r, j, ps, ks, vs);
     } else if r is ProjCong || r is ProjIota {

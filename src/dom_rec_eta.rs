@@ -108,6 +108,7 @@ pub proof fn side_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         let pre = (sh.np + 2) as int;
         let (x, args) = (xs[pre], s_args(sig, c, ls, xs));
         &&& sh.nmin() == 1
+        &&& !s_fire(sig, c, ls, xs)
         &&& s_pargs(sig, c, ls, xs).len() == sh.np
         &&& args.len() == sh.fields[0].len()
         &&& s_cl(sig, c, ls, xs).len() == sig.consts[sh.ind].lps.len()
@@ -136,6 +137,11 @@ pub proof fn side_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     let us = rinst(sig, c, ls);
     let st = crate::ti_eta::eta_st(sig, c, ls, xs);
     crate::dom_rec_ty::rec_lps_sub(sig, c);
+    assert(!s_fire(sig, c, ls, xs)) by {
+        reveal(crate::ti_hred::rec_smash);
+        crate::beta_model::spine_destruct_app(h, xs);
+        assert(crate::rec_canon::rec_ind(sig, c) == sh.ind);
+    }
     if s_fire(sig, c, ls, xs) {
         // Iota at the major's constructor application
         crate::beta_model::spine_destruct_app(h, xs);

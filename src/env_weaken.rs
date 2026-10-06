@@ -64,6 +64,10 @@ pub proof fn ew_sig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
         }
     }
     crate::ti_syntax::norecs_no_structs(s1);
+    assert forall|rid: u64| !s2.ienv.recs.contains_key(rid) by {
+        assert(s2.ienv.recs == s0.ienv.recs);
+    }
+    crate::ti_syntax::norecs_no_structs(s2);
 }
 
 pub proof fn ew_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)

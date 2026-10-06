@@ -1214,7 +1214,7 @@ pub proof fn iota_sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> (l: LevelSpe
     requires
         crate::dom_rec_end::sig_sr(sig),
         derivable(sig, eq(g, m, m, t)),
-        crate::ti_hred::rec_fire(sig, m),
+        crate::ti_hred::rec_fits(sig, m),
         sr_ok(sig, spine_head(m)->Const_0, spine_head(m)->Const_1, fired_rule(sig, m)),
     ensures
         derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
@@ -1376,10 +1376,10 @@ pub open spec fn iota_end(sig: Sig, m: ExprSpec) -> ExprSpec {
 /// so is its reduct.
 pub proof fn bare_facts(sig: Sig, g: Ctx, m: ExprSpec)
     requires
-        crate::ti_hred::rec_fire(sig, m),
+        crate::ti_hred::rec_fits(sig, m),
     ensures
         m == spine_app(bare(sig, m), extra(sig, m)),
-        crate::ti_hred::rec_fire(sig, bare(sig, m)),
+        crate::ti_hred::rec_fits(sig, bare(sig, m)),
         spine_head(bare(sig, m)) == spine_head(m),
         crate::beta_model::rec_result(sig.ienv, m) == spine_app(crate::beta_model::rec_result(sig.ienv, bare(sig, m)), extra(sig, m)),
         crate::ti_syntax::iota_pjs(sig, g, bare(sig, m)) == crate::ti_syntax::iota_pjs(sig, g, m),

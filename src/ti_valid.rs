@@ -135,6 +135,7 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& sig.ienv.sub(sig2.ienv)
     &&& iota_ok(sig2)
     &&& crate::ti_syntax::no_structs(sig)
+    &&& crate::ti_syntax::no_structs(sig2)
 }
 
 /// Without recursors nothing is a recursor redex.
@@ -246,6 +247,8 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
             pjs_ext(sig, sig2, j->Eq_0, j->Eq_1);
             reveal(crate::ti_hred::fire_inst);
+            reveal(crate::ti_hred::rec_smash);
+            assert(!crate::ti_syntax::struct_of(sig2, crate::rec_canon::rec_ind(sig2, crate::beta_model::spine_head(j->Eq_1)->Const_0)));
         },
         _ => {},
     }

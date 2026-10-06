@@ -39,8 +39,23 @@ pub open spec fn rec_arity(sig: Sig, t: ExprSpec) -> bool {
 
 /// A recursor redex the typed judgment reduces: a recursor the model
 /// interprets at any instance, any other where its motive is a
-/// proposition.
+/// proposition; not a smashed structure's, which reduces only by its eta
+/// step (rule `RecEta`; docs/TYPED_TARGET.md, "Revision (E4c)").
 pub open spec fn rec_fire(sig: Sig, t: ExprSpec) -> bool {
+    rec_fits(sig, t) && !rec_smash(sig, t)
+}
+
+/// The redex's recursor is a smashed structure's (opaque: the structure
+/// test unfolds the canonical shape).
+#[verifier::opaque]
+pub open spec fn rec_smash(sig: Sig, t: ExprSpec) -> bool {
+    crate::dom_code::smash(sig, crate::rec_canon::rec_ind(sig, crate::beta_model::spine_head(t)->Const_0))
+}
+
+/// A recursor redex its rule fits: ready, its major of the constructor's
+/// arity, at a reducing instance (Iota's redexes, and a smashed
+/// structure's at its eta expansion).
+pub open spec fn rec_fits(sig: Sig, t: ExprSpec) -> bool {
     crate::beta_model::rec_ready(sig.ienv, t) && rec_arity(sig, t) && fire_inst(sig, t)
 }
 
@@ -74,6 +89,16 @@ pub proof fn reta_sig(s1: Sig, s2: Sig, a: ExprSpec)
     assert(crate::dom_code::smash(s1, ind) == crate::dom_code::smash(s2, ind));
 }
 
+/// Whether the recursor is a smashed structure's reads only its name.
+pub proof fn rec_smash_id(sig: Sig, a: ExprSpec, b: ExprSpec)
+    requires
+        crate::beta_model::spine_head(a)->Const_0 == crate::beta_model::spine_head(b)->Const_0,
+    ensures
+        rec_smash(sig, a) == rec_smash(sig, b),
+{
+    reveal(rec_smash);
+}
+
 /// It reads only the head.
 pub proof fn fire_inst_head(sig: Sig, a: ExprSpec, b: ExprSpec)
     requires
@@ -82,7 +107,9 @@ pub proof fn fire_inst_head(sig: Sig, a: ExprSpec, b: ExprSpec)
         fire_inst(sig, a) == fire_inst(sig, b),
         crate::ti_syntax::iota_prop(sig, a) == crate::ti_syntax::iota_prop(sig, b),
         crate::ti_syntax::iota_lm(sig, a) == crate::ti_syntax::iota_lm(sig, b),
+        rec_smash(sig, a) == rec_smash(sig, b),
 {
+    reveal(rec_smash);
     reveal(fire_inst);
     reveal(crate::ti_syntax::iota_prop);
     reveal(crate::ti_syntax::iota_lm);
@@ -99,12 +126,24 @@ pub proof fn fire_inst_sig(s1: Sig, s2: Sig, a: ExprSpec)
         crate::ti_syntax::iota_lm(s1, a) == crate::ti_syntax::iota_lm(s2, a),
         crate::dom_rec_end::rec_interp(s1, crate::beta_model::spine_head(a)->Const_0)
             == crate::dom_rec_end::rec_interp(s2, crate::beta_model::spine_head(a)->Const_0),
+        crate::rec_canon::rec_ind(s1, crate::beta_model::spine_head(a)->Const_0) == crate::rec_canon::rec_ind(s2, crate::beta_model::spine_head(a)->Const_0),
+        crate::dom_code::smash(s1, crate::rec_canon::rec_ind(s1, crate::beta_model::spine_head(a)->Const_0))
+            == crate::dom_code::smash(s2, crate::rec_canon::rec_ind(s2, crate::beta_model::spine_head(a)->Const_0)),
+        rec_smash(s1, a) == rec_smash(s2, a),
 {
+    reveal(rec_smash);
     reveal(fire_inst);
     reveal(crate::ti_syntax::iota_prop);
     reveal(crate::ti_syntax::iota_lm);
     reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::rec_large);
+    let ind = crate::rec_canon::rec_ind(s1, crate::beta_model::spine_head(a)->Const_0);
+    if crate::ti_syntax::struct_of(s1, ind) {
+        crate::ti_proj::struct_congr(s1, s2, ind);
+    }
+    if crate::ti_syntax::struct_of(s2, ind) {
+        crate::ti_proj::struct_congr(s2, s1, ind);
+    }
 }
 
 /// An interpreted recursor's redexes reduce at every instance.

@@ -955,6 +955,7 @@ pub proof fn li_fire(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs:
     if crate::ti_syntax::iota_prop(sig, sp) {
         crate::ti_level::ls_is_zero(crate::ti_syntax::iota_lm(sig, sp), ks, vs);
     }
+    crate::ti_hred::rec_smash_id(sig, subst_expr_levels(sp, ks, vs), sp);
 }
 
 } // verus!

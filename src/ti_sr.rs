@@ -316,6 +316,7 @@ proof fn iota_node(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, e: ExprSpec, l: L
 {
     crate::iota_sr::bare_facts(sig, g, m);
     let (x1, ex) = (crate::iota_sr::bare(sig, m), crate::iota_sr::extra(sig, m));
+    crate::ti_hred::fire_inst_head(sig, x1, m);
     let n1 = crate::beta_model::rec_result(sig.ienv, x1);
     let d0 = get(sig, eq(g, x1, x1, e));
     let d1 = get(sig, eq(g, n1, n1, e));
@@ -422,9 +423,9 @@ proof fn mchain_typed_k(sig: Sig, g: Ctx, ch: Seq<ExprSpec>, k: int, t: ExprSpec
     }
 }
 
-/// THE RECURSOR'S ETA STEP: the major converts with its eta expansion
-/// (StructEta), under application congruence; the recursor at the
-/// expansion fires Iota, to the step's result.
+/// THE RECURSOR'S ETA STEP (rule RecEta): its result is typed at the
+/// redex's type, through the eta expansion (StructEta under application
+/// congruence) and the rule's instance there.
 #[verifier::spinoff_prover]
 proof fn sr_rec_eta(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec, a1: ExprSpec, b1: ExprSpec, l1: LevelSpec, l2: LevelSpec)
     requires
@@ -493,15 +494,32 @@ proof fn sr_rec_eta(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec, a1:
         reveal_with_fuel(crate::beta_model::find_rule, 2);
     }
     assert(crate::ti_hred::fire_inst(sig, m2)) by { reveal(crate::ti_hred::fire_inst); }
-    assert(crate::ti_hred::rec_fire(sig, m2));
-    sr_iota(sig, g, m2, inst(0, x, b1));
-    assert(crate::beta_model::rec_result(sig.ienv, m2) == crate::ti_hred::rec_eta_result(sig, m)) by {
+    assert(crate::ti_hred::rec_fits(sig, m2));
+    // the rule's instance at the expansion is typed at the application's type
+    let tt = inst(0, x, b1);
+    crate::dom_psimple::der_diag(sig, g, m2, m, tt);
+    assert(crate::iota_sr::fired_rule(sig, m2) == 0);
+    crate::dom_rec_conv::sr_ok_of(sig, rid, lv, 0);
+    let _ = crate::iota_sr::iota_sr(sig, g, m2, tt);
+    let n = crate::ti_hred::rec_eta_result(sig, m);
+    assert(crate::beta_model::rec_result(sig.ienv, m2) == n) by {
         assert(cargs.subrange((cargs.len() - nf) as int, cargs.len() as int) =~= crate::ti_syntax::projs(x, nf));
         assert(a2.subrange((rd.major_idx + 1) as int, a2.len() as int) =~= Seq::<ExprSpec>::empty());
     }
-    crate::dom_adeq_syn::dtrans(sig, g, m, m2, crate::ti_hred::rec_eta_result(sig, m), inst(0, x, b1));
-    tchain_sym(sig, g, t, inst(0, x, b1));
-    conv_chain(sig, g, m, crate::ti_hred::rec_eta_result(sig, m), inst(0, x, b1), t);
+    // the eta step's instance
+    crate::ti_chain::inst_conv(sig, g, a1, b1, l2, x, x);
+    let q0 = get(sig, eq(g, m, m, tt));
+    let q1 = get(sig, eq(g, n, n, tt));
+    let q2 = get(sig, eq(g, tt, tt, sort(l2)));
+    let rj = eq(g, m, n, tt);
+    let rp = seq![q0, q1, q2];
+    assert(prems(rp, seq![eq(g, m, m, tt), eq(g, n, n, tt), eq(g, tt, tt, sort(l2))]));
+    assert(crate::ti_hred::rec_smashed(sig, m));
+    assert(step_ok(sig, Rule::RecEta(l2), rj, rp)) by { reveal(crate::ti_syntax::rec_eta_ok); }
+    valid_node(sig, Rule::RecEta(l2), rj, rp);
+    mk_d(sig, node(Rule::RecEta(l2), rj, rp));
+    tchain_sym(sig, g, t, tt);
+    conv_chain(sig, g, m, n, tt, t);
 }
 
 /// A PROJECTION OF A CONSTRUCTOR APPLICATION converts with its field: the
