@@ -132,9 +132,6 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     match rule {
         Rule::Var(_) => ps[0],
         Rule::Univ(_, _) => ps[0],
@@ -147,6 +144,14 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
         Rule::Zeta(_) => d_wf(sig, ps[0]),
         Rule::Iota(_) => d_wf(sig, ps[0]),
+        Rule::ProjCong(_) => {
+            reveal(crate::ti_syntax::proj_cong_ok);
+            d_wf(sig, ps[0])
+        },
+        Rule::ProjIota(_) => {
+            reveal(crate::ti_syntax::proj_iota_ok);
+            d_wf(sig, ps[0])
+        },
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
@@ -169,9 +174,8 @@ pub proof fn d_wf_last(sig: Sig, d: Deriv) -> (r: (LevelSpec, Deriv))
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_iota_ok);
     match rule {
         Rule::CtxCons(l) => (l, ps[1]),
         _ => {
@@ -270,9 +274,6 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;
@@ -311,6 +312,8 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
         Rule::Zeta(..) => d_ren_zeta(sig, d, w, dl, r),
         Rule::Iota(_) => d_ren_iota(sig, d, w, dl, r),
+        Rule::ProjCong(_) => d_ren_pcong(sig, d, w, dl, r),
+        Rule::ProjIota(_) => d_ren_piota(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
         Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
@@ -647,6 +650,79 @@ proof fn d_ren_irr(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             ]));
             valid_node(sig, Rule::Irr(l), j2, ps2);
             node(Rule::Irr(l), j2, ps2)
+}
+
+/// A projection's congruence, renamed.
+proof fn d_ren_pcong(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is ProjCong,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (m, n, a) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    let q = rn(r);
+    let l = rule->ProjCong_0;
+    reveal(crate::ti_syntax::proj_cong_ok);
+    let st = concl(ps[0])->Eq_3;
+    let (i, x, x2) = (m->Proj_0, *m->Proj_1, *n->Proj_1);
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
+    crate::ti_proj::proj_ty_psub(sig, st, i as nat, x, q);
+    let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    let ps2 = seq![d0, d1];
+    assert(prems(ps2, seq![eq(dl, psub(x, q), psub(x2, q), psub(st, q)), eq(dl, psub(a, q), psub(a, q), sort(l))]));
+    assert(step_ok(sig, Rule::ProjCong(l), j2, ps2)) by { reveal(crate::ti_syntax::proj_cong_ok); }
+    valid_node(sig, Rule::ProjCong(l), j2, ps2);
+    node(Rule::ProjCong(l), j2, ps2)
+}
+
+/// A projection's reduction, renamed.
+proof fn d_ren_piota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is ProjIota,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (m, n, a) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    let q = rn(r);
+    let l = rule->ProjIota_0;
+    reveal(crate::ti_syntax::proj_iota_ok);
+    let st = concl(ps[2])->Eq_3;
+    let x = *m->Proj_1;
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    let d2 = d_ren(sig, ps[2], w, dl, r);
+    let d3 = d_ren(sig, ps[3], w, dl, r);
+    crate::ti_proj::proj_fire_psub(sig, m, q);
+    crate::ti_proj::proj_ty_psub(sig, st, 0, x, q);
+    crate::ti_subst::psub_spine_const(q, st);
+    assert(psub(m, q) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, q))));
+    let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    let ps2 = seq![d0, d1, d2, d3];
+    assert(prems(ps2, seq![eq(dl, psub(m, q), psub(m, q), psub(a, q)), eq(dl, psub(n, q), psub(n, q), psub(a, q)),
+        eq(dl, psub(x, q), psub(x, q), psub(st, q)), eq(dl, psub(a, q), psub(a, q), sort(l))]));
+    assert(step_ok(sig, Rule::ProjIota(l), j2, ps2)) by { reveal(crate::ti_syntax::proj_iota_ok); }
+    valid_node(sig, Rule::ProjIota(l), j2, ps2);
+    node(Rule::ProjIota(l), j2, ps2)
 }
 
 /// The signature's rules mention only closed terms, which renaming fixes.

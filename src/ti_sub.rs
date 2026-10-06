@@ -345,9 +345,6 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;
@@ -372,6 +369,8 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::Beta(_, _) => d_sub_beta(sig, d, dl, s, s2),
         Rule::Zeta(_) => d_sub_zeta(sig, d, dl, s, s2),
         Rule::Iota(_) => d_sub_iota(sig, d, dl, s, s2),
+        Rule::ProjCong(_) => d_sub_pcong(sig, d, dl, s, s2),
+        Rule::ProjIota(_) => d_sub_piota(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => d_sub_sig(sig, d, dl, s, s2),
@@ -1001,6 +1000,94 @@ proof fn d_sub_zeta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         mk_d(sig, z);
         assert(psub(m, s) == lm);
     }
+}
+
+/// A projection's congruence, substituted.
+#[verifier::spinoff_prover]
+proof fn d_sub_pcong(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is ProjCong,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->ProjCong_0;
+    reveal(crate::ti_syntax::proj_cong_ok);
+    let st = concl(ps[0])->Eq_3;
+    let (i, x, x2) = (m->Proj_0, *m->Proj_1, *n->Proj_1);
+    spair_left(sig, g, dl, s, s2);
+    d_sub(sig, ps[0], dl, s, s2);
+    d_sub(sig, ps[1], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s2);
+    crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
+    crate::ti_proj::proj_ty_psub(sig, st, i as nat, x, s);
+    let q0 = get(sig, eq(dl, psub(x, s), psub(x2, s2), psub(st, s)));
+    let q1 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    let (m2, n2) = (ExprSpec::Proj(i, Box::new(psub(x, s))), ExprSpec::Proj(i, Box::new(psub(x2, s2))));
+    assert(psub(m, s) == m2 && psub(n, s2) == n2);
+    let ij = eq(dl, m2, n2, psub(a, s));
+    let ip = seq![q0, q1];
+    assert(prems(ip, seq![eq(dl, psub(x, s), psub(x2, s2), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l))]));
+    assert(step_ok(sig, Rule::ProjCong(l), ij, ip)) by { reveal(crate::ti_syntax::proj_cong_ok); }
+    valid_node(sig, Rule::ProjCong(l), ij, ip);
+    mk_d(sig, node(Rule::ProjCong(l), ij, ip));
+    let t = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
+    mk_t(sig, t, l);
+}
+
+/// A projection's reduction, substituted: the instance at the left
+/// substitution, then the field's own conversion.
+#[verifier::spinoff_prover]
+proof fn d_sub_piota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is ProjIota,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->ProjIota_0;
+    reveal(crate::ti_syntax::proj_iota_ok);
+    let st = concl(ps[2])->Eq_3;
+    let x = *m->Proj_1;
+    spair_left(sig, g, dl, s, s2);
+    d_sub(sig, ps[0], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s2);
+    d_sub(sig, ps[2], dl, s, s);
+    d_sub(sig, ps[3], dl, s, s);
+    d_sub(sig, ps[3], dl, s, s2);
+    crate::ti_proj::proj_fire_psub(sig, m, s);
+    crate::ti_proj::proj_ty_psub(sig, st, 0, x, s);
+    let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
+    let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
+    let q2 = get(sig, eq(dl, psub(x, s), psub(x, s), psub(st, s)));
+    let q3 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    assert(psub(m, s) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, s))));
+    crate::ti_subst::psub_spine_const(s, st);
+    let ij = eq(dl, psub(m, s), psub(n, s), psub(a, s));
+    let ip = seq![q0, q1, q2, q3];
+    assert(prems(ip, seq![eq(dl, psub(m, s), psub(m, s), psub(a, s)), eq(dl, psub(n, s), psub(n, s), psub(a, s)),
+        eq(dl, psub(x, s), psub(x, s), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l))]));
+    assert(step_ok(sig, Rule::ProjIota(l), ij, ip)) by { reveal(crate::ti_syntax::proj_iota_ok); }
+    valid_node(sig, Rule::ProjIota(l), ij, ip);
+    mk_d(sig, node(Rule::ProjIota(l), ij, ip));
+    crate::dom_adeq_syn::dtrans(sig, dl, psub(m, s), psub(n, s), psub(n, s2), psub(a, s));
+    let t = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
+    mk_t(sig, t, l);
 }
 
 #[verifier::spinoff_prover]

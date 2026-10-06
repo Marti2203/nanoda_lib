@@ -98,6 +98,7 @@ pub mod ti_gen;
 pub mod ti_scope;
 pub mod iota_sr;
 pub mod iota_gen;
+pub mod ti_proj;
 pub mod ti_spine;
 pub mod ti_sr;
 pub mod ti_hred;

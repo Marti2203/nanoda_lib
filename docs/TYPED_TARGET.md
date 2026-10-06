@@ -1337,6 +1337,21 @@ case:
   instantiation, extension, validity, generation, scoping and subject
   reduction cover them; the model's cases are vacuous behind
   `proj_ok(sig)` ("no structures") until T2.
+- **T2a (done, 39f3e33): `hstep` reduces projections** (a constructor
+  application's to its field, else the subject).
+- **T2, in steps** (found 2026-10-06: canonical field types never mention
+  earlier fields, `field_kind`, so a projection's type is the field's type
+  over the parameters alone; covered: `Prod`, `PProd`, `MProd`, `And`;
+  dependent fields, `Sigma`/`Subtype`/`Iff`, need more field kinds):
+  T2b the syntactic facts (a projection's type in the parameters only,
+  closed under substitution, renaming, local swap/close, level
+  instantiation, extension; the redex likewise) in `ti_proj`; T2c the
+  rules' transports wired into the derivation transformations; T2d
+  generation and subject reduction (a projection of a constructor
+  application: injectivity's chains for the parameters, as in
+  `iota_gen`); T2e the model and soundness; T2f adequacy; T2g the flip of
+  `proj_ok` to a real condition (structures in scope, their facts in the
+  model's hypothesis).
 - **T2: the model.** `mem_w` gives `Proj(i, x)` the `i`-th field value of
   `x`'s constructor values (bottom otherwise); soundness of both rules
   (a constructor application's members are constructor nodes whose

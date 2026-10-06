@@ -30,9 +30,6 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     let g = j->Eq_0;
     let t = j->Eq_3;
     match rule {
@@ -92,6 +89,18 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         },
         Rule::Iota(_) => {
             d_ty(sig, ps[0]);
+        },
+        Rule::ProjCong(l) => {
+            reveal(crate::ti_syntax::proj_cong_ok);
+            mk_d(sig, ps[1]);
+            let r = get(sig, eq(g, t, t, sort(l)));
+            mk_t(sig, r, l);
+        },
+        Rule::ProjIota(l) => {
+            reveal(crate::ti_syntax::proj_iota_ok);
+            mk_d(sig, ps[3]);
+            let r = get(sig, eq(g, t, t, sort(l)));
+            mk_t(sig, r, l);
         },
         Rule::Beta(l1, l2) => {
             let a = concl(ps[0])->Eq_1;

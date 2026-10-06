@@ -56,7 +56,17 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
     crate::ti_meta::valid_prems(strip(sig), d);
     let Deriv::Node(r, j, ps) = d;
     if r is ProjCong || r is ProjIota {
-        crate::ti_syntax::proj_dead(strip(sig), r, j, ps);
+        reveal(crate::ti_syntax::proj_cong_ok);
+        reveal(crate::ti_syntax::proj_iota_ok);
+        reveal(crate::ti_syntax::proj_ty);
+        reveal(crate::ti_syntax::proj_fire);
+        reveal(crate::ti_syntax::struct_of);
+        assert forall|s: u64| !crate::dom_code::has_canon(strip(sig), s) by {
+            if crate::dom_code::has_canon(strip(sig), s) {
+                let rid = choose|rid: u64| crate::rec_canon::rec_canon(strip(sig), rid) && crate::rec_canon::rec_ind(strip(sig), rid) == s;
+                assert(strip(sig).ienv.recs.contains_key(rid));
+            }
+        }
     }
     assert forall|k: int| 0 <= k < ps.len() implies valid(sig, #[trigger] ps[k]) && iota_free(ps[k]) by {
         strip_valid(sig, ps[k]);

@@ -254,9 +254,8 @@ pub proof fn d_wf_init(sig: Sig, d: Deriv) -> (r: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_iota_ok);
     match rule {
         Rule::CtxCons(_) => ps[0],
         _ => {

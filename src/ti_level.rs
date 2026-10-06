@@ -604,9 +604,8 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(r, j, ps) = d;
-    if r is ProjCong || r is ProjIota {
-        crate::ti_syntax::proj_dead(sig, r, j, ps);
-    }
+    reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_iota_ok);
     let k = ps.len();
     if k > 0 { d_consts(sig, ps[0]); }
     if k > 1 { d_consts(sig, ps[1]); }

@@ -495,7 +495,8 @@ pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
     match j {
         Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 4 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
-            proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && (proj_prop(sig, st) ==> is_zero(l))
+            proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && crate::beta_model::spine_head(st) is Const
+                && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l))])
         },
         _ => false,
