@@ -564,20 +564,7 @@ pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
     }
 }
 
-/// The projection rules are dead while there are no structures.
-pub proof fn proj_dead(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
-    requires
-        step_ok(sig, r, j, ps),
-        r is ProjCong || r is ProjIota,
-    ensures
-        false,
-{
-    reveal(proj_cong_ok);
-    reveal(proj_iota_ok);
-    proj_dead_ns(sig, r, j, ps);
-}
-
-/// They are dead in a signature without structures.
+/// The projection rules are dead in a signature without structures.
 pub proof fn proj_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     requires
         step_ok(sig, r, j, ps),

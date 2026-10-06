@@ -73,22 +73,6 @@ pub open spec fn gen_proj(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec) ->
         && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0)
 }
 
-/// While there are no structures (`proj_ok`), no projection is typed.
-pub proof fn gen_proj_dead(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
-    requires
-        gen_proj(sig, g, i, x, t),
-    ensures
-        false,
-{
-    let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
-        && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i, x) is Some
-        && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0, l)
-        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l)) && crate::ti_syntax::proj_ok(sig)
-        && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0);
-    reveal(crate::ti_syntax::proj_ty);
-    assert(crate::ti_syntax::struct_of(sig, crate::beta_model::spine_head(st)->Const_0));
-}
-
 /// Without recursors there are no structures, so no projection is typed.
 pub proof fn gen_proj_norecs(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
     requires

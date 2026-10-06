@@ -116,6 +116,51 @@ pub proof fn pi_chain_cod(sig: Sig, g: Ctx, a: ExprSpec, l1: LevelSpec, c1: Expr
     pi_chain_k(sig, g, a, l1, ch, ch.len() - 1);
 }
 
+/// A projection's two types: the subjects' chained types are applications
+/// of one structure, whose parameter the field names they chain.
+#[verifier::spinoff_prover]
+proof fn uniq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, ta: ExprSpec, tb: ExprSpec, st1: ExprSpec, st2: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::proj_ok(sig),
+        tchain(sig, g, st1, st2),
+        crate::ti_syntax::proj_ty(sig, st1, i as nat, x) is Some,
+        crate::ti_syntax::proj_ty(sig, st2, i as nat, x) is Some,
+        tchain(sig, g, ta, crate::ti_syntax::proj_ty(sig, st1, i as nat, x)->Some_0),
+        tchain(sig, g, tb, crate::ti_syntax::proj_ty(sig, st2, i as nat, x)->Some_0),
+    ensures
+        tchain(sig, g, ta, tb),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    crate::dom_proj_sound::proj_ok_sem(sig);
+    crate::ti_proj::proj_ty_unfold(sig, st1, i as nat, x);
+    crate::ti_proj::proj_ty_unfold(sig, st2, i as nat, x);
+    let (s1, us1, xs) = (spine_head(st1)->Const_0, spine_head(st1)->Const_1, spine_args(st1));
+    let (s2, us2, ys) = (spine_head(st2)->Const_0, spine_head(st2)->Const_1, spine_args(st2));
+    assert(crate::dom_proj_sound::struct_sem(sig, s1));
+    assert(crate::dom_proj_sound::struct_sem(sig, s2));
+    assert(crate::dom_model::sem_const(sig, s1, us1));
+    assert(crate::dom_model::sem_const(sig, s2, us2));
+    reveal(crate::ti_syntax::struct_of);
+    crate::beta_model::spine_recompose(st1);
+    // the second type is an application of the first's structure
+    crate::dom_fund::ind_head_chain(sig, g, s1, us1, xs, st2);
+    crate::dom_lift::iapp_self(sig, st2);
+    crate::ti_hred::hred_stuck_self(sig, st2, crate::dom_rel::ir(sig, st2, s1));
+    assert(s2 == s1);
+    // both types are the parameter the field names
+    let sh = crate::dom_code::canon_shape(sig, s1);
+    crate::dom_adeq_proj::pfield(sig, s1, i as nat, us1);
+    let q = (sh.np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
+    crate::dom_adeq_proj::pfield_vsub(sig, s1, i as nat, us1, xs + crate::ti_syntax::projs(x, i as nat));
+    crate::dom_adeq_proj::pfield_vsub(sig, s1, i as nat, us2, ys + crate::ti_syntax::projs(x, i as nat));
+    assert((xs + crate::ti_syntax::projs(x, i as nat))[q] == xs[q]);
+    assert((ys + crate::ti_syntax::projs(x, i as nat))[q] == ys[q]);
+    assert(tchain(sig, g, xs[q], ys[q]));
+    tchain_trans(sig, g, ta, xs[q], ys[q]);
+    tchain_meet(sig, g, ta, tb, ys[q]);
+}
+
 /// UNIQUENESS OF TYPES: two typings of a term have chained types.
 pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
     requires
@@ -133,10 +178,21 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
     let db = get(sig, eq(g, m, m, tb));
     gen(sig, da);
     gen(sig, db);
-    if m is Proj {
-        gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, ta);
-    }
     match m {
+        ExprSpec::Proj(i, x) => {
+            let (st1, l1) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
+                && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
+                && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && tchain(sig, g, ta, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
+            let (st2, l2) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
+                && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
+                && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && tchain(sig, g, tb, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
+            uniq(sig, g, *x, st1, st2);
+            uniq_proj(sig, g, i, *x, ta, tb, st1, st2);
+        },
         ExprSpec::Var(i) => {
             tchain_meet(sig, g, ta, tb, var_ty(g, i));
         },
@@ -368,6 +424,104 @@ proof fn mchain_typed_k(sig: Sig, g: Ctx, ch: Seq<ExprSpec>, k: int, t: ExprSpec
     }
 }
 
+/// A PROJECTION OF A CONSTRUCTOR APPLICATION converts with its field: the
+/// field is typed at its declared type, the parameter it names, which the
+/// subject's type chains to its own parameter, the projection's type.
+#[verifier::spinoff_prover]
+proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, st: ExprSpec, l: LevelSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::proj_ok(sig),
+        crate::ti_syntax::proj_fire(sig, ExprSpec::Proj(i, Box::new(x))),
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x)), t)),
+        derivable(sig, eq(g, x, x, st)),
+        crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some,
+        typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0, l),
+        crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l),
+        tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), crate::ti_syntax::proj_result(sig, ExprSpec::Proj(i, Box::new(x))), t)),
+{
+    use crate::beta_model::{spine_head, spine_args, spine_app};
+    let m = ExprSpec::Proj(i, Box::new(x));
+    let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0;
+    crate::dom_proj_sound::proj_ok_sem(sig);
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    let (c, cl) = (spine_head(x)->Const_0, spine_head(x)->Const_1);
+    let s = sig.ienv.ctor_ind[c];
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let (np, nf) = (sh.np, sh.fields[0].len());
+    let aa = spine_args(x);
+    assert(crate::dom_proj_sound::struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, cl));
+    reveal(crate::ti_syntax::struct_of);
+    // the constructor application's type: the structure at the parameters
+    let lps = sig.consts[s].lps;
+    crate::dom_con_rel::ctor_inst(sig, c, cl, s, 0, np);
+    crate::dom_con_rel::ctor_result(sig, c, cl, s, 0, np, aa);
+    crate::dom_levels::sl_plevels_id(lps, cl);
+    let tc = crate::ti_syntax::dty_at(sig, c, cl);
+    let r = crate::dom_con_rel::trest(tc, aa);
+    let ra = spine_args(r);
+    crate::beta_model::spine_recompose(r);
+    assert(ra =~= aa.subrange(0, np as int));
+    crate::beta_model::spine_recompose(x);
+    let thc = crate::dom_iota::spine_gen(sig, g, ExprSpec::Const(c, cl), aa, st);
+    crate::ti_spine::const_typed(sig, g, c, cl, thc);
+    let ds = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[0], lps, cl);
+    let body = spine_app(ExprSpec::Const(s, crate::level_model::subst_levels_spec(sh.us(), lps, cl)),
+        crate::dom_rec_shape::sls(crate::rec_canon::vars(nf, np) + sh.tss[0], lps, cl));
+    assert forall|k: int| 0 <= k < aa.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tc, aa.subrange(0, k))) by {
+        crate::ti_spine::tel_next(ds, body, aa, k);
+    }
+    crate::ti_spine::spine_ty(sig, g, ExprSpec::Const(c, cl), tc, aa, st);
+    // the field, typed at the parameter it names
+    crate::dom_adeq_proj::pfield(sig, s, i as nat, cl);
+    let q = (np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
+    let fld = aa[np + i];
+    crate::ti_spine::tel_next(ds, body, aa, (np + i) as int);
+    assert(ds[np + i] == crate::ti_proj::sfield(sig, s, i as nat, cl));
+    crate::dom_adeq_proj::pfield_vsub(sig, s, i as nat, cl, aa.subrange(0, (np + i) as int));
+    assert(derivable(sig, eq(g, fld, fld, aa[q])));
+    assert(crate::ti_syntax::proj_fty(sig, m) == aa[q]) by {
+        reveal(crate::ti_syntax::proj_fty);
+    }
+    // the subject's type is an application of the same structure
+    tchain_sym(sig, g, st, r);
+    crate::dom_fund::ind_head_chain(sig, g, s, cl, ra, st);
+    crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
+    let (s2, us2) = (spine_head(st)->Const_0, spine_head(st)->Const_1);
+    assert(crate::dom_proj_sound::struct_sem(sig, s2));
+    assert(crate::dom_model::sem_const(sig, s2, us2));
+    crate::dom_lift::iapp_self(sig, st);
+    crate::ti_hred::hred_stuck_self(sig, st, crate::dom_rel::ir(sig, st, s));
+    assert(s2 == s);
+    crate::dom_adeq_proj::pfield_vsub(sig, s, i as nat, us2, spine_args(st) + crate::ti_syntax::projs(x, i as nat));
+    assert((spine_args(st) + crate::ti_syntax::projs(x, i as nat))[q] == spine_args(st)[q]);
+    assert(ty == spine_args(st)[q]);
+    assert(tchain(sig, g, aa[q], ty));
+    // ProjIota, then back to the projection's type
+    conv_chain(sig, g, fld, fld, aa[q], ty);
+    conv_chain(sig, g, m, m, t, ty);
+    let e0 = get(sig, eq(g, m, m, ty));
+    let e1 = get(sig, eq(g, fld, fld, ty));
+    let e2 = get(sig, eq(g, x, x, st));
+    let e3 = get(sig, eq(g, ty, ty, sort(l)));
+    let e4 = get(sig, eq(g, fld, fld, aa[q]));
+    let ji = eq(g, m, fld, ty);
+    let pi = seq![e0, e1, e2, e3, e4];
+    assert(prems(pi, seq![eq(g, m, m, ty), eq(g, fld, fld, ty), eq(g, x, x, st), eq(g, ty, ty, sort(l)),
+        eq(g, fld, fld, crate::ti_syntax::proj_fty(sig, m))]));
+    assert(step_ok(sig, Rule::ProjIota(l), ji, pi)) by {
+        reveal(crate::ti_syntax::proj_iota_ok);
+    }
+    valid_node(sig, Rule::ProjIota(l), ji, pi);
+    mk_d(sig, node(Rule::ProjIota(l), ji, pi));
+    tchain_sym(sig, g, t, ty);
+    conv_chain(sig, g, m, fld, ty, t);
+}
+
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its
 /// type.
 #[verifier::spinoff_prover]
@@ -384,12 +538,37 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
 {
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
-    if m is Proj {
-        gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
-    }
     let w = d_wf(sig, dm);
     mk_d(sig, w);
     match m {
+        ExprSpec::Proj(i, x) => {
+            let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
+                && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
+                && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)
+                && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+                && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0);
+            let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0;
+            if crate::ti_syntax::proj_fire(sig, m) {
+                sr_proj_fire(sig, g, i, *x, t, st, l);
+            } else {
+                // the subject reduced in place
+                sr(sig, g, *x, st);
+                let x2 = crate::ti_hred::hstep(sig, *x)->Some_0;
+                let m2 = ExprSpec::Proj(i, Box::new(x2));
+                let d0 = get(sig, eq(g, *x, x2, st));
+                let d1 = get(sig, eq(g, ty, ty, sort(l)));
+                let pj = eq(g, m, m2, ty);
+                let pp = seq![d0, d1];
+                assert(prems(pp, seq![eq(g, *x, x2, st), eq(g, ty, ty, sort(l))]));
+                assert(step_ok(sig, Rule::ProjCong(l), pj, pp)) by {
+                    reveal(crate::ti_syntax::proj_cong_ok);
+                }
+                valid_node(sig, Rule::ProjCong(l), pj, pp);
+                mk_d(sig, node(Rule::ProjCong(l), pj, pp));
+                tchain_sym(sig, g, t, ty);
+                conv_chain(sig, g, m, m2, ty, t);
+            }
+        },
         ExprSpec::App(f, x) => {
             let (a1, b1, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] gmark(a, b, l2, l2)
                 && derivable(sig, eq(g, *f, *f, pi(a, b))) && derivable(sig, eq(g, *x, *x, a)) && typ(sig, g.push(a), b, l2)

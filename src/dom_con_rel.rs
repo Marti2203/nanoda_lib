@@ -607,7 +607,7 @@ pub proof fn ctor_inst(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, 
 pub proof fn ctor_result(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np: nat, xs: Seq<ExprSpec>)
     requires
         ctor_at(sig, c, ind, pc, np),
-        crate::dom_code::canon_ok(sig, ind),
+        crate::dom_code::canon_sr(sig, ind),
         xs.len() == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
     ensures ({
         let t = trest(crate::ti_syntax::dty_at(sig, c, ls), xs);

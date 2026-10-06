@@ -594,6 +594,49 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
     }
 }
 
+/// A TYPE CHAINED TO AN APPLICATION OF THE INDUCTIVE reduces to one, its
+/// type parameters chained to the application's. Unlike `ind_inj_chain`
+/// it asks no typing of the application, so uniqueness of types can use it.
+pub proof fn ind_head_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, t2: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::dom_code::has_canon(sig, ind),
+        crate::dom_model::sem_const(sig, ind, ls),
+        !sig.ienv.ctor_ind.contains_key(ind),
+        !sig.ienv.recs.contains_key(ind),
+        xs.len() == crate::dom_code::canon_shape(sig, ind).np + crate::dom_code::canon_shape(sig, ind).ni,
+        tchain(sig, g, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), t2),
+    ensures
+        ind_red(sig, t2, ind),
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
+            ==> #[trigger] tchain(sig, g, xs[q], crate::beta_model::spine_args(ir(sig, t2, ind))[q]),
+{
+    let t = crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), xs);
+    crate::dom_lift::iapp_self(sig, t);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == t && #[trigger] ch[ch.len() - 1] == t2
+        && crate::ti_chain::chain_ok(sig, g, ch);
+    if ch.len() == 1 {
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, xs[q], crate::beta_model::spine_args(ir(sig, t2, ind))[q]) by {
+            crate::ti_chain::tchain_refl(sig, g, xs[q]);
+        }
+    } else {
+        let c = ind_code_mem(sig, ind, ls, xs);
+        let nn = cstage(c, Cpt::U);
+        typed_up(c, Cpt::U, nn);
+        chain_rel(sig, g, ch, ch.len() - 1, nn, c);
+        ty_ind(sig, nn, g, t, t2, c);
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+            implies #[trigger] tchain(sig, g, xs[q], crate::beta_model::spine_args(ir(sig, t2, ind))[q]) by {
+            assert(peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, crate::beta_model::spine_args(ir(sig, t, ind))[q],
+                crate::beta_model::spine_args(ir(sig, t2, ind))[q]));
+        }
+    }
+}
+
 /// INDUCTIVE INJECTIVITY, at two applications of the inductive: their
 /// type parameters convert, and their parameters (and indices, unless the
 /// inductive is always a type) are joined by term chains.
