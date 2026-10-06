@@ -118,7 +118,7 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
     if m is Proj {
-        crate::ti_gen::gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
+        crate::ti_gen::gen_proj_norecs(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
     }
     match m {
         ExprSpec::App(f, x) => sr_app(dty, denv, lctx, g, *f, *x, m2, t),
@@ -552,9 +552,6 @@ pub proof fn lveq_conv(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
     }
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
-    if m is Proj {
-        crate::ti_gen::gen_proj_dead(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
-    }
     match m {
         ExprSpec::Sort(l) => {
             let l2 = m2->Sort_0;
@@ -574,8 +571,41 @@ pub proof fn lveq_conv(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
         },
         ExprSpec::Bind(bk, a, b) => lveq_bind(sig, g, bk, *a, *b, *m2->Bind_1, *m2->Bind_2, t),
         ExprSpec::Let(a, v, b) => lveq_let(sig, g, *a, *v, *b, *m2->Let_0, *m2->Let_1, *m2->Let_2, t),
+        ExprSpec::Proj(i, x) => lveq_proj(sig, g, i, *x, *m2->Proj_1, t),
         _ => {},
     }
+}
+
+/// A projection: congruence over the subject's conversion.
+proof fn lveq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        lev_ok(sig),
+        crate::ti_gen::gen_proj(sig, g, i as nat, x, t),
+        crate::conv_cr::lveq(x, x2),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)), t)),
+    decreases crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 0int,
+{
+    let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
+        && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some
+        && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0, l)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l)) && crate::ti_syntax::proj_ok(sig)
+        && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0);
+    let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0;
+    let (m, m2) = (ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)));
+    lveq_conv(sig, g, x, x2, st);
+    let d0 = get(sig, eq(g, x, x2, st));
+    let d1 = get(sig, eq(g, ty, ty, sort(l)));
+    let j = eq(g, m, m2, ty);
+    let ps = seq![d0, d1];
+    assert(prems(ps, seq![eq(g, x, x2, st), eq(g, ty, ty, sort(l))]));
+    assert(step_ok(sig, Rule::ProjCong(l), j, ps)) by {
+        reveal(crate::ti_syntax::proj_cong_ok);
+    }
+    valid_node(sig, Rule::ProjCong(l), j, ps);
+    mk_d(sig, node(Rule::ProjCong(l), j, ps));
+    conv_to(sig, g, m, m2, ty, t);
 }
 
 #[verifier::spinoff_prover]
@@ -692,6 +722,7 @@ pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
     reveal(crate::ti_syntax::iota_ok);
+    crate::ti_syntax::norecs_no_structs(s0);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls) by {
         assert(is_def(s0, c, ls));
         assert(def_ok(s0, c, ls));

@@ -323,9 +323,11 @@ pub proof fn gen_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<
     assert(typed(dty, denv, d, a, pa));
 }
 
-/// A projection is typed nowhere in the fragment.
+/// A projection is typed nowhere in the fragment: it has no recursors,
+/// so no structures.
 pub proof fn gen_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, idx: usize, s: ExprSpec)
     requires
+        kh(dty, denv),
         rtyped(dty, denv, d, ExprSpec::Proj(idx, Box::new(s))),
     ensures
         false,
@@ -335,7 +337,7 @@ pub proof fn gen_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map
     let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
     let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
     crate::ti_gen::gen(sig, de);
-    crate::ti_gen::gen_proj_dead(sig, Seq::empty(), idx as nat, s, t);
+    crate::ti_gen::gen_proj_norecs(sig, Seq::empty(), idx as nat, s, t);
 }
 
 pub proof fn cw_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
@@ -2589,7 +2591,7 @@ pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
         let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
         crate::ti_gen::gen(sig, de);
         if e is Proj {
-            crate::ti_gen::gen_proj_dead(sig, Seq::empty(), e->Proj_0 as nat, *e->Proj_1, t);
+            crate::ti_gen::gen_proj_norecs(sig, Seq::empty(), e->Proj_0 as nat, *e->Proj_1, t);
         }
     }
 }

@@ -452,7 +452,28 @@ pub open spec fn proj_fty(sig: Sig, m: ExprSpec) -> ExprSpec {
 /// projection rules are dead until the model interprets them
 /// (docs/TYPED_TARGET.md, "Structures stage plan", T2).
 pub open spec fn proj_ok(sig: Sig) -> bool {
+    no_structs(sig)
+}
+
+/// The signature has no structures.
+pub open spec fn no_structs(sig: Sig) -> bool {
     forall|s: u64| !#[trigger] struct_of(sig, s)
+}
+
+/// Without recursors there are no structures.
+pub proof fn norecs_no_structs(sig: Sig)
+    requires
+        forall|rid: u64| !sig.ienv.recs.contains_key(rid),
+    ensures
+        no_structs(sig),
+{
+    reveal(struct_of);
+    assert forall|s: u64| !#[trigger] struct_of(sig, s) by {
+        if struct_of(sig, s) {
+            let rid = choose|rid: u64| crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s;
+            assert(sig.ienv.recs.contains_key(rid));
+        }
+    }
 }
 
 /// The projections of `x` before field `i`.
@@ -548,6 +569,20 @@ pub proof fn proj_dead(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     requires
         step_ok(sig, r, j, ps),
         r is ProjCong || r is ProjIota,
+    ensures
+        false,
+{
+    reveal(proj_cong_ok);
+    reveal(proj_iota_ok);
+    proj_dead_ns(sig, r, j, ps);
+}
+
+/// They are dead in a signature without structures.
+pub proof fn proj_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        step_ok(sig, r, j, ps),
+        r is ProjCong || r is ProjIota,
+        no_structs(sig),
     ensures
         false,
 {

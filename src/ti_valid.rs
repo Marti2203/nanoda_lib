@@ -124,6 +124,7 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls)
     &&& sig.ienv.sub(sig2.ienv)
     &&& iota_ok(sig2)
+    &&& crate::ti_syntax::no_structs(sig)
 }
 
 /// Without recursors nothing is a recursor redex.
@@ -203,7 +204,7 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
         step_ok(sig2, r, j, ps),
 {
     if r is ProjCong || r is ProjIota {
-        crate::ti_syntax::proj_dead(sig, r, j, ps);
+        crate::ti_syntax::proj_dead_ns(sig, r, j, ps);
     }
     match r {
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Delta(_) => {
