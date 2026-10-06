@@ -195,6 +195,17 @@ pub proof fn eta_facts(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>
     assert(crate::dom_code::never_prop(sig, sh.ind));
 }
 
+/// The major typed at the structure application, the parameters at their
+/// sorts at the inductive's instance: what the eta step's typing reads of
+/// the redex (from its typing by `eta_heads`, or from the recursor's
+/// logical relation, where no inversion is available).
+pub open spec fn eta_tys(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>) -> bool {
+    let sh = rshape(sig, rid);
+    &&& derivable(sig, eq(g, a0[(sh.np + 1 + sh.nmin()) as int], a0[(sh.np + 1 + sh.nmin()) as int], eta_st(sig, rid, lv, a0)))
+    &&& forall|q: int| 0 <= q < sh.np ==> #[trigger] derivable(sig, eq(g, a0[q], a0[q],
+        crate::ti_spine::vsub(crate::dom_rel::ptype(sig, sh.ind, rinst(sig, rid, lv), q), a0.subrange(0, q))))
+}
+
 /// The redex's major is typed at the structure application, its
 /// parameters at their sorts at the inductive's instance.
 #[verifier::spinoff_prover]
@@ -240,10 +251,10 @@ pub proof fn eta_heads(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<E
 /// The major's projections are typed at the parameters their fields
 /// name (ProjCong: the structure is never a proposition), which are types.
 #[verifier::spinoff_prover]
-pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, th: ExprSpec, x: ExprSpec, k: int)
+pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, x: ExprSpec, k: int)
     requires
         eta_ok(sig, rid, lv, a0),
-        derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0), th)),
+        eta_tys(sig, g, rid, lv, a0),
         derivable(sig, eq(g, x, x, eta_st(sig, rid, lv, a0))),
         0 <= k < rshape(sig, rid).fields[0].len(),
     ensures ({
@@ -259,7 +270,6 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
 {
     let sh = rshape(sig, rid);
     eta_facts(sig, rid, lv, a0);
-    eta_heads(sig, g, rid, lv, a0, th);
     let np = sh.np;
     let us = rinst(sig, rid, lv);
     let st = eta_st(sig, rid, lv, a0);
@@ -293,16 +303,15 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
 /// THE ETA-EXPANDED MAJOR is typed at the structure application: the
 /// constructor at the parameters and the projections, along its type.
 #[verifier::spinoff_prover]
-pub proof fn eta_cx_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, th: ExprSpec)
+pub proof fn eta_cx_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>)
     requires
         eta_ok(sig, rid, lv, a0),
-        derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0), th)),
+        eta_tys(sig, g, rid, lv, a0),
     ensures
         derivable(sig, eq(g, eta_cx(sig, rid, lv, a0), eta_cx(sig, rid, lv, a0), eta_st(sig, rid, lv, a0))),
 {
     let sh = rshape(sig, rid);
     eta_facts(sig, rid, lv, a0);
-    eta_heads(sig, g, rid, lv, a0, th);
     let (np, nmin) = (sh.np, sh.nmin());
     let nf = sh.fields[0].len();
     let pre = (np + 1 + nmin) as int;
@@ -311,7 +320,7 @@ pub proof fn eta_cx_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Se
     let c = sh.ctors[0];
     let cargs = a0.subrange(0, np as int) + crate::ti_syntax::projs(x, nf);
     // the constructor at the instance
-    crate::dom_lift::eq_ctx_wf(sig, g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0), th);
+    crate::dom_lift::eq_ctx_wf(sig, g, x, x, eta_st(sig, rid, lv, a0));
     crate::ti_ls2::levs_eq_refl(us);
     crate::iota_sr::ctor_at(sig, rid, 0, us);
     crate::iota_sr::ctor_lv(sig, g, rid, 0, us, us);
@@ -331,7 +340,7 @@ pub proof fn eta_cx_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Se
             assert(derivable(sig, eq(g, a0[i], a0[i], crate::ti_spine::vsub(crate::dom_rel::ptype(sig, sh.ind, us, i), a0.subrange(0, i)))));
         } else {
             let k = i - np;
-            eta_proj_typed(sig, g, rid, lv, a0, th, x, k);
+            eta_proj_typed(sig, g, rid, lv, a0, x, k);
             let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
             assert(tds[np + k] == crate::iota_sr::cfu(sig, rid, 0, k, us));
             assert(crate::iota_sr::cfu(sig, rid, 0, k, us) == crate::ti_proj::sfield(sig, sh.ind, k as nat, us));
@@ -351,10 +360,10 @@ pub proof fn eta_cx_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Se
 /// A FIELD OF THE ETA EXPANSION: the projection of the expanded major
 /// is the major's projection (ProjIota).
 #[verifier::spinoff_prover]
-pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, th: ExprSpec, k: int)
+pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, k: int)
     requires
         eta_ok(sig, rid, lv, a0),
-        derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0), th)),
+        eta_tys(sig, g, rid, lv, a0),
         0 <= k < rshape(sig, rid).fields[0].len(),
     ensures ({
         let sh = rshape(sig, rid);
@@ -366,8 +375,7 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
 {
     let sh = rshape(sig, rid);
     eta_facts(sig, rid, lv, a0);
-    eta_heads(sig, g, rid, lv, a0, th);
-    eta_cx_typed(sig, g, rid, lv, a0, th);
+    eta_cx_typed(sig, g, rid, lv, a0);
     let (np, nmin) = (sh.np, sh.nmin());
     let nf = sh.fields[0].len();
     let x = a0[(np + 1 + nmin) as int];
@@ -376,8 +384,8 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
     let us = rinst(sig, rid, lv);
     let c = sh.ctors[0];
     let cargs = a0.subrange(0, np as int) + crate::ti_syntax::projs(x, nf);
-    eta_proj_typed(sig, g, rid, lv, a0, th, x, k);
-    eta_proj_typed(sig, g, rid, lv, a0, th, cx, k);
+    eta_proj_typed(sig, g, rid, lv, a0, x, k);
+    eta_proj_typed(sig, g, rid, lv, a0, cx, k);
     let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
     let t = a0[q];
     let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, a0[q], a0[q], sort(l)));
@@ -417,18 +425,17 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
 
 /// THE MAJOR IS ITS ETA EXPANSION (StructEta).
 #[verifier::spinoff_prover]
-pub proof fn eta_struct_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, th: ExprSpec)
+pub proof fn eta_struct_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>)
     requires
         eta_ok(sig, rid, lv, a0),
-        derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0), th)),
+        eta_tys(sig, g, rid, lv, a0),
     ensures
         derivable(sig, eq(g, a0[(rshape(sig, rid).np + 1 + rshape(sig, rid).nmin()) as int], eta_cx(sig, rid, lv, a0),
             eta_st(sig, rid, lv, a0))),
 {
     let sh = rshape(sig, rid);
     eta_facts(sig, rid, lv, a0);
-    eta_heads(sig, g, rid, lv, a0, th);
-    eta_cx_typed(sig, g, rid, lv, a0, th);
+    eta_cx_typed(sig, g, rid, lv, a0);
     let (np, nmin) = (sh.np, sh.nmin());
     let nf = sh.fields[0].len();
     let x = a0[(np + 1 + nmin) as int];
@@ -445,7 +452,7 @@ pub proof fn eta_struct_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: S
         crate::ti_syntax::proj_ty(sig, st, k as nat, x)->Some_0));
     assert forall|k: int| 0 <= k < nf implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
         && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[k])) == pj[k] by {
-        eta_proj_eq(sig, g, rid, lv, a0, th, k);
+        eta_proj_eq(sig, g, rid, lv, a0, k);
         let dk = crate::ti_sub::get(sig, pj[k]);
         crate::ti_sub::pick_of(sig, dk);
     }

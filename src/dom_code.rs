@@ -42,24 +42,11 @@ pub open spec fn smash(sig: Sig, ind: u64) -> bool {
     &&& smash_on()
 }
 
-/// The eta redesign's switch, off while its stages land: opaque, so the
-/// model's proofs handle smashed structures without knowing it is off
-/// (only `smash_dead` looks inside).
+/// The eta redesign's switch, off until its flip: opaque, so the model's
+/// proofs handle smashed structures without knowing it is off.
 #[verifier::opaque]
 pub open spec fn smash_on() -> bool {
     false
-}
-
-/// While the switch is off nothing is smashed: the dismissal of the
-/// cases the redesign's later stages make real (docs/TYPED_TARGET.md,
-/// "The eta redesign"; it goes when the switch does).
-pub proof fn smash_dead(sig: Sig, ind: u64)
-    requires
-        smash(sig, ind),
-    ensures
-        false,
-{
-    reveal(smash_on);
 }
 
 /// A constructor's value at fields `fs`: its node, or bottom for a

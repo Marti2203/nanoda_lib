@@ -457,7 +457,8 @@ proof fn sr_rec_eta(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec, a1:
     crate::dom_bound::spine_push(h, a0);
     assert(a0.last() == x && a0[pre] == x);
     assert(spine_app(h, a0.subrange(0, pre)) == f);
-    crate::ti_eta::eta_struct_eq(sig, g, rid, lv, a0, t);
+    crate::ti_eta::eta_heads(sig, g, rid, lv, a0, t);
+    crate::ti_eta::eta_struct_eq(sig, g, rid, lv, a0);
     let (cx, st) = (crate::ti_eta::eta_cx(sig, rid, lv, a0), crate::ti_eta::eta_st(sig, rid, lv, a0));
     // the expansion at the application's domain
     crate::dom_adeq_syn::dsym(sig, g, x, cx, st);

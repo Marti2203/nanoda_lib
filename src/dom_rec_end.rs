@@ -834,6 +834,7 @@ pub open spec fn rc_eta(sig: Sig, rc: Rc) -> bool {
     let pre = rc.pre(sig);
     let mi = rc.np(sig) + 1 + rc.j;
     &&& rc.j == 0
+    &&& rc.args == crate::dom_rec_eta::s_args(sig, rc.c, rc.ls, rc.xs) && rc.args2 == crate::dom_rec_eta::s_args(sig, rc.c, rc.ls2, rc.xs2)
     &&& hred(sig, rc.m(), spine_app(rc.xs[mi], rc.args + crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls, rc.j, rc.xs.subrange(0, pre), rc.args)))
     &&& hred(sig, rc.m2(), spine_app(rc.xs2[mi], rc.args2 + crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls2, rc.j, rc.xs2.subrange(0, pre), rc.args2)))
     &&& !(rc.wx(sig) is Bot) ==> con_top(sig, rc.nn, rc.g, rc.cxr(sig), rc.xs[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
@@ -3482,8 +3483,9 @@ pub proof fn rec_red_left(sig: Sig, rc: Rc)
     }),
 {
     if crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind) {
-        // a smashed structure's redex reduces by its eta step (stage E4c)
-        crate::dom_code::smash_dead(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind);
+        // a smashed structure's redex reduces by its eta step
+        crate::dom_rec_eta::reds_eta(sig, rc);
+        return;
     }
     reveal(rc_red);
     reveal(rc_eta);
@@ -3527,8 +3529,9 @@ pub proof fn rec_red_right(sig: Sig, rc: Rc)
     }),
 {
     if crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind) {
-        // a smashed structure's redex reduces by its eta step (stage E4c)
-        crate::dom_code::smash_dead(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind);
+        // a smashed structure's redex reduces by its eta step
+        crate::dom_rec_eta::reds_eta(sig, rc);
+        return;
     }
     reveal(rc_red);
     reveal(rc_eta);
@@ -3652,14 +3655,21 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
         crate::dom_rel_per::bot_tm(sig, n, g, m, m2, t, a);
         return;
     }
-    if crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind) {
-        // a smashed structure's recursor reduces by its eta step: its end
-        // goes through the major's projections (stage E4c)
-        crate::dom_code::smash_dead(sig, crate::dom_rec_ty::rshape(sig, c).ind);
-    }
     rec_live(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
-    let rc = rec_ctx_intro(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
-    reveal(rc_red);
+    let rc = if !crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind) {
+        let rc0 = rec_ctx_intro(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
+        reveal(rc_red);
+        rc0
+    } else if crate::dom_rec::rec_ok(sig, c, fs) {
+        // a smashed structure at a constructor value: the major's
+        // projections, against the reducts' fields
+        let rc0 = rec_ctx_intro(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
+        crate::dom_rec_eta::ctx_con(sig, rc0)
+    } else {
+        // at bottom: the minor at bottom fields
+        crate::dom_rec_eta::ctx_bot(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u)
+    };
+    assert(rc.fs == fs);
     rec_end_rc(sig, rc);
 }
 
