@@ -568,6 +568,7 @@ pub open spec fn struct_ty(sig: Sig, t: ExprSpec) -> bool {
     &&& h is Const && struct_of(sig, h->Const_0)
     &&& crate::beta_model::spine_args(t).len() == crate::dom_code::canon_shape(sig, h->Const_0).np
     &&& h->Const_1.len() == sig.consts[h->Const_0].lps.len()
+    &&& crate::dom_code::canon_shape(sig, h->Const_0).fields[0].len() <= usize::MAX
 }
 
 /// The number of fields of the structure `t` applies.

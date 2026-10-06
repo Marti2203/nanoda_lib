@@ -415,11 +415,12 @@ pub proof fn proj_one_ctor(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpe
         ps.len() == canon_shape(sig, s).np,
         mem(sig, spine_app(ExprSpec::Const(s, us), ps), rho, a),
     ensures
+        a is Bot || a is Nd,
         a is Nd ==> tbl(a->Nd_1).len() <= 1,
+        a is Nd ==> a->Nd_0 == NdKey::Ty(s, crate::dom_code::is_prop_at(sig, s, us), crate::dom_code::smash(sig, s)),
+        a is Nd && tbl(a->Nd_1).len() == 1 && tbl(a->Nd_1)[0] is Nd
+            ==> tbl(a->Nd_1)[0]->Nd_1.len() == canon_shape(sig, s).fields[0].len(),
 {
-    if !(a is Nd) {
-        return;
-    }
     reveal(crate::ti_syntax::struct_of);
     let sh = canon_shape(sig, s);
     let lps = sig.consts[s].lps;
@@ -434,6 +435,14 @@ pub proof fn proj_one_ctor(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpe
     let ws = crate::dom_bound::tf_spine(sig, s, us, ps, rho, a);
     let cc = crate::dom_code::canon_code(sig, s, us, ws);
     assert(le(a, cc));
+    if a is Bot {
+        return;
+    }
+    mem_wf1(sig, spine_app(ExprSpec::Const(s, us), ps), rho, a);
+    crate::dom_compact::head_le(a, cc);
+    if !(a is Nd) {
+        return;
+    }
     crate::dom_sem::nd_le_inv(a->Nd_0, a->Nd_1, cc);
     let ts = a->Nd_1;
     if tbl(ts).len() > 0 {
@@ -441,6 +450,13 @@ pub proof fn proj_one_ctor(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpe
         crate::dom_sem::nd_le_inv(ts[l]->Nd_0, ts[l]->Nd_1, cc->Nd_1[l]);
         if crate::dom_code::tabled(sig, s, us, ws) {
             crate::dom_code::cblocks_at(sig, s, us, ws, sh.nmin());
+            crate::dom_code::centries_at(sig, s, us, ws, 0, sh.fields[0].len());
+            let b0 = tbl(ts)[0];
+            let cb0 = crate::dom_code::cblocks(sig, s, us, ws, sh.nmin())[0];
+            assert(le(b0, cb0));
+            if b0 is Nd {
+                crate::dom_sem::nd_le_inv(b0->Nd_0, b0->Nd_1, cb0);
+            }
         }
     }
 }
@@ -774,6 +790,193 @@ pub proof fn sound_proj_iota(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, st
         }
         if mem(sig, n, rho, u) {
             proj_iota_sup(sig, m, rho, u);
+        }
+    }
+}
+
+/// A STRUCTURE-TYPED TERM'S MEMBER above bottom is its structure's
+/// constructor node, with all its fields, below a typed member.
+#[verifier::spinoff_prover]
+pub proof fn struct_val(sig: Sig, t: ExprSpec, x: ExprSpec, rho: Env, w: Cpt) -> (r: (Cpt, Cpt))
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_ty(sig, t),
+        crate::dom_sound::tyd(sig, x, rho, t),
+        mem(sig, x, rho, w),
+        !(w is Bot),
+    ensures ({
+        let s = crate::beta_model::spine_head(t)->Const_0;
+        let key = NdKey::Con(s, 0, crate::dom_code::smash(sig, s));
+        let nf = crate::ti_syntax::struct_nf(sig, t);
+        &&& w is Nd && w->Nd_0 == key && w->Nd_1.len() == nf && wf(w)
+        &&& mem(sig, x, rho, r.0) && le(w, r.0) && typed(r.0, r.1)
+        &&& r.0 is Nd && r.0->Nd_0 == key && r.0->Nd_1.len() == nf && wf(r.0)
+    }),
+{
+    use crate::dom_model::{mem_w, Wit};
+    let h = crate::beta_model::spine_head(t);
+    let (s, us) = (h->Const_0, h->Const_1);
+    let ps = crate::beta_model::spine_args(t);
+    mem_wf1(sig, x, rho, w);
+    let (v2, a) = tyd_pick(sig, x, rho, t, w);
+    typed_wf_pair(v2, a);
+    crate::dom_compact::head_le(w, v2);
+    assert(struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, us));
+    crate::beta_model::spine_recompose(t);
+    proj_one_ctor(sig, s, us, ps, rho, a);
+    // the typing: a constructor node at the structure's code
+    reveal(crate::dom_model::typed);
+    let n = (vstd::math::max(crate::dom_compact::ht(v2) as int, crate::dom_compact::ht(a) as int) + 1) as nat;
+    assert(crate::dom_typing::has_type(n, v2, a));
+    assert(!(a is Bot));
+    assert(v2 is Nd && v2->Nd_0 is Con);
+    assert(v2 == Cpt::Nd(v2->Nd_0, v2->Nd_1));
+    crate::dom_sem::nd_le_inv(w->Nd_0, w->Nd_1, v2);
+    assert(w == Cpt::Nd(w->Nd_0, w->Nd_1));
+    (v2, a)
+}
+
+/// A member is well formed.
+pub proof fn mem_wf1(sig: Sig, x: ExprSpec, rho: Env, u: Cpt)
+    requires
+        mem(sig, x, rho, u),
+    ensures
+        wf(u),
+{
+    use crate::dom_model::{mem_w, Wit};
+    reveal(mem);
+    let w = choose|w: Wit| #[trigger] mem_w(sig, x, rho, u, w);
+    crate::dom_model::mem_wf(sig, x, rho, u, w);
+}
+
+/// The projections' witnesses joined: a member of `n` above each of the
+/// first `j` fields of `v` that is not bottom (bottom when there is none).
+#[verifier::spinoff_prover]
+pub proof fn seta_join(sig: Sig, n: ExprSpec, t: ExprSpec, rho: Env, v: Cpt, j: nat) -> (w: Cpt)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_ty(sig, t),
+        crate::dom_sound::tyd(sig, n, rho, t),
+        crate::dom_model::jc(sig, n, rho),
+        v is Nd && v->Nd_1.len() == crate::ti_syntax::struct_nf(sig, t),
+        j <= crate::ti_syntax::struct_nf(sig, t),
+        forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, t) && !(v->Nd_1[k] is Bot)
+            ==> #[trigger] mem(sig, ExprSpec::Proj(k as usize, Box::new(n)), rho, v->Nd_1[k]),
+    ensures ({
+        let s = crate::beta_model::spine_head(t)->Const_0;
+        &&& w is Bot || (mem(sig, n, rho, w) && w is Nd && w->Nd_0 == NdKey::Con(s, 0, crate::dom_code::smash(sig, s))
+            && w->Nd_1.len() == crate::ti_syntax::struct_nf(sig, t))
+        &&& forall|i: int| 0 <= i < j ==> (#[trigger] v->Nd_1[i]) is Bot || (!(w is Bot) && le(v->Nd_1[i], w->Nd_1[i]))
+    }),
+    decreases j,
+{
+    if j == 0 {
+        return Cpt::Bot;
+    }
+    let w0 = seta_join(sig, n, t, rho, v, (j - 1) as nat);
+    let k = (j - 1) as int;
+    let f = v->Nd_1[k];
+    if f is Bot {
+        return w0;
+    }
+    let w1 = proj_pick(sig, k as usize, n, rho, f);
+    struct_val(sig, t, n, rho, w1);
+    if w0 is Bot {
+        return w1;
+    }
+    crate::dom_model::jc_elim(sig, n, rho, w0, w1);
+    let jw = crate::dom_compact::join(w0, w1);
+    mem_wf1(sig, n, rho, w0);
+    mem_wf1(sig, n, rho, w1);
+    crate::dom_compact::join_ub(w0, w1);
+    crate::dom_sem::nd_le_inv(w0->Nd_0, w0->Nd_1, jw);
+    crate::dom_sem::nd_le_inv(w1->Nd_0, w1->Nd_1, jw);
+    assert forall|i: int| 0 <= i < j implies (#[trigger] v->Nd_1[i]) is Bot || (!(jw is Bot) && le(v->Nd_1[i], jw->Nd_1[i])) by {
+        if !(v->Nd_1[i] is Bot) {
+            if i < k {
+                crate::dom_compact::le_trans(v->Nd_1[i], w0->Nd_1[i], jw->Nd_1[i]);
+            } else {
+                crate::dom_compact::le_trans(v->Nd_1[i], w1->Nd_1[i], jw->Nd_1[i]);
+            }
+        }
+    }
+    jw
+}
+
+/// STRUCTURE ETA, ONE WAY: a member of `m` is one of `n` when they share
+/// a smashed structure's type and their projections have the same members.
+#[verifier::spinoff_prover]
+pub proof fn seta_sub(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, rho: Env, u: Cpt)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_ty(sig, t),
+        crate::dom_code::smash(sig, crate::beta_model::spine_head(t)->Const_0),
+        crate::dom_sound::tyd(sig, m, rho, t),
+        crate::dom_sound::tyd(sig, n, rho, t),
+        crate::dom_model::jc(sig, n, rho),
+        forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, t) ==>
+            #[trigger] crate::dom_sound::sem_eq(sig, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), rho),
+        mem(sig, m, rho, u),
+    ensures
+        mem(sig, n, rho, u),
+{
+    if u is Bot {
+        crate::dom_model::mem_bot(sig, n, rho);
+        reveal(mem);
+        return;
+    }
+    let nf = crate::ti_syntax::struct_nf(sig, t);
+    let s = crate::beta_model::spine_head(t)->Const_0;
+    let key = NdKey::Con(s, 0, crate::dom_code::smash(sig, s));
+    let (v, _a) = struct_val(sig, t, m, rho, u);
+    // a smashed value has a field that is not bottom
+    let k0 = choose|k: int| 0 <= k < v->Nd_1.len() && !(#[trigger] v->Nd_1[k] is Bot);
+    assert forall|k: int| 0 <= k < nf && !(v->Nd_1[k] is Bot)
+        implies #[trigger] mem(sig, ExprSpec::Proj(k as usize, Box::new(n)), rho, v->Nd_1[k]) by {
+        proj_intro(sig, k as usize, m, rho, v);
+        assert(crate::dom_sound::sem_eq(sig, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), rho));
+    }
+    let w = seta_join(sig, n, t, rho, v, nf);
+    assert(!(w is Bot)) by {
+        assert(!(v->Nd_1[k0] is Bot));
+    }
+    assert forall|i: int| 0 <= i < v->Nd_1.len() implies le(#[trigger] v->Nd_1[i], w->Nd_1[i]) by {
+        if v->Nd_1[i] is Bot {
+            assert(le(Cpt::Bot, w->Nd_1[i]));
+        }
+    }
+    crate::dom_sem::nd_le(key, v->Nd_1, w->Nd_1);
+    assert(v == Cpt::Nd(key, v->Nd_1) && w == Cpt::Nd(key, w->Nd_1));
+    crate::dom_model::mem_down_e(sig, n, rho, w, v);
+    crate::dom_model::mem_down_e(sig, n, rho, v, u);
+}
+
+/// RULE StructEta IS SOUND: both sides have the same members (each way
+/// by `seta_sub`); typing and join-closure are the left side's.
+#[verifier::spinoff_prover]
+pub proof fn sound_seta(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, rho: Env)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_ty(sig, t),
+        crate::dom_code::smash(sig, crate::beta_model::spine_head(t)->Const_0),
+        crate::dom_sound::sound_ok(sig, m, m, t, rho),
+        crate::dom_sound::sound_ok(sig, n, n, t, rho),
+        forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, t) ==>
+            #[trigger] crate::dom_sound::sem_eq(sig, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), rho),
+    ensures
+        crate::dom_sound::sound_ok(sig, m, n, t, rho),
+{
+    assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, t) implies
+        #[trigger] crate::dom_sound::sem_eq(sig, ExprSpec::Proj(k as usize, Box::new(n)), ExprSpec::Proj(k as usize, Box::new(m)), rho) by {
+        assert(crate::dom_sound::sem_eq(sig, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), rho));
+    }
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, n, rho, u) by {
+        if mem(sig, m, rho, u) {
+            seta_sub(sig, m, n, t, rho, u);
+        }
+        if mem(sig, n, rho, u) {
+            seta_sub(sig, n, m, t, rho, u);
         }
     }
 }

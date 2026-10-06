@@ -2032,9 +2032,14 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
         },
         Rule::StructEta(_) => {
-            // structure eta needs the smashed model (stage E4)
             reveal(crate::ti_syntax::struct_eta_ok);
-            crate::dom_code::smash_dead(sig, crate::beta_model::spine_head(a)->Const_0);
+            sound(sig, ps[0], rho);
+            sound(sig, ps[1], rho);
+            assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, a) implies
+                #[trigger] crate::dom_sound::sem_eq(sig, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), rho) by {
+                sound(sig, ps[3 + k], rho);
+            }
+            crate::dom_proj_sound::sound_seta(sig, m, n, a, rho);
         },
         Rule::Iota(l) => if crate::ti_syntax::iota_prop(sig, m) {
             // a proposition motive's: proof irrelevance
