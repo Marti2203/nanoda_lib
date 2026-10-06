@@ -418,8 +418,8 @@ pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
         crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             #[trigger] crate::dom_code::canon_shape(sig, s).fields[0][k])
     &&& always_prop(sig, s) || (crate::dom_code::never_prop(sig, s)
-        && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np ==>
-            never_zero(#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]->Sort_0))
+        && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && (#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]) is Sort ==>
+            never_zero(crate::dom_code::canon_shape(sig, s).pdoms[q]->Sort_0))
     &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]
         crate::rec_canon::rec_canon(sig, r1) && crate::rec_canon::rec_ind(sig, r1) == s
         && crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s ==> r1 == r2
@@ -534,6 +534,7 @@ pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
         Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 5 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
             proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
+                && crate::beta_model::spine_head(st)->Const_0 == sig.ienv.ctor_ind[crate::beta_model::spine_head(*m->Proj_1)->Const_0]
                 && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l)),
                     eq(g, n, n, proj_fty(sig, m))])

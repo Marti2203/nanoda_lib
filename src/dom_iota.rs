@@ -2717,6 +2717,54 @@ proof fn r2l_ps_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv
         crate::dom_psimple::ps_mem_lv(ss, sig, sh.ind, us, clv, e, l0, ds.subrange(0, np as int), pv, ak[k]);
 }
 
+/// A CONSTRUCTOR NODE over field values typed as the constructor step
+/// asks is a member of the constructor application whose arguments have
+/// the parameters' values and the fields above them as members.
+#[verifier::spinoff_prover]
+pub proof fn con_major(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>,
+    xf: Seq<Cpt>, ak: Seq<Cpt>, cargs: Seq<ExprSpec>, rho: Env, wl: Seq<Cpt>)
+    requires
+        cf_fields_ok(sig, rid, p, clv, dps, pv, xf, ak),
+        crate::dom_code::canon_sr(sig, crate::dom_rec_ty::rshape(sig, rid).ind),
+        crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, rid).ctors[p], clv),
+        cargs.len() == crate::dom_rec_ty::rshape(sig, rid).np + xf.len(),
+        wl.len() == xf.len(),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, rid).np ==> mem(sig, #[trigger] cargs[q], rho, pv[q]),
+        forall|k: int| 0 <= k < xf.len() ==> mem(sig, cargs[crate::dom_rec_ty::rshape(sig, rid).np + k], rho, #[trigger] wl[k])
+            && le(xf[k], wl[k]),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        mem(sig, spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs), rho, Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let (ind, np) = (sh.ind, sh.np);
+    let c = sh.ctors[p];
+    let (ac, v) = cf_step(sig, rid, p, clv, dps, pv, xf, ak);
+    typed_wf(v, ac);
+    le_refl(v);
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(crate::dom_model::code_ok(sig, c, clv, ac, v));
+    assert(crate::dom_sem::sem_mem(sig, c, clv, v, ac, v));
+    crate::dom_sem::mem_sem(sig, c, clv, rho, v);
+    let ws = pv + xf;
+    ind_pv_mem_wf(sig, rid, clv, dps, pv, xf, 0);
+    assert forall|i: int| 0 <= i < cargs.len() implies #[trigger] mem(sig, cargs[i], rho, ws[i]) && wf(ws[i]) by {
+        if i < np {
+            assert(ws[i] == pv[i]);
+        } else {
+            let k = i - np;
+            assert(ws[i] == xf[k]);
+            assert(wl[k] == wl[k]);
+            assert(mem(sig, cargs[np + k], rho, wl[k]) && le(xf[k], wl[k]));
+            mem_down_e(sig, cargs[i], rho, wl[k], xf[k]);
+        }
+    }
+    let val = Cpt::Nd(NdKey::Con(ind, p as nat), xf);
+    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat), xf);
+    crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(c, clv), cargs, rho, v, ws, val);
+}
+
 /// THE REBUILT MAJOR is a member of the constructor application, its
 /// parameter arguments having the parameters' values as members.
 #[verifier::spinoff_prover]

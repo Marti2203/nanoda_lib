@@ -435,4 +435,333 @@ pub proof fn proj_one_ctor(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpe
     }
 }
 
+/// The signature's facts about its structures the model needs: the
+/// structure and its constructor are interpreted at every instance.
+pub open spec fn struct_sem(sig: Sig, s: u64) -> bool {
+    let sh = canon_shape(sig, s);
+    &&& !sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s)
+    &&& crate::dom_code::canon_sr(sig, s)
+    &&& crate::dom_rec_ty::rec_scope(sig, crate::dom_code::canon_rec(sig, s))
+    &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
+        #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls)
+}
+
+pub open spec fn proj_sem(sig: Sig) -> bool {
+    forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) ==> struct_sem(sig, s)
+}
+
+/// PROJECTION IOTA, LEFT IN RIGHT: a member of a constructor
+/// application's projection lies below the constructor's field there, so
+/// it is a member of the projected argument.
+#[verifier::spinoff_prover]
+pub proof fn proj_iota_sub(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        proj_sem(sig),
+        mem(sig, m, rho, u),
+    ensures
+        mem(sig, crate::ti_syntax::proj_result(sig, m), rho, u),
+{
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    let (i, x) = (m->Proj_0, *m->Proj_1);
+    let h = crate::beta_model::spine_head(x);
+    let (c, us) = (h->Const_0, h->Const_1);
+    let s = sig.ienv.ctor_ind[c];
+    let sh = canon_shape(sig, s);
+    let (np, nf) = (sh.np, sh.fields[0].len());
+    let args = crate::beta_model::spine_args(x);
+    assert(m == ExprSpec::Proj(i, Box::new(x)));
+    if u is Bot {
+        crate::dom_model::mem_bot(sig, args[np + i], rho);
+        reveal(mem);
+        return;
+    }
+    let v = proj_pick(sig, i, x, rho, u);
+    crate::beta_model::spine_recompose(x);
+    assert(struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, us));
+    reveal(crate::ti_syntax::struct_of);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    assert(crate::dom_model::ctor_of(sig, s, c)) by {
+        assert(sh.ctors[0] == c);
+    }
+    let pc = crate::dom_model::ctor_pos(sig, s, c);
+    assert(pc == 0);
+    // the constructor's arity
+    let tc = sig.consts[c].ty;
+    crate::dom_rec_ty::spine_const_nonbind(s, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[0]);
+    crate::dom_rec_shape::tarity_binds(sh.pdoms + sh.fields[0], crate::rec_canon::tbody(tc, np + nf));
+    crate::dom_rec_shape::tarity_sl(tc, sig.consts[c].lps, us);
+    let ws = crate::dom_bound::cf_spine(sig, c, us, args, rho, v);
+    crate::dom_bound::tbody_end(crate::ti_syntax::dty_at(sig, c, us));
+    let fl = crate::dom_bound::flds(ws, np);
+    let node = Cpt::Nd(NdKey::Con(s, 0), fl);
+    assert(le(v, node));
+    assert(v == Cpt::Nd(v->Nd_0, v->Nd_1));
+    crate::dom_sem::nd_le_inv(v->Nd_0, v->Nd_1, node);
+    assert(fl[i as int] == ws[np + i]);
+    assert(le(v->Nd_1[i as int], fl[i as int]));
+    crate::dom_compact::le_trans(u, v->Nd_1[i as int], fl[i as int]);
+    crate::dom_model::mem_down_e(sig, args[np + i], rho, ws[np + i], u);
+}
+
+/// PROJECTION IOTA, RIGHT IN LEFT, at a structure never a proposition:
+/// a member of the projected argument lies below one typed at a member of
+/// its parameter's code, so the constructor node with that one field is a
+/// member of the subject, and the field one of the projection.
+#[verifier::spinoff_prover]
+pub proof fn proj_iota_sup(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        proj_sem(sig),
+        !crate::ti_syntax::always_prop(sig, sig.ienv.ctor_ind[crate::beta_model::spine_head(*m->Proj_1)->Const_0]),
+        crate::dom_sound::tyd(sig, crate::ti_syntax::proj_result(sig, m), rho, crate::ti_syntax::proj_fty(sig, m)),
+        mem(sig, crate::ti_syntax::proj_result(sig, m), rho, u),
+    ensures
+        mem(sig, m, rho, u),
+{
+    use crate::dom_model::{mem_w, Wit};
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    reveal(crate::ti_syntax::proj_fty);
+    let (i, x) = (m->Proj_0, *m->Proj_1);
+    let h = crate::beta_model::spine_head(x);
+    let (c, us) = (h->Const_0, h->Const_1);
+    let s = sig.ienv.ctor_ind[c];
+    let sh = canon_shape(sig, s);
+    let (np, nf) = (sh.np, sh.fields[0].len());
+    let args = crate::beta_model::spine_args(x);
+    let n = args[np + i];
+    assert(m == ExprSpec::Proj(i, Box::new(x)));
+    if u is Bot {
+        crate::dom_model::mem_bot(sig, m, rho);
+        reveal(mem);
+        return;
+    }
+    reveal(mem);
+    let wu = choose|w: Wit| #[trigger] mem_w(sig, n, rho, u, w);
+    crate::dom_model::mem_wf(sig, n, rho, u, wu);
+    let fty = crate::ti_syntax::proj_fty(sig, m);
+    let (v2, a) = tyd_pick(sig, n, rho, fty, u);
+    typed_wf_pair(v2, a);
+    // the field's type is its parameter
+    assert(struct_sem(sig, s));
+    reveal(crate::ti_syntax::struct_of);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    let f = sh.fields[0][i as int];
+    assert(crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f));
+    let vv = f->Var_0;
+    let q = (np + i - 1 - vv) as int;
+    let xs = args.subrange(0, (np + i) as int);
+    assert(crate::ti_proj::sfield(sig, s, i as nat, us) == f);
+    crate::ti_spine::vsub_var(vv, xs);
+    assert(mem(sig, args[q], rho, a));
+    // the canonical recursor's shape is the structure's
+    let rid = crate::dom_code::canon_rec(sig, s);
+    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s);
+    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
+    let pv = Seq::new(np, |k: int| if k == q { a } else { Cpt::Bot });
+    assert(sh.pdoms[q] is Sort);
+    let dps = proj_chain(sig, s, us, q, a, pv);
+    let xf = Seq::new(nf, |k: int| if k == i as int { v2 } else { Cpt::Bot });
+    let ak = Seq::new(nf, |k: int| if k == i as int { a } else { Cpt::Bot });
+    proj_fields_ok(sig, s, us, q, a, v2, i as int, dps, pv, xf, ak);
+    assert(crate::dom_model::sem_const(sig, s, us));
+    assert forall|k: int| 0 <= k < np implies mem(sig, #[trigger] args[k], rho, pv[k]) by {
+        if k != q {
+            crate::dom_model::mem_bot(sig, args[k], rho);
+        }
+    }
+    assert forall|k: int| 0 <= k < nf implies mem(sig, args[np + k], rho, #[trigger] xf[k]) && le(xf[k], xf[k]) by {
+        crate::dom_compact::le_refl(xf[k]);
+        if k != i as int {
+            crate::dom_model::mem_bot(sig, args[np + k], rho);
+        }
+    }
+    crate::dom_iota::con_major(sig, rid, 0, us, dps, pv, xf, ak, args, rho, xf);
+    crate::beta_model::spine_recompose(x);
+    let node = Cpt::Nd(NdKey::Con(s, 0), xf);
+    proj_intro(sig, i, x, rho, node);
+    assert(node->Nd_1[i as int] == v2);
+    crate::dom_model::mem_down_e(sig, m, rho, v2, u);
+}
+
+proof fn typed_wf_pair(v: Cpt, a: Cpt)
+    requires
+        typed(v, a),
+    ensures
+        wf(v),
+        wf(a),
+{
+    crate::dom_model::typed_wf(v, a);
+}
+
+/// The parameters' values, all bottom but one type: typed along the
+/// parameters' types, the one's a sort that is never a proposition.
+#[verifier::spinoff_prover]
+proof fn proj_chain(sig: Sig, s: u64, us: Seq<LevelSpec>, q: int, a: Cpt, pv: Seq<Cpt>) -> (dps: Seq<Cpt>)
+    requires
+        crate::ti_syntax::struct_of(sig, s),
+        !crate::ti_syntax::always_prop(sig, s),
+        us.len() == sig.consts[s].lps.len(),
+        0 <= q < canon_shape(sig, s).np,
+        canon_shape(sig, s).pdoms[q] is Sort,
+        typed(a, Cpt::U),
+        pv == Seq::new(canon_shape(sig, s).np, |k: int| if k == q { a } else { Cpt::Bot }),
+    ensures
+        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at(sig, crate::dom_code::canon_rec(sig, s), us),
+            crate::dom_model::bot_env(), dps, pv),
+{
+    reveal(crate::ti_syntax::struct_of);
+    let sh = canon_shape(sig, s);
+    let np = sh.np;
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    let rid = crate::dom_code::canon_rec(sig, s);
+    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s);
+    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
+    let pd = crate::dom_iota::pdoms_at(sig, rid, us);
+    let dps = Seq::new(np, |k: int| if k == q { Cpt::U } else { Cpt::Bot });
+    crate::dom_sound::typed_basic();
+    assert forall|k: int| 0 <= k < np implies #[trigger] crate::dom_sound::dfit(sig, pd[k],
+        crate::dom_tele::exts(crate::dom_model::bot_env(), pv.subrange(0, k)), dps[k], pv[k]) by {
+        let env = crate::dom_tele::exts(crate::dom_model::bot_env(), pv.subrange(0, k));
+        reveal(mem);
+        if k == q {
+            let l = sh.pdoms[k]->Sort_0;
+            assert(pd[k] == ExprSpec::Sort(crate::level_model::subst_level_spec(l, sh.lps, us)));
+            assert(crate::ti_syntax::never_zero(l));
+            let r0 = Map::<nat, nat>::empty();
+            crate::level_model::subst_level_spec_interp(l, sh.lps, us, r0);
+            assert(crate::level_model::interp(l, crate::level_model::subst_env(r0, sh.lps, us)) > 0);
+            assert(!crate::ti_syntax::is_zero(crate::level_model::subst_level_spec(l, sh.lps, us)));
+            assert(mem_w_sort(sig, pd[k], env, dps[k]));
+        } else {
+            crate::dom_model::mem_bot(sig, pd[k], env);
+        }
+    }
+    dps
+}
+
+spec fn mem_w_sort(sig: Sig, t: ExprSpec, rho: Env, d: Cpt) -> bool {
+    crate::dom_model::mem_w(sig, t, rho, d, crate::dom_model::Wit::Nil)
+}
+
+/// The constructor step's facts for the one-field node.
+#[verifier::spinoff_prover]
+proof fn proj_fields_ok(sig: Sig, s: u64, us: Seq<LevelSpec>, q: int, a: Cpt, v2: Cpt, i: int,
+    dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>)
+    requires
+        crate::ti_syntax::struct_of(sig, s),
+        struct_sem(sig, s),
+        !crate::ti_syntax::always_prop(sig, s),
+        us.len() == sig.consts[s].lps.len(),
+        0 <= i < canon_shape(sig, s).fields[0].len(),
+        q == canon_shape(sig, s).np + i - 1 - canon_shape(sig, s).fields[0][i]->Var_0,
+        typed(a, Cpt::U),
+        typed(v2, a),
+        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at(sig, crate::dom_code::canon_rec(sig, s), us),
+            crate::dom_model::bot_env(), dps, pv),
+        pv == Seq::new(canon_shape(sig, s).np, |k: int| if k == q { a } else { Cpt::Bot }),
+        xf == Seq::new(canon_shape(sig, s).fields[0].len(), |k: int| if k == i { v2 } else { Cpt::Bot }),
+        ak == Seq::new(canon_shape(sig, s).fields[0].len(), |k: int| if k == i { a } else { Cpt::Bot }),
+    ensures
+        crate::dom_iota::cf_fields_ok(sig, crate::dom_code::canon_rec(sig, s), 0, us, dps, pv, xf, ak),
+{
+    reveal(crate::ti_syntax::struct_of);
+    let sh = canon_shape(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    let rid = crate::dom_code::canon_rec(sig, s);
+    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s);
+    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
+    assert(crate::dom_model::sem_const(sig, s, us));
+    crate::dom_sound::typed_basic();
+    crate::dom_model::typed_wf(v2, a);
+    crate::dom_model::typed_wf(Cpt::Bot, Cpt::U);
+    crate::dom_compact::le_refl(a);
+    assert(pv[q] == a);
+    assert forall|k: int| 0 <= k < xf.len() implies crate::dom_iota::ispvar(sig, rid, 0, k)
+        && !crate::dom_iota::isrec(sig, rid, 0, k) by {
+        assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+    }
+    assert forall|k: int| 0 <= k < xf.len() && crate::dom_iota::ispvar(sig, rid, 0, k) implies
+        wf(#[trigger] ak[k]) && le(ak[k], pv[crate::dom_iota::pvq(sig, rid, 0, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+        if k == i {
+            assert(crate::dom_iota::pvq(sig, rid, 0, k) == q);
+        } else {
+            assert(pv[crate::dom_iota::pvq(sig, rid, 0, k)] == pv[crate::dom_iota::pvq(sig, rid, 0, k)]);
+        }
+    }
+    assert(crate::dom_code::aw(xf));
+}
+
+/// RULE ProjCong IS SOUND: projections of equal subjects are equal,
+/// join-closed, and typed within the field's type.
+#[verifier::spinoff_prover]
+pub proof fn sound_proj_cong(sig: Sig, i: usize, x: ExprSpec, x2: ExprSpec, st: ExprSpec, t: ExprSpec, rho: Env)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
+        crate::dom_sound::sound_ok(sig, x, x2, st, rho),
+    ensures
+        crate::dom_sound::sound_ok(sig, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)), t, rho),
+{
+    proj_sem_eq(sig, i, x, x2, rho);
+    proj_jc(sig, i, x, rho);
+    crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
+    let h = crate::beta_model::spine_head(st);
+    let (s, us) = (h->Const_0, h->Const_1);
+    let ps = crate::beta_model::spine_args(st);
+    assert(struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, us));
+    crate::beta_model::spine_recompose(st);
+    proj_tyd(sig, s, us, ps, i, x, rho);
+}
+
+/// RULE ProjIota IS SOUND: at a structure that may be a proposition by
+/// irrelevance, otherwise because a constructor application's projection
+/// and its projected argument have the same members.
+#[verifier::spinoff_prover]
+pub proof fn sound_proj_iota(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, st: ExprSpec, l: LevelSpec, rho: Env)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::proj_fire(sig, m),
+        n == crate::ti_syntax::proj_result(sig, m),
+        crate::ti_syntax::proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some,
+        crate::beta_model::spine_head(st)->Const_0 == sig.ienv.ctor_ind[crate::beta_model::spine_head(*m->Proj_1)->Const_0],
+        crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l),
+        crate::dom_sound::sound_ok(sig, m, m, t, rho),
+        crate::dom_sound::sound_ok(sig, n, n, t, rho),
+        crate::dom_sound::sound_ok(sig, t, t, ExprSpec::Sort(l), rho),
+        crate::dom_sound::sound_ok(sig, n, n, crate::ti_syntax::proj_fty(sig, m), rho),
+    ensures
+        crate::dom_sound::sound_ok(sig, m, n, t, rho),
+{
+    if crate::ti_syntax::proj_prop(sig, st) {
+        crate::dom_sound::sound_irr(sig, m, n, t, l, rho);
+        return;
+    }
+    // the structure is not always a proposition
+    crate::ti_proj::proj_ty_unfold(sig, st, m->Proj_0 as nat, *m->Proj_1);
+    let h = crate::beta_model::spine_head(st);
+    let (s, us) = (h->Const_0, h->Const_1);
+    let ty = sig.consts[s].ty;
+    let lb = crate::rec_canon::tbody(ty, crate::rec_canon::tarity(ty))->Sort_0;
+    if crate::ti_syntax::always_prop(sig, s) {
+        crate::ti_level::ls_is_zero(lb, sig.consts[s].lps, us);
+        reveal(crate::ti_syntax::proj_prop);
+        let r0 = Map::<nat, nat>::empty();
+        assert(crate::level_model::interp(crate::level_model::subst_level_spec(lb, sig.consts[s].lps, us), r0) == 0);
+        assert(false);
+    }
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, n, rho, u) by {
+        if mem(sig, m, rho, u) {
+            proj_iota_sub(sig, m, rho, u);
+        }
+        if mem(sig, n, rho, u) {
+            proj_iota_sup(sig, m, rho, u);
+        }
+    }
+}
+
 } // verus!
