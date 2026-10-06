@@ -438,7 +438,7 @@ proof fn pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     reveal(crate::ti_syntax::iota_pjs);
     let rid = spine_head(m)->Const_0;
     let rd = sig.ienv.recs[rid];
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_syntax::frag_of(sig, rid);
     crate::level_inst::li_spine_const(m, ks, vs);
     let major = spine_args(m)[rd.major_idx as int];
     crate::level_inst::li_spine_const(major, ks, vs);

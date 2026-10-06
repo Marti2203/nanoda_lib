@@ -621,6 +621,7 @@ pub proof fn frag_congr(s1: Sig, s2: Sig)
         crate::ti_syntax::iota_ok(s1) == crate::ti_syntax::iota_ok(s2),
         forall|c: u64| #[trigger] rec_frag(s1, c) == rec_frag(s2, c),
 {
+    reveal(crate::ti_syntax::iota_ok);
     assert forall|c: u64| #[trigger] rec_frag(s1, c) == rec_frag(s2, c) by {
         if rec_frag(s1, c) {
             frag_dir(s1, s2, c);

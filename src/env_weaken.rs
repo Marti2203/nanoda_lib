@@ -47,6 +47,7 @@ pub proof fn ew_sig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
     let s1 = crate::metatheory::jsig(dty, denv, g);
     let s2 = crate::metatheory::jsig(dty2, denv2, g);
     let s0 = crate::metatheory::jsig(dty2, denv2, Map::empty());
+    reveal(crate::ti_syntax::iota_ok);
     assert forall|c: u64| #[trigger] s1.consts.contains_key(c) implies s2.consts.contains_key(c) && s2.consts[c] == s1.consts[c] by {
         assert(dty.contains_key(c));
         if denv.defs.contains_key(c) {

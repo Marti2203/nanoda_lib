@@ -261,13 +261,18 @@ pub proof fn app_var_mem(sig: Sig, i: nat, j: nat, rho: Env)
         Wit::Ap(rho(i), rho(j), Box::new(Wit::Nil), Box::new(Wit::Nil))));
 }
 
-/// A RECURSOR IN THE FIRST STAGE'S SCOPE: canonical, without indices,
-/// with distinct constructors, and the only canonical recursor of its
-/// inductive.
+/// A RECURSOR IN THE FIRST STAGE'S SCOPE: in the general scope, without
+/// indices.
 pub open spec fn rec_scope(sig: Sig, rid: u64) -> bool {
+    rec_scope_g(sig, rid) && rshape(sig, rid).ni == 0
+}
+
+/// A RECURSOR IN SCOPE: canonical, with distinct constructors, the only
+/// canonical recursor of its inductive, with distinct level parameters,
+/// and its inductive's and constructors' types over the inductive's.
+pub open spec fn rec_scope_g(sig: Sig, rid: u64) -> bool {
     let sh = crate::rec_canon::shape_of(sig, sig.ienv.recs[rid], crate::rec_canon::rec_ind(sig, rid));
     &&& crate::rec_canon::rec_canon(sig, rid)
-    &&& sh.ni == 0
     &&& forall|j1: int, j2: int| #![trigger sh.ctors[j1], sh.ctors[j2]]
         0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] ==> j1 == j2
     &&& forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == crate::rec_canon::rec_ind(sig, rid)
@@ -331,7 +336,7 @@ pub proof fn rinst_id(sig: Sig, rid: u64, lv: Seq<LevelSpec>, e: ExprSpec)
 /// The inductive's level parameters are distinct, as the recursor's are.
 pub proof fn rec_lps_distinct(sig: Sig, rid: u64)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
     ensures
         crate::dom_levels::lps_distinct(sig.consts[rshape(sig, rid).ind].lps),
 {
@@ -356,7 +361,7 @@ pub proof fn rec_lps_distinct(sig: Sig, rid: u64)
 /// motive's universe, if any).
 pub proof fn rec_lps_sub(sig: Sig, rid: u64)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
     ensures
         crate::dom_levels::lps_sub(rshape(sig, rid).lps, sig.ienv.recs[rid].uparams),
         rshape(sig, rid).lps == sig.consts[rshape(sig, rid).ind].lps,
@@ -381,7 +386,7 @@ pub proof fn rec_lps_sub(sig: Sig, rid: u64)
 /// The parameter domains mention only the inductive's level parameters.
 pub proof fn rec_elp_pdoms(sig: Sig, rid: u64)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
     ensures
         forall|q: int| 0 <= q < rshape(sig, rid).np ==> crate::level_inst::elp_in(#[trigger] rshape(sig, rid).pdoms[q], rshape(sig, rid).lps),
 {
@@ -400,7 +405,7 @@ pub proof fn rec_elp_pdoms(sig: Sig, rid: u64)
 /// parameters.
 pub proof fn rec_elp_parts(sig: Sig, rid: u64, p: int)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
     ensures ({
         let sh = rshape(sig, rid);
@@ -429,7 +434,7 @@ pub proof fn rec_elp_parts(sig: Sig, rid: u64, p: int)
 /// A recursor in scope is its inductive's canonical recursor.
 pub proof fn scope_canon(sig: Sig, rid: u64)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
     ensures
         crate::dom_code::has_canon(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
@@ -497,7 +502,7 @@ pub proof fn rec_ty_split(sig: Sig, rid: u64, ls: Seq<LevelSpec>)
 /// position.
 pub proof fn scope_ctor(sig: Sig, rid: u64, p: int)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
         0 <= p < rshape(sig, rid).nmin(),
     ensures ({
         let sh = rshape(sig, rid);
@@ -528,7 +533,7 @@ pub proof fn scope_ctor(sig: Sig, rid: u64, p: int)
 /// shape, an axiom, neither a constructor nor a recursor.
 pub proof fn scope_ctor_ind(sig: Sig, rid: u64)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
     ensures ({
         let sh = rshape(sig, rid);
         &&& crate::dom_code::has_canon(sig, sh.ind)

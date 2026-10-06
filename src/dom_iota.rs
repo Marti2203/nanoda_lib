@@ -2639,6 +2639,59 @@ pub proof fn r2l_fields(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int,
         && !crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) implies
         mem(sig, crate::iota_sr::cfu(sig, rid, p, k, clv), crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), #[trigger] ak[k])
         && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+        r2l_ps_mem(ss, sig, rid, lv, p, clv, ds, xs, k);
+    }
+    assert forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) implies
+        wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+        r2l_pvar_field(sig, rid, lv, p, clv, ds, xs, k);
+        typed_wf(ak[k], Cpt::U);
+        crate::dom_canon::canon_fields(sig, sh.ind, p, k);
+        assert(pv[pvq(sig, rid, p, k)] == xs[pvq(sig, rid, p, k)]);
+    }
+    assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
+        typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, clv, pv)) by {
+        r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
+        crate::dom_code::canon_blind(sig, sh.ind, us, clv, pv);
+    }
+}
+
+/// `r2l_fields`' case of a field over the parameters.
+#[verifier::spinoff_prover]
+proof fn r2l_ps_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
+    requires
+        crate::dom_sound::sound_oracle(ss, sig),
+        ss == crate::ti_strip::strip(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+        0 <= k < xs.len() - (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()),
+        !isrec(sig, rid, p, k),
+        !ispvar(sig, rid, p, k),
+        !crate::rec_canon::simple_ty(sig, crate::dom_rec_ty::rshape(sig, rid).ind, crate::dom_rec_ty::rshape(sig, rid).fields[p][k]),
+    ensures ({
+        let np = crate::dom_rec_ty::rshape(sig, rid).np as int;
+        let pre = (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int;
+        let (pv, xf, ak) = (xs.subrange(0, np), xs.subrange(pre, xs.len() as int), ds.subrange(pre, ds.len() as int));
+        &&& mem(sig, crate::iota_sr::cfu(sig, rid, p, k, clv), crate::dom_tele::exts(bot_env(), pv + xf.subrange(0, k)), ak[k])
+        &&& typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    r2l_pv(sig, rid, lv, p, clv, ds, xs);
+    let xf = xs.subrange(pre, xs.len() as int);
+    let ak = ds.subrange(pre, ds.len() as int);
+    let pv = xs.subrange(0, np as int);
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    crate::dom_rec_ty::rec_lps_sub(sig, rid);
+    chain_pdoms_lv(sig, rid, us, clv, ds.subrange(0, np as int), pv);
+    crate::dom_rec_end::rec_canon_ok(sig, rid);
         r2l_ps_field(sig, rid, lv, p, clv, ds, xs, k);
         crate::dom_rec_ty::scope_ctor(sig, rid, p);
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
@@ -2662,19 +2715,6 @@ pub proof fn r2l_fields(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int,
         let l0 = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
         assert(crate::ti_level::gls(sh.pdoms, sig.consts[sh.ind].lps, us) =~= pdoms_at(sig, rid, us));
         crate::dom_psimple::ps_mem_lv(ss, sig, sh.ind, us, clv, e, l0, ds.subrange(0, np as int), pv, ak[k]);
-    }
-    assert forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) implies
-        wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
-        r2l_pvar_field(sig, rid, lv, p, clv, ds, xs, k);
-        typed_wf(ak[k], Cpt::U);
-        crate::dom_canon::canon_fields(sig, sh.ind, p, k);
-        assert(pv[pvq(sig, rid, p, k)] == xs[pvq(sig, rid, p, k)]);
-    }
-    assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
-        typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, clv, pv)) by {
-        r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
-        crate::dom_code::canon_blind(sig, sh.ind, us, clv, pv);
-    }
 }
 
 /// THE REBUILT MAJOR is a member of the constructor application, its

@@ -103,7 +103,7 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     let rd = sig.ienv.recs[rid];
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     // the recursor is interpreted
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_syntax::frag_of(sig, rid);
     assert(!crate::ti_syntax::no_recs(sig)) by {
         assert(sig.ienv.recs.contains_key(rid));
     }

@@ -125,6 +125,7 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
             assert(denv.defs.contains_key(id));
             assert(is_def(sig, id, ls));
             assert(dval(sig, id, ls) == m2);
+            assert(crate::ti_syntax::iota_ok(sig)) by { reveal(crate::ti_syntax::iota_ok); }
             crate::ti_sr::sr(sig, g, m, t);
         },
         _ => {},
@@ -684,6 +685,7 @@ pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
 {
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
+    reveal(crate::ti_syntax::iota_ok);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls) by {
         assert(is_def(s0, c, ls));
         assert(def_ok(s0, c, ls));

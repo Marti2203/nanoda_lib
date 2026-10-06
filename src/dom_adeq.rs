@@ -1472,7 +1472,7 @@ proof fn adeq_iota(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     dsym(sig, dl, psub(m2, s), psub(m2, s2), psub(t, s));
     crate::ti_subst::psub_fire(s, sig, m);
     let rid = crate::beta_model::spine_head(m)->Const_0;
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_syntax::frag_of(sig, rid);
     crate::ti_subst::psub_spine_const(s, m);
     crate::ti_hred_rec::fire_hstep(sig, psub(m, s));
     crate::ti_hred::hred_step(sig, psub(m, s));

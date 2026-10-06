@@ -257,7 +257,7 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
     let pr = crate::iota_sr::fired_rule(sig, m);
     crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
-    assert(crate::dom_rec_end::rec_frag(sig, h->Const_0));
+    crate::ti_syntax::frag_of(sig, h->Const_0);
     crate::dom_rec_conv::sr_ok_of(sig, h->Const_0, h->Const_1, pr);
     let l = crate::iota_sr::iota_sr(sig, g, m, t);
     // the Iota node at the bare redex, in the motive's sort; then the

@@ -166,7 +166,7 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
     reveal(crate::ti_syntax::iota_lv);
     reveal(crate::ti_syntax::iota_prop);
     let rid = crate::beta_model::spine_head(m)->Const_0;
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_syntax::frag_of(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid));
     assert(sig2.ienv.recs[rid] == sig.ienv.recs[rid]);
     assert(sig2.consts[rid] == sig.consts[rid]);

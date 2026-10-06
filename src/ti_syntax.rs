@@ -61,8 +61,21 @@ pub open spec fn no_recs(sig: Sig) -> bool {
 /// What the model needs of the signature's recursors to interpret them:
 /// each is in the fragment `dom_rec_end::rec_frag` (docs/TYPED_TARGET.md,
 /// "The landing"). Syntactic, so the Iota rule can ask it.
+#[verifier::opaque]
 pub open spec fn iota_ok(sig: Sig) -> bool {
     forall|rid: u64| #[trigger] sig.ienv.recs.contains_key(rid) ==> crate::dom_rec_end::rec_frag(sig, rid)
+}
+
+/// Each recursor of a signature meeting Iota's condition is in the
+/// fragment.
+pub proof fn frag_of(sig: Sig, rid: u64)
+    requires
+        iota_ok(sig),
+        sig.ienv.recs.contains_key(rid),
+    ensures
+        crate::dom_rec_end::rec_frag(sig, rid),
+{
+    reveal(iota_ok);
 }
 
 /// A declared constant: its universe parameters, its type, and its value
@@ -435,7 +448,7 @@ pub proof fn iota_major_len(sig: Sig, m: ExprSpec)
     let rd = sig.ienv.recs[rid];
     let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
     let cid = crate::beta_model::spine_head(major)->Const_0;
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_syntax::frag_of(sig, rid);
     let p = crate::iota_sr::fired_rule(sig, m);
     crate::beta_model::find_rule_spec(rd.rules, cid);
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -455,7 +468,7 @@ pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
         forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
     }),
 {
-    assert(crate::dom_rec_end::rec_frag(sig, crate::beta_model::spine_head(m)->Const_0));
+    crate::ti_syntax::frag_of(sig, crate::beta_model::spine_head(m)->Const_0);
 }
 
 /// Iota's premise types: the declared parameter sorts at the recursor's
@@ -480,7 +493,7 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     let rid = crate::beta_model::spine_head(m)->Const_0;
     let lv = crate::beta_model::spine_head(m)->Const_1;
     let sh = crate::dom_rec_ty::rshape(sig, rid);
-    assert(crate::dom_rec_end::rec_frag(sig, rid));
+    crate::ti_syntax::frag_of(sig, rid);
     let pd = sh.pdoms[q];
     crate::dom_rec_ty::rec_elp_pdoms(sig, rid);
     crate::dom_rec_ty::rinst_id(sig, rid, lv, pd);
