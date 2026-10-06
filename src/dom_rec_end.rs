@@ -811,6 +811,7 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let pre = rc.pre(sig);
     &&& rec_hyps(sig, rc.c)
+    &&& !crate::dom_code::smash(sig, sh.ind)
     &&& crate::dom_rec_adeq::rf_inv(sig, rc.nn, rc.n, rc.g, rc.c, rc.sm, rc.ls, rc.ls2, 0, rc.xs, rc.xs2, rc.a, rc.ds, rc.fs, rc.u)
     &&& !(rc.u is Bot) && !(rc.a is Bot)
     &&& rc.xs.len() == pre + 1 && rc.fs.len() == pre + 1 && rc.ds.len() == pre + 1
@@ -1206,6 +1207,7 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
         crate::dom_rec_adeq::rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u),
         !(u is Bot),
         !(a is Bot),
+        !crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind),
     ensures
         rec_ctx(sig, rc),
         rc.nn == nn && rc.n == n && rc.g == g && rc.c == c && rc.sm == sm && rc.ls == ls && rc.ls2 == ls2,
@@ -1226,10 +1228,6 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     assert(le(u, crate::dom_rec::recval(sig, c, fs)));
     crate::dom_rec::recval_wf(sig, c, fs);
     head_le(u, crate::dom_rec::recval(sig, c, fs));
-    if !crate::dom_rec::rec_ok(sig, c, fs) && crate::dom_rec::rec_bot_ok(sig, c, fs) {
-        // the irrefutable match needs the recursor's eta head step (E3)
-        crate::dom_code::smash_dead(sig, crate::rec_canon::rec_ind(sig, c));
-    }
     assert(crate::dom_rec::rec_ok(sig, c, fs));
     let wx = fs[pre];
     assert(fs.last() == wx);
@@ -3304,6 +3302,11 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
     if u is Bot {
         crate::dom_rel_per::bot_tm(sig, n, g, m, m2, t, a);
         return;
+    }
+    if crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind) {
+        // a smashed structure's recursor reduces by its eta step: its end
+        // goes through the major's projections (stage E4c)
+        crate::dom_code::smash_dead(sig, crate::dom_rec_ty::rshape(sig, c).ind);
     }
     let rc = rec_ctx_intro(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
     walk_init(sig, rc);

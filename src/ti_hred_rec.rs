@@ -130,6 +130,7 @@ pub proof fn hred_rec_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<E
         heads.len() == sig.ienv.recs[rid].major_idx,
         hred(sig, x, x2),
         forall|y: ExprSpec| #[trigger] rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(y))) ==> stuck(sig, y),
+        forall|y: ExprSpec| !#[trigger] crate::ti_hred::rec_eta(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(y))),
     ensures
         hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)), spine_app(ExprSpec::Const(rid, lv), heads.push(x2))),
 {
@@ -143,6 +144,7 @@ proof fn hred_rec_major_k(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<Exp
         !crate::ti_syntax::is_def(sig, rid, lv),
         heads.len() == sig.ienv.recs[rid].major_idx,
         forall|y: ExprSpec| #[trigger] rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(y))) ==> stuck(sig, y),
+        forall|y: ExprSpec| !#[trigger] crate::ti_hred::rec_eta(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(y))),
     ensures
         hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)), spine_app(ExprSpec::Const(rid, lv), heads.push(hiter(sig, x, k)))),
     decreases k,

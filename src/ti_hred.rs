@@ -97,7 +97,7 @@ pub proof fn fire_inst_interp(sig: Sig, a: ExprSpec)
 /// A smashed structure's recursor, interpreted by the model, at a major
 /// that is not its constructor's application: it matches irrefutably, so
 /// it fires on the major's projections (the kernel's structure eta for
-/// iota).
+/// iota), without reducing the major first.
 pub open spec fn rec_eta(sig: Sig, t: ExprSpec) -> bool {
     let h = crate::beta_model::spine_head(t);
     let rd = sig.ienv.recs[h->Const_0];
@@ -138,10 +138,12 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
                 Some(f2) => Some(ExprSpec::App(Box::new(f2), x)),
                 None => if rec_fire(sig, t) {
                     Some(crate::beta_model::rec_result(sig.ienv, t))
+                } else if rec_eta(sig, t) {
+                    Some(rec_eta_result(sig, t))
                 } else if rec_major(sig, t) {
                     match hstep(sig, *x) {
                         Some(x2) => Some(ExprSpec::App(f, Box::new(x2))),
-                        None => if rec_eta(sig, t) { Some(rec_eta_result(sig, t)) } else { None },
+                        None => None,
                     }
                 } else {
                     None

@@ -687,7 +687,7 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
             } else if crate::ti_hred::rec_fire(sig, m) {
                 // iota: the rule instance is typed at the redex's type
                 sr_iota(sig, g, m, t);
-            } else if crate::ti_hred::hstep(sig, *x) is None {
+            } else if crate::ti_hred::rec_eta(sig, m) {
                 // a smashed structure's major, eta-expanded
                 sr_rec_eta(sig, g, *f, *x, t, a1, b1, l1, l2b);
             } else {

@@ -144,7 +144,7 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
         cl.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
         hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)),
     ensures
-        hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
+        !crate::dom_code::smash(sig, rshape(sig, rid).ind) ==> hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
             spine_app(heads[rshape(sig, rid).np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs))),
         rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)))),
         crate::beta_model::rec_result(sig.ienv, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs))))
@@ -161,7 +161,13 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
     assert forall|y: ExprSpec| #[trigger] rec_fire(sig, spine_app(h, heads.push(y))) implies stuck(sig, y) by {
         ready_stuck(sig, rid, lv, heads, y);
     }
-    crate::ti_hred_rec::hred_rec_major(sig, rid, lv, heads, x, cx);
+    let unsmashed = !crate::dom_code::smash(sig, sh.ind);
+    if unsmashed {
+        assert forall|y: ExprSpec| !#[trigger] crate::ti_hred::rec_eta(sig, spine_app(h, heads.push(y))) by {
+            crate::beta_model::spine_destruct_app(h, heads.push(y));
+        }
+        crate::ti_hred_rec::hred_rec_major(sig, rid, lv, heads, x, cx);
+    }
     // iota
     let t1 = spine_app(h, heads.push(cx));
     crate::dom_bound::spine_push(h, heads.push(cx));
@@ -202,7 +208,9 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
     rule_vsub(sig, rid, lv, j, heads, cargs);
     let r = spine_app(heads[sh.np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs));
     hred_trans(sig, t1, spine_app(body, heads + cargs), r);
-    hred_trans(sig, spine_app(h, heads.push(x)), t1, r);
+    if unsmashed {
+        hred_trans(sig, spine_app(h, heads.push(x)), t1, r);
+    }
 }
 
 /// A rule list with the constructor at `j` finds some rule for it.
