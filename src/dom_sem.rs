@@ -374,7 +374,7 @@ pub proof fn cf_mono(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2: 
             }
         },
         _ => {
-            let key = NdKey::Con(ind, pc);
+            let key = NdKey::Con(ind, pc, false);
             nd_le(key, f1, f2);
             le_trans(v, Cpt::Nd(key, f1), Cpt::Nd(key, f2));
         },
@@ -420,7 +420,7 @@ pub proof fn cf_compat(ind: u64, pc: nat, np: nat, t: ExprSpec, f1: Seq<Cpt>, f2
             }
         },
         _ => {
-            let key = NdKey::Con(ind, pc);
+            let key = NdKey::Con(ind, pc, false);
             let (n1, n2) = (Cpt::Nd(key, f1), Cpt::Nd(key, f2));
             assert forall|i: int| 0 <= i < f1.len() implies compat(#[trigger] f1[i], f2[i]) by {}
             assert forall|i: int| 0 <= i < f1.len() implies #[trigger] wf(f1[i]) by {}
@@ -467,7 +467,7 @@ pub proof fn cf_join(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: n
             }
         },
         _ => {
-            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, pc), fs));
+            join_lub(y1, y2, Cpt::Nd(NdKey::Con(ind, pc, false), fs));
         },
     }
 }

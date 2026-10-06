@@ -124,7 +124,7 @@ pub proof fn expand_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, s: E
             tchain_trans(sig, g, s2, t2, pi(rp(sig, t2).0, rp(sig, t2).1));
         },
         Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) | Cpt::Nd(NdKey::Tag(..), _) => ty_other(sig, n, g, t, t2, a),
-        Cpt::Nd(NdKey::Ty(ind, _), _) => {
+        Cpt::Nd(NdKey::Ty(ind, _, _), _) => {
             ty_ind(sig, n, g, t, t2, a);
             ty_ind(sig, n, g, s, s2, a);
             tchain_trans(sig, g, s, t, t2);

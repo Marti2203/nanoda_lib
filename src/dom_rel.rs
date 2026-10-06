@@ -258,7 +258,7 @@ pub open spec fn rel_ty(sig: Sig, n: nat, g: Ctx, t: ExprSpec, t2: ExprSpec, a: 
                 && rel_ty(sig, (n - 1) as nat, g, ta, ta2, *b)
                 && cod_ty(sig, (n - 1) as nat, g, a, ta, tb, tb2)
         },
-        Cpt::Nd(NdKey::Ty(ind, _), ts) => tchain(sig, g, t, t2) && ind_red(sig, t, ind) && ind_red(sig, t2, ind)
+        Cpt::Nd(NdKey::Ty(ind, _, _), ts) => tchain(sig, g, t, t2) && ind_red(sig, t, ind) && ind_red(sig, t2, ind)
             && pconv(sig, g, ind, t, t2)
             && forall|p: int, k: int| #![trigger tbl(ts)[p]->Nd_1[k]]
                 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len() && is_centry(tbl(ts)[p]->Nd_1[k])
@@ -298,7 +298,7 @@ pub open spec fn rel_tm(sig: Sig, n: nat, g: Ctx, m: ExprSpec, m2: ExprSpec, t: 
         Cpt::U => to_sort(sig, g, t, false) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Prop => to_sort(sig, g, t, true) && rel_ty(sig, n, g, m, m2, u),
         Cpt::Pi(b, _) => n >= 1 && rel_ty(sig, n, g, t, t, a) && pi_red(sig, t) && app_tm(sig, (n - 1) as nat, g, m, m2, rp(sig, t).0, rp(sig, t).1, u, a),
-        Cpt::Nd(NdKey::Ty(_, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || (con_tm(sig, n, g, m, m2, t, u, a)
+        Cpt::Nd(NdKey::Ty(_, _, _), _) => rel_ty(sig, n, g, t, t, a) && (u is Bot || (con_tm(sig, n, g, m, m2, t, u, a)
             && derivable(sig, eq(g, m, cr(sig, m), t)) && derivable(sig, eq(g, m2, cr(sig, m2), t)))),
         _ => false,
     }

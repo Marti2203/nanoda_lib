@@ -210,7 +210,7 @@ pub proof fn cf_down(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k: n
             }
         },
         _ => {
-            le_trans(u, v, Cpt::Nd(NdKey::Con(ind, pc), fs));
+            le_trans(u, v, Cpt::Nd(NdKey::Con(ind, pc, false), fs));
         },
     }
 }
@@ -332,7 +332,7 @@ pub proof fn motive_bound(sig: Sig, k: nat, c: u64, us: Seq<LevelSpec>, args: Se
         args.len() == tarity(dty_at(sig, c, us)),
     ensures
         args_w(sig, args, rho, ws),
-        le(e, app(rho(k), Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat),
+        le(e, app(rho(k), Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, false),
             flds(ws, crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[c]).np)))),
 {
     let ind = sig.ienv.ctor_ind[c];
@@ -362,8 +362,8 @@ pub proof fn motive_bound(sig: Sig, k: nat, c: u64, us: Seq<LevelSpec>, args: Se
         assert(fl[i] == ws[np + i]);
         assert(mem(sig, args[np + i], rho, ws[np + i]));
     }
-    let node = Cpt::Nd(NdKey::Con(ind, pc), fl);
-    crate::dom_code::wf_nd(NdKey::Con(ind, pc), fl);
+    let node = Cpt::Nd(NdKey::Con(ind, pc, false), fl);
+    crate::dom_code::wf_nd(NdKey::Con(ind, pc, false), fl);
     assert(le(wx, node));
     crate::dom_sound::app_mono(wf_, rho(k), wx, node);
     le_trans(e, app(wf_, wx), app(rho(k), node));

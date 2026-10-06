@@ -141,7 +141,7 @@ pub open spec fn entry_canon(sig: Sig, j: u64, pv: Seq<Cpt>, p: int, k: int, e: 
 /// its table, if any, is `j`'s canonical table with entries below the
 /// canonical ones.
 pub open spec fn tbl_canon(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt) -> bool {
-    &&& a is Nd && a->Nd_0 is Ty && a->Nd_0->Ty_0 == j
+    &&& a is Nd && a->Nd_0 is Ty && a->Nd_0->Ty_0 == j && a->Nd_0->Ty_2 == crate::dom_code::smash(sig, j)
     &&& pv.len() >= canon_shape(sig, j).np
     &&& tbl(a->Nd_1).len() > 0 ==> canon_ok(sig, j) && tbl(a->Nd_1).len() == canon_shape(sig, j).nmin()
     &&& forall|p: int, k: int| 0 <= p < tbl(a->Nd_1).len() && tbl(a->Nd_1)[p] is Nd && 0 <= k < tbl(a->Nd_1)[p]->Nd_1.len()

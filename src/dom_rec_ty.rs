@@ -87,7 +87,7 @@ pub proof fn minor_out(ss: Sig, sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<E
         typed(crate::dom_rec::apps(xn, fs + hs), e),
         typed(e, Cpt::U),
         le(e, app(rho((km - fds.len() - ihs.len()) as nat),
-            Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat), fs))),
+            Cpt::Nd(NdKey::Con(sig.ienv.ctor_ind[c], ctor_pos(sig, sig.ienv.ctor_ind[c], c) as nat, false), fs))),
 {
     let (nf, nr) = (fds.len(), ihs.len());
     let ind = sig.ienv.ctor_ind[c];
@@ -121,14 +121,14 @@ pub proof fn minor_out(ss: Sig, sig: Sig, g: Ctx, fds: Seq<ExprSpec>, ihs: Seq<E
         assert(fl[i] == wa[np + i]);
         le_trans(fl[i], ws2[i], fs[i]);
     }
-    crate::dom_sem::nd_le(NdKey::Con(ind, pc), fl, fs);
-    crate::dom_code::wf_nd(NdKey::Con(ind, pc), fl);
-    crate::dom_code::wf_nd(NdKey::Con(ind, pc), fs);
+    crate::dom_sem::nd_le(NdKey::Con(ind, pc, false), fl, fs);
+    crate::dom_code::wf_nd(NdKey::Con(ind, pc, false), fl);
+    crate::dom_code::wf_nd(NdKey::Con(ind, pc, false), fs);
     let m = rho((km - nf - nr) as nat);
     assert(wf(m));
     le_refl(m);
-    crate::dom_sound::app_mono(m, m, Cpt::Nd(NdKey::Con(ind, pc), fl), Cpt::Nd(NdKey::Con(ind, pc), fs));
-    le_trans(e, app(m, Cpt::Nd(NdKey::Con(ind, pc), fl)), app(m, Cpt::Nd(NdKey::Con(ind, pc), fs)));
+    crate::dom_sound::app_mono(m, m, Cpt::Nd(NdKey::Con(ind, pc, false), fl), Cpt::Nd(NdKey::Con(ind, pc, false), fs));
+    le_trans(e, app(m, Cpt::Nd(NdKey::Con(ind, pc, false), fl)), app(m, Cpt::Nd(NdKey::Con(ind, pc, false), fs)));
     e
 }
 
@@ -624,7 +624,7 @@ pub proof fn rec_minor(ss: Sig, sig: Sig, rid: u64, ls: Seq<LevelSpec>, l: Level
     crate::dom_rec::rec_ihs_wf(sig, rid, xs, nf);
     let e = minor_out(ss, sig, g, f2, i2, km, c, us2, pvars, li, rho, ds[mi], minor, fs, hs);
     exts_at(rho0, xs.subrange(0, mi), p as nat);
-    assert(v == Cpt::Nd(NdKey::Con(ind, p as nat), fs));
+    assert(v == Cpt::Nd(NdKey::Con(ind, p as nat, false), fs));
     e
 }
 

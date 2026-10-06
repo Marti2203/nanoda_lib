@@ -64,6 +64,7 @@ pub open spec fn rec_ok(sig: Sig, rid: u64, ins: Seq<Cpt>) -> bool {
     &&& rec_pre(rd) <= rd.major_idx
     &&& ins.last() is Nd && ins.last()->Nd_0 is Con
     &&& ins.last()->Nd_0->Con_0 == rec_ind(sig, rid)
+    &&& ins.last()->Nd_0->Con_2 == crate::dom_code::smash(sig, rec_ind(sig, rid))
     &&& (ins.last()->Nd_0->Con_1 as int) < rd.rules.len()
     &&& rd.rules[ins.last()->Nd_0->Con_1 as int].nfields == ins.last()->Nd_1.len()
     &&& rd.num_params + rd.num_motives + ins.last()->Nd_0->Con_1 < ins.len()

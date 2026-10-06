@@ -126,7 +126,7 @@ pub open spec fn cf_fun(ind: u64, pc: nat, np: nat, t: ExprSpec, fs: Seq<Cpt>, k
             _ => false,
         },
         _ => k >= np && crate::beta_model::spine_head(t) is Const && crate::beta_model::spine_head(t)->Const_0 == ind
-            && le(v, Cpt::Nd(NdKey::Con(ind, pc), fs)),
+            && le(v, Cpt::Nd(NdKey::Con(ind, pc, false), fs)),
     }
 }
 

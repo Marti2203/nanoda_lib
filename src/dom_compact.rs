@@ -27,8 +27,12 @@ pub enum Cpt {
 /// `prop`), a value built by the constructor at position `ctor` of
 /// inductive `ind`, or structure inside a code (a tag).
 pub enum NdKey {
-    Ty(u64, bool),
-    Con(u64, nat),
+    /// An inductive's code: the inductive, whether it is a proposition at
+    /// the instance, whether it is a structure (its values are smashed).
+    Ty(u64, bool, bool),
+    /// A constructor value: the inductive, the constructor's position,
+    /// whether the inductive is a structure.
+    Con(u64, nat, bool),
     /// Structure inside a code: an inductive code's table and its entries.
     Tag(nat),
 }
@@ -1062,11 +1066,11 @@ pub open spec fn jall(s: Seq<Cpt>) -> Cpt {
 /// The head constructor (a node's with its key and arity).
 pub open spec fn hd(c: Cpt) -> (nat, NdKey, nat) {
     match c {
-        Cpt::Bot => (0, NdKey::Ty(0, false), 0),
-        Cpt::U => (1, NdKey::Ty(0, false), 0),
-        Cpt::Prop => (2, NdKey::Ty(0, false), 0),
-        Cpt::Lam(_) => (3, NdKey::Ty(0, false), 0),
-        Cpt::Pi(_, _) => (4, NdKey::Ty(0, false), 0),
+        Cpt::Bot => (0, NdKey::Ty(0, false, false), 0),
+        Cpt::U => (1, NdKey::Ty(0, false, false), 0),
+        Cpt::Prop => (2, NdKey::Ty(0, false, false), 0),
+        Cpt::Lam(_) => (3, NdKey::Ty(0, false, false), 0),
+        Cpt::Pi(_, _) => (4, NdKey::Ty(0, false, false), 0),
         Cpt::Nd(key, cs) => (5, key, cs.len()),
     }
 }
@@ -1714,9 +1718,10 @@ pub open spec fn fun_ok(f: Seq<(Cpt, Cpt)>) -> bool {
         ==> compat(#[trigger] f[i].1, #[trigger] f[j].1)
 }
 
-/// WELL-FORMED: entries well formed, step lists present functions, and a
+/// WELL-FORMED: entries well formed, step lists present functions, a
 /// lambda is not bottom (some output is not bottom: `lambda(bottom) =
-/// bottom` is coalesced away).
+/// bottom` is coalesced away), and neither is a structure's value (some
+/// field is not bottom: structures are smashed).
 pub open spec fn wf(c: Cpt) -> bool
     decreases c,
 {
@@ -1725,9 +1730,14 @@ pub open spec fn wf(c: Cpt) -> bool
             && fun_ok(f) && exists|k: int| 0 <= k < f.len() && !(#[trigger] f[k].1 is Bot),
         Cpt::Pi(a, g) => wf(*a) && (forall|k: int| 0 <= k < g.len() ==> wf(#[trigger] g[k].0) && wf(g[k].1))
             && fun_ok(g),
-        Cpt::Nd(_, cs) => forall|k: int| 0 <= k < cs.len() ==> wf(#[trigger] cs[k]),
+        Cpt::Nd(key, cs) => (forall|k: int| 0 <= k < cs.len() ==> wf(#[trigger] cs[k])) && smash_ok(key, cs),
         _ => true,
     }
+}
+
+/// A smashed node (a structure's value) has a field that is not bottom.
+pub open spec fn smash_ok(key: NdKey, cs: Seq<Cpt>) -> bool {
+    key is Con && key->Con_2 ==> exists|k: int| 0 <= k < cs.len() && !(#[trigger] cs[k] is Bot)
 }
 
 /// The function condition on a list, over its members.

@@ -557,7 +557,7 @@ pub proof fn sort_code(sig: Sig, n: nat, g: Ctx, l: LevelSpec, t2: ExprSpec, d: 
             ty_pi(sig, n, g, s, t2, d);
             crate::ti_hred::hred_stuck_self(sig, s, pi(rp(sig, s).0, rp(sig, s).1));
         },
-        Cpt::Nd(NdKey::Ty(ind, _), _) => {
+        Cpt::Nd(NdKey::Ty(ind, _, _), _) => {
             ty_ind(sig, n, g, s, t2, d);
             crate::ti_hred::hred_stuck_self(sig, s, crate::dom_rel::ir(sig, s, ind));
         },
@@ -925,6 +925,7 @@ pub proof fn val_code(n: nat, w: Cpt, d: Cpt)
         w is Nd && w->Nd_0 is Con,
     ensures
         d is Nd && d->Nd_0 is Ty,
+        d->Nd_0->Ty_0 == w->Nd_0->Con_0 && d->Nd_0->Ty_2 == w->Nd_0->Con_2 && !d->Nd_0->Ty_1,
 {
 }
 
@@ -937,7 +938,7 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
         xs.len() == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
         crate::rec_canon::direct_occ(crate::dom_code::canon_shape(sig, ind).fields[pc as int][i], ind,
             crate::dom_code::canon_shape(sig, ind).us(), np, crate::dom_code::canon_shape(sig, ind).ni, i as nat),
-        a is Nd && a->Nd_0 == NdKey::Ty(ind, a->Nd_0->Ty_1),
+        a is Nd && a->Nd_0 == NdKey::Ty(ind, a->Nd_0->Ty_1, a->Nd_0->Ty_2),
         rel_ty(sig, n, g, trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls), xs), a),
     ensures
         crate::dom_rel::pconv(sig, g, ind, tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat),
@@ -975,7 +976,7 @@ pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: 
         crate::dom_code::canon_ok(sig, ind),
         xs.len() == np + crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
         xs2.len() == xs.len(),
-        a is Nd && a->Nd_0 == NdKey::Ty(ind, a->Nd_0->Ty_1),
+        a is Nd && a->Nd_0 == NdKey::Ty(ind, a->Nd_0->Ty_1, a->Nd_0->Ty_2),
         rel_ty(sig, n, g, trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls), xs), a),
         rel_ty(sig, n, g, trest(crate::ti_syntax::dty_at(sig, c, ls), xs), trest(crate::ti_syntax::dty_at(sig, c, ls2), xs2), a),
     ensures
@@ -1037,14 +1038,14 @@ pub proof fn cf_end(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec
     let (t0, t02) = (crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2));
     let (t, t2) = (trest(t0, xs), trest(t02, xs2));
     let (m, m2) = (spine_app(ExprSpec::Const(c, ls), xs), spine_app(ExprSpec::Const(c, ls2), xs2));
-    let node = Cpt::Nd(NdKey::Con(ind, pc), fs);
+    let node = Cpt::Nd(NdKey::Con(ind, pc, false), fs);
     assert(wf(u)) by {
         typed_facts_wf(n, u, a);
     }
     head_le(u, node);
     let us = u->Nd_1;
     crate::dom_sem::nd_le_inv(u->Nd_0, us, node);
-    assert(u->Nd_0 == NdKey::Con(ind, pc));
+    assert(u->Nd_0 == NdKey::Con(ind, pc, false));
     val_code(n, u, a);
     tm_ind(sig, n, g, m, m2, t, u, a);
     con_tm_unfold(sig, n, g, m, m2, t, u, a);
@@ -1083,8 +1084,8 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
     requires
         cf_inv(sig, nn, n, g, c, ls, ls2, ind, pc, np, 0, xs, xs2, a, ds, fs, u, pv),
         !(u is Bot),
-        u == Cpt::Nd(NdKey::Con(ind, pc), u->Nd_1),
-        le(u, Cpt::Nd(NdKey::Con(ind, pc), fs)),
+        u == Cpt::Nd(NdKey::Con(ind, pc, false), u->Nd_1),
+        le(u, Cpt::Nd(NdKey::Con(ind, pc, false), fs)),
         wf(u),
         a is Nd && a->Nd_0 is Ty,
         crate::dom_lift::tbl_canon(sig, ind, pv, a),
@@ -1121,7 +1122,7 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
     if us[i] is Bot {
         return;
     }
-    crate::dom_sem::nd_le_inv(u->Nd_0, us, Cpt::Nd(NdKey::Con(ind, pc), fs));
+    crate::dom_sem::nd_le_inv(u->Nd_0, us, Cpt::Nd(NdKey::Con(ind, pc, false), fs));
     assert(le(us[i], w));
     assert(wf(us[i]));
     head_le(us[i], w);

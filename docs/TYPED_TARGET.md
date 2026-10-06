@@ -1408,6 +1408,43 @@ case:
   (`con_tm`); a projection head-reduces to the related field
   (`expand_tm`). Prop structures: projections of proofs are proofs
   (irrelevance).
+- **Found 2026-10-06, before T3: structure and unit eta are unsound in
+  the current model.** Constructor nodes are lazy: `Con(S, 0, [⊥, ⊥])` is
+  well-formed and distinct from `⊥` (unlike `Lam`, whose `wf` asks a
+  non-bottom output, which is what makes function eta sound), and every
+  constructor application contains it (`dom_iota::con_major` with
+  all-bottom fields). Axioms and locals denote only `⊥`. So for an axiom
+  `ax : Prod A B`, eta relates `{⊥}` to a denotation containing
+  `Con(Prod, 0, [⊥, ⊥])`; likewise `ax : Unit` and `Unit.unit`. Smashing
+  all-bottom nodes into `⊥` is no fix (zero-field constructors such as
+  `Nat.zero` must stay distinct for the recursors). T3/T4 need a model
+  change first (e.g. type-directed bottoms: at a structure type, bottom
+  is the all-bottom constructor node), or stay out of the judgment.
+- **The eta redesign (chosen 2026-10-06): smash structures, irrefutable
+  structure recursors.** A structure's constructor node with every field
+  bottom is not well-formed, so a structure value is `⊥` or has a
+  non-bottom field (functions already work this way: `wf(Lam)` asks a
+  non-bottom output). Multi-constructor types stay lazy (`Nat.zero`,
+  `succ ⊥` must stay apart from `⊥` for their recursors). Then
+  `ax ≡ c ps (π0 ax) .. (πn ax)` holds in the model (both `{⊥}` at an
+  axiom), unit eta too (a zero-field structure has no well-formed node,
+  so all its terms denote `{⊥}`). The price: Iota at a constructor
+  application with bottom fields must still hold, so the model's
+  recursor at a structure applies the minor to bottom fields when the
+  major is `⊥` (irrefutable match); adequacy then needs the judgment's
+  head reduction to fire a structure recursor on any major, eta-expanding
+  it (`rec M x ~> M-rule (π0 x) .. (πn x)`, the kernel's
+  `toCtorWhenStructure`), which is untyped: the recursor names its
+  inductive. Stages:
+  E1 keys: `NdKey::Con` and `NdKey::Ty` carry a structure flag;
+  `has_type` ties a value's flag to its code's; `wf` asks a flagged node
+  for a non-bottom field; every producer passes `false` (no semantic
+  change). E2 smash on: codes and constructor values take the flag from
+  `struct_of`; the constructor's code function at bottom fields is `⊥`;
+  `recval` is irrefutable at structures; the model's lemmas re-proven.
+  E3 judgment: the recursor-eta head step and Iota instance, the
+  structure-eta conversion rule, transports, generation, uniqueness, SR.
+  E4 soundness and adequacy of both.
 - **T3: structure eta.** Rule `x ≡ c ps (Proj(0, x)) .. (Proj(n-1, x)) :
   S ps`. Soundness by the join-closure of `x`'s denotation; adequacy
   because a related `x` reduces to a constructor application whose

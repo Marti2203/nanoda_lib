@@ -506,7 +506,7 @@ pub proof fn proj_iota_sub(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
     let ws = crate::dom_bound::cf_spine(sig, c, us, args, rho, v);
     crate::dom_bound::tbody_end(crate::ti_syntax::dty_at(sig, c, us));
     let fl = crate::dom_bound::flds(ws, np);
-    let node = Cpt::Nd(NdKey::Con(s, 0), fl);
+    let node = Cpt::Nd(NdKey::Con(s, 0, false), fl);
     assert(le(v, node));
     assert(v == Cpt::Nd(v->Nd_0, v->Nd_1));
     crate::dom_sem::nd_le_inv(v->Nd_0, v->Nd_1, node);
@@ -591,7 +591,7 @@ pub proof fn proj_iota_sup(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
     }
     crate::dom_iota::con_major(sig, rid, 0, us, dps, pv, xf, ak, args, rho, xf);
     crate::beta_model::spine_recompose(x);
-    let node = Cpt::Nd(NdKey::Con(s, 0), xf);
+    let node = Cpt::Nd(NdKey::Con(s, 0, false), xf);
     proj_intro(sig, i, x, rho, node);
     assert(node->Nd_1[i as int] == v2);
     crate::dom_model::mem_down_e(sig, m, rho, v2, u);

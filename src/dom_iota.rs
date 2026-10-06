@@ -174,7 +174,7 @@ pub proof fn cf_apps(ind: u64, pc: nat, np: nat, ds: Seq<ExprSpec>, body: ExprSp
         crate::dom_code::aw(ws),
         ws.len() == ds.len(),
     ensures
-        le(crate::dom_rec::apps(v, ws), Cpt::Nd(NdKey::Con(ind, pc), cacc(fs, ws, k, np))),
+        le(crate::dom_rec::apps(v, ws), Cpt::Nd(NdKey::Con(ind, pc, false), cacc(fs, ws, k, np))),
     decreases ds.len(),
 {
     if ds.len() == 0 {
@@ -342,7 +342,7 @@ pub proof fn iota_major(ss: Sig, sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>
         let np = sh.np;
         let nf = sh.fields[p].len();
         &&& cargs.len() == np + nf
-        &&& x->Nd_0 == NdKey::Con(sh.ind, p as nat)
+        &&& x->Nd_0 == NdKey::Con(sh.ind, p as nat, false)
         &&& x->Nd_1.len() == nf
         &&& crate::dom_tele::chain_ok(sig, ctds(sig, rid, p, clv), bot_env(), r.1, r.0)
         &&& forall|i: int| 0 <= i < cargs.len() ==> #[trigger] mem(sig, cargs[i], rho, r.0[i])
@@ -404,7 +404,7 @@ pub proof fn iota_major(ss: Sig, sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>
         if !(v1 is Lam) {
             apps_nonlam(v1, c2);
         } else {
-            head_le(v1, Cpt::Nd(NdKey::Con(ind, p as nat), cacc(Seq::empty(), c1, 0, np)));
+            head_le(v1, Cpt::Nd(NdKey::Con(ind, p as nat, false), cacc(Seq::empty(), c1, 0, np)));
         }
         head_le(x, big);
     }
@@ -413,7 +413,7 @@ pub proof fn iota_major(ss: Sig, sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>
     let (cws2, _e, _l2, dcs) = crate::dom_tele::tele_apps(ss, sig, Seq::empty(), tds, body, lc, bot_env(), ac, vc, cws);
     assert(crate::dom_sound::fits_env(sig, Seq::empty(), bot_env()));
     cf_apps(ind, p as nat, np, tds, body, Seq::empty(), 0, vc, cws2);
-    let node = Cpt::Nd(NdKey::Con(ind, p as nat), cacc(Seq::empty(), cws2, 0, np));
+    let node = Cpt::Nd(NdKey::Con(ind, p as nat, false), cacc(Seq::empty(), cws2, 0, np));
     le_trans(x, big, node);
     head_le(x, node);
     crate::dom_sem::nd_le_inv(x->Nd_0, x->Nd_1, node);
@@ -1443,7 +1443,7 @@ pub proof fn lamchain_cf(ind: u64, pc: nat, np: nat, tds: Seq<ExprSpec>, body: E
         !(body is Bind),
         spine_head(body) == ExprSpec::Const(ind, spine_head(body)->Const_1),
         k + xs.len() >= np,
-        le(out, Cpt::Nd(NdKey::Con(ind, pc), cacc(fs, xs, k, np))),
+        le(out, Cpt::Nd(NdKey::Con(ind, pc, false), cacc(fs, xs, k, np))),
     ensures
         cf_fun(ind, pc, np, crate::rec_canon::binds(BinderKind::Pi, tds, body), fs, k, crate::dom_tele::lamchain(xs, out)),
     decreases tds.len(),
@@ -1745,7 +1745,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: S
         cf_fields_ok(sig, rid, p, cl, dps, pv, xf, ak),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
-        typed(Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf), crate::dom_code::canon_code(sig, sh.ind, cl, pv))
+        typed(Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xf), crate::dom_code::canon_code(sig, sh.ind, cl, pv))
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -1761,8 +1761,8 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: S
     crate::dom_canon::canon_typed(sig, ind, cl, pv);
     let dcan = crate::dom_code::canon_code(sig, ind, cl, pv);
     typed_wf(dcan, Cpt::U);
-    let val = Cpt::Nd(NdKey::Con(ind, p as nat), xf);
-    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat), xf);
+    let val = Cpt::Nd(NdKey::Con(ind, p as nat, false), xf);
+    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat, false), xf);
     parts_lower(val);
     let n = cstage(val, dcan) + cstage(dcan, Cpt::U) + 2;
     typed_up(dcan, Cpt::U, n);
@@ -1834,7 +1834,7 @@ pub proof fn cf_step(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<C
         &&& typed(r.0, Cpt::U)
         &&& typed(r.1, r.0)
         &&& cf_fun(sh.ind, p as nat, sh.np, crate::ti_syntax::dty_at(sig, c, clv), Seq::empty(), 0, r.1)
-        &&& le(Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf), crate::dom_rec::apps(r.1, pv + xf))
+        &&& le(Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xf), crate::dom_rec::apps(r.1, pv + xf))
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -1857,7 +1857,7 @@ pub proof fn cf_step(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<C
     cf_chain(sig, rid, p, clv, dps, pv, xf, ak);
     crate::dom_tele::pichain_mem(sig, tds, cb, bot_env(), dsc, xsc, dcan);
     let a = crate::dom_tele::pichain(dsc, xsc, dcan);
-    let val = Cpt::Nd(NdKey::Con(ind, p as nat), xf);
+    let val = Cpt::Nd(NdKey::Con(ind, p as nat, false), xf);
     cf_val_typed(sig, rid, p, clv, dps, pv, xf, ak);
     assert forall|i: int| 0 <= i < dsc.len() implies #[trigger] typed(xsc[i], dsc[i]) by {
         assert(crate::dom_sound::dfit(sig, tds[i], crate::dom_tele::exts(bot_env(), xsc.subrange(0, i)), dsc[i], xsc[i]));
@@ -2064,7 +2064,7 @@ pub proof fn ih_bound(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: LevelS
 pub open spec fn rebuilt(sig: Sig, rid: u64, p: int, xs: Seq<Cpt>) -> Seq<Cpt> {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     let pre = (sh.np + 1 + sh.nmin()) as int;
-    xs.subrange(0, pre).push(Cpt::Nd(NdKey::Con(sh.ind, p as nat), xs.subrange(pre, xs.len() as int)))
+    xs.subrange(0, pre).push(Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xs.subrange(pre, xs.len() as int)))
 }
 
 /// The arguments of rule `p`'s body.
@@ -2095,7 +2095,7 @@ pub proof fn rebuilt_facts(sig: Sig, rid: u64, p: int, xs: Seq<Cpt>)
         let x = rebuilt(sig, rid, p, xs);
         &&& crate::dom_rec::rec_ok(sig, rid, x)
         &&& crate::dom_code::aw(x)
-        &&& x.last() == Cpt::Nd(NdKey::Con(sh.ind, p as nat), xs.subrange(pre, xs.len() as int))
+        &&& x.last() == Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xs.subrange(pre, xs.len() as int))
         &&& x.last()->Nd_1.len() == sh.fields[p].len()
         &&& forall|i: int| 0 <= i < pre ==> #[trigger] x[i] == xs[i]
         &&& crate::dom_code::aw(body_top(sig, rid, p, xs))
@@ -2113,7 +2113,7 @@ pub proof fn rebuilt_facts(sig: Sig, rid: u64, p: int, xs: Seq<Cpt>)
     assert forall|i: int| 0 <= i < xf.len() implies #[trigger] wf(xf[i]) by {
         assert(xf[i] == xs[pre + i]);
     }
-    crate::dom_code::wf_nd(NdKey::Con(sh.ind, p as nat), xf);
+    crate::dom_code::wf_nd(NdKey::Con(sh.ind, p as nat, false), xf);
     assert forall|i: int| 0 <= i < x.len() implies #[trigger] wf(x[i]) by {
         if i < pre { assert(x[i] == xs[i]); }
     }
@@ -2641,6 +2641,47 @@ pub proof fn r2l_fields(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int,
         && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
         r2l_ps_mem(ss, sig, rid, lv, p, clv, ds, xs, k);
     }
+    r2l_fields_b(ss, sig, rid, lv, p, clv, ds, xs);
+    assert(crate::dom_code::aw(xf));
+    assert(crate::dom_tele::chain_ok(sig, pdoms_at(sig, rid, clv), bot_env(), ds.subrange(0, np as int), pv));
+}
+
+/// `r2l_fields`' parameter-typed and recursive fields.
+#[verifier::spinoff_prover]
+proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        crate::dom_sound::sound_oracle(ss, sig),
+        ss == crate::ti_strip::strip(sig),
+        crate::dom_rec_end::rec_hyps(sig, rid),
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+    ensures ({
+        let np = crate::dom_rec_ty::rshape(sig, rid).np as int;
+        let pre = (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int;
+        let pv = xs.subrange(0, np);
+        let xf = xs.subrange(pre, xs.len() as int);
+        let ak = ds.subrange(pre, ds.len() as int);
+        &&& forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) ==>
+            wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
+        &&& forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) ==>
+            typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, crate::dom_rec_ty::rshape(sig, rid).ind, clv, pv))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    r2l_pv(sig, rid, lv, p, clv, ds, xs);
+    let xf = xs.subrange(pre, xs.len() as int);
+    let ak = ds.subrange(pre, ds.len() as int);
+    let pv = xs.subrange(0, np as int);
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    crate::dom_rec_ty::rec_lps_sub(sig, rid);
+    crate::dom_rec_end::rec_canon_ok(sig, rid);
     assert forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) implies
         wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
         r2l_pvar_field(sig, rid, lv, p, clv, ds, xs, k);
@@ -2734,7 +2775,7 @@ pub proof fn con_major(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq
             && le(xf[k], wl[k]),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
-        mem(sig, spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs), rho, Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf))
+        mem(sig, spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs), rho, Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xf))
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -2760,8 +2801,8 @@ pub proof fn con_major(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq
             mem_down_e(sig, cargs[i], rho, wl[k], xf[k]);
         }
     }
-    let val = Cpt::Nd(NdKey::Con(ind, p as nat), xf);
-    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat), xf);
+    let val = Cpt::Nd(NdKey::Con(ind, p as nat, false), xf);
+    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat, false), xf);
     crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(c, clv), cargs, rho, v, ws, val);
 }
 
@@ -2780,7 +2821,7 @@ pub proof fn r2l_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<
             && le(xf[k], wl[k]),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
-        mem(sig, spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs), rho, Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf))
+        mem(sig, spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs), rho, Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xf))
     }),
 {
     let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -2806,8 +2847,8 @@ pub proof fn r2l_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<
             mem_down_e(sig, cargs[i], rho, wl[k], xf[k]);
         }
     }
-    let val = Cpt::Nd(NdKey::Con(ind, p as nat), xf);
-    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat), xf);
+    let val = Cpt::Nd(NdKey::Con(ind, p as nat, false), xf);
+    crate::dom_code::wf_nd(NdKey::Con(ind, p as nat, false), xf);
     crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(c, clv), cargs, rho, v, ws, val);
 }
 
@@ -2855,7 +2896,7 @@ pub proof fn r2l_fit(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, cl
     }
     rebuilt_facts(sig, rid, p, xs);
     let x = rebuilt(sig, rid, p, xs);
-    let maj = Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf);
+    let maj = Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xf);
     let dcan = crate::dom_code::canon_code(sig, sh.ind, us, pv);
     cf_val_typed(sig, rid, p, clv, dps, pv, xf, ak);
     crate::dom_code::canon_blind(sig, sh.ind, clv, us, pv);
@@ -2956,7 +2997,7 @@ pub proof fn iota_core_r2l(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: L
         assert(wf2[k] == wl[pre + k] && xf[k] == xs[pre + k]);
     }
     r2l_major(sig, rid, lv, p, clv, dps, pv, xf, ak, cargs, rho, wf2);
-    let maj = Cpt::Nd(NdKey::Con(sh.ind, p as nat), xf);
+    let maj = Cpt::Nd(NdKey::Con(sh.ind, p as nat, false), xf);
     // the recursor's step at the rebuilt inputs
     let dcan = crate::dom_code::canon_code(sig, sh.ind, crate::dom_rec_ty::rinst(sig, rid, lv), pv);
     let tds = crate::dom_rec_ty::rtds(sig, rid, lv);

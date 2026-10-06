@@ -203,13 +203,13 @@ pub open spec fn has_type(n: nat, u: Cpt, a: Cpt) -> bool
         (Cpt::Lam(f), Cpt::Pi(b, g)) => n >= 1 && has_type((n - 1) as nat, *b, Cpt::U)
             && forall|k: int| 0 <= k < f.len() ==> has_type((n - 1) as nat, #[trigger] f[k].0, *b)
                 && has_type((n - 1) as nat, f[k].1, cod(a, f[k].0)),
-        (Cpt::Nd(NdKey::Ty(_, _), ts), Cpt::U) => forall|j: int, k: int|
+        (Cpt::Nd(NdKey::Ty(_, _, _), ts), Cpt::U) => forall|j: int, k: int|
             0 <= j < tbl(ts).len() && tbl(ts)[j] is Nd && 0 <= k < tbl(ts)[j]->Nd_1.len() && is_centry(tbl(ts)[j]->Nd_1[k])
             ==> has_type(n, #[trigger] ecode(tbl(ts)[j]->Nd_1[k]), Cpt::U),
-        (Cpt::Nd(NdKey::Ty(_, true), ts), Cpt::Prop) => forall|j: int, k: int|
+        (Cpt::Nd(NdKey::Ty(_, true, _), ts), Cpt::Prop) => forall|j: int, k: int|
             0 <= j < tbl(ts).len() && tbl(ts)[j] is Nd && 0 <= k < tbl(ts)[j]->Nd_1.len() && is_centry(tbl(ts)[j]->Nd_1[k])
             ==> has_type(n, #[trigger] ecode(tbl(ts)[j]->Nd_1[k]), Cpt::U),
-        (Cpt::Nd(NdKey::Con(i, p), fs), Cpt::Nd(NdKey::Ty(i2, false), ts)) => i == i2 && has_type(n, a, Cpt::U)
+        (Cpt::Nd(NdKey::Con(i, p, sm), fs), Cpt::Nd(NdKey::Ty(i2, false, sm2), ts)) => i == i2 && sm == sm2 && has_type(n, a, Cpt::U)
             && (p as int) < tbl(ts).len() && tbl(ts)[p as int] is Nd && {
                 let es = tbl(ts)[p as int]->Nd_1;
                 &&& fs.len() == es.len()
@@ -229,7 +229,7 @@ proof fn has_type_decreases(n: nat, u: Cpt, a: Cpt) {
     }
     if a is Nd {
         tbl_lower(a);
-        if let (Cpt::Nd(NdKey::Con(i, p), fs), Cpt::Nd(NdKey::Ty(_, _), ts)) = (u, a) {
+        if let (Cpt::Nd(NdKey::Con(i, p, _), fs), Cpt::Nd(NdKey::Ty(_, _, _), ts)) = (u, a) {
             if (p as int) < tbl(ts).len() && tbl(ts)[p as int] is Nd {
                 let es = tbl(ts)[p as int]->Nd_1;
                 assert forall|k: int| 0 <= k < fs.len() && k < es.len() && is_centry(es[k])
@@ -346,7 +346,7 @@ pub proof fn ty_stable(n: nat, u: Cpt, a: Cpt)
                 assert(ht(u) >= 1);
             }
         },
-        (Cpt::Nd(NdKey::Con(_, p), fs), Cpt::Nd(NdKey::Ty(_, false), ts)) => {
+        (Cpt::Nd(NdKey::Con(_, p, _), fs), Cpt::Nd(NdKey::Ty(_, false, _), ts)) => {
             assert(stg(n, Cpt::U));
             ty_stable(n, a, Cpt::U);
             tbl_stg(n, a);
@@ -369,7 +369,7 @@ pub proof fn ty_stable(n: nat, u: Cpt, a: Cpt)
                 }
             }
         },
-        (Cpt::Nd(NdKey::Ty(_, _), ts), _) => {
+        (Cpt::Nd(NdKey::Ty(_, _, _), ts), _) => {
             tbl_stg(n, u);
             tbl_lower(u);
             assert(stg(n, Cpt::U));
@@ -444,7 +444,7 @@ pub proof fn ty_join(n: nat, u: Cpt, v: Cpt, a: Cpt)
                 }
             }
         },
-        (Cpt::Nd(NdKey::Ty(_, _), _), Cpt::Nd(_, _)) => {
+        (Cpt::Nd(NdKey::Ty(_, _, _), _), Cpt::Nd(_, _)) => {
             tbl_lower(u);
             tbl_lower(v);
             let tj = tbl(j->Nd_1);
@@ -467,7 +467,7 @@ pub proof fn ty_join(n: nat, u: Cpt, v: Cpt, a: Cpt)
                 }
             }
         },
-        (Cpt::Nd(NdKey::Con(_, p), f1), Cpt::Nd(_, f2)) => {
+        (Cpt::Nd(NdKey::Con(_, p, _), f1), Cpt::Nd(_, f2)) => {
             parts_lower(u);
             parts_lower(v);
             let ts = a->Nd_1;
@@ -574,7 +574,7 @@ pub proof fn ty_weak(n: nat, u: Cpt, a: Cpt, a2: Cpt)
                 ty_weak((n - 1) as nat, f[k].1, cod(a, x), cod(a2, x));
             }
         },
-        (Cpt::Nd(NdKey::Con(_, p), fs), Cpt::Nd(_, ts), Cpt::Nd(_, ts2)) => {
+        (Cpt::Nd(NdKey::Con(_, p, _), fs), Cpt::Nd(_, ts), Cpt::Nd(_, ts2)) => {
             parts_lower(u);
             crate::dom_sem::nd_le_inv(a->Nd_0, ts, a2);
             let bs = tbl(ts);

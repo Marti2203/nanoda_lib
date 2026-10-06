@@ -33,6 +33,12 @@ pub open spec fn canon_rec(sig: Sig, ind: u64) -> u64 {
     choose|rid: u64| rec_canon(sig, rid) && rec_ind(sig, rid) == ind
 }
 
+/// Whether `ind`'s values are smashed (docs/TYPED_TARGET.md, "The eta
+/// redesign"): not yet.
+pub open spec fn smash(sig: Sig, ind: u64) -> bool {
+    false
+}
+
 /// The shape of `ind`'s canonical recursor.
 pub open spec fn canon_shape(sig: Sig, ind: u64) -> IndShape {
     shape_of(sig, sig.ienv.recs[canon_rec(sig, ind)], ind)
@@ -164,7 +170,7 @@ pub open spec fn canon_code(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cp
     } else {
         Seq::empty()
     };
-    Cpt::Nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls)), code_args(sig, ind, args) + seq![Cpt::Nd(NdKey::Tag(2), blocks)])
+    Cpt::Nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls), false), code_args(sig, ind, args) + seq![Cpt::Nd(NdKey::Tag(2), blocks)])
 }
 
 /// The table's first `j` blocks.
@@ -241,6 +247,7 @@ pub open spec fn aw(xs: Seq<Cpt>) -> bool {
 pub proof fn wf_nd(key: NdKey, cs: Seq<Cpt>)
     requires
         aw(cs),
+        crate::dom_compact::smash_ok(key, cs),
     ensures
         wf(Cpt::Nd(key, cs)),
 {
@@ -321,7 +328,7 @@ pub proof fn canon_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
             assert(comps[i] == ca[i]);
         }
     }
-    wf_nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls)), comps);
+    wf_nd(NdKey::Ty(ind, is_prop_at(sig, ind, ls), false), comps);
 }
 
 pub proof fn cblocks_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: nat)
@@ -840,7 +847,7 @@ pub proof fn canon_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2
     pre_le_push2(c1, c2, Cpt::Nd(NdKey::Tag(2), b1), Cpt::Nd(NdKey::Tag(2), b2));
     assert(c1.push(Cpt::Nd(NdKey::Tag(2), b1)) =~= c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)]);
     assert(c2.push(Cpt::Nd(NdKey::Tag(2), b2)) =~= c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
-    nd_le(NdKey::Ty(ind, is_prop_at(sig, ind, ls)), c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)], c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
+    nd_le(NdKey::Ty(ind, is_prop_at(sig, ind, ls), false), c1 + seq![Cpt::Nd(NdKey::Tag(2), b1)], c2 + seq![Cpt::Nd(NdKey::Tag(2), b2)]);
 }
 
 pub proof fn cblocks_mono(sig: Sig, ind: u64, ls: Seq<LevelSpec>, a1: Seq<Cpt>, a2: Seq<Cpt>, j: nat)
