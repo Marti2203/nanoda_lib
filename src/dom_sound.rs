@@ -2031,6 +2031,12 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             sound(sig, ps[4], rho);
             crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
         },
+        Rule::RecEta(_) => {
+            // the recursor's eta step: sound by the irrefutable recursor
+            // (stage E4c)
+            reveal(crate::ti_syntax::rec_eta_ok);
+            crate::dom_code::smash_dead(sig, crate::rec_canon::rec_ind(sig, crate::beta_model::spine_head(j->Eq_1)->Const_0));
+        },
         Rule::StructEta(_) => {
             reveal(crate::ti_syntax::struct_eta_ok);
             sound(sig, ps[0], rho);

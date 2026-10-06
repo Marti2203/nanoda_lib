@@ -84,6 +84,7 @@ pub proof fn wf_last(sig: Sig, w: Deriv) -> (l: LevelSpec)
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
+    reveal(crate::ti_syntax::rec_eta_ok);
     let l = rule->CtxCons_0;
     crate::ti_meta::mk_d(sig, ps[1]);
     l

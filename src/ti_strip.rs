@@ -76,6 +76,11 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
         assert(!crate::ti_hred::rec_fire(strip(sig), j->Eq_1));
         assert(false);
     }
+    if r is RecEta {
+        reveal(crate::ti_syntax::rec_eta_ok);
+        assert(!crate::ti_hred::rec_smashed(strip(sig), j->Eq_1));
+        assert(false);
+    }
     if r is ConstDef || r is Delta {
         let m = j->Eq_1;
         crate::ti_locals::crank_same(strip(sig), sig, crate::ti_syntax::dval(sig, m->Const_0, m->Const_1));

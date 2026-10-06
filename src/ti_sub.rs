@@ -372,6 +372,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::ProjCong(_) => d_sub_pcong(sig, d, dl, s, s2),
         Rule::ProjIota(_) => d_sub_piota(sig, d, dl, s, s2),
         Rule::StructEta(_) => d_sub_seta(sig, d, dl, s, s2),
+        Rule::RecEta(_) => d_sub_reta(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => d_sub_sig(sig, d, dl, s, s2),
@@ -1205,6 +1206,48 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     ] + pj2));
     valid_node(sig, Rule::Iota(l), bj, bp);
     let bd = node(Rule::Iota(l), bj, bp);
+    let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
+    let z = d_trans(sig, bd, bb);
+    mk_d(sig, z);
+}
+
+#[verifier::spinoff_prover]
+proof fn d_sub_reta(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is RecEta,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    reveal(crate::ti_syntax::rec_eta_ok);
+    let l = rule->RecEta_0;
+    let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    spair_left(sig, g, dl, s, s2);
+    d_sub(sig, ps[0], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s2);
+    d_sub(sig, ps[2], dl, s, s);
+    assert(psub(sort(l), s) == sort(l));
+    crate::ti_subst::psub_reta(s, sig, m);
+    let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
+    let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
+    let q2 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    let bj = eq(dl, psub(m, s), psub(n, s), psub(a, s));
+    let bp = seq![q0, q1, q2];
+    assert(prems(bp, seq![
+        eq(dl, psub(m, s), psub(m, s), psub(a, s)),
+        eq(dl, psub(n, s), psub(n, s), psub(a, s)),
+        eq(dl, psub(a, s), psub(a, s), sort(l)),
+    ]));
+    assert(step_ok(sig, Rule::RecEta(l), bj, bp)) by { reveal(crate::ti_syntax::rec_eta_ok); }
+    valid_node(sig, Rule::RecEta(l), bj, bp);
+    let bd = node(Rule::RecEta(l), bj, bp);
     let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
     let z = d_trans(sig, bd, bb);
     mk_d(sig, z);

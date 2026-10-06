@@ -337,6 +337,11 @@ pub proof fn gen(sig: Sig, d: Deriv)
             gen(sig, ps[0]);
             gen(sig, ps[1]);
         },
+        Rule::RecEta(_) => {
+            reveal(crate::ti_syntax::rec_eta_ok);
+            gen(sig, ps[0]);
+            gen(sig, ps[1]);
+        },
         Rule::ProjCong(l) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             let st = concl(ps[0])->Eq_3;

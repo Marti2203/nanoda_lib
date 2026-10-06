@@ -509,6 +509,37 @@ pub proof fn pstep_star_inst_arg(env: EnvSpec, j: nat, a: ExprSpec, a2: ExprSpec
     assert(ch2[ch2.len() - 1] == inst(j, a2, e));
 }
 
+/// Closing a local keeps a smashed structure's recursor redex one, and
+/// its eta step's result commutes with it.
+pub proof fn fclose_reta(k: nat, c: nat, sig: crate::ti_syntax::Sig, sp: ExprSpec)
+    requires
+        env_fv_free(sig.ienv),
+        crate::ti_hred::rec_smashed(sig, sp),
+    ensures
+        crate::ti_hred::rec_smashed(sig, fclose(k, c, sp)),
+        fclose(k, c, crate::ti_hred::rec_eta_result(sig, sp)) == crate::ti_hred::rec_eta_result(sig, fclose(k, c, sp)),
+{
+    fclose_spine_const(k, c, sp);
+    let args = spine_args(sp);
+    let (rid, lv) = (spine_head(sp)->Const_0, spine_head(sp)->Const_1);
+    let rd = sig.ienv.recs[rid];
+    let rule = rd.rules[0];
+    let body = crate::expr_model::subst_expr_levels(rule.rhs, rd.uparams, lv);
+    crate::tc::subst_levels_nlbv(rule.rhs, rd.uparams, lv);
+    assert(sig.ienv.recs.contains_key(rid));
+    assert(!has_fv(sig.ienv.recs[rid].rules[0].rhs));
+    subst_expr_levels_has_fv(rule.rhs, rd.uparams, lv);
+    fclose_closed(k, c, body);
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    sclose_subrange(k, c, args, 0, rec_prefix(rd) as int);
+    let x = args[rd.major_idx as int];
+    let pj = crate::ti_syntax::projs(x, rule.nfields);
+    assert(sclose(k, c, pj) =~= crate::ti_syntax::projs(fclose(k, c, x), rule.nfields));
+    assert(sclose(k, c, args)[rd.major_idx as int] == fclose(k, c, x));
+    fclose_spine_app(k, c, body, pre);
+    fclose_spine_app(k, c, spine_app(body, pre), pj);
+}
+
 /// Closing a local keeps a recursor redex firing.
 pub proof fn fclose_fire(k: nat, c: nat, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     requires

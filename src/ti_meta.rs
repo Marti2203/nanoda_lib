@@ -156,6 +156,10 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
             reveal(crate::ti_syntax::struct_eta_ok);
             d_wf(sig, ps[0])
         },
+        Rule::RecEta(_) => {
+            reveal(crate::ti_syntax::rec_eta_ok);
+            d_wf(sig, ps[0])
+        },
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
@@ -181,7 +185,7 @@ pub proof fn d_wf_last(sig: Sig, d: Deriv) -> (r: (LevelSpec, Deriv))
     reveal(crate::ti_syntax::proj_cong_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
-    reveal(crate::ti_syntax::struct_eta_ok);
+    reveal(crate::ti_syntax::rec_eta_ok);
     match rule {
         Rule::CtxCons(l) => (l, ps[1]),
         _ => {
@@ -321,6 +325,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::ProjCong(_) => d_ren_pcong(sig, d, w, dl, r),
         Rule::ProjIota(_) => d_ren_piota(sig, d, w, dl, r),
         Rule::StructEta(_) => d_ren_seta(sig, d, w, dl, r),
+        Rule::RecEta(_) => d_ren_reta(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
         Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
@@ -946,6 +951,43 @@ proof fn d_ren_seta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     }
     valid_node(sig, Rule::StructEta(l), j2, ps2);
     node(Rule::StructEta(l), j2, ps2)
+}
+
+#[verifier::spinoff_prover]
+proof fn d_ren_reta(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is RecEta,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    reveal(crate::ti_syntax::rec_eta_ok);
+    let l = rule->RecEta_0;
+    let (m, n, a) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    let q = rn(r);
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    let d2 = d_ren(sig, ps[2], w, dl, r);
+    assert(psub(sort(l), q) == sort(l));
+    crate::ti_subst::psub_reta(q, sig, m);
+    let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    let ps2 = seq![d0, d1, d2];
+    assert(prems(ps2, seq![
+        eq(dl, psub(m, q), psub(m, q), psub(a, q)),
+        eq(dl, psub(n, q), psub(n, q), psub(a, q)),
+        eq(dl, psub(a, q), psub(a, q), sort(l)),
+    ]));
+    assert(step_ok(sig, Rule::RecEta(l), j2, ps2)) by { reveal(crate::ti_syntax::rec_eta_ok); }
+    valid_node(sig, Rule::RecEta(l), j2, ps2);
+    node(Rule::RecEta(l), j2, ps2)
 }
 
 } // verus!

@@ -51,6 +51,29 @@ pub open spec fn fire_inst(sig: Sig, t: ExprSpec) -> bool {
     crate::dom_rec_end::rec_interp(sig, crate::beta_model::spine_head(t)->Const_0) || crate::ti_syntax::iota_prop(sig, t)
 }
 
+/// The recursor's eta step reads only the constants and the inductive
+/// tables.
+pub proof fn reta_sig(s1: Sig, s2: Sig, a: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        rec_smashed(s1, a) == rec_smashed(s2, a),
+        rec_eta_result(s1, a) == rec_eta_result(s2, a),
+{
+    let rid = crate::beta_model::spine_head(a)->Const_0;
+    fire_inst_sig(s1, s2, a);
+    assert(crate::rec_canon::rec_ind(s1, rid) == crate::rec_canon::rec_ind(s2, rid));
+    let ind = crate::rec_canon::rec_ind(s1, rid);
+    if crate::ti_syntax::struct_of(s1, ind) {
+        crate::ti_proj::struct_congr(s1, s2, ind);
+    }
+    if crate::ti_syntax::struct_of(s2, ind) {
+        crate::ti_proj::struct_congr(s2, s1, ind);
+    }
+    assert(crate::dom_code::smash(s1, ind) == crate::dom_code::smash(s2, ind));
+}
+
 /// It reads only the head.
 pub proof fn fire_inst_head(sig: Sig, a: ExprSpec, b: ExprSpec)
     requires
@@ -99,10 +122,15 @@ pub proof fn fire_inst_interp(sig: Sig, a: ExprSpec)
 /// it fires on the major's projections (the kernel's structure eta for
 /// iota), without reducing the major first.
 pub open spec fn rec_eta(sig: Sig, t: ExprSpec) -> bool {
+    !rec_fire(sig, t) && rec_smashed(sig, t)
+}
+
+/// A smashed structure's recursor, interpreted by the model, applied up to
+/// its major: the redexes rule `RecEta` steps, whatever the major.
+pub open spec fn rec_smashed(sig: Sig, t: ExprSpec) -> bool {
     let h = crate::beta_model::spine_head(t);
     let rd = sig.ienv.recs[h->Const_0];
     &&& rec_major(sig, t)
-    &&& !rec_fire(sig, t)
     &&& crate::dom_code::smash(sig, crate::rec_canon::rec_ind(sig, h->Const_0))
     &&& rd.rules.len() == 1
     &&& crate::beta_model::rec_prefix(rd) == rd.major_idx

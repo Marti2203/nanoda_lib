@@ -262,6 +262,50 @@ proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
     }
 }
 
+/// The recursor's eta step, swapped.
+#[verifier::spinoff_prover]
+proof fn step_swap_reta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
+    requires
+        sig_fv_free(sig),
+        step_ok(sig, r, j, ps),
+        r is RecEta,
+        forall|k: int| 0 <= k < ps.len() ==> concl(#[trigger] pswap(sig, ps, x, y)[k]) == jswap(concl(ps[k]), x, y),
+    ensures
+        step_ok(sig_swap(sig, x, y), r, jswap(j, x, y), pswap(sig, ps, x, y)),
+{
+    reveal(crate::ti_syntax::rec_eta_ok);
+    let s2 = sig_swap(sig, x, y);
+    let qs = pswap(sig, ps, x, y);
+    assert(qs.len() == ps.len());
+    crate::swap_model::fswap_reta(sig, j->Eq_1, x, y);
+    crate::ti_hred::reta_sig(sig, s2, crate::swap_model::fswap(j->Eq_1, x, y));
+    assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+    assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+    assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
+}
+
+/// The recursor's eta step, closed.
+#[verifier::spinoff_prover]
+proof fn step_close_reta(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        close_ok(sig, k, a),
+        step_ok(sig_with(sig, k, a), r, j, ps),
+        r is RecEta,
+        forall|i: int| 0 <= i < ps.len() ==> concl(#[trigger] pclose(sig, k, a, ps)[i]) == jclose(k, a, concl(ps[i])),
+    ensures
+        step_ok(sig, r, jclose(k, a, j), pclose(sig, k, a, ps)),
+{
+    reveal(crate::ti_syntax::rec_eta_ok);
+    let s1 = sig_with(sig, k, a);
+    let qs = pclose(sig, k, a, ps);
+    assert(qs.len() == ps.len());
+    crate::ti_hred::reta_sig(sig, s1, j->Eq_1);
+    crate::fclose::fclose_reta(k, j->Eq_0.len(), sig, j->Eq_1);
+    assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+    assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+    assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));
+}
+
 /// The Iota instance, swapped.
 #[verifier::spinoff_prover]
 proof fn step_swap_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
@@ -619,6 +663,7 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
         Rule::Iota(_) => step_swap_iota(sig, r, j, ps, x, y),
         Rule::ProjCong(_) | Rule::ProjIota(_) => step_swap_proj(sig, r, j, ps, x, y),
         Rule::StructEta(_) => step_swap_seta(sig, r, j, ps, x, y),
+        Rule::RecEta(_) => step_swap_reta(sig, r, j, ps, x, y),
         Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;
             let ls = j->Eq_1->Const_1;
@@ -772,6 +817,10 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
     }
     if r is StructEta {
         step_close_seta(sig, k, a, r, j, ps);
+        return;
+    }
+    if r is RecEta {
+        step_close_reta(sig, k, a, r, j, ps);
         return;
     }
     if r is CtxNil || r is CtxCons || r is Var || r is Univ || r is Sym || r is Trans || r is Conv || r is Irr {

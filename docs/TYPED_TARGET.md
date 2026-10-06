@@ -1450,6 +1450,30 @@ case:
   followed by ordinary Iota at the constructor application.
   E4 soundness and adequacy of StructEta (done), and the recursor's
   adequacy at the irrefutable match (through the head step).
+  **Revision (E4c, 2026-10-06): a smashed structure's recursor never
+  takes Iota; its eta step is a rule (`RecEta`).** The recursor's end in
+  adequacy can read typing facts only off the logical relation: every
+  inversion lemma (`uniq`, `spine_ty`, `dom_fund`'s injectivity, and so
+  `iota_sr` and the projection's subject reduction) is proven from
+  adequacy, so calling one there is circular. A major that is the
+  constructor's application with a bottom value then has untyped fields:
+  typing them at the recursor's parameters needs the constructor's
+  parameters to be the recursor's (injectivity) and the spine's
+  arguments typed at its head's declared domains (Pi injectivity), and
+  the relation at bottom says nothing. Restricting Iota to the
+  constructor at the redex's own parameters does not help (the spine
+  still needs inverting), and keeping Iota as a rule while the head step
+  eta-expands breaks Iota's adequacy (the minor at the projections and
+  at the fields would have to be related without the minor's own
+  relation). So `rec_fire` excludes smashed structures: their redexes
+  always take the eta step, the end route only ever meets the major's
+  projections (typed by ProjCong from the major's own typing), and the
+  step gets its own rule `RecEta` (`m ≡ rec_eta_result(m)`, both sides
+  typed), adequate by one head step like Iota, sound by the irrefutable
+  recursor (a projection of a constructor value is its field, of
+  anything else bottom). The kernel's Iota at a structure's constructor
+  application becomes RecEta followed by ProjIota at each field, derived
+  outside adequacy where inversion is available.
 - **T3: structure eta.** Rule `x ≡ c ps (Proj(0, x)) .. (Proj(n-1, x)) :
   S ps`. Soundness by the join-closure of `x`'s denotation; adequacy
   because a related `x` reduces to a constructor application whose

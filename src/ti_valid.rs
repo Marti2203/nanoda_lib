@@ -90,6 +90,10 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Iota(_) => {
             d_ty(sig, ps[0]);
         },
+        Rule::RecEta(_) => {
+            reveal(crate::ti_syntax::rec_eta_ok);
+            d_ty(sig, ps[0]);
+        },
         Rule::ProjCong(l) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             mk_d(sig, ps[1]);
@@ -214,6 +218,9 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     }
     if r is StructEta {
         crate::ti_syntax::seta_dead_ns(sig, r, j, ps);
+    }
+    if r is RecEta {
+        crate::ti_syntax::reta_dead_ns(sig, r, j, ps);
     }
     match r {
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Delta(_) => {

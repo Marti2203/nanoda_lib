@@ -59,6 +59,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::ProjCong(l) => Rule::ProjCong(ll_(l, ks, vs)),
         Rule::ProjIota(l) => Rule::ProjIota(ll_(l, ks, vs)),
         Rule::StructEta(l) => Rule::StructEta(ll_(l, ks, vs)),
+        Rule::RecEta(l) => Rule::RecEta(ll_(l, ks, vs)),
         Rule::ConstAx(l) => Rule::ConstAx(ll_(l, ks, vs)),
         Rule::ConstDef(l) => Rule::ConstDef(ll_(l, ks, vs)),
         Rule::Local(l) => Rule::Local(ll_(l, ks, vs)),
@@ -499,6 +500,26 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
 }
 
+/// The recursor's eta step at a level instance.
+#[verifier::spinoff_prover]
+proof fn step_ls_reta(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        step_ok(sig, r, j, ps),
+        pls_ok(sig, ps, ks, vs),
+        r is RecEta,
+    ensures
+        step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
+{
+    reveal(crate::ti_syntax::rec_eta_ok);
+    let qs = pls(sig, ps, ks, vs);
+    assert(qs.len() == ps.len());
+    crate::level_inst::li_reta(sig, j->Eq_1, ks, vs);
+    assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+    assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+    assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
+}
+
 /// The projection instances at a level instance.
 /// The structure-eta instance at a level instance.
 #[verifier::spinoff_prover]
@@ -601,6 +622,8 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
         step_ls_proj(sig, r, j, ps, ks, vs);
     } else if r is StructEta {
         step_ls_seta(sig, r, j, ps, ks, vs);
+    } else if r is RecEta {
+        step_ls_reta(sig, r, j, ps, ks, vs);
     } else {
         step_ls_cst(sig, r, j, ps, ks, vs);
     }
@@ -711,6 +734,10 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
             assert(consts_ok(sig, j));
         },
         Rule::Local(_) | Rule::Var(_) | Rule::Univ(..) | Rule::CtxNil | Rule::CtxCons(_) => {
+            assert(consts_ok(sig, j));
+        },
+        Rule::RecEta(_) => {
+            reveal(crate::ti_syntax::rec_eta_ok);
             assert(consts_ok(sig, j));
         },
         _ => {

@@ -207,6 +207,10 @@ pub enum Rule {
     /// Structure eta: two terms of a (smashed) structure type whose
     /// projections convert convert (unit eta when it has no fields).
     StructEta(LevelSpec),
+    /// A smashed structure's recursor applied up to its major unfolds to
+    /// its single rule at the major's projections (the recursor's eta
+    /// step, the only way it reduces), both sides typed.
+    RecEta(LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -398,6 +402,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),
         Rule::ProjIota(l) => proj_iota_ok(sig, l, j, ps),
         Rule::StructEta(l) => struct_eta_ok(sig, l, j, ps),
+        Rule::RecEta(l) => rec_eta_ok(sig, l, j, ps),
         Rule::Irr(l) => match j {
             Jd::Eq(g, m, n, a) => is_zero(l) && prems(ps, seq![
                 eq(g, a, a, sort(l)),
@@ -589,6 +594,31 @@ pub open spec fn struct_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) ->
                 == eq(g, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), proj_ty(sig, t, k as nat, m)->Some_0),
         _ => false,
     }
+}
+
+/// Rule `RecEta`'s instance: a smashed structure's recursor redex and its
+/// eta step's result, both typed at a type at the sort.
+#[verifier::opaque]
+pub open spec fn rec_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
+    match j {
+        Jd::Eq(g, m, n, t) => crate::ti_hred::rec_smashed(sig, m) && n == crate::ti_hred::rec_eta_result(sig, m)
+            && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]),
+        _ => false,
+    }
+}
+
+/// The recursor's eta step is dead in a signature without structures.
+pub proof fn reta_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        step_ok(sig, r, j, ps),
+        r is RecEta,
+        no_structs(sig),
+    ensures
+        false,
+{
+    reveal(rec_eta_ok);
+    let rid = crate::beta_model::spine_head(j->Eq_1)->Const_0;
+    assert(struct_of(sig, crate::rec_canon::rec_ind(sig, rid)));
 }
 
 /// Structure eta is dead in a signature without structures.

@@ -218,6 +218,12 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::ProjCong(_) => adeq_pcong(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ProjIota(_) => adeq_piota(sig, d, rho, dl, s, s2, n, u, a),
         Rule::StructEta(_) => adeq_seta(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::RecEta(_) => {
+            // one head step, once Iota excludes smashed structures (stage E4c)
+            crate::ti_meta::valid_prems(sig, d);
+            reveal(crate::ti_syntax::rec_eta_ok);
+            crate::dom_code::smash_dead(sig, crate::rec_canon::rec_ind(sig, crate::beta_model::spine_head(concl(d)->Eq_1)->Const_0));
+        },
         _ => {},
     }
 }

@@ -1009,6 +1009,36 @@ pub open spec fn dty_fv_free(dty: Map<u64, (Seq<u64>, ExprSpec)>) -> bool {
     forall|c: u64| #[trigger] dty.contains_key(c) ==> !has_fv(dty[c].1)
 }
 
+/// Swapping locals keeps a smashed structure's recursor redex one, and
+/// its eta step's result commutes with it.
+pub proof fn fswap_reta(sig: crate::ti_syntax::Sig, s: ExprSpec, x: nat, y: nat)
+    requires
+        env_fv_free(sig.ienv),
+        crate::ti_hred::rec_smashed(sig, s),
+    ensures
+        crate::ti_hred::rec_smashed(sig, fswap(s, x, y)),
+        fswap(crate::ti_hred::rec_eta_result(sig, s), x, y) == crate::ti_hred::rec_eta_result(sig, fswap(s, x, y)),
+{
+    fswap_spine(s, x, y);
+    let args = spine_args(s);
+    let (rid, lv) = (spine_head(s)->Const_0, spine_head(s)->Const_1);
+    let rd = sig.ienv.recs[rid];
+    let rule = rd.rules[0];
+    let body = subst_expr_levels(rule.rhs, rd.uparams, lv);
+    assert(sig.ienv.recs.contains_key(rid));
+    assert(!has_fv(sig.ienv.recs[rid].rules[0].rhs));
+    subst_expr_levels_has_fv(rule.rhs, rd.uparams, lv);
+    fswap_closed(body, x, y);
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    sswap_subrange(args, 0, rec_prefix(rd) as int, x, y);
+    let z = args[rd.major_idx as int];
+    let pj = crate::ti_syntax::projs(z, rule.nfields);
+    assert(sswap(pj, x, y) =~= crate::ti_syntax::projs(fswap(z, x, y), rule.nfields));
+    assert(sswap(args, x, y)[rd.major_idx as int] == fswap(z, x, y));
+    fswap_spine_app(body, pre, x, y);
+    fswap_spine_app(spine_app(body, pre), pj, x, y);
+}
+
 /// Swapping locals keeps a recursor redex firing.
 pub proof fn fswap_fire(sig: crate::ti_syntax::Sig, s: ExprSpec, x: nat, y: nat)
     requires

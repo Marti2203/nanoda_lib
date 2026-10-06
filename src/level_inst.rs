@@ -898,6 +898,36 @@ pub proof fn elp_in_spine(h: ExprSpec, args: Seq<ExprSpec>, us: Seq<u64>)
     }
 }
 
+/// Level instantiation keeps a smashed structure's recursor redex one,
+/// and its eta step's result commutes with it.
+pub proof fn li_reta(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        env_lp_ok(sig.ienv),
+        ks.len() == vs.len(),
+        crate::ti_hred::rec_smashed(sig, sp),
+    ensures
+        crate::ti_hred::rec_smashed(sig, subst_expr_levels(sp, ks, vs)),
+        subst_expr_levels(crate::ti_hred::rec_eta_result(sig, sp), ks, vs) == crate::ti_hred::rec_eta_result(sig, subst_expr_levels(sp, ks, vs)),
+{
+    li_spine_const(sp, ks, vs);
+    let args = spine_args(sp);
+    let (rid, lv) = (spine_head(sp)->Const_0, spine_head(sp)->Const_1);
+    let rd = sig.ienv.recs[rid];
+    let rule = rd.rules[0];
+    let body = subst_expr_levels(rule.rhs, rd.uparams, lv);
+    assert(sig.ienv.recs.contains_key(rid));
+    assert(elp_in(sig.ienv.recs[rid].rules[0].rhs, sig.ienv.recs[rid].uparams));
+    expr_compose(rule.rhs, rd.uparams, lv, ks, vs);
+    let pre = args.subrange(0, rec_prefix(rd) as int);
+    sli_subrange(args, 0, rec_prefix(rd) as int, ks, vs);
+    let x = args[rd.major_idx as int];
+    let pj = crate::ti_syntax::projs(x, rule.nfields);
+    assert(sli(pj, ks, vs) =~= crate::ti_syntax::projs(subst_expr_levels(x, ks, vs), rule.nfields));
+    assert(sli(args, ks, vs)[rd.major_idx as int] == subst_expr_levels(x, ks, vs));
+    li_spine_app(body, pre, ks, vs);
+    li_spine_app(spine_app(body, pre), pj, ks, vs);
+}
+
 /// Level instantiation keeps a recursor redex firing.
 pub proof fn li_fire(sig: crate::ti_syntax::Sig, sp: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
