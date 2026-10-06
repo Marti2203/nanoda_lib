@@ -51,6 +51,8 @@ pub enum Wit {
     /// At a semantic constant: the element of its type, the typed element
     /// above the member, and the type element's witness.
     Sem(Cpt, Cpt, Box<Wit>),
+    /// At a projection: the subject's constructor value and its witness.
+    Pj(Cpt, Box<Wit>),
 }
 
 /// The generator's step list (Lam or Pi).
@@ -201,6 +203,11 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
                 _ => false,
             }),
         ExprSpec::Let(t, v, b) => mem_w(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, w),
+        ExprSpec::Proj(i, x) => u is Bot || match w {
+            Wit::Pj(v, wx) => wf(u) && mem_w(sig, *x, rho, v, *wx) && v is Nd && v->Nd_0 is Con
+                && (i as int) < v->Nd_1.len() && le(u, v->Nd_1[i as int]),
+            _ => false,
+        },
         _ => u is Bot,
     }
 }
@@ -325,6 +332,14 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
                 }
             }
         },
+        ExprSpec::Proj(i, x) => {
+            if !(u2 is Bot) {
+                head_le(u2, u);
+                if let Wit::Pj(v, wx) = w {
+                    le_trans(u2, u, v->Nd_1[i as int]);
+                }
+            }
+        },
         _ => {
             if !(u2 is Bot) {
                 head_le(u2, u);
@@ -385,6 +400,13 @@ pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w:
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
             mem_env_mono(sig, crate::subst_algebra::inst(0, *v, *b), rho, rho2, u, w);
+        },
+        ExprSpec::Proj(i, x) => {
+            if !(u is Bot) {
+                if let Wit::Pj(v, wx) = w {
+                    mem_env_mono(sig, *x, rho, rho2, v, *wx);
+                }
+            }
         },
         _ => {},
     }
@@ -458,6 +480,11 @@ pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: 
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
             mem_rn(sig, crate::subst_algebra::inst(0, *v, *b), r, rho, u, w);
+        },
+        ExprSpec::Proj(i, x) => {
+            if let Wit::Pj(v, wx) = w {
+                mem_rn(sig, *x, r, rho, v, *wx);
+            }
         },
         _ => {},
     }
@@ -598,6 +625,15 @@ pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: 
             mem_psub_back(sig, r, s, rho, rho2, u, w);
             let w2 = choose|v2: Wit| #[trigger] mem_w(sig, psub(r, s), rho, u, v2);
             assert(mem_w(sig, psub(m, s), rho, u, w2));
+        },
+        ExprSpec::Proj(i, x) => {
+            if u is Bot {
+                assert(mem_w(sig, psub(m, s), rho, u, Wit::Nil));
+            } else if let Wit::Pj(v, wx) = w {
+                mem_psub_back(sig, *x, s, rho, rho2, v, *wx);
+                let v1 = choose|v1: Wit| #[trigger] mem_w(sig, psub(*x, s), rho, v, v1);
+                assert(mem_w(sig, psub(m, s), rho, u, Wit::Pj(v, Box::new(v1))));
+            }
         },
         _ => {
             assert(mem_w(sig, psub(m, s), rho, u, Wit::Nil));
@@ -1058,6 +1094,21 @@ pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: E
             assert(mem_w(sig, m, bot_env(), u, w));
             bot_env()
         },
+        ExprSpec::Proj(i, x) => {
+            if u is Bot {
+                covers_bot(sig, s, rho);
+                assert(mem_w(sig, m, bot_env(), u, Wit::Nil));
+                bot_env()
+            } else if let Wit::Pj(v, wx) = w {
+                let r = mem_psub_fwd(sig, *x, s, rho, v, *wx);
+                let v1 = choose|v1: Wit| #[trigger] mem_w(sig, *x, r, v, v1);
+                assert(mem_w(sig, m, r, u, Wit::Pj(v, Box::new(v1))));
+                r
+            } else {
+                assert(false);
+                bot_env()
+            }
+        },
         _ => {
             covers_bot(sig, s, rho);
             assert(mem_w(sig, m, bot_env(), u, Wit::Nil));
@@ -1144,6 +1195,11 @@ pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: C
             if let Wit::Ap(wf_, wx, w1, w2) = w {
                 mem_closed(sig, *f, rho, rho2, k, wf_, *w1);
                 mem_closed(sig, *x, rho, rho2, k, wx, *w2);
+            }
+        },
+        ExprSpec::Proj(i, x) => {
+            if let Wit::Pj(v, wx) = w {
+                mem_closed(sig, *x, rho, rho2, k, v, *wx);
             }
         },
         ExprSpec::Let(t, v, b) => {
