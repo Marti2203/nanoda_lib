@@ -198,6 +198,12 @@ pub enum Rule {
     /// rule's instance, where both sides are typed, and their type is a
     /// type at the given sort (a proposition for a recursor into Prop).
     Iota(LevelSpec),
+    /// A projection, at its field's type over the parameters and the
+    /// earlier projections (a proposition when the structure may be one).
+    ProjCong(LevelSpec),
+    /// A projection of a constructor application unfolds to its field,
+    /// both sides typed.
+    ProjIota(LevelSpec),
 }
 
 /// A derivation: a rule, its conclusion, its premises.
@@ -386,6 +392,8 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + iota_pjs(sig, g, m)),
             _ => false,
         },
+        Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),
+        Rule::ProjIota(l) => proj_iota_ok(sig, l, j, ps),
         Rule::Irr(l) => match j {
             Jd::Eq(g, m, n, a) => is_zero(l) && prems(ps, seq![
                 eq(g, a, a, sort(l)),
@@ -394,6 +402,125 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             ]),
             _ => false,
         },
+    }
+}
+
+/// A STRUCTURE: a canonical inductive with one constructor and no indices.
+#[verifier::opaque]
+pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
+    crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
+}
+
+/// Projections' signature condition: for now no structures, so the
+/// projection rules are dead until the model interprets them
+/// (docs/TYPED_TARGET.md, "Structures stage plan", T2).
+pub open spec fn proj_ok(sig: Sig) -> bool {
+    forall|s: u64| !#[trigger] struct_of(sig, s)
+}
+
+/// The projections of `x` before field `i`.
+pub open spec fn projs(x: ExprSpec, i: nat) -> Seq<ExprSpec> {
+    Seq::new(i, |j: int| ExprSpec::Proj(j as usize, Box::new(x)))
+}
+
+/// Field `i`'s type of the structure application `st`, at the
+/// projection's subject `x`: the constructor's field at the instance, over
+/// the parameters and `x`'s earlier projections.
+#[verifier::opaque]
+pub open spec fn proj_ty(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec) -> Option<ExprSpec> {
+    let h = crate::beta_model::spine_head(st);
+    let args = crate::beta_model::spine_args(st);
+    if h is Const && struct_of(sig, h->Const_0) {
+        let (s, us) = (h->Const_0, h->Const_1);
+        let sh = crate::dom_code::canon_shape(sig, s);
+        if args.len() == sh.np && us.len() == sig.consts[s].lps.len() && i < sh.fields[0].len() {
+            Some(crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(sh.fields[0][i as int], sig.consts[s].lps, us), args + projs(x, i)))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// The structure application `st` may be a proposition at its instance.
+#[verifier::opaque]
+pub open spec fn proj_prop(sig: Sig, st: ExprSpec) -> bool {
+    let h = crate::beta_model::spine_head(st);
+    let (s, us) = (h->Const_0, h->Const_1);
+    let t = sig.consts[s].ty;
+    let l = crate::level_model::subst_level_spec(crate::rec_canon::tbody(t, crate::rec_canon::tarity(t))->Sort_0, sig.consts[s].lps, us);
+    !(forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) > 0)
+}
+
+/// A projection redex: of a constructor application of a structure, with
+/// all its arguments.
+#[verifier::opaque]
+pub open spec fn proj_fire(sig: Sig, m: ExprSpec) -> bool {
+    m is Proj && {
+        let (i, x) = (m->Proj_0 as nat, *m->Proj_1);
+        let h = crate::beta_model::spine_head(x);
+        h is Const && sig.ienv.ctor_ind.contains_key(h->Const_0) && struct_of(sig, sig.ienv.ctor_ind[h->Const_0]) && {
+            let sh = crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[h->Const_0]);
+            h->Const_0 == sh.ctors[0] && crate::beta_model::spine_args(x).len() == sh.np + sh.fields[0].len() && i < sh.fields[0].len()
+        }
+    }
+}
+
+/// Its reduct: the projected field.
+#[verifier::opaque]
+pub open spec fn proj_result(sig: Sig, m: ExprSpec) -> ExprSpec {
+    let x = *m->Proj_1;
+    let sh = crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[crate::beta_model::spine_head(x)->Const_0]);
+    crate::beta_model::spine_args(x)[(sh.np + m->Proj_0 as nat) as int]
+}
+
+/// Rule `ProjCong`'s instance.
+#[verifier::opaque]
+pub open spec fn proj_cong_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
+    match j {
+        Jd::Eq(g, m, n, t) => m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
+            let st = concl(ps[0])->Eq_3;
+            let (x, x2) = (*m->Proj_1, *n->Proj_1);
+            proj_ok(sig) && proj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
+                && prems(ps, seq![eq(g, x, x2, st), eq(g, t, t, sort(l))])
+        },
+        _ => false,
+    }
+}
+
+/// Rule `ProjIota`'s instance.
+#[verifier::opaque]
+pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
+    match j {
+        Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 4 && concl(ps[2]) is Eq && {
+            let st = concl(ps[2])->Eq_3;
+            proj_ok(sig) && proj_fire(sig, m) && n == proj_result(sig, m) && (proj_prop(sig, st) ==> is_zero(l))
+                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l))])
+        },
+        _ => false,
+    }
+}
+
+/// The projection rules are dead while there are no structures.
+pub proof fn proj_dead(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        step_ok(sig, r, j, ps),
+        r is ProjCong || r is ProjIota,
+    ensures
+        false,
+{
+    reveal(proj_cong_ok);
+    reveal(proj_iota_ok);
+    reveal(proj_ty);
+    reveal(proj_fire);
+    let m = j->Eq_1;
+    if r is ProjCong {
+        let st = concl(ps[0])->Eq_3;
+        assert(struct_of(sig, crate::beta_model::spine_head(st)->Const_0));
+    } else {
+        let x = *m->Proj_1;
+        assert(struct_of(sig, sig.ienv.ctor_ind[crate::beta_model::spine_head(x)->Const_0]));
     }
 }
 

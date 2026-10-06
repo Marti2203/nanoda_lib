@@ -132,6 +132,9 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     match rule {
         Rule::Var(_) => ps[0],
         Rule::Univ(_, _) => ps[0],
@@ -166,6 +169,9 @@ pub proof fn d_wf_last(sig: Sig, d: Deriv) -> (r: (LevelSpec, Deriv))
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     match rule {
         Rule::CtxCons(l) => (l, ps[1]),
         _ => {
@@ -264,6 +270,9 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;

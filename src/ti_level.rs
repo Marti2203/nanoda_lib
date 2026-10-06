@@ -56,6 +56,8 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::Eta(l1, l2) => Rule::Eta(ll_(l1, ks, vs), ll_(l2, ks, vs)),
         Rule::Irr(l) => Rule::Irr(ll_(l, ks, vs)),
         Rule::Iota(l) => Rule::Iota(ll_(l, ks, vs)),
+        Rule::ProjCong(l) => Rule::ProjCong(ll_(l, ks, vs)),
+        Rule::ProjIota(l) => Rule::ProjIota(ll_(l, ks, vs)),
         Rule::ConstAx(l) => Rule::ConstAx(ll_(l, ks, vs)),
         Rule::ConstDef(l) => Rule::ConstDef(ll_(l, ks, vs)),
         Rule::Local(l) => Rule::Local(ll_(l, ks, vs)),
@@ -507,6 +509,9 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
 {
     valid_prems(sig, d);
     let Deriv::Node(r, j, ps) = d;
+    if r is ProjCong || r is ProjIota {
+        crate::ti_syntax::proj_dead(sig, r, j, ps);
+    }
     let qs = pls(sig, ps, ks, vs);
     assert forall|k: int| 0 <= k < ps.len() implies valid(sig, #[trigger] qs[k]) && concl(qs[k]) == jls(concl(ps[k]), ks, vs) by {
         d_ls(sig, ps[k], ks, vs);
@@ -599,6 +604,9 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(r, j, ps) = d;
+    if r is ProjCong || r is ProjIota {
+        crate::ti_syntax::proj_dead(sig, r, j, ps);
+    }
     let k = ps.len();
     if k > 0 { d_consts(sig, ps[0]); }
     if k > 1 { d_consts(sig, ps[1]); }

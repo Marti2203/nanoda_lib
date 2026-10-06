@@ -195,6 +195,9 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     decreases d, 20int,
 {
     valid_prems(sig, d);
+    if d->Node_0 is ProjCong || d->Node_0 is ProjIota {
+        crate::ti_syntax::proj_dead(sig, d->Node_0, d->Node_1, d->Node_2);
+    }
     match d->Node_0 {
         Rule::Var(_) => adeq_var(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Univ(_, _) => adeq_univ(sig, d, rho, dl, s, s2, n, u, a),

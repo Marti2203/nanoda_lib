@@ -1979,6 +1979,9 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
     valid_prems(sig, d);
     crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;

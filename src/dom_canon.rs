@@ -450,25 +450,25 @@ pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pd
 }
 
 /// CANONICAL CODES ARE TYPES: their table entries are canonical codes of
-/// lower-ranked formers, parameters' codes, or bottom.
+/// One table entry of a canonical code is a type at the code's stage.
 #[verifier::spinoff_prover]
-pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
+proof fn canon_entry_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>, j: int, k: int, n: nat)
     requires
         aw(args),
         sparams_typed(sig, ind, args),
+        n == cstage(canon_code(sig, ind, ls, args), Cpt::U),
+        0 <= j < crate::dom_typing::tbl(canon_code(sig, ind, ls, args)->Nd_1).len(),
+        crate::dom_typing::tbl(canon_code(sig, ind, ls, args)->Nd_1)[j] is Nd,
+        0 <= k < crate::dom_typing::tbl(canon_code(sig, ind, ls, args)->Nd_1)[j]->Nd_1.len(),
+        crate::dom_typing::is_centry(crate::dom_typing::tbl(canon_code(sig, ind, ls, args)->Nd_1)[j]->Nd_1[k]),
     ensures
-        typed(canon_code(sig, ind, ls, args), Cpt::U),
-        is_prop_at(sig, ind, ls) ==> typed(canon_code(sig, ind, ls, args), Cpt::Prop),
+        has_type(n, crate::dom_typing::ecode(crate::dom_typing::tbl(canon_code(sig, ind, ls, args)->Nd_1)[j]->Nd_1[k]), Cpt::U),
     decreases rk(sig, ind) + 1, 0int, 0int,
 {
     let c = canon_code(sig, ind, ls, args);
     canon_wf(sig, ind, ls, args);
-    let n = cstage(c, Cpt::U);
     let ts = c->Nd_1;
     crate::dom_typing::tbl_lower(c);
-    assert forall|j: int, k: int| 0 <= j < crate::dom_typing::tbl(ts).len() && crate::dom_typing::tbl(ts)[j] is Nd
-        && 0 <= k < crate::dom_typing::tbl(ts)[j]->Nd_1.len() && crate::dom_typing::is_centry(crate::dom_typing::tbl(ts)[j]->Nd_1[k])
-        implies has_type(n, #[trigger] crate::dom_typing::ecode(crate::dom_typing::tbl(ts)[j]->Nd_1[k]), Cpt::U) by {
         let sh = canon_shape(sig, ind);
         let blocks = cblocks(sig, ind, ls, args, sh.nmin());
         assert(tabled(sig, ind, ls, args));
@@ -499,7 +499,29 @@ pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
             }
             ps_ceval_typed(sig, rk(sig, ind), ind, ls, sh.pdoms, sh.np, k as nat, pe, e);
         }
-        typed_up(v, Cpt::U, n);
+    typed_up(v, Cpt::U, n);
+}
+
+/// lower-ranked formers, parameters' codes, or bottom.
+#[verifier::spinoff_prover]
+pub proof fn canon_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>)
+    requires
+        aw(args),
+        sparams_typed(sig, ind, args),
+    ensures
+        typed(canon_code(sig, ind, ls, args), Cpt::U),
+        is_prop_at(sig, ind, ls) ==> typed(canon_code(sig, ind, ls, args), Cpt::Prop),
+    decreases rk(sig, ind) + 1, 0int, 1int,
+{
+    let c = canon_code(sig, ind, ls, args);
+    canon_wf(sig, ind, ls, args);
+    let n = cstage(c, Cpt::U);
+    let ts = c->Nd_1;
+    crate::dom_typing::tbl_lower(c);
+    assert forall|j: int, k: int| 0 <= j < crate::dom_typing::tbl(ts).len() && crate::dom_typing::tbl(ts)[j] is Nd
+        && 0 <= k < crate::dom_typing::tbl(ts)[j]->Nd_1.len() && crate::dom_typing::is_centry(crate::dom_typing::tbl(ts)[j]->Nd_1[k])
+        implies has_type(n, #[trigger] crate::dom_typing::ecode(crate::dom_typing::tbl(ts)[j]->Nd_1[k]), Cpt::U) by {
+        canon_entry_typed(sig, ind, ls, args, j, k, n);
     }
     assert(stg(n, c));
     assert(has_type(n, c, Cpt::U));

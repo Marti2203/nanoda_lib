@@ -2143,10 +2143,10 @@ pub proof fn ih_chain(sig: Sig, rc: Rc, kf: int)
     }
 }
 
-/// The walk's code at a recursive call lies below the motive at the
-/// field, so it belongs to the recursor type's body at the call's inputs.
+/// `ih_code`'s bound: the walk's code at a recursive call lies below the
+/// motive applied to the field's value.
 #[verifier::spinoff_prover]
-pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
+proof fn ih_code_le(sig: Sig, rc: Rc, k: nat)
     requires
         rec_ctx(sig, rc),
         rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
@@ -2158,8 +2158,10 @@ pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
         let w = walk_of(sig, rc);
         &&& 0 <= kf < rc.nf(sig)
         &&& crate::dom_iota::isrec(sig, rc.c, rc.j, kf)
-        &&& crate::dom_model::mem(sig, crate::dom_rec_ty::rbody(sig, rc.c),
-                crate::dom_tele::exts(crate::dom_model::bot_env(), ih_fs(sig, rc, kf)), *w.a(k)->Pi_0)
+        &&& le(*w.a(k)->Pi_0, app(rc.fs[rc.np(sig)], rc.fsm(sig)[kf]))
+        &&& wf(rc.fs[rc.np(sig)]) && wf(rc.fsm(sig)[kf]) && wf(*w.a(k)->Pi_0)
+        &&& crate::dom_tele::exts(crate::dom_model::bot_env(), ih_fs(sig, rc, kf))((sh.nmin() + 1) as nat) == rc.fs[rc.np(sig)]
+        &&& crate::dom_tele::exts(crate::dom_model::bot_env(), ih_fs(sig, rc, kf))(0) == rc.fsm(sig)[kf]
     }),
 {
     let w = walk_of(sig, rc);
@@ -2193,6 +2195,39 @@ pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
     le_refl(rc.fs[rc.np(sig)]);
     crate::dom_sound::app_mono(rc.fs[rc.np(sig)], rc.fs[rc.np(sig)], w.wp(k)[kf], rc.fsm(sig)[kf]);
     le_trans(d, app(rc.fs[rc.np(sig)], w.wp(k)[kf]), app(rc.fs[rc.np(sig)], rc.fsm(sig)[kf]));
+    let fz = ih_fs(sig, rc, kf);
+    let im = (sh.nmin() + 1) as nat;
+    crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), fz, im);
+    crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), fz, 0);
+}
+
+/// The walk's code at a recursive call lies below the motive at the
+/// field, so it belongs to the recursor type's body at the call's inputs.
+#[verifier::spinoff_prover]
+pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
+    requires
+        rec_ctx(sig, rc),
+        rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
+        crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
+        !(walk_of(sig, rc).u(k) is Bot),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+        let kf = sh.rposj(rc.j)[k - rc.nf(sig)] as int;
+        let w = walk_of(sig, rc);
+        &&& 0 <= kf < rc.nf(sig)
+        &&& crate::dom_iota::isrec(sig, rc.c, rc.j, kf)
+        &&& crate::dom_model::mem(sig, crate::dom_rec_ty::rbody(sig, rc.c),
+                crate::dom_tele::exts(crate::dom_model::bot_env(), ih_fs(sig, rc, kf)), *w.a(k)->Pi_0)
+    }),
+{
+    let w = walk_of(sig, rc);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let nf = rc.nf(sig);
+    let q = k - nf;
+    let kf = sh.rposj(rc.j)[q] as int;
+    ih_code_le(sig, rc, k);
+    let d = *w.a(k)->Pi_0;
+    let fz = ih_fs(sig, rc, kf);
     let env = crate::dom_tele::exts(crate::dom_model::bot_env(), fz);
     let im = (sh.nmin() + 1) as nat;
     crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), fz, im);
@@ -3261,6 +3296,31 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
     rec_close(sig, rc);
 }
 
+/// The walk's value stays above bottom.
+#[verifier::spinoff_prover]
+proof fn walk_live(sig: Sig, rc: Rc, k: nat)
+    requires
+        rec_ctx(sig, rc),
+        k < walk_of(sig, rc).ys.len(),
+        crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
+    ensures
+        !(walk_of(sig, rc).u(k) is Bot),
+{
+    let w = walk_of(sig, rc);
+    let l = w.ys.len();
+    walk_facts(sig, rc);
+    walk_shape(sig, rc, k);
+    let (wk, wr) = (w.wsk(k), w.ws.subrange(k as int, l as int));
+    assert(wk + wr =~= w.ws);
+    crate::dom_rec_ty::apps_concat(w.u0, wk, wr);
+    if w.u(k) is Bot {
+        crate::dom_iota::apps_bot(wr);
+        crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
+        head_le(rc.u, crate::dom_rec::recval(sig, rc.c, rc.fs));
+        assert(false);
+    }
+}
+
 /// The walk, argument by argument: fields by the major's relation,
 /// recursive calls by the induction.
 #[verifier::spinoff_prover]
@@ -3281,16 +3341,7 @@ pub proof fn walk_run(sig: Sig, rc: Rc, k: nat, h: nat)
     }
     walk_facts(sig, rc);
     walk_shape(sig, rc, k);
-    // the walk's value stays above bottom
-    let (wk, wr) = (w.wsk(k), w.ws.subrange(k as int, l as int));
-    assert(wk + wr =~= w.ws);
-    crate::dom_rec_ty::apps_concat(w.u0, wk, wr);
-    if w.u(k) is Bot {
-        crate::dom_iota::apps_bot(wr);
-        crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
-        head_le(rc.u, crate::dom_rec::recval(sig, rc.c, rc.fs));
-        assert(false);
-    }
+    walk_live(sig, rc, k);
     if k < rc.nf(sig) {
         field_arg(sig, rc, k);
     } else {

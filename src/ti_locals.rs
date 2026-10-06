@@ -497,6 +497,7 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
         Rule::Iota(_) => step_swap_iota(sig, r, j, ps, x, y),
+        Rule::ProjCong(_) | Rule::ProjIota(_) => crate::ti_syntax::proj_dead(sig, r, j, ps),
         Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;
             let ls = j->Eq_1->Const_1;
@@ -644,6 +645,9 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
     ensures
         step_ok(sig, r, jclose(k, a, j), pclose(sig, k, a, ps)),
 {
+    if r is ProjCong || r is ProjIota {
+        crate::ti_syntax::proj_dead(sig_with(sig, k, a), r, j, ps);
+    }
     if r is CtxNil || r is CtxCons || r is Var || r is Univ || r is Sym || r is Trans || r is Conv || r is Irr {
         step_close_ctx(sig, k, a, r, j, ps);
     } else if r is PiCong || r is LamCong || r is AppCong || r is Beta || r is Zeta || r is Eta {

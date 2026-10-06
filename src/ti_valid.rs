@@ -30,6 +30,9 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let g = j->Eq_0;
     let t = j->Eq_3;
     match rule {
@@ -190,6 +193,9 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     ensures
         step_ok(sig2, r, j, ps),
 {
+    if r is ProjCong || r is ProjIota {
+        crate::ti_syntax::proj_dead(sig, r, j, ps);
+    }
     match r {
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Delta(_) => {
             let c = j->Eq_1->Const_0;

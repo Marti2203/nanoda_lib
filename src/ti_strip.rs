@@ -55,6 +55,9 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
 {
     crate::ti_meta::valid_prems(strip(sig), d);
     let Deriv::Node(r, j, ps) = d;
+    if r is ProjCong || r is ProjIota {
+        crate::ti_syntax::proj_dead(strip(sig), r, j, ps);
+    }
     assert forall|k: int| 0 <= k < ps.len() implies valid(sig, #[trigger] ps[k]) && iota_free(ps[k]) by {
         strip_valid(sig, ps[k]);
     }

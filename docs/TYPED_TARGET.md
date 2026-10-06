@@ -1306,6 +1306,60 @@ Steps:
     still `iota_sr`'s. `Acc` stays out: its accessibility field is a
     function into `Acc` (not a field kind of `rec_canon`).
 
+### Structures stage plan (2026-10-06)
+
+Chosen next (2026-10-06) after the Prop stage. The kernel's facts
+(`tc.rs`): a projection `Proj(i, s)` infers `s`'s type, reduces it to
+`S.{us} ps` with `S` a structure (`get_structure`: one constructor, no
+indices; recursive allowed for projections), and types the projection at
+the constructor's field `i` at `us`, instantiated at the parameters and
+the earlier projections `Proj(0, s) .. Proj(i-1, s)`; when `S` may be a
+proposition, the field must be a proposition too. Head reduction:
+`Proj(i, c ps fs) ~> fs[i]`, else reduce `s`. Definitional equality adds
+structure eta (`t ≡ c ps fs` when `Proj(j, t) ≡ fs[j]` for every `j`),
+unit eta (two terms of a type with one constructor without fields are
+equal) and K-like reduction (a recursor of a Prop inductive with one
+constructor without fields fires on any major whose type has the
+constructor's indices).
+
+The judgment has none of it and the model gives `Proj` only bottom. Each
+rule lands dead first, gated by a signature condition the model can
+discharge vacuously (the S6.3 pattern), then goes live with its model
+case:
+
+- **T1: projection typing and reduction, syntax.** `struct_of(sig, S)`
+  (a canonical inductive with one constructor and no indices, its
+  fields' telescope); rules `ProjCong` (`x ≡ x2 : S.{us} ps` gives
+  `Proj(i, x) ≡ Proj(i, x2)` at field `i` over `ps` and `x`'s earlier
+  projections) and `ProjIota` (the projection of a constructor
+  application converts with its field, both typed); `hstep` reduces
+  projections. Renaming, substitution, local swap/close, level
+  instantiation, extension, validity, generation, scoping and subject
+  reduction cover them; the model's cases are vacuous behind
+  `proj_ok(sig)` ("no structures") until T2.
+- **T2: the model.** `mem_w` gives `Proj(i, x)` the `i`-th field value of
+  `x`'s constructor values (bottom otherwise); soundness of both rules
+  (a constructor application's members are constructor nodes whose
+  fields are members of its arguments, down-closed; projections of a
+  join-closed denotation). Adequacy: the relation at a structure code
+  already relates terms reducing to constructor applications fieldwise
+  (`con_tm`); a projection head-reduces to the related field
+  (`expand_tm`). Prop structures: projections of proofs are proofs
+  (irrelevance).
+- **T3: structure eta.** Rule `x ≡ c ps (Proj(0, x)) .. (Proj(n-1, x)) :
+  S ps`. Soundness by the join-closure of `x`'s denotation; adequacy
+  because a related `x` reduces to a constructor application whose
+  fields its projections reduce to.
+- **T4: unit eta.** Rule for types with one constructor without fields:
+  any two terms are equal. Soundness: members are bottom or the single
+  constructor node; adequacy: both reduce to it or are related at
+  bottom.
+- **T5: K-like reduction** for Prop recursors (one constructor, no
+  fields): the major replaced by the constructor at the major's type's
+  indices when they convert with the constructor's. Into Prop it is
+  irrelevance; subject reduction by the generic route with the index
+  premise.
+
 ### Open: large elimination out of Prop
 
 `Eq.rec` (and every subsingleton eliminator into Type) has no

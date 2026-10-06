@@ -345,6 +345,9 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;

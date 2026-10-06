@@ -299,6 +299,9 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let g = j->Eq_0;
     match rule {
         Rule::Var(i) => {

@@ -80,6 +80,9 @@ pub proof fn wf_last(sig: Sig, w: Deriv) -> (l: LevelSpec)
 {
     crate::ti_meta::valid_prems(sig, w);
     let Deriv::Node(rule, j, ps) = w;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let l = rule->CtxCons_0;
     crate::ti_meta::mk_d(sig, ps[1]);
     l

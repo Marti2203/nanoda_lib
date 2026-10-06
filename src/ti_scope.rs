@@ -230,6 +230,7 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
             d_scope(sig, ps[1]);
             assert(scoped(j));
         },
+        Rule::ProjCong(_) | Rule::ProjIota(_) => crate::ti_syntax::proj_dead(sig, rule, j, ps),
     }
 }
 

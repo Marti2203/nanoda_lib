@@ -158,6 +158,9 @@ pub proof fn gen(sig: Sig, d: Deriv)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
+    if rule is ProjCong || rule is ProjIota {
+        crate::ti_syntax::proj_dead(sig, rule, j, ps);
+    }
     let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     match rule {
         Rule::Var(i) => {
