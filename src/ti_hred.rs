@@ -94,6 +94,36 @@ pub proof fn fire_inst_interp(sig: Sig, a: ExprSpec)
     reveal(fire_inst);
 }
 
+/// A smashed structure's recursor, interpreted by the model, at a major
+/// that is not its constructor's application: it matches irrefutably, so
+/// it fires on the major's projections (the kernel's structure eta for
+/// iota).
+pub open spec fn rec_eta(sig: Sig, t: ExprSpec) -> bool {
+    let h = crate::beta_model::spine_head(t);
+    let rd = sig.ienv.recs[h->Const_0];
+    &&& rec_major(sig, t)
+    &&& !rec_fire(sig, t)
+    &&& crate::dom_code::smash(sig, crate::rec_canon::rec_ind(sig, h->Const_0))
+    &&& rd.rules.len() == 1
+    &&& crate::beta_model::rec_prefix(rd) == rd.major_idx
+    &&& h->Const_1.len() == rd.uparams.len()
+    &&& crate::beta_model::rule_rhs_ok(sig.ienv, rd.rules[0])
+    &&& rd.rules[0].nfields <= usize::MAX
+    &&& crate::dom_rec_end::rec_interp(sig, h->Const_0)
+}
+
+/// Its result: the only rule at the recursor's levels, applied to the
+/// parameters, motive and minor, then to the major's projections.
+pub open spec fn rec_eta_result(sig: Sig, t: ExprSpec) -> ExprSpec {
+    let h = crate::beta_model::spine_head(t);
+    let rd = sig.ienv.recs[h->Const_0];
+    let args = crate::beta_model::spine_args(t);
+    crate::beta_model::spine_app(
+        crate::beta_model::spine_app(crate::expr_model::subst_expr_levels(rd.rules[0].rhs, rd.uparams, h->Const_1),
+            args.subrange(0, crate::beta_model::rec_prefix(rd) as int)),
+        crate::ti_syntax::projs(args[rd.major_idx as int], rd.rules[0].nfields))
+}
+
 /// One head step, if any: beta, delta, zeta, reduction in function
 /// position, then iota at a recursor whose major premise is a constructor
 /// application, or reduction of that major premise; a projection of a
@@ -111,7 +141,7 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
                 } else if rec_major(sig, t) {
                     match hstep(sig, *x) {
                         Some(x2) => Some(ExprSpec::App(f, Box::new(x2))),
-                        None => None,
+                        None => if rec_eta(sig, t) { Some(rec_eta_result(sig, t)) } else { None },
                     }
                 } else {
                     None

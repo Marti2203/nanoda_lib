@@ -1442,9 +1442,14 @@ case:
   change). E2 smash on: codes and constructor values take the flag from
   `struct_of`; the constructor's code function at bottom fields is `⊥`;
   `recval` is irrefutable at structures; the model's lemmas re-proven.
-  E3 judgment: the recursor-eta head step and Iota instance, the
-  structure-eta conversion rule, transports, generation, uniqueness, SR.
-  E4 soundness and adequacy of both.
+  E3 judgment: the structure-eta conversion rule (E3a, `StructEta`,
+  extensional: equal projections) with its transports; then the
+  recursor-eta head step (E3b). That step needs no rule of its own: its
+  subject reduction is StructEta under application congruence
+  (`x ≡ c ps (π0 x) .. (πn x)`, the projections' premises by ProjIota)
+  followed by ordinary Iota at the constructor application.
+  E4 soundness and adequacy of StructEta (done), and the recursor's
+  adequacy at the irrefutable match (through the head step).
 - **T3: structure eta.** Rule `x ≡ c ps (Proj(0, x)) .. (Proj(n-1, x)) :
   S ps`. Soundness by the join-closure of `x`'s denotation; adequacy
   because a related `x` reduces to a constructor application whose

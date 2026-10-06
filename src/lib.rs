@@ -95,6 +95,7 @@ pub mod swap_typed;
 pub mod tc;
 pub mod tc_model;
 pub mod ti_chain;
+pub mod ti_eta;
 pub mod ti_gen;
 pub mod ti_scope;
 pub mod iota_sr;
