@@ -302,7 +302,7 @@ pub open spec fn rinst(sig: Sig, rid: u64, lv: Seq<LevelSpec>) -> Seq<LevelSpec>
 /// the recursor's levels.
 pub proof fn rinst_ls(sig: Sig, rid: u64, lv: Seq<LevelSpec>, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
-        rec_scope(sig, rid),
+        rec_scope_g(sig, rid),
         lv.len() == sig.ienv.recs[rid].uparams.len(),
     ensures
         rinst(sig, rid, crate::level_model::subst_levels_spec(lv, ks, vs))

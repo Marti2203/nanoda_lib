@@ -1386,6 +1386,8 @@ pub proof fn bare_facts(sig: Sig, g: Ctx, m: ExprSpec)
         fired_rule(sig, bare(sig, m)) == fired_rule(sig, m),
         iota_end(sig, bare(sig, m)) == iota_end(sig, m),
         extra(sig, bare(sig, m)) == Seq::<ExprSpec>::empty(),
+        crate::beta_model::spine_args(bare(sig, m))
+            == crate::beta_model::spine_args(m).subrange(0, (sig.ienv.recs[crate::beta_model::spine_head(m)->Const_0].major_idx + 1) as int),
 {
     let h = spine_head(m);
     let args = spine_args(m);

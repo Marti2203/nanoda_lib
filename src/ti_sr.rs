@@ -239,40 +239,30 @@ pub proof fn wk_closed(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
     mk_d(sig, e);
 }
 
-/// SUBJECT REDUCTION's Iota case: a firing recursor application converts
-/// with its rule instance.
-#[verifier::spinoff_prover]
-proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+/// THE IOTA NODE at the bare redex, extended over the extra arguments.
+proof fn iota_node(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, e: ExprSpec, l: LevelSpec)
     requires
         crate::ti_syntax::iota_ok(sig),
         crate::dom_rec_end::sig_sr(sig),
-        derivable(sig, eq(g, m, m, t)),
         crate::ti_hred::rec_fire(sig, m),
+        crate::ti_syntax::iota_lv(sig, m),
+        crate::ti_syntax::iota_prop(sig, m) ==> crate::ti_syntax::is_zero(l),
+        derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, m), crate::beta_model::rec_result(sig.ienv, m), t)),
+        derivable(sig, eq(g, crate::iota_sr::bare(sig, m), crate::iota_sr::bare(sig, m), e)),
+        derivable(sig, eq(g, crate::beta_model::rec_result(sig.ienv, crate::iota_sr::bare(sig, m)),
+            crate::beta_model::rec_result(sig.ienv, crate::iota_sr::bare(sig, m)), e)),
+        derivable(sig, eq(g, e, e, sort(l))),
+        forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m).len() ==> derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m)[q]),
+        derivable(sig, eq(g, m, m, t)),
     ensures
         derivable(sig, eq(g, m, crate::beta_model::rec_result(sig.ienv, m), t)),
 {
-    let dm = get(sig, eq(g, m, m, t));
-    let h = crate::beta_model::spine_head(m);
-    let rd = sig.ienv.recs[h->Const_0];
-    let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
-    let pr = crate::iota_sr::fired_rule(sig, m);
-    crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
-    crate::ti_syntax::frag_of(sig, h->Const_0);
-    crate::dom_rec_conv::sr_ok_of(sig, h->Const_0, h->Const_1, pr);
-    let l = crate::iota_sr::iota_sr(sig, g, m, t);
-    // the Iota node at the bare redex, in the motive's sort; then the
-    // extra arguments
     crate::iota_sr::bare_facts(sig, g, m);
-    let (x1, e, ex) = (crate::iota_sr::bare(sig, m), crate::iota_sr::iota_end(sig, m), crate::iota_sr::extra(sig, m));
+    let (x1, ex) = (crate::iota_sr::bare(sig, m), crate::iota_sr::extra(sig, m));
     let n1 = crate::beta_model::rec_result(sig.ienv, x1);
     let d0 = get(sig, eq(g, x1, x1, e));
     let d1 = get(sig, eq(g, n1, n1, e));
     let d2 = get(sig, eq(g, e, e, sort(l)));
-    if crate::ti_syntax::iota_prop(sig, x1) {
-        reveal(crate::ti_syntax::iota_prop);
-        assert(l == LevelSpec::Zero);
-        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {}
-    }
     let ij = eq(g, x1, n1, e);
     let pj = crate::ti_syntax::iota_pjs(sig, g, x1);
     let ip = seq![d0, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
@@ -285,6 +275,59 @@ proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     valid_node(sig, Rule::Iota(l), ij, ip);
     mk_d(sig, node(Rule::Iota(l), ij, ip));
     crate::ti_spine::reconv_spine(sig, g, x1, n1, e, ex, t);
+}
+
+/// SUBJECT REDUCTION's Iota case: a firing recursor application converts
+/// with its rule instance. A recursor eliminating into any universe by its
+/// field kinds (`iota_sr`), a Prop-only one generically (`iota_gen`).
+#[verifier::spinoff_prover]
+proof fn sr_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, m, m, t)),
+        crate::ti_hred::rec_fire(sig, m),
+    ensures
+        derivable(sig, eq(g, m, crate::beta_model::rec_result(sig.ienv, m), t)),
+{
+    let h = crate::beta_model::spine_head(m);
+    let (rid, lv) = (h->Const_0, h->Const_1);
+    let rd = sig.ienv.recs[rid];
+    let major = crate::beta_model::spine_args(m)[rd.major_idx as int];
+    let pr = crate::iota_sr::fired_rule(sig, m);
+    crate::beta_model::find_rule_spec(rd.rules, crate::beta_model::spine_head(major)->Const_0);
+    crate::ti_syntax::frag_of(sig, rid);
+    crate::ti_syntax::prop_large(sig, m);
+    if crate::ti_syntax::iota_prop(sig, m) {
+        // Prop-only: generic subject reduction, no parameter premises
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        assert(!crate::ti_syntax::no_recs(sig)) by {
+            assert(sig.ienv.recs.contains_key(rid));
+        }
+        reveal(crate::dom_rec_end::sig_rec);
+        assert(crate::dom_rec_end::rec_model_p(sig, rid));
+        crate::dom_rec_ty::rinst_id(sig, rid, lv, ExprSpec::Sort(LevelSpec::Zero));
+        crate::dom_rec_ty::rec_lps_sub(sig, rid);
+        assert(crate::iota_gen::rule_typed_g(sig, rid, lv, pr));
+        assert(crate::iota_gen::srg_ok(sig, rid, lv, pr));
+        let l = crate::iota_gen::iota_sr_g(sig, g, m, t);
+        crate::iota_sr::bare_facts(sig, g, m);
+        assert(crate::iota_gen::iota_end_g(sig, crate::iota_sr::bare(sig, m)) == crate::iota_gen::iota_end_g(sig, m)) by {
+            let args = crate::beta_model::spine_args(m);
+            let rd = sig.ienv.recs[rid];
+            assert(args.subrange(0, (rd.major_idx + 1) as int).subrange(crate::beta_model::rec_prefix(rd) as int, (rd.major_idx + 1) as int)
+                =~= args.subrange(crate::beta_model::rec_prefix(rd) as int, (rd.major_idx + 1) as int));
+        }
+        reveal(crate::ti_syntax::iota_prop);
+        assert(l == LevelSpec::Zero);
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {}
+        reveal(crate::ti_syntax::iota_pjs);
+        iota_node(sig, g, m, t, crate::iota_gen::iota_end_g(sig, m), l);
+    } else {
+        crate::dom_rec_conv::sr_ok_of(sig, rid, lv, pr);
+        let l = crate::iota_sr::iota_sr(sig, g, m, t);
+        iota_node(sig, g, m, t, crate::iota_sr::iota_end(sig, m), l);
+    }
 }
 
 /// A TERM CHAIN FROM A TYPED TERM is an equality at its type: each step's

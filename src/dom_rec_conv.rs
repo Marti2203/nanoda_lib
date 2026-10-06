@@ -332,6 +332,7 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
         crate::dom_rec_end::sig_sr(sig),
         crate::ti_syntax::iota_ok(sig),
         sig.ienv.recs.contains_key(rid),
+        crate::dom_rec_end::rec_large(sig, rid),
         lv.len() == sig.ienv.recs[rid].uparams.len(),
         0 <= p < rshape(sig, rid).nmin(),
     ensures

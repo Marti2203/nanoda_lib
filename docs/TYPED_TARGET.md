@@ -1264,36 +1264,32 @@ Steps:
     occurrences (`direct_pconv`), the recursor's inductive (`dom_rec_end`).
     `ind_inj_args` reads the chains back (and the argument counts agree);
     `ti_sr::mchain_typed` types them.
-  - **V2: Prop-only recursors with value parameters and indices.**
-    `rec_frag` keeps `pdoms` sorts and `ni == 0` for recursors with a
-    motive universe; a Prop-only recursor may have value parameters and
-    indices when its inductive is not always a type (`!never_prop`, so
-    `pconv` carries the index chains). `iota_pjs` is empty for a Prop-only
-    redex (its soundness is irrelevance and needs no parameter premises).
-    Subject reduction by a generic route instead of `iota_sr`'s field-kind
-    case analysis (design 2026-10-05):
-    - the constructor's telescope `ctds(us)` is well formed (`pi_tele_wf`
-      on its closed type at the instance);
-    - `ind_inj_args` on the major's type `I.{us} ps idx` against the
-      constructor's `I.{clv} ps2 tss[ps2, fs]` gives `levs_eq` and chains
-      for every parameter and index;
-    - `tpair(ctds, ps2 ++ fs, ps ++ fs)` (`mchain_typed` for the
-      parameters, the major's own typing for the fields), so
-      `tpair_spair`: the `spair`'s type clause converts every field type
-      `F_k[ps2, fs<k]` to `F_k[ps, fs<k]` (all field kinds, value
-      parameters included), and `d_sub` on the index terms' typings gives
-      `tss[ps2, fs] ≡ tss[ps, fs]`;
-    - the rule's spine types the reduct at `P tss[ps, fs] (c.{us} ps fs)`;
-      chains (`mchain_trans`) join each `tss_i[ps, fs]` to `idx_i` and the
-      constructor application to the major, `mchain_typed` types them at
-      the motive's domains, and `spine_cong2` converts the type to
-      `P idx major`.
-    Needs index-aware forms of the recursor-telescope lemmas (`rtds`,
-    `rec_ty_split`, `rule_ty_split`, `sr_heads`, `motive_at`, `major_form`)
-    and spine inversion of the constructor's result type for the `tss`.
-    Landed groundwork: `ti_beta::tpair`/`tpair_spair`, `pi_tele_wf`.
-    Estimated well over a thousand lines; it buys `Eq`, `HEq`, `Nat.le`
-    (`Acc`'s and `Exists`'s fields need further field kinds).
+  - **V2 (done 2026-10-06): Prop-only recursors with value parameters
+    and indices.** `rec_frag` asks `rec_scope_g` (no `ni == 0`) of every
+    recursor and `rec_frag_l` (`rec_scope`, type parameters) of one with a
+    motive universe. `iota_pjs` is empty for a Prop-only redex. `sig_rec`
+    asks `rec_model` of a large recursor and `rec_model_p` of a Prop-only
+    one: its rules typed in the general form (`iota_gen::rule_typed_g`,
+    `rule_body_g` with the recursive calls' index terms), its
+    constructors' types closed, its inductive semantic, and index chains
+    (`ni == 0 || !never_prop`). Subject reduction dispatches: `iota_sr`
+    for a large recursor, `iota_gen::iota_sr_g` for a Prop-only one. The
+    generic route inspects no field kind: injectivity's term chains give
+    the major's instance, parameters and indices (`srg_inj`); a telescope
+    pair over the constructor's telescope (`srg_tpair`, `tpair_spair`)
+    moves the fields to the recursor's parameters, the constructor
+    application and the index terms (`srg_move`); the rule's spine types
+    the reduct (`srg_rule`), and spine congruence at the motive converts
+    its type (`srg_end`).
+    **Correction:** `Eq`, `HEq` and `Acc` are subsingletons, so their
+    recursors eliminate into every universe: they are large recursors of
+    Prop inductives, still outside (`rec_model` asks `never_prop`; see
+    "Open: large elimination out of Prop"). V2 admits the indexed Prop
+    families with Prop-only elimination (`Nat.le`, `List.Mem`-like
+    families with several constructors). A follow-up could admit large
+    recursors of Prop inductives at instances whose motive level is zero
+    (Iota there is irrelevance, subject reduction generic), by making
+    `rec_fire` refuse their other instances.
 
 ### Open: large elimination out of Prop
 

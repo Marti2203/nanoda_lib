@@ -299,7 +299,23 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
 /// "The landing", option (a)): every recursor's model facts.
 #[verifier::opaque]
 pub open spec fn sig_rec(sig: Sig) -> bool {
-    forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_model(sig, c)
+    forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==>
+        (rec_large(sig, c) ==> rec_model(sig, c)) && (!rec_large(sig, c) ==> rec_model_p(sig, c))
+}
+
+/// What subject reduction assumes of a Prop-only recursor (which the model
+/// does not interpret): its rules typed, its constructors' types closed,
+/// its inductive semantic, and index chains where there are indices
+/// (`iota_gen::srg_ok`).
+pub open spec fn rec_model_p(sig: Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let rd = sig.ienv.recs[c];
+    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
+        ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sh.ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, sh.ind, ls)
+    &&& crate::dom_levels::sig_lps(sig)
+    &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
 }
 
 /// The hypothesis soundness and adequacy take: vacuous without recursors
@@ -363,6 +379,7 @@ pub proof fn rec_model_at(sig: Sig, c: u64, ls: Seq<LevelSpec>)
     requires
         sig_rec(sig),
         rec_frag(sig, c),
+        rec_large(sig, c),
         ls.len() == sig.consts[crate::dom_rec_ty::rshape(sig, c).ind].lps.len(),
     ensures
         crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, c).ind, ls),
@@ -502,14 +519,23 @@ pub proof fn field_dom_bnd(sig: Sig, c: u64, j: int, k: int, us: Seq<LevelSpec>,
     }
 }
 
-/// The syntactic part: the recursors the model interprets (parameters all
-/// type parameters).
+/// The syntactic part: the recursors in scope; one eliminating into any
+/// universe (which the model interprets) without indices and with type
+/// parameters only.
 pub open spec fn rec_frag(sig: Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    &&& crate::dom_rec_ty::rec_scope_g(sig, c)
+    &&& (rec_large(sig, c) ==> rec_frag_l(sig, c))
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
+}
+
+/// A recursor eliminating into any universe: without indices, with type
+/// parameters only.
+pub open spec fn rec_frag_l(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     &&& crate::dom_rec_ty::rec_scope(sig, c)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
 }
 
 /// The recursor eliminates into any universe (it has a motive universe).
@@ -581,9 +607,9 @@ pub proof fn scope_dir(s1: Sig, s2: Sig, c: u64)
     requires
         s1.consts == s2.consts,
         s1.ienv == s2.ienv,
-        crate::dom_rec_ty::rec_scope(s1, c),
+        crate::dom_rec_ty::rec_scope_g(s1, c),
     ensures
-        crate::dom_rec_ty::rec_scope(s2, c),
+        crate::dom_rec_ty::rec_scope_g(s2, c),
 {
     reveal(crate::dom_rec_ty::rec_elp);
     canon_congr(s1, s2, c);
@@ -609,6 +635,7 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     scope_dir(s1, s2, c);
     let sh = crate::dom_rec_ty::rshape(s1, c);
     assert(sh == crate::dom_rec_ty::rshape(s2, c));
+    assert(rec_large(s1, c) == rec_large(s2, c)) by { reveal(rec_large); }
     assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
 }
 

@@ -419,7 +419,8 @@ pub open spec fn iota_lv(sig: Sig, m: ExprSpec) -> bool {
 /// Iota's parameter premises: the recursor's parameters equal the major
 /// constructor's own, at their declared sorts at the recursor's level
 /// instance (what Iota drops; the
-/// model's soundness cannot recover it by injectivity).
+/// model's soundness cannot recover it by injectivity). None for a
+/// Prop-only recursor, whose Iota is proof irrelevance.
 #[verifier::opaque]
 pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     let rid = crate::beta_model::spine_head(m)->Const_0;
@@ -428,7 +429,21 @@ pub open spec fn iota_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
     let pdoms = crate::dom_rec_ty::rshape(sig, rid).pdoms;
     let lv = crate::beta_model::spine_head(m)->Const_1;
-    Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, lv)))
+    if iota_prop(sig, m) {
+        Seq::empty()
+    } else {
+        Seq::new(rd.num_params as nat, |q: int| eq(g, args[q], cargs[q], crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, lv)))
+    }
+}
+
+/// A Prop-only redex is one of a recursor not eliminating into every
+/// universe.
+pub proof fn prop_large(sig: Sig, m: ExprSpec)
+    ensures
+        iota_prop(sig, m) == !crate::dom_rec_end::rec_large(sig, crate::beta_model::spine_head(m)->Const_0),
+{
+    reveal(iota_prop);
+    reveal(crate::dom_rec_end::rec_large);
 }
 
 /// A firing redex's major has at least the recursor's parameters as
@@ -465,10 +480,11 @@ pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
-        forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
+        !iota_prop(sig, m) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
     }),
 {
     crate::ti_syntax::frag_of(sig, crate::beta_model::spine_head(m)->Const_0);
+    prop_large(sig, m);
 }
 
 /// Iota's premise types: the declared parameter sorts at the recursor's
@@ -478,6 +494,7 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
         iota_ok(sig),
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
         0 <= q < crate::dom_rec_ty::rshape(sig, crate::beta_model::spine_head(m)->Const_0).np,
+        !iota_prop(sig, m),
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
         let lv = crate::beta_model::spine_head(m)->Const_1;
@@ -494,6 +511,7 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     let lv = crate::beta_model::spine_head(m)->Const_1;
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     crate::ti_syntax::frag_of(sig, rid);
+    prop_large(sig, m);
     let pd = sh.pdoms[q];
     crate::dom_rec_ty::rec_elp_pdoms(sig, rid);
     crate::dom_rec_ty::rinst_id(sig, rid, lv, pd);
