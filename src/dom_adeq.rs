@@ -195,9 +195,6 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     decreases d, 20int,
 {
     valid_prems(sig, d);
-    if d->Node_0 is ProjCong || d->Node_0 is ProjIota {
-        crate::ti_syntax::proj_dead(sig, d->Node_0, d->Node_1, d->Node_2);
-    }
     match d->Node_0 {
         Rule::Var(_) => adeq_var(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Univ(_, _) => adeq_univ(sig, d, rho, dl, s, s2, n, u, a),
@@ -218,6 +215,8 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         } else {
             adeq_iota(sig, d, rho, dl, s, s2, n, u, a)
         },
+        Rule::ProjCong(_) => adeq_pcong(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::ProjIota(_) => adeq_piota(sig, d, rho, dl, s, s2, n, u, a),
         _ => {},
     }
 }
@@ -1481,6 +1480,96 @@ proof fn adeq_iota(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     crate::ti_syntax::frag_of(sig, rid);
     crate::ti_subst::psub_spine_const(s, m);
     crate::ti_hred_rec::fire_hstep(sig, psub(m, s));
+    crate::ti_hred::hred_step(sig, psub(m, s));
+    hred_refl(sig, psub(m2, s2));
+    expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
+}
+
+/// PROJECTION CONGRUENCE: the subjects are related at a constructor value
+/// above the projection's witness, so they reduce to constructor
+/// applications whose projected arguments are related
+/// (`dom_adeq_proj::pcong_tail`).
+#[verifier::spinoff_prover]
+proof fn adeq_pcong(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is ProjCong,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    use crate::dom_typing::{tbl, ecode};
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->ProjCong_0;
+    reveal(crate::ti_syntax::proj_cong_ok);
+    let st = concl(ps[0])->Eq_3;
+    let (i, x, x2) = (m->Proj_0, *m->Proj_1, *m2->Proj_1);
+    crate::dom_proj_sound::proj_ok_sem(sig);
+    // the type
+    adeq_type(sig, ps[1], rho, dl, s, s2, n, a);
+    related_left(sig, g, rho, dl, s, s2);
+    adeq_type(sig, ps[1], rho, dl, s, s, n, a);
+    let (xx, xx2, sst, tt, tt2) = (psub(x, s), psub(x2, s2), psub(st, s), psub(t, s), psub(t, s2));
+    assert(psub(m, s) == ExprSpec::Proj(i, Box::new(xx)));
+    assert(psub(m2, s2) == ExprSpec::Proj(i, Box::new(xx2)));
+    if u is Bot {
+        crate::dom_rel_per::bot_tm(sig, n, dl, psub(m, s), psub(m2, s2), tt, a);
+        return;
+    }
+    // the subject's typed constructor value above the witness
+    crate::dom_sound::sound(sig, ps[0], rho);
+    crate::dom_sound::sound(sig, ps[1], rho);
+    reveal(mem);
+    let wu = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+    mem_wf(sig, m, rho, u, wu);
+    let (v2, b) = crate::dom_proj_sound::proj_typed_val(sig, st, i, x, rho, u);
+    let f = v2->Nd_1[i as int];
+    let ec = ecode(tbl(b->Nd_1)[0]->Nd_1[i as int]);
+    let nn = n + cstage(v2, b) + cstage(b, Cpt::U) + cstage(f, ec) + cstage(ec, Cpt::U);
+    crate::dom_model::typed_up(v2, b, nn);
+    crate::dom_model::typed_up(b, Cpt::U, nn);
+    adeq(sig, ps[0], rho, dl, s, s2, nn, v2, b);
+    ty_adeq_of(sig, d, 1, rho, dl, s, s2);
+    reveal(spair);
+    crate::ti_sub::d_sub(sig, ps[1], dl, s, s);
+    crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
+    crate::ti_proj::proj_ty_psub(sig, st, i as nat, x, s);
+    crate::ti_subst::psub_spine_const(s, st);
+    crate::dom_adeq_proj::pcong_tail(sig, n, nn, dl, rho, i, x, st, t, xx, xx2, sst, tt, tt2, l, u, a, v2, b);
+}
+
+/// PROJECTION IOTA: the projection of a constructor application
+/// head-reduces to its field, which has the same members (soundness) and
+/// which the premise relates.
+#[verifier::spinoff_prover]
+proof fn adeq_piota(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is ProjIota,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    reveal(crate::ti_syntax::proj_iota_ok);
+    assert(concl(ps[1]) == eq(g, m2, m2, t));
+    // the field has the same members
+    crate::dom_sound::sound(sig, d, rho);
+    assert(mem(sig, m2, rho, u));
+    adeq(sig, ps[1], rho, dl, s, s2, n, u, a);
+    // one head step, typed
+    related_left(sig, g, rho, dl, s, s2);
+    reveal(spair);
+    crate::ti_sub::d_sub(sig, d, dl, s, s);
+    crate::ti_sub::d_sub(sig, ps[1], dl, s, s2);
+    dsym(sig, dl, psub(m2, s), psub(m2, s2), psub(t, s));
+    crate::ti_proj::proj_fire_psub(sig, m, s);
     crate::ti_hred::hred_step(sig, psub(m, s));
     hred_refl(sig, psub(m2, s2));
     expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);

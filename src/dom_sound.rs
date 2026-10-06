@@ -1979,9 +1979,6 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
     valid_prems(sig, d);
     crate::ti_strip::inode_prems(d);
     let Deriv::Node(rule, j, ps) = d;
-    if rule is ProjCong || rule is ProjIota {
-        crate::ti_syntax::proj_dead(sig, rule, j, ps);
-    }
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;
@@ -2021,6 +2018,21 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
+        Rule::ProjCong(_) => {
+            reveal(crate::ti_syntax::proj_cong_ok);
+            sound(sig, ps[0], rho);
+            crate::dom_proj_sound::proj_ok_sem(sig);
+            crate::dom_proj_sound::sound_proj_cong(sig, m->Proj_0, *m->Proj_1, *n->Proj_1, concl(ps[0])->Eq_3, a, rho);
+        },
+        Rule::ProjIota(l) => {
+            reveal(crate::ti_syntax::proj_iota_ok);
+            sound(sig, ps[0], rho);
+            sound(sig, ps[1], rho);
+            sound(sig, ps[3], rho);
+            sound(sig, ps[4], rho);
+            crate::dom_proj_sound::proj_ok_sem(sig);
+            crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
+        },
         Rule::Iota(l) => if crate::ti_syntax::iota_prop(sig, m) {
             // a proposition motive's: proof irrelevance
             crate::ti_syntax::prop_zero(sig, m, l);

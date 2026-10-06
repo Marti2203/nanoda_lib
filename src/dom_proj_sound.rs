@@ -49,6 +49,9 @@ pub proof fn proj_entry(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>,
         let t = vsub(crate::ti_proj::sfield(sig, s, i, us), ps + crate::ti_syntax::projs(y, i));
         &&& is_centry(e) ==> mem(sig, t, rho, ecode(e))
         &&& e == rmark() ==> t == spine_app(ExprSpec::Const(s, us), ps)
+        &&& e != rmark()
+        &&& a->Nd_0 is Ty && a->Nd_0->Ty_0 == s
+        &&& tbl(a->Nd_1)[0]->Nd_1.len() == canon_shape(sig, s).fields[0].len()
     }),
 {
     reveal(crate::ti_syntax::struct_of);
@@ -71,6 +74,7 @@ pub proof fn proj_entry(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>,
     assert(crate::dom_model::tf_fun(sig, s, us, srt, ws, a));
     assert(le(a, cc));
     crate::dom_rel_mono::tbl_entry_le(a, cc, 0, i as int);
+    crate::dom_sem::nd_le_inv(a->Nd_0, a->Nd_1, cc);
     let e = tbl(a->Nd_1)[0]->Nd_1[i as int];
     let ec = tbl(cc->Nd_1)[0]->Nd_1[i as int];
     assert(crate::dom_code::tabled(sig, s, us, ws));
@@ -100,6 +104,9 @@ pub proof fn proj_entry(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>,
         assert(fu == f);
         assert(crate::dom_code::fpe(ws, np, i)[(np + i - 1 - v) as int] == ws[q]);
         assert(ecode(ec) == ws[q]);
+        if e == rmark() {
+            crate::dom_sem::nd_le_inv(NdKey::Tag(1), Seq::empty(), ec);
+        }
         crate::ti_spine::vsub_var(v, xs);
         assert(xs[xs.len() - 1 - v] == ps[q]);
         if is_centry(e) {
@@ -274,12 +281,13 @@ proof fn proj_tyd_one(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>, i
 
 /// The subject's typed value above a projection's member: a constructor
 /// node whose field lies above the member, itself a member.
-proof fn proj_typed_val(sig: Sig, st: ExprSpec, i: usize, x: ExprSpec, rho: Env, u: Cpt) -> (r: (Cpt, Cpt))
+pub proof fn proj_typed_val(sig: Sig, st: ExprSpec, i: usize, x: ExprSpec, rho: Env, u: Cpt) -> (r: (Cpt, Cpt))
     requires
         crate::dom_sound::tyd(sig, x, rho, st),
         mem(sig, ExprSpec::Proj(i, Box::new(x)), rho, u),
         !(u is Bot),
     ensures
+        mem(sig, x, rho, r.0),
         r.0 is Nd && r.0->Nd_0 is Con && (i as int) < r.0->Nd_1.len(),
         crate::dom_compact::le(u, r.0->Nd_1[i as int]),
         !(r.0->Nd_1[i as int] is Bot),
@@ -367,6 +375,8 @@ pub proof fn con_field_typed(v: Cpt, a: Cpt, i: int)
         a is Nd ==> tbl(a->Nd_1).len() <= 1,
     ensures
         a is Nd && 0 < tbl(a->Nd_1).len() && tbl(a->Nd_1)[0] is Nd && i < tbl(a->Nd_1)[0]->Nd_1.len(),
+        v->Nd_0->Con_1 == 0,
+        a->Nd_0 is Ty && v->Nd_0->Con_0 == a->Nd_0->Ty_0,
         v->Nd_1[i] is Bot
             || (tbl(a->Nd_1)[0]->Nd_1[i] == rmark() && typed(v->Nd_1[i], a))
             || (is_centry(tbl(a->Nd_1)[0]->Nd_1[i]) && typed(v->Nd_1[i], ecode(tbl(a->Nd_1)[0]->Nd_1[i]))
@@ -448,6 +458,15 @@ pub open spec fn struct_sem(sig: Sig, s: u64) -> bool {
 
 pub open spec fn proj_sem(sig: Sig) -> bool {
     forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) ==> struct_sem(sig, s)
+}
+
+/// The projection gate gives the model's structure facts.
+pub proof fn proj_ok_sem(sig: Sig)
+    requires
+        crate::ti_syntax::proj_ok(sig),
+    ensures
+        proj_sem(sig),
+{
 }
 
 /// PROJECTION IOTA, LEFT IN RIGHT: a member of a constructor

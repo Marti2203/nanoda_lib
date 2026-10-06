@@ -15,6 +15,7 @@ pub mod debug_printer;
 pub mod env;
 pub mod dom_adeq;
 pub mod dom_adeq_base;
+pub mod dom_adeq_proj;
 pub mod dom_adeq_syn;
 pub mod dom_bound;
 pub mod dom_canon;

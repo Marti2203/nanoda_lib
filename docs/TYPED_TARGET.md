@@ -1360,8 +1360,24 @@ case:
   structure, i.e. the flipped `proj_ok` carrying per-structure facts such
   as `sem_const` and the constructor's closed type), the kernel port's
   "projections are typed nowhere" (`kclaims::gen_proj`,
-  `untypable_untyped`, `jkernel::sr_pstep`/`lveq_conv`: S6.6 at the flip),
-  soundness and adequacy.
+  `untypable_untyped`, `jkernel::sr_pstep`/`lveq_conv`: S6.6 at the flip).
+  **Soundness and adequacy are real (2026-10-06, T2e/T2f)**, under
+  `dom_proj_sound::proj_sem` (each structure and its constructor
+  interpreted at every instance, its canonical recursor in scope, its
+  tables' syntactic facts), which the gate still gives vacuously
+  (`proj_ok_sem`); the flip must derive it. ProjIota gained two premises
+  for them: the field typed at its declared type `proj_fty` (the ⊇
+  direction builds the one-field constructor node, `dom_iota::con_major`)
+  and the subject's type headed by the constructor's structure (so the
+  Prop test on the subject's type speaks of the projected structure).
+  `struct_of` now asks every field to be a type parameter, and a
+  structure that may be a proposition always to be one, or else its sort
+  parameters never to be propositions. Adequacy: ProjIota is the Iota
+  pattern; ProjCong (`dom_adeq_proj`) takes the subjects' relation at a
+  constructor value above the witness, moves the projected arguments'
+  relation at the field's table entry to the witness (`arg_adeq`), and
+  expands along `Proj(i, x) ~> Proj(i, c ps fs) ~> fs[i]` with the
+  ProjCong and ProjIota derivations built at the substituted terms.
   **First slice (2026-10-06):** `struct_of` admits structures whose fields
   are type parameters or recursive occurrences (`Prod`, `PProd`, `MProd`,
   `And`). Soundness of a projection needs the field's table entry to be a
