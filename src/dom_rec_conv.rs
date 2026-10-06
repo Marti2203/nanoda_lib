@@ -192,7 +192,7 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
             crate::dom_rel::ptype(sig, rshape(sig, c).ind, crate::dom_rec_ty::rinst(sig, c, lv), q))),
         derivable(sig, eq(g, x, spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], cl), pargs + args),
             spine_app(ExprSpec::Const(rshape(sig, c).ind, crate::dom_rec_ty::rinst(sig, c, lv)), heads.subrange(0, rshape(sig, c).np as int)))),
-        crate::ti_hred::hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], cl), pargs + args)),
+        !crate::dom_code::smash(sig, rshape(sig, c).ind) ==> crate::ti_hred::hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], cl), pargs + args)),
         crate::conv_cr::levs_eq(crate::dom_rec_ty::rinst(sig, c, lv), cl),
         forall|k: int| 0 <= k < args.len() ==> derivable(sig, eq(g, #[trigger] args[k], args[k],
             crate::ti_spine::vsub(crate::iota_sr::cfu(sig, c, j, k, crate::dom_rec_ty::rinst(sig, c, lv)),

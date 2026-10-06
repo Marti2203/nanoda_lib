@@ -710,7 +710,10 @@ impl Rc {
     pub open spec fn np(self, sig: Sig) -> int { crate::dom_rec_ty::rshape(sig, self.c).np as int }
     pub open spec fn pre(self, sig: Sig) -> int { (crate::dom_rec_ty::rshape(sig, self.c).np + crate::dom_rec_ty::rshape(sig, self.c).nmin() + 1) as int }
     pub open spec fn wx(self, sig: Sig) -> Cpt { self.fs[self.pre(sig)] }
-    pub open spec fn fsm(self, sig: Sig) -> Seq<Cpt> { self.wx(sig)->Nd_1 }
+    /// The major's field values: bottom ones at a bottom (smashed) major.
+    pub open spec fn fsm(self, sig: Sig) -> Seq<Cpt> {
+        if self.wx(sig) is Nd { self.wx(sig)->Nd_1 } else { Seq::new(self.nf(sig), |k: int| Cpt::Bot) }
+    }
     pub open spec fn dm(self, sig: Sig) -> Cpt { self.ds[self.pre(sig)] }
     /// The code a field of the major is related at: the major's own for a
     /// recursive field, else its table entry's.
@@ -804,23 +807,67 @@ pub open spec fn rc_field(sig: Sig, rc: Rc, i: int) -> bool {
     })
 }
 
-/// The end's context holds: the invariant at the end of the telescope, a
-/// value above bottom, and the major a constructor value whose terms
-/// reduce to applications of its constructor.
+/// The end's context holds: its core, and the majors reducing to their
+/// constructor applications, or for a smashed structure the redexes
+/// reducing by their single rule.
 pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
+    let pre = rc.pre(sig);
+    &&& rc_core(sig, rc)
+    &&& !crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind) ==> rc_red(sig, rc)
+    &&& crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind) ==> rc_eta(sig, rc)
+}
+
+/// The majors reduce to their constructor applications.
+#[verifier::opaque]
+pub open spec fn rc_red(sig: Sig, rc: Rc) -> bool {
+    let pre = rc.pre(sig);
+    &&& hred(sig, rc.xs[pre], rc.cx(sig)) && hred(sig, rc.xs2[pre], rc.cx2(sig))
+    &&& cr(sig, rc.xs[pre]) == rc.cx(sig) && ctor_red(sig, rc.xs[pre])
+}
+
+/// A smashed structure's end: its single rule's redexes reduce to the
+/// minor at the field terms (the major's constructor arguments, or its
+/// projections), and where the major's value is not bottom the
+/// constructor at those terms relates to the major.
+#[verifier::opaque]
+pub open spec fn rc_eta(sig: Sig, rc: Rc) -> bool {
+    let pre = rc.pre(sig);
+    let mi = rc.np(sig) + 1 + rc.j;
+    &&& rc.j == 0
+    &&& hred(sig, rc.m(), spine_app(rc.xs[mi], rc.args + crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls, rc.j, rc.xs.subrange(0, pre), rc.args)))
+    &&& hred(sig, rc.m2(), spine_app(rc.xs2[mi], rc.args2 + crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls2, rc.j, rc.xs2.subrange(0, pre), rc.args2)))
+    &&& !(rc.wx(sig) is Bot) ==> con_top(sig, rc.nn, rc.g, rc.cxr(sig), rc.xs[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
+}
+
+/// The major's value: a constructor's, its terms constructor-related; or
+/// bottom, a smashed structure's.
+#[verifier::opaque]
+pub open spec fn rc_major(sig: Sig, rc: Rc) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let pre = rc.pre(sig);
+    &&& rc.wx(sig) is Bot ==> crate::dom_code::smash(sig, sh.ind) && crate::dom_rec::rec_bot_ok(sig, rc.c, rc.fs) && rc.j == 0
+    &&& !(rc.wx(sig) is Bot) ==> {
+        &&& crate::dom_rec::rec_ok(sig, rc.c, rc.fs)
+        &&& rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind))
+        &&& con_tm(sig, rc.nn, rc.g, rc.xs[pre], rc.xs2[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
+    }
+}
+
+/// The end's core: the invariant at the end of the telescope, a value
+/// above bottom, the major a constructor value (or bottom, smashed) and
+/// its field terms, derivably the constructor's arguments.
+pub open spec fn rc_core(sig: Sig, rc: Rc) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let pre = rc.pre(sig);
     &&& rec_hyps(sig, rc.c)
-    &&& !crate::dom_code::smash(sig, sh.ind)
     &&& crate::dom_rec_adeq::rf_inv(sig, rc.nn, rc.n, rc.g, rc.c, rc.sm, rc.ls, rc.ls2, 0, rc.xs, rc.xs2, rc.a, rc.ds, rc.fs, rc.u)
     &&& !(rc.u is Bot) && !(rc.a is Bot)
     &&& rc.xs.len() == pre + 1 && rc.fs.len() == pre + 1 && rc.ds.len() == pre + 1
     &&& rc.t(sig) == ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.xs[pre]))
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
-    &&& crate::dom_rec::rec_ok(sig, rc.c, rc.fs)
     &&& le(rc.u, crate::dom_rec::recval(sig, rc.c, rc.fs))
     &&& 0 <= rc.j < sh.nmin()
-    &&& rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind))
+    &&& rc_major(sig, rc)
     &&& rc.fsm(sig).len() == rc.nf(sig)
     &&& rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig)
     &&& rc.pargs.len() == sh.np && rc.pargs2.len() == sh.np
@@ -828,9 +875,6 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
     &&& crate::dom_lift::tbl_canon(sig, sh.ind, rc.pv(sig), rc.ds[pre])
     &&& tel_dom(rc.t0(sig), rc.xs, pre as nat) == rc.ind(sig)
     &&& tel_dom(rc.t02(sig), rc.xs2, pre as nat) == rc.ind2(sig)
-    &&& con_tm(sig, rc.nn, rc.g, rc.xs[pre], rc.xs2[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
-    &&& hred(sig, rc.xs[pre], rc.cx(sig)) && hred(sig, rc.xs2[pre], rc.cx2(sig))
-    &&& cr(sig, rc.xs[pre]) == rc.cx(sig) && ctor_red(sig, rc.xs[pre])
     &&& derivable(sig, eq(rc.g, rc.xs[pre], rc.cx(sig), rc.ind(sig)))
     &&& derivable(sig, eq(rc.g, rc.xs2[pre], rc.cx2(sig), rc.ind(sig)))
     &&& derivable(sig, eq(rc.g, rc.xs2[pre], rc.cx2(sig), rc.ind2(sig)))
@@ -840,6 +884,50 @@ pub open spec fn rec_ctx(sig: Sig, rc: Rc) -> bool {
         crate::dom_rel::ptype(sig, sh.ind, rc.ri2(sig), q)))
     &&& forall|i: int| 0 <= i < rc.nf(sig) ==> #[trigger] rc_field(sig, rc, i)
     &&& rc_lv(sig, rc)
+}
+
+/// A smashed structure's fields are typed by its parameters: none is
+/// recursive, so its recursor has no recursive calls.
+pub proof fn rc_smash_norec(sig: Sig, rc: Rc)
+    requires
+        rec_hyps(sig, rc.c),
+        crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind),
+        0 <= rc.j < crate::dom_rec_ty::rshape(sig, rc.c).nmin(),
+    ensures
+        rc.j == 0,
+        crate::dom_rec_ty::rshape(sig, rc.c).rposj(rc.j).len() == 0,
+        forall|k: int| 0 <= k < rc.nf(sig) ==> !#[trigger] crate::dom_iota::isrec(sig, rc.c, rc.j, k),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    reveal(crate::ti_syntax::struct_of);
+    assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
+    assert(rc.j == 0);
+    assert forall|k: int| 0 <= k < rc.nf(sig) implies !#[trigger] crate::dom_iota::isrec(sig, rc.c, rc.j, k) by {
+        assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+    }
+    let nf = sh.fields[0].len();
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[0], sh.ind, sh.us(), sh.np, sh.ni, nf);
+    if sh.rposj(0).len() > 0 {
+        let k = sh.rposj(0)[0] as int;
+        assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        assert(!crate::dom_iota::isrec(sig, rc.c, 0, k));
+    }
+}
+
+/// A recursive field's major is not bottom (a bottom major is a smashed
+/// structure's).
+pub proof fn rc_rec_nd(sig: Sig, rc: Rc, kf: int)
+    requires
+        rc_core(sig, rc),
+        0 <= kf < rc.nf(sig),
+        crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
+    ensures
+        !(rc.wx(sig) is Bot),
+{
+    reveal(rc_major);
+    if rc.wx(sig) is Bot {
+        rc_smash_norec(sig, rc);
+    }
 }
 
 /// The instances at the end: the recursors' instances of the inductive
@@ -1213,6 +1301,9 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
         rc.nn == nn && rc.n == n && rc.g == g && rc.c == c && rc.sm == sm && rc.ls == ls && rc.ls2 == ls2,
         rc.xs == xs && rc.xs2 == xs2 && rc.a == a && rc.ds == ds && rc.fs == fs && rc.u == u,
 {
+    reveal(rc_red);
+    reveal(rc_eta);
+    reveal(rc_major);
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
     let np = sh.np;
@@ -1344,7 +1435,7 @@ pub open spec fn walk_of(sig: Sig, rc: Rc) -> crate::dom_rec_walk::Wk {
 #[verifier::spinoff_prover]
 pub proof fn walk_facts(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures ({
         let w = walk_of(sig, rc);
         let sh = crate::dom_rec_ty::rshape(sig, rc.c);
@@ -1358,6 +1449,7 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
         &&& crate::dom_rec::apps(w.u0, w.ws) == crate::dom_rec::recval(sig, rc.c, rc.fs)
     }),
 {
+    reveal(rc_major);
     walk_value(sig, rc);
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
@@ -1365,7 +1457,13 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
     let pre = rc.pre(sig);
     let fsm = rc.fsm(sig);
     crate::dom_rec_ty::scope_ctor(sig, rc.c, rc.j);
-    crate::dom_rec_ty::rec_ihs_at(sig, rc.c, rc.fs, nf);
+    if rc.wx(sig) is Bot {
+        rc_smash_norec(sig, rc);
+        assert(!crate::dom_rec::rec_ok(sig, rc.c, rc.fs));
+        assert(crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf) =~= Seq::<Cpt>::empty());
+    } else {
+        crate::dom_rec_ty::rec_ihs_at(sig, rc.c, rc.fs, nf);
+    }
     let hs = crate::dom_rec::rec_ihs(sig, rc.c, rc.fs, nf);
     assert(sh.rposj(rc.j) == crate::rec_canon::rec_pos(sh.fields[rc.j], sh.ind, sh.us(), sh.np, sh.ni, nf));
     let (_, _) = crate::dom_rec_minor::minor_split(sig, rc.c, rc.sm.0, rc.j);
@@ -1394,10 +1492,11 @@ pub proof fn walk_facts(sig: Sig, rc: Rc)
 #[verifier::spinoff_prover]
 proof fn walk_value(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures
         crate::dom_rec::apps(walk_of(sig, rc).u0, walk_of(sig, rc).ws) == crate::dom_rec::recval(sig, rc.c, rc.fs),
 {
+    reveal(rc_major);
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let nf = rc.nf(sig);
@@ -1407,6 +1506,14 @@ proof fn walk_value(sig: Sig, rc: Rc)
     assert(rc.fs.last() == rc.wx(sig));
     let rd = sig.ienv.recs[rc.c];
     assert(rd.num_params == sh.np && rd.num_motives == 1);
+    if rc.wx(sig) is Bot {
+        // a smashed structure's bottom major: the minor at bottom fields
+        assert(!crate::dom_rec::rec_ok(sig, rc.c, rc.fs));
+        assert(hs =~= Seq::<Cpt>::empty());
+        assert(fsm =~= crate::dom_rec::bot_fields(sig, rc.c));
+        assert(fsm + hs =~= fsm);
+        return;
+    }
     assert(rc.fs[(rd.num_params + rd.num_motives + rc.j) as int] == rc.fs[rc.np(sig) + 1 + rc.j]);
     crate::dom_rec_ty::apps_concat(rc.fs[rc.np(sig) + 1 + rc.j], fsm, hs);
 }
@@ -1415,7 +1522,7 @@ proof fn walk_value(sig: Sig, rc: Rc)
 #[verifier::spinoff_prover]
 pub proof fn walk_init(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), 0),
 {
@@ -1464,7 +1571,7 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
 /// (unless the value is bottom).
 pub proof fn rc_par(sig: Sig, rc: Rc, q: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= q < rc.np(sig),
     ensures
         rc.fs[q] is Bot || (rel_ty(sig, rc.nn, rc.g, rc.xs[q], rc.xs[q], rc.fs[q]) && has_type(rc.nn, rc.fs[q], Cpt::U)),
@@ -1496,7 +1603,7 @@ pub proof fn rc_par(sig: Sig, rc: Rc, q: int)
 #[verifier::spinoff_prover]
 pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         n <= rc.nn,
     ensures
         crate::dom_lift::ptr(sig, rc.nn, n, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind(sig), rc.pv(sig)),
@@ -1563,7 +1670,10 @@ pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
 #[verifier::spinoff_prover]
 proof fn cxr_field(sig: Sig, rc: Rc, i: int, l: LevelSpec)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
+        !(rc.wx(sig) is Bot),
+        cr(sig, rc.xs[rc.pre(sig)]) == rc.cx(sig),
+        ctor_red(sig, rc.xs[rc.pre(sig)]),
         0 <= i < rc.nf(sig),
         derivable(sig, eq(rc.g, rc.ind(sig), rc.ind(sig), crate::ti_syntax::sort(l))),
         con_tm(sig, rc.nn, rc.g, rc.xs[rc.pre(sig)], rc.xs[rc.pre(sig)], rc.ind(sig), rc.wx(sig), rc.ds[rc.pre(sig)]),
@@ -1571,6 +1681,7 @@ proof fn cxr_field(sig: Sig, rc: Rc, i: int, l: LevelSpec)
         con_field(sig, rc.nn, rc.g, rc.cxr(sig), rc.cx(sig), rc.ind(sig), rc.fsm(sig), cblock(rc.wx(sig), rc.ds[rc.pre(sig)]),
             rc.np(sig) as nat, rc.j, rc.ds[rc.pre(sig)], i),
 {
+    reveal(rc_major);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let (np, j, g, nn) = (sh.np, rc.j, rc.g, rc.nn);
     let pre = rc.pre(sig);
@@ -1629,7 +1740,7 @@ proof fn cxr_field(sig: Sig, rc: Rc, i: int, l: LevelSpec)
 #[verifier::spinoff_prover]
 pub proof fn cxr_typed(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures
         derivable(sig, eq(rc.g, rc.cxr(sig), rc.cxr(sig), rc.ind(sig))),
         derivable(sig, eq(rc.g, rc.cxr(sig), rc.cx(sig), rc.ind(sig))),
@@ -1687,10 +1798,14 @@ pub proof fn cxr_typed(sig: Sig, rc: Rc)
 #[verifier::spinoff_prover]
 pub proof fn cxr_con(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
+        !(rc.wx(sig) is Bot),
+        cr(sig, rc.xs[rc.pre(sig)]) == rc.cx(sig),
+        ctor_red(sig, rc.xs[rc.pre(sig)]),
     ensures
         con_top(sig, rc.nn, rc.g, rc.cxr(sig), rc.xs[rc.pre(sig)], rc.ind(sig), rc.wx(sig), rc.ds[rc.pre(sig)]),
 {
+    reveal(rc_major);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let (np, nf, pre, nn, g, j) = (sh.np, rc.nf(sig), rc.pre(sig), rc.nn, rc.g, rc.j);
     let ind = sh.ind;
@@ -1747,7 +1862,7 @@ pub proof fn cxr_con(sig: Sig, rc: Rc)
 /// major's.
 pub proof fn rc_fty_rec(sig: Sig, rc: Rc, kf: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= kf < rc.nf(sig),
         crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
     ensures
@@ -1777,7 +1892,7 @@ pub proof fn rc_fty_rec(sig: Sig, rc: Rc, kf: int)
 #[verifier::spinoff_prover]
 pub proof fn rc_args2_typed(sig: Sig, rc: Rc, k: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= k < rc.nf(sig),
     ensures
         derivable(sig, eq(rc.g, rc.args2[k], rc.args2[k], rc.fty2(sig, k))),
@@ -1856,7 +1971,7 @@ pub proof fn rec_trest_pi(sig: Sig, c: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec
 #[verifier::spinoff_prover]
 pub proof fn walk_shape(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         k < walk_of(sig, rc).ys.len(),
     ensures ({
         let w = walk_of(sig, rc);
@@ -1905,7 +2020,7 @@ pub proof fn walk_shape(sig: Sig, rc: Rc, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn walk_end_ty(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures ({
         let w = walk_of(sig, rc);
         &&& w.t(w.ys.len()) == ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.cxr(sig)))
@@ -1941,7 +2056,7 @@ pub open spec fn ih_fs(sig: Sig, rc: Rc, kf: int) -> Seq<Cpt> { rc.fs.subrange(0
 /// the major, the inductive at it.
 pub proof fn ih_dom(sig: Sig, rc: Rc, kf: int, i: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= kf < rc.nf(sig),
         0 <= i <= rc.pre(sig),
     ensures
@@ -1966,7 +2081,7 @@ pub proof fn ih_dom(sig: Sig, rc: Rc, kf: int, i: int)
 #[verifier::spinoff_prover]
 pub proof fn ih_der(sig: Sig, rc: Rc, kf: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= kf < rc.nf(sig),
         crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
     ensures ({
@@ -2032,7 +2147,7 @@ pub proof fn ih_der(sig: Sig, rc: Rc, kf: int)
 /// induction's stage, and lies lower than the major.
 pub proof fn ih_field(sig: Sig, rc: Rc, kf: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= kf < rc.nf(sig),
         crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
     ensures ({
@@ -2042,6 +2157,7 @@ pub proof fn ih_field(sig: Sig, rc: Rc, kf: int)
         &&& crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rc.c, rc.sm.0), crate::dom_model::bot_env(), rc.ds, rc.fs)
     }),
 {
+    reveal(rc_major);
     let pre = rc.pre(sig);
     let (t0, t02) = (rc.t0(sig), rc.t02(sig));
     let (wx, dm) = (rc.wx(sig), rc.ds[pre]);
@@ -2051,6 +2167,7 @@ pub proof fn ih_field(sig: Sig, rc: Rc, kf: int)
     assert(crate::dom_rec_adeq::rf_sem(sig, rc.c, rc.sm, rc.xs.len(), 0, rc.a, rc.ds, rc.fs));
     assert(tds.subrange(0, rc.xs.len() as int) =~= tds);
     assert(rc.fs.last() == wx);
+    rc_rec_nd(sig, rc, kf);
     crate::dom_iota::rec_field_ok(sig, rc.c, rc.sm.0, rc.ds, rc.fs, kf);
     assert(crate::dom_con_rel::fld_ok(sig, rc.nn, rc.g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, pre));
     crate::dom_con_rel::typed_facts_wf(rc.nn, wx, dm);
@@ -2067,7 +2184,7 @@ pub proof fn ih_field(sig: Sig, rc: Rc, kf: int)
 #[verifier::spinoff_prover]
 pub proof fn ih_flds(sig: Sig, rc: Rc, kf: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= kf < rc.nf(sig),
         crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
     ensures
@@ -2137,7 +2254,7 @@ pub proof fn app_var_le(sig: Sig, i: nat, j: nat, rho: crate::dom_model::Env, d:
 #[verifier::spinoff_prover]
 pub proof fn ih_chain(sig: Sig, rc: Rc, kf: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= kf < rc.nf(sig),
         crate::dom_iota::isrec(sig, rc.c, rc.j, kf),
     ensures
@@ -2162,7 +2279,7 @@ pub proof fn ih_chain(sig: Sig, rc: Rc, kf: int)
 #[verifier::spinoff_prover]
 proof fn ih_code_le(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2220,7 +2337,7 @@ proof fn ih_code_le(sig: Sig, rc: Rc, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2257,7 +2374,7 @@ pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn ih_inv(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2411,7 +2528,7 @@ pub proof fn ctor_mem_le(sig: Sig, c: u64, j: int, us: Seq<LevelSpec>, pa: nat, 
 #[verifier::spinoff_prover]
 pub proof fn walk_end_code(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), walk_of(sig, rc).ys.len()),
     ensures ({
         let w = walk_of(sig, rc);
@@ -2419,6 +2536,7 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
         &&& le(w.a(w.ys.len()), app(rc.fs[rc.np(sig)], rc.wx(sig)))
     }),
 {
+    reveal(rc_major);
     let w = walk_of(sig, rc);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let rd = sig.ienv.recs[rc.c];
@@ -2459,13 +2577,22 @@ pub proof fn walk_end_code(sig: Sig, rc: Rc)
             assert(crate::dom_model::mem(sig, spine_app(cj, vs), rho, ux));
             ctor_mem_le(sig, rc.c, rc.j, us, pa, nr, rho, ux, fsm);
             let wx = rc.wx(sig);
-            assert(wx == Cpt::Nd(NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind)), fsm));
             crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
             assert(crate::dom_rec::all_wf(rc.fs)) by {
                 assert(crate::dom_con_rel::flds_ok(sig, rc.nn, rc.g, rc.t0(sig), rc.t02(sig), rc.xs, rc.xs2, rc.ds, rc.fs, 0));
             }
             assert(wf(rc.fs[rc.np(sig)]) && wf(wx));
             crate::dom_model::mem_wf(sig, spine_app(cj, vs), rho, ux, *w2);
+            if wx is Bot {
+                // a bottom major: a smashed structure's, whose bottom fields
+                // are bottom
+                let sm = crate::dom_code::smash(sig, sh.ind);
+                crate::dom_code::node_le_cval(sh.ind, rc.j as nat, sm, fsm, ux);
+                assert(crate::dom_code::cval(sh.ind, rc.j as nat, sm, fsm) == Cpt::Bot);
+            } else {
+                assert(wx == Cpt::Nd(NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind)), fsm));
+            }
+            assert(le(ux, wx));
             crate::dom_sound::app_mono(uf, rc.fs[rc.np(sig)], ux, wx);
             le_trans(e, app(uf, ux), app(rc.fs[rc.np(sig)], wx));
         },
@@ -2484,7 +2611,7 @@ pub open spec fn fa_ctx(sig: Sig, rc: Rc, k: nat) -> bool {
     let (a, n, t) = (w.a(k), w.n(k), w.t(k));
     let (ta, dd, wv) = (*t->Bind_1, *a->Pi_0, w.wv(k));
     let ki = k as int;
-    &&& rec_ctx(sig, rc)
+    &&& rc_core(sig, rc)
     &&& k < rc.nf(sig)
     &&& n >= 1 && (n - 1) as nat <= rc.nn
     &&& has_type((n - 1) as nat, wv, dd) && has_type((n - 1) as nat, dd, Cpt::U) && wf(wv) && wf(dd)
@@ -2504,7 +2631,7 @@ pub open spec fn fa_ctx(sig: Sig, rc: Rc, k: nat) -> bool {
 #[verifier::spinoff_prover]
 pub proof fn field_arg_ctx(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         k < rc.nf(sig),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2535,7 +2662,7 @@ pub proof fn field_arg_ctx(sig: Sig, rc: Rc, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn field_arg_bnd(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         k < rc.nf(sig),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2570,7 +2697,7 @@ pub proof fn field_arg_bnd(sig: Sig, rc: Rc, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn walk_pv_env(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         k < rc.nf(sig),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2603,7 +2730,7 @@ pub proof fn walk_pv_env(sig: Sig, rc: Rc, k: nat)
 /// A FIELD ARGUMENT of the walk is related.
 pub proof fn field_arg(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         k < rc.nf(sig),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
         !(walk_of(sig, rc).u(k) is Bot),
@@ -2824,7 +2951,7 @@ pub proof fn motive_form(sig: Sig, c: u64, lv: Seq<LevelSpec>)
 /// The goal's code lies below the motive's value at the major.
 pub proof fn goal_code(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures
         wf(rc.a),
         le(rc.a, app(rc.fs[rc.np(sig)], rc.wx(sig))),
@@ -2845,6 +2972,35 @@ pub proof fn goal_code(sig: Sig, rc: Rc)
     app_var_le(sig, (crate::dom_rec_ty::rshape(sig, rc.c).nmin() + 1) as nat, 0, env, rc.a);
 }
 
+/// Where the major's value is not bottom: the major related to itself,
+/// and the constructor at the recursor's parameters to it.
+#[verifier::spinoff_prover]
+proof fn major_tops(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures ({
+        let (x, wx, dm) = (rc.xs[rc.pre(sig)], rc.wx(sig), rc.ds[rc.pre(sig)]);
+        !(wx is Bot) ==> con_top(sig, rc.nn, rc.g, x, x, rc.ind(sig), wx, dm)
+            && con_top(sig, rc.nn, rc.g, rc.cxr(sig), x, rc.ind(sig), wx, dm)
+    }),
+{
+    reveal(rc_red);
+    reveal(rc_eta);
+    reveal(rc_major);
+    let pre = rc.pre(sig);
+    let (x, x2, wx, dm, ci) = (rc.xs[pre], rc.xs2[pre], rc.wx(sig), rc.ds[pre], rc.ind(sig));
+    if !(wx is Bot) {
+        con_tm_unfold(sig, rc.nn, rc.g, x, x2, ci, wx, dm);
+        crate::dom_rel_per::con_symm(sig, rc.nn, rc.g, x, x2, ci, wx, dm);
+        crate::dom_rel_per::con_trans(sig, rc.nn, rc.g, x, x2, x, ci, wx, dm);
+        con_red(sig, rc.nn, rc.g, x, x, ci, wx, dm);
+        cr_self(sig, x);
+        if !crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, rc.c).ind) {
+            cxr_con(sig, rc);
+        }
+    }
+}
+
 /// THE MOTIVE AT THE MAJOR: its value there is a type, above the goal's
 /// code, at which the goal's type relates to itself and to the motive at
 /// the major's constructor application.
@@ -2863,6 +3019,7 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
         &&& rel_ty(sig, k1, rc.g, ExprSpec::App(Box::new(p), Box::new(rc.cxr(sig))), ExprSpec::App(Box::new(p), Box::new(x)), top)
     }),
 {
+    reveal(rc_major);
     crate::dom_sound::sound_all(sig);
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     let np = rc.np(sig);
@@ -2954,14 +3111,10 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
     crate::dom_rel_per::trans_ty(sig, k1, rc.g, ci, ci2, ci, d0);
     // the major's pairs
     let dm = rc.ds[pre];
-    crate::dom_rel_per::con_symm(sig, nn, rc.g, x, x2, ci, wx, dm);
-    crate::dom_rel_per::con_trans(sig, nn, rc.g, x, x2, x, ci, wx, dm);
-    con_red(sig, nn, rc.g, x, x, ci, wx, dm);
-    cr_self(sig, x);
     crate::dom_adeq_syn::dsym(sig, rc.g, x, x2, ci);
     crate::dom_adeq_syn::dsym(sig, rc.g, x, rc.cx(sig), ci);
     assert(has_type(nn, wx, dm) && has_type(nn, dm, Cpt::U));
-    cxr_con(sig, rc);
+    major_tops(sig, rc);
     cxr_typed(sig, rc);
     // the motive's domain code below the inductive's canonical table at the
     // parameters' values
@@ -3011,7 +3164,7 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
 /// One head argument on each side, typed at its declared domain.
 pub proof fn head_typed_at(sig: Sig, rc: Rc, i: int)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         0 <= i < rc.pre(sig),
     ensures ({
         let pre = rc.pre(sig);
@@ -3038,7 +3191,7 @@ pub proof fn head_typed_at(sig: Sig, rc: Rc, i: int)
 #[verifier::spinoff_prover]
 pub proof fn reds_typed(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures ({
         let pre = rc.pre(sig);
         let sh = crate::dom_rec_ty::rshape(sig, rc.c);
@@ -3078,7 +3231,7 @@ pub proof fn reds_typed(sig: Sig, rc: Rc)
 #[verifier::spinoff_prover]
 pub proof fn sides_ty(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures ({
         let pre = rc.pre(sig);
         crate::ti_chain::tchain(sig, rc.g, ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.xs2[pre])),
@@ -3117,7 +3270,7 @@ pub proof fn sides_ty(sig: Sig, rc: Rc)
 /// are typed at their own types.
 pub proof fn rc_levels(sig: Sig, rc: Rc)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
     ensures
         rc.ls.len() == sig.ienv.recs[rc.c].uparams.len(),
         rc.ls2.len() == sig.ienv.recs[rc.c].uparams.len(),
@@ -3145,6 +3298,8 @@ pub proof fn rec_red_left(sig: Sig, rc: Rc)
         &&& derivable(sig, eq(rc.g, rc.m(), w.m(l), ExprSpec::App(Box::new(rc.xs[rc.np(sig)]), Box::new(rc.xs[pre]))))
     }),
 {
+    reveal(rc_red);
+    reveal(rc_eta);
     let w = walk_of(sig, rc);
     let l = w.ys.len();
     let pre = rc.pre(sig);
@@ -3184,6 +3339,8 @@ pub proof fn rec_red_right(sig: Sig, rc: Rc)
         &&& derivable(sig, eq(rc.g, rc.m2(), w.m2(l), ExprSpec::App(Box::new(rc.xs2[rc.np(sig)]), Box::new(rc.xs2[pre]))))
     }),
 {
+    reveal(rc_red);
+    reveal(rc_eta);
     let w = walk_of(sig, rc);
     let l = w.ys.len();
     let pre = rc.pre(sig);
@@ -3283,6 +3440,7 @@ pub proof fn rec_close(sig: Sig, rc: Rc)
 
 /// THE END OF THE RECURSOR'S TELESCOPE, by induction on the major's
 /// height: an approximation above bottom relates the two applications.
+#[verifier::spinoff_prover]
 pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>,
     xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt)
     requires
@@ -3309,9 +3467,21 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
         crate::dom_code::smash_dead(sig, crate::dom_rec_ty::rshape(sig, c).ind);
     }
     let rc = rec_ctx_intro(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
+    rec_end_rc(sig, rc);
+}
+
+/// The end from its context: the walk down the minor, then its close.
+#[verifier::spinoff_prover]
+pub proof fn rec_end_rc(sig: Sig, rc: Rc)
+    requires
+        rec_ctx(sig, rc),
+    ensures
+        rel_tm(sig, rc.n, rc.g, rc.m(), rc.m2(), rc.t(sig), rc.u, rc.a),
+    decreases ht(rc.fs.last()), 0nat, walk_of(sig, rc).ys.len() + 1,
+{
     walk_init(sig, rc);
     walk_facts(sig, rc);
-    walk_run(sig, rc, 0, ht(fs.last()));
+    walk_run(sig, rc, 0, ht(rc.fs.last()));
     rec_close(sig, rc);
 }
 
@@ -3319,7 +3489,7 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
 #[verifier::spinoff_prover]
 proof fn walk_live(sig: Sig, rc: Rc, k: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         k < walk_of(sig, rc).ys.len(),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
     ensures
@@ -3345,7 +3515,7 @@ proof fn walk_live(sig: Sig, rc: Rc, k: nat)
 #[verifier::spinoff_prover]
 pub proof fn walk_run(sig: Sig, rc: Rc, k: nat, h: nat)
     requires
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
         h == ht(rc.fs.last()),
         k <= walk_of(sig, rc).ys.len(),
         crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),

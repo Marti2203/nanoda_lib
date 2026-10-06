@@ -142,9 +142,10 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
         heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
         cargs.len() == rshape(sig, rid).fields[j].len(),
         cl.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
-        hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)),
+        !crate::dom_code::smash(sig, rshape(sig, rid).ind) ==> hred(sig, x, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)),
     ensures
-        !crate::dom_code::smash(sig, rshape(sig, rid).ind) ==> hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
+        !crate::dom_code::smash(sig, rshape(sig, rid).ind) || x == spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)
+            ==> hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
             spine_app(heads[rshape(sig, rid).np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs))),
         rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs)))),
         crate::beta_model::rec_result(sig.ienv, spine_app(ExprSpec::Const(rid, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, rid).ctors[j], cl), pargs + cargs))))
