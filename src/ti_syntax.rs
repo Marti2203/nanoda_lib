@@ -406,10 +406,17 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 }
 
 /// A STRUCTURE: a canonical inductive with one constructor and no indices,
-/// its canonical recursor unique.
+/// its canonical recursor unique, each field a type parameter or a
+/// recursive occurrence (docs/TYPED_TARGET.md, "Structures stage plan":
+/// the first slice, whose table entries are the parameters' own codes).
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
     &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
+    &&& forall|k: int| 0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() ==>
+        crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
+            #[trigger] crate::dom_code::canon_shape(sig, s).fields[0][k])
+        || crate::rec_canon::direct_occ(crate::dom_code::canon_shape(sig, s).fields[0][k], s, crate::dom_code::canon_shape(sig, s).us(),
+            crate::dom_code::canon_shape(sig, s).np, crate::dom_code::canon_shape(sig, s).ni, k as nat)
     &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]
         crate::rec_canon::rec_canon(sig, r1) && crate::rec_canon::rec_ind(sig, r1) == s
         && crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s ==> r1 == r2

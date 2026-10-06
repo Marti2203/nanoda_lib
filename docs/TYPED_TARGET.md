@@ -1362,6 +1362,14 @@ case:
   "projections are typed nowhere" (`kclaims::gen_proj`,
   `untypable_untyped`, `jkernel::sr_pstep`/`lveq_conv`: S6.6 at the flip),
   soundness and adequacy.
+  **First slice (2026-10-06):** `struct_of` admits structures whose fields
+  are type parameters or recursive occurrences (`Prod`, `PProd`, `MProd`,
+  `And`). Soundness of a projection needs the field's table entry to be a
+  member of the field type's denotation; for a parameter the entry is the
+  parameter's own code (a member of the parameter term, `tf_spine`), for
+  a recursive field the structure's code. Closed or nested field types
+  need a general lemma that a simple type's code (`ceval`) is a member of
+  its denotation, which the model does not have yet.
 - **T2: the model.** `mem_w` gives `Proj(i, x)` the `i`-th field value of
   `x`'s constructor values (bottom otherwise); soundness of both rules
   (a constructor application's members are constructor nodes whose
