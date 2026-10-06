@@ -107,6 +107,7 @@ pub mod ti_sr;
 pub mod ti_hred;
 pub mod ti_hred_rec;
 pub mod dom_rec_red;
+pub mod dom_rec_eta;
 pub mod dom_rec_minor;
 pub mod dom_rec_walk;
 pub mod dom_rec_end;

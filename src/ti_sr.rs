@@ -508,7 +508,7 @@ proof fn sr_rec_eta(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec, a1:
 /// field is typed at its declared type, the parameter it names, which the
 /// subject's type chains to its own parameter, the projection's type.
 #[verifier::spinoff_prover]
-proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, st: ExprSpec, l: LevelSpec)
+pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, st: ExprSpec, l: LevelSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
         crate::ti_syntax::proj_fire(sig, ExprSpec::Proj(i, Box::new(x))),

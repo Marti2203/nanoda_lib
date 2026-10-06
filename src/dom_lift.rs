@@ -144,6 +144,8 @@ pub open spec fn tbl_canon(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt) -> bool {
     &&& a is Nd && a->Nd_0 is Ty && a->Nd_0->Ty_0 == j && a->Nd_0->Ty_2 == crate::dom_code::smash(sig, j)
     &&& pv.len() >= canon_shape(sig, j).np
     &&& tbl(a->Nd_1).len() > 0 ==> canon_ok(sig, j) && tbl(a->Nd_1).len() == canon_shape(sig, j).nmin()
+    &&& forall|p: int| 0 <= p < tbl(a->Nd_1).len() && (#[trigger] tbl(a->Nd_1)[p]) is Nd
+        ==> tbl(a->Nd_1)[p]->Nd_1.len() == canon_shape(sig, j).fields[p].len()
     &&& forall|p: int, k: int| 0 <= p < tbl(a->Nd_1).len() && tbl(a->Nd_1)[p] is Nd && 0 <= k < tbl(a->Nd_1)[p]->Nd_1.len()
         ==> #[trigger] entry_canon(sig, j, pv, p, k, tbl(a->Nd_1)[p]->Nd_1[k])
 }
@@ -182,6 +184,10 @@ pub proof fn canon_is_tbl(sig: Sig, j: u64, ls: Seq<LevelSpec>, cs: Seq<Cpt>)
     if tabled(sig, j, ls, cs) {
         cblocks_at(sig, j, ls, cs, sh.nmin());
         assert(ts.last() == Cpt::Nd(NdKey::Tag(2), cblocks(sig, j, ls, cs, sh.nmin())));
+        assert forall|p: int| 0 <= p < tbl(ts).len() && (#[trigger] tbl(ts)[p]) is Nd
+            implies tbl(ts)[p]->Nd_1.len() == sh.fields[p].len() by {
+            centries_at(sig, j, ls, cs, p as nat, sh.fields[p].len());
+        }
         assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
             implies #[trigger] entry_canon(sig, j, cs, p, k, tbl(ts)[p]->Nd_1[k]) by {
             let nf = sh.fields[p].len();
@@ -243,6 +249,10 @@ pub proof fn tbl_canon_le(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt, b: Cpt)
         assert(le(ts[ts.len() - 1], ts2[ts.len() - 1]));
         assert(ts.last() == ts[ts.len() - 1] && ts2.last() == ts2[ts2.len() - 1]);
         crate::dom_sem::nd_le_inv(ts.last()->Nd_0, ts.last()->Nd_1, ts2.last());
+    }
+    assert forall|p: int| 0 <= p < tbl(ts).len() && (#[trigger] tbl(ts)[p]) is Nd
+        implies tbl(ts)[p]->Nd_1.len() == canon_shape(sig, j).fields[p].len() by {
+        crate::dom_iota::tbl_le(a, b, p);
     }
     assert forall|p: int, k: int| 0 <= p < tbl(ts).len() && tbl(ts)[p] is Nd && 0 <= k < tbl(ts)[p]->Nd_1.len()
         implies #[trigger] entry_canon(sig, j, pv, p, k, tbl(ts)[p]->Nd_1[k]) by {

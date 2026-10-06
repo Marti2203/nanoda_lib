@@ -850,6 +850,8 @@ pub open spec fn rc_major(sig: Sig, rc: Rc) -> bool {
         &&& crate::dom_rec::rec_ok(sig, rc.c, rc.fs)
         &&& rc.wx(sig) is Nd && rc.wx(sig)->Nd_0 == NdKey::Con(sh.ind, rc.j as nat, crate::dom_code::smash(sig, sh.ind))
         &&& con_tm(sig, rc.nn, rc.g, rc.xs[pre], rc.xs2[pre], rc.ind(sig), rc.wx(sig), rc.ds[pre])
+        &&& rc.ds[pre] is Nd && rc.ds[pre]->Nd_0 is Ty
+        &&& crate::dom_lift::tbl_canon(sig, sh.ind, rc.pv(sig), rc.ds[pre])
     }
 }
 
@@ -871,8 +873,6 @@ pub open spec fn rc_core(sig: Sig, rc: Rc) -> bool {
     &&& rc.fsm(sig).len() == rc.nf(sig)
     &&& rc.args.len() == rc.nf(sig) && rc.args2.len() == rc.nf(sig)
     &&& rc.pargs.len() == sh.np && rc.pargs2.len() == sh.np
-    &&& rc.ds[pre] is Nd && rc.ds[pre]->Nd_0 is Ty
-    &&& crate::dom_lift::tbl_canon(sig, sh.ind, rc.pv(sig), rc.ds[pre])
     &&& tel_dom(rc.t0(sig), rc.xs, pre as nat) == rc.ind(sig)
     &&& tel_dom(rc.t02(sig), rc.xs2, pre as nat) == rc.ind2(sig)
     &&& derivable(sig, eq(rc.g, rc.xs[pre], rc.cx(sig), rc.ind(sig)))
@@ -1286,6 +1286,73 @@ proof fn major_par_at(sig: Sig, nn: nat, g: Ctx, c: u64, t0: ExprSpec, t02: Expr
     }
 }
 
+/// THE RECURSOR'S VALUE IS ABOVE BOTTOM: its major is a constructor's
+/// value, or bottom at a smashed structure.
+pub proof fn rec_live(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>,
+    xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt)
+    requires
+        rec_hyps(sig, c),
+        crate::dom_rec_adeq::rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u),
+        !(u is Bot),
+    ensures
+        crate::dom_rec::rec_ok(sig, c, fs) || (crate::dom_rec::rec_bot_ok(sig, c, fs) && !crate::dom_rec::rec_ok(sig, c, fs)
+            && crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind)
+            && fs[(crate::dom_rec_ty::rshape(sig, c).np + crate::dom_rec_ty::rshape(sig, c).nmin() + 1) as int] is Bot),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    crate::dom_iota::major_form(sig, c, sm.0);
+    crate::dom_iota::major_form(sig, c, ls);
+    crate::dom_con_rel::typed_facts_wf(n, u, a);
+    assert(le(u, crate::dom_rec::recval(sig, c, fs)));
+    crate::dom_rec::recval_wf(sig, c, fs);
+    head_le(u, crate::dom_rec::recval(sig, c, fs));
+    assert(crate::rec_canon::rec_ind(sig, c) == sh.ind);
+    let pre = (sh.np + sh.nmin() + 1) as int;
+    if !(fs[pre] is Bot) {
+        major_ok(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
+    }
+}
+
+/// A MAJOR VALUE ABOVE BOTTOM is a constructor's value the recursor has a
+/// rule for: typed at the major's code, below the inductive's canonical
+/// table.
+pub proof fn major_ok(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>,
+    xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt)
+    requires
+        rec_hyps(sig, c),
+        crate::dom_rec_adeq::rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u),
+        !(fs[(crate::dom_rec_ty::rshape(sig, c).np + crate::dom_rec_ty::rshape(sig, c).nmin() + 1) as int] is Bot),
+    ensures
+        crate::dom_rec::rec_ok(sig, c, fs),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let rd = sig.ienv.recs[c];
+    let pre = (sh.np + sh.nmin() + 1) as int;
+    crate::dom_iota::major_form(sig, c, sm.0);
+    crate::dom_iota::major_form(sig, c, ls);
+    let (t0, t02) = (crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2));
+    assert(xs.len() == pre + 1);
+    assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, pre));
+    let (wx, dm) = (fs[pre], ds[pre]);
+    assert(has_type(nn, wx, dm));
+    // the major's code below the canonical table
+    let tds = crate::dom_rec_ty::rtds(sig, c, sm.0);
+    assert(crate::dom_rec_adeq::rf_sem(sig, c, sm, xs.len(), 0, a, ds, fs));
+    assert(tds.subrange(0, xs.len() as int) =~= tds);
+    crate::dom_iota::major_bnd(sig, c, sm.0, ds, fs);
+    assert(wx is Nd && wx->Nd_0 is Con && dm is Nd && dm->Nd_0 is Ty);
+    let p = wx->Nd_0->Con_1 as int;
+    assert(crate::dom_lift::tbl_canon(sig, sh.ind, fs.subrange(0, sh.np as int), dm));
+    assert(tbl(dm->Nd_1)[p] is Nd);
+    assert(tbl(dm->Nd_1)[p]->Nd_1.len() == wx->Nd_1.len());
+    rec_canon_ok(sig, c);
+    assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
+    assert(0 <= p < sh.nmin());
+    crate::dom_rec_ty::scope_ctor(sig, c, p);
+    assert(crate::rec_canon::rec_ind(sig, c) == sh.ind);
+    assert(fs.last() == wx);
+}
+
 /// THE END'S CONTEXT from the invariant at the end of the telescope.
 #[verifier::spinoff_prover]
 pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>,
@@ -1295,9 +1362,11 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
         crate::dom_rec_adeq::rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u),
         !(u is Bot),
         !(a is Bot),
-        !crate::dom_code::smash(sig, crate::dom_rec_ty::rshape(sig, c).ind),
+        crate::dom_rec::rec_ok(sig, c, fs),
     ensures
-        rec_ctx(sig, rc),
+        rc_core(sig, rc),
+        rc_red(sig, rc),
+        !(rc.wx(sig) is Bot),
         rc.nn == nn && rc.n == n && rc.g == g && rc.c == c && rc.sm == sm && rc.ls == ls && rc.ls2 == ls2,
         rc.xs == xs && rc.xs2 == xs2 && rc.a == a && rc.ds == ds && rc.fs == fs && rc.u == u,
 {
@@ -1549,7 +1618,31 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     assert(w.u(0) == v && w.a(0) == d);
     assert(w.m(0) == x && w.m2(0) == x2);
     assert(w.t(0) == ty && w.t2(0) == ty2);
-    // the semantic side
+    assert(w.wp(0) =~= Seq::<Cpt>::empty());
+    assert(crate::dom_sem::pre_le(w.wp(0), w.wsk(0)));
+    walk_init_sem(sig, rc);
+}
+
+/// The walk's semantic side at its start: the minor's telescope typed, the
+/// environment fitting, the minor's code its member.
+#[verifier::spinoff_prover]
+proof fn walk_init_sem(sig: Sig, rc: Rc)
+    requires
+        rc_core(sig, rc),
+    ensures ({
+        let w = walk_of(sig, rc);
+        &&& derivable(sig, eq(w.g0, crate::rec_canon::binds(BinderKind::Pi, w.sds, w.sbody), crate::rec_canon::binds(BinderKind::Pi, w.sds, w.sbody), crate::ti_syntax::sort(w.l0)))
+        &&& crate::dom_sound::fits_env(sig, w.g0 + w.sds.subrange(0, 0), w.rho(0))
+        &&& crate::dom_model::mem(sig, w.srest(0), w.rho(0), w.a(0))
+    }),
+{
+    let w = walk_of(sig, rc);
+    let mi = rc.np(sig) + 1 + rc.j;
+    let tds = crate::dom_rec_ty::rtds(sig, rc.c, rc.sm.0);
+    let (d, v) = (rc.ds[mi], rc.fs[mi]);
+    crate::dom_iota::major_form(sig, rc.c, rc.sm.0);
+    assert(w.wsk(0) =~= Seq::<Cpt>::empty());
+    assert(w.a(0) == d);
     let sem = rc.sm;
     assert(crate::dom_rec_adeq::rf_sem(sig, rc.c, sem, rc.xs.len(), 0, rc.a, rc.ds, rc.fs));
     assert(tds.subrange(0, rc.xs.len() as int) =~= tds);
@@ -1560,7 +1653,6 @@ pub proof fn walk_init(sig: Sig, rc: Rc)
     assert(crate::ti_gen::typ(sig, w.g0, tds[mi], li));
     assert(derivable(sig, eq(w.g0, tds[mi], tds[mi], crate::ti_syntax::sort(w.l0))));
     assert(w.wp(0) =~= Seq::<Cpt>::empty());
-    assert(crate::dom_sem::pre_le(w.wp(0), w.wsk(0)));
     assert(w.rho(0) == w.rho0);
     assert(w.g0 + w.sds.subrange(0, 0) =~= w.g0);
     assert(w.sds.subrange(0, w.sds.len() as int) =~= w.sds);
@@ -1597,6 +1689,40 @@ pub proof fn rc_par(sig: Sig, rc: Rc, q: int)
     crate::dom_rel_per::trans_ty(sig, nn, g, x, x2, x, w0);
 }
 
+/// The major's type's parameters convert with themselves.
+pub proof fn pconv_self(sig: Sig, rc: Rc)
+    requires
+        rc_core(sig, rc),
+    ensures
+        crate::dom_rel::pconv(sig, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind(sig)),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let (np, ind, g) = (sh.np, sh.ind, rc.g);
+    let ci = rc.ind(sig);
+    let ri = rc.ri(sig);
+    let (t0, t02) = (rc.t0(sig), rc.t02(sig));
+    rec_canon_ok(sig, rc.c);
+    assert(crate::dom_code::canon_shape(sig, ind) == sh);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rc.c);
+    crate::dom_rec_ty::rec_lps_sub(sig, rc.c);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ri), rc.xs.subrange(0, np as int));
+    crate::dom_lift::iapp_self(sig, ci);
+    crate::dom_rel::lpad_id(ri, sig.consts[ind].lps.len());
+    assert(crate::dom_rel::iinst(sig, ind, ci) == ri);
+    crate::ti_ls2::levs_eq_refl(ri);
+    let a = spine_args(ci);
+    assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies #[trigger] crate::dom_rel::peq(sig, g, ind, ri, q, a[q], a[q]) by {
+        assert(a[q] == rc.xs[q]);
+        assert(crate::dom_con_rel::fld_ok(sig, rc.nn, g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, q));
+        crate::dom_rec_minor::head_pdom(sig, rc.c, rc.ls, rc.xs, q);
+        crate::dom_psimple::der_diag(sig, g, rc.xs[q], rc.xs2[q], crate::dom_rel::ptype(sig, ind, ri, q));
+        crate::ti_chain::tchain_refl(sig, g, a[q]);
+    }
+    assert forall|q: int| 0 <= q < a.len() && (q < np || !crate::dom_code::never_prop(sig, ind)) implies #[trigger] crate::ti_chain::mchain(sig, g, a[q], a[q]) by {
+        crate::ti_chain::mchain_refl(sig, g, a[q]);
+    }
+}
+
 /// THE RECURSOR'S PARAMETERS TRANSFER: each is related to itself at its
 /// value, a type, so a relation at a code below that value moves between
 /// stages (`ptr`); and the major's type's parameters convert (`pconv`).
@@ -1617,11 +1743,8 @@ pub proof fn rc_ptr(sig: Sig, rc: Rc, n: nat)
     let (ci, ci2) = (rc.ind(sig), rc.ind2(sig));
     let dm = rc.ds[pre];
     let pv = rc.pv(sig);
-    // the major's type, related to itself at its code
-    assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, rc.xs, rc.xs2, rc.ds, rc.fs, 0, pre));
-    crate::dom_rel_per::symm_ty(sig, nn, g, ci, ci2, dm);
-    crate::dom_rel_per::trans_ty(sig, nn, g, ci, ci2, ci, dm);
-    crate::dom_rel::ty_ind(sig, nn, g, ci, ci, dm);
+    // the major's type's parameters convert with themselves
+    pconv_self(sig, rc);
     // the parameters, the major's type's arguments
     crate::dom_rec_ty::scope_ctor_ind(sig, rc.c);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, rc.ri(sig)), rc.xs.subrange(0, np as int));
@@ -2196,6 +2319,8 @@ pub proof fn ih_flds(sig: Sig, rc: Rc, kf: int)
     let (ys, ys2, fz) = (ih_xs(sig, rc, kf), ih_xs2(sig, rc, kf), ih_fs(sig, rc, kf));
     let (v, dm) = (rc.fsm(sig)[kf], rc.ds[pre]);
     let ci = rc.ind(sig);
+    rc_rec_nd(sig, rc, kf);
+    reveal(rc_major);
     ih_field(sig, rc, kf);
     rc_fty_rec(sig, rc, kf);
     assert(rc_field(sig, rc, kf));
@@ -3466,7 +3591,9 @@ pub proof fn rec_end_at(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
         // goes through the major's projections (stage E4c)
         crate::dom_code::smash_dead(sig, crate::dom_rec_ty::rshape(sig, c).ind);
     }
+    rec_live(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
     let rc = rec_ctx_intro(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u);
+    reveal(rc_red);
     rec_end_rc(sig, rc);
 }
 
@@ -3496,17 +3623,28 @@ proof fn walk_live(sig: Sig, rc: Rc, k: nat)
         !(walk_of(sig, rc).u(k) is Bot),
 {
     let w = walk_of(sig, rc);
-    let l = w.ys.len();
     walk_facts(sig, rc);
-    walk_shape(sig, rc, k);
-    let (wk, wr) = (w.wsk(k), w.ws.subrange(k as int, l as int));
-    assert(wk + wr =~= w.ws);
-    crate::dom_rec_ty::apps_concat(w.u0, wk, wr);
-    if w.u(k) is Bot {
+    crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
+    apps_live(w.u0, w.ws, k as int, rc.u);
+}
+
+/// Above bottom, below an application to arguments: every application to
+/// a prefix of them is above bottom.
+proof fn apps_live(u0: Cpt, ws: Seq<Cpt>, k: int, u: Cpt)
+    requires
+        0 <= k <= ws.len(),
+        wf(u),
+        !(u is Bot),
+        le(u, crate::dom_rec::apps(u0, ws)),
+    ensures
+        !(crate::dom_rec::apps(u0, ws.subrange(0, k)) is Bot),
+{
+    let (wk, wr) = (ws.subrange(0, k), ws.subrange(k, ws.len() as int));
+    assert(wk + wr =~= ws);
+    crate::dom_rec_ty::apps_concat(u0, wk, wr);
+    if crate::dom_rec::apps(u0, wk) is Bot {
         crate::dom_iota::apps_bot(wr);
-        crate::dom_con_rel::typed_facts_wf(rc.n, rc.u, rc.a);
-        head_le(rc.u, crate::dom_rec::recval(sig, rc.c, rc.fs));
-        assert(false);
+        head_le(u, crate::dom_rec::apps(u0, ws));
     }
 }
 

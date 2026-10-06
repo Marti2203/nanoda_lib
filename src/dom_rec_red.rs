@@ -200,18 +200,86 @@ pub proof fn rec_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>,
     assert(ca.subrange(ca.len() - rd.rules[j].nfields, ca.len() as int) =~= cargs);
     assert(args.subrange((rd.major_idx + 1) as int, args.len() as int) =~= Seq::<ExprSpec>::empty());
     assert(hstep(sig, t1)->Some_0 == spine_app(spine_app(body, heads), cargs));
-    // beta through the rule's lambdas
+    crate::dom_iota::spine_concat(body, heads, cargs);
+    rule_red(sig, rid, lv, j, heads, cargs);
+    let r = spine_app(heads[sh.np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs));
+    hred_trans(sig, t1, spine_app(spine_app(body, heads), cargs), r);
+    if unsmashed {
+        hred_trans(sig, spine_app(h, heads.push(x)), t1, r);
+    }
+}
+
+/// THE RULE'S BODY at the heads and field terms beta-reduces to the minor
+/// at the field terms and the recursive calls.
+pub proof fn rule_red(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, heads: Seq<ExprSpec>, cargs: Seq<ExprSpec>)
+    requires
+        rec_scope(sig, rid),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+        0 <= j < rshape(sig, rid).nmin(),
+        crate::beta_model::rule_rhs_ok(sig.ienv, sig.ienv.recs[rid].rules[j]),
+        heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
+        cargs.len() == rshape(sig, rid).fields[j].len(),
+    ensures
+        hred(sig, spine_app(spine_app(crate::expr_model::subst_expr_levels(sig.ienv.recs[rid].rules[j].rhs, sig.ienv.recs[rid].uparams, lv), heads), cargs),
+            spine_app(heads[rshape(sig, rid).np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs))),
+{
+    let rd = sig.ienv.recs[rid];
+    let sh = rshape(sig, rid);
+    let body = crate::expr_model::subst_expr_levels(rd.rules[j].rhs, rd.uparams, lv);
     crate::dom_iota::rule_split(sig, rid, lv, j);
     crate::dom_iota::spine_concat(body, heads, cargs);
     let pre = (sh.np + sh.nmin() + 1) as int;
     let ds = crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0, pre) + crate::dom_iota::ftds(sig, rid, lv, j);
     crate::ti_hred_rec::hred_beta_spine(sig, ds, crate::dom_iota::rule_body(sig, rid, lv, j), heads + cargs);
     rule_vsub(sig, rid, lv, j, heads, cargs);
-    let r = spine_app(heads[sh.np + 1 + j], cargs + ih_tms(sig, rid, lv, j, heads, cargs));
-    hred_trans(sig, t1, spine_app(body, heads + cargs), r);
-    if unsmashed {
-        hred_trans(sig, spine_app(h, heads.push(x)), t1, r);
-    }
+}
+
+/// A SMASHED STRUCTURE'S REDEX at a major its Iota does not fire on
+/// reduces by its eta step to the minor at the major's projections.
+#[verifier::spinoff_prover]
+pub proof fn rec_red_eta(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<ExprSpec>, x: ExprSpec)
+    requires
+        rec_scope(sig, rid),
+        crate::dom_rec_end::rec_interp(sig, rid),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+        !crate::ti_syntax::is_def(sig, rid, lv),
+        crate::dom_code::smash(sig, rshape(sig, rid).ind),
+        crate::beta_model::rule_rhs_ok(sig.ienv, sig.ienv.recs[rid].rules[0]),
+        heads.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + 1,
+        !rec_fire(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x))),
+    ensures
+        rshape(sig, rid).nmin() == 1,
+        hred(sig, spine_app(ExprSpec::Const(rid, lv), heads.push(x)),
+            spine_app(heads[(rshape(sig, rid).np + 1) as int], crate::ti_syntax::projs(x, rshape(sig, rid).fields[0].len())
+                + ih_tms(sig, rid, lv, 0, heads, crate::ti_syntax::projs(x, rshape(sig, rid).fields[0].len())))),
+{
+    let rd = sig.ienv.recs[rid];
+    let sh = rshape(sig, rid);
+    let h = ExprSpec::Const(rid, lv);
+    let m = spine_app(h, heads.push(x));
+    reveal(crate::ti_syntax::struct_of);
+    crate::dom_rec_ty::scope_ctor(sig, rid, 0);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    assert(rd.major_idx == heads.len());
+    assert(sh.nmin() == 1);
+    let nf = sh.fields[0].len();
+    let cargs = crate::ti_syntax::projs(x, nf);
+    // the eta step
+    crate::beta_model::spine_destruct_app(h, heads.push(x));
+    crate::dom_bound::spine_push(h, heads.push(x));
+    assert(heads.push(x).subrange(0, heads.len() as int) =~= heads);
+    crate::ti_hred_rec::rec_prefix_stuck(sig, rid, lv, heads);
+    assert(rec_eta(sig, m));
+    let args = heads.push(x);
+    assert(args.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
+    assert(args[rd.major_idx as int] == x);
+    let body = crate::expr_model::subst_expr_levels(rd.rules[0].rhs, rd.uparams, lv);
+    assert(hstep(sig, m) == Some(spine_app(spine_app(body, heads), cargs)));
+    hred_step(sig, m);
+    // beta through the rule's lambdas
+    rule_red(sig, rid, lv, 0, heads, cargs);
+    hred_trans(sig, m, spine_app(spine_app(body, heads), cargs),
+        spine_app(heads[(sh.np + 1) as int], cargs + ih_tms(sig, rid, lv, 0, heads, cargs)));
 }
 
 /// A rule list with the constructor at `j` finds some rule for it.

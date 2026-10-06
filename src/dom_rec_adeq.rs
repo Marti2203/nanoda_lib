@@ -127,6 +127,7 @@ pub open spec fn rf_inv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
 /// The two heads, derivably equal at the left one's type, and the right
 /// one at its own.
 pub open spec fn rf_heads(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>) -> bool {
+    &&& crate::conv_cr::levs_eq(ls, ls2)
     &&& derivable(sig, eq(g, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls2), crate::ti_syntax::dty_at(sig, c, ls)))
     &&& derivable(sig, eq(g, ExprSpec::Const(c, ls2), ExprSpec::Const(c, ls2), crate::ti_syntax::dty_at(sig, c, ls2)))
 }
