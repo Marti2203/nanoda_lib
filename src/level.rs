@@ -292,6 +292,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 #![trigger interp(to_model(l), rho)]
                 #![trigger interp(to_model(r), rho)]
                 interp(to_model(l), rho) <= interp(to_model(r), rho),
+            to_model(l) is Param && to_model(l) == to_model(r) ==> result,
     {
         let l_prime = self.simplify(l);
         let r_prime = self.simplify(r);
@@ -545,6 +546,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             result ==> forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(l_in), rho) as int <= interp(to_model(r_in), rho) as int
                     + diff as int,
+            to_model(l_in) is Param && to_model(l_in) == to_model(r_in) && diff >= 0 ==> result,
     {
         match self.read_level_pair(l_in, r_in) {
             (Zero, _) if diff >= 0 => {
@@ -557,8 +559,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             (Param(a, ..), Param(x, ..)) => {
                 let res = a == x && diff >= 0;
                 proof {
+                    level_ptr_eq_iff_same_model_param(*self, l_in, r_in);
                     if res {
-                        level_ptr_eq_iff_same_model_param(*self, l_in, r_in);
                         assert(to_model(l_in) == to_model(r_in));
                     }
                 }
@@ -918,6 +920,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::same_arenas(*old(self), *final(self)),
             result ==> forall|rho: Map<nat, nat>| #[trigger]
                 interp(to_model(l), rho) == interp(to_model(r), rho),
+            to_model(l) is Param && to_model(l) == to_model(r) ==> result,
     {
         self.leq(l, r) && self.leq(r, l)
     }
@@ -1428,6 +1431,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             // after substituting, so without this the depth bound proven on the
             // substitution does not survive to the recursive call.
             level_depth(to_model(result)) <= level_depth(to_model(ptr)),
+            to_model(ptr) is Param ==> result == ptr,
     {
         let ghost ptr0 = ptr;
         match self.read_level(ptr) {

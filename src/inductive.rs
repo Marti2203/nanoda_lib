@@ -693,6 +693,141 @@ pub(crate) proof fn rec_bridge<'t>(st: InductiveCheckState<'t>, sh: crate::rec_c
         ExprSpec::App(Box::new(crate::beta_model::spine_app(ExprSpec::Free(mm[0]), crate::kgen::frees(iids))), Box::new(ExprSpec::Free(majid))));
 }
 
+/// `m` is the block's `i`-th inductive (as recorded, with its levels) at
+/// the parameters and as many indices as it has: the purely syntactic
+/// test the tested check compares `is_rec_argument` against.
+pub(crate) open spec fn shape_at<'t>(st: InductiveCheckState<'t>, i: int, m: ExprSpec) -> bool {
+    &&& 0 <= i < st.ind_consts@.len()
+    &&& i < st.local_indices@.len()
+    &&& crate::beta_model::spine_head(m) == crate::expr_arena_bridge::to_model(st.ind_consts@[i])
+    &&& crate::beta_model::spine_args(m).len() == st.local_params@.len() + st.local_indices@[i]@.len()
+    &&& forall|j: int| 0 <= j < st.local_params@.len() ==> #[trigger] crate::beta_model::spine_args(m)[j]
+        == crate::expr_arena_bridge::to_model(st.local_params@[j])
+}
+
+/// THE RECURSIVE FIELDS ARE THE SYNTACTIC OCCURRENCES: among fields whose
+/// type is not a Pi, the ones at positions `ps` are exactly those whose
+/// type is a block inductive at the parameters (`shape_at`; the second
+/// direction when the block's constants are at parameter levels).
+#[verifier::opaque]
+pub(crate) open spec fn recs_syn<'t>(st: InductiveCheckState<'t>, fs: Seq<ExprPtr<'t>>, ps: Seq<int>) -> bool {
+    forall|k: int| 0 <= k < fs.len() && !(crate::quot_model::local_type(#[trigger] fs[k]) is Bind
+        && crate::quot_model::local_type(fs[k])->Bind_0 == BinderKind::Pi) ==>
+        ((exists|r: int| 0 <= r < ps.len() && ps[r] == k) ==> exists|i: int| shape_at(st, i, crate::quot_model::local_type(fs[k])))
+        && (consts_params(st) && (exists|i: int| shape_at(st, i, crate::quot_model::local_type(fs[k])))
+            ==> exists|r: int| 0 <= r < ps.len() && ps[r] == k)
+}
+
+/// One more field walked: the recursive positions stay the syntactic ones.
+#[verifier::spinoff_prover]
+pub(crate) proof fn recs_syn_push<'t>(st: InductiveCheckState<'t>, aa0: Seq<ExprPtr<'t>>, local: ExprPtr<'t>, ps0: Seq<int>, ps: Seq<int>, is_rec: bool)
+    requires
+        recs_syn(st, aa0, ps0),
+        forall|r: int| 0 <= r < ps0.len() ==> 0 <= #[trigger] ps0[r] < aa0.len(),
+        ps == if is_rec { ps0.push(aa0.len() as int) } else { ps0 },
+        !(crate::quot_model::local_type(local) is Bind && crate::quot_model::local_type(local)->Bind_0 == BinderKind::Pi) ==>
+            (is_rec ==> exists|i: int| shape_at(st, i, crate::quot_model::local_type(local)))
+            && (consts_params(st) && (exists|i: int| shape_at(st, i, crate::quot_model::local_type(local))) ==> is_rec),
+    ensures
+        recs_syn(st, aa0.push(local), ps),
+{
+    reveal(recs_syn);
+    let all = aa0.push(local);
+    let n = aa0.len() as int;
+    assert forall|k: int| 0 <= k < all.len() && !(crate::quot_model::local_type(#[trigger] all[k]) is Bind
+        && crate::quot_model::local_type(all[k])->Bind_0 == BinderKind::Pi) implies
+        ((exists|r: int| 0 <= r < ps.len() && ps[r] == k) ==> exists|i: int| shape_at(st, i, crate::quot_model::local_type(all[k])))
+        && (consts_params(st) && (exists|i: int| shape_at(st, i, crate::quot_model::local_type(all[k])))
+            ==> exists|r: int| 0 <= r < ps.len() && ps[r] == k) by {
+        if k < n {
+            assert(all[k] == aa0[k]);
+            if exists|r: int| 0 <= r < ps.len() && ps[r] == k {
+                let r = choose|r: int| 0 <= r < ps.len() && ps[r] == k;
+                if r >= ps0.len() { assert(ps[r] == n); }
+                assert(ps0[r] == k);
+            }
+            if consts_params(st) && (exists|i: int| shape_at(st, i, crate::quot_model::local_type(all[k]))) {
+                let r = choose|r: int| 0 <= r < ps0.len() && ps0[r] == k;
+                assert(ps[r] == k);
+            }
+        } else {
+            assert(all[k] == local);
+            if exists|r: int| 0 <= r < ps.len() && ps[r] == k {
+                let r = choose|r: int| 0 <= r < ps.len() && ps[r] == k;
+                if r < ps0.len() {
+                    assert(ps0[r] < aa0.len());
+                }
+                assert(is_rec);
+            }
+            if is_rec {
+                assert(ps[ps.len() - 1] == k);
+            }
+        }
+    }
+}
+
+/// The block's recorded inductives are constants at parameter levels.
+pub(crate) open spec fn consts_params<'t>(st: InductiveCheckState<'t>) -> bool {
+    forall|i: int| 0 <= i < st.ind_consts@.len() ==> crate::expr_arena_bridge::is_const_shape(#[trigger] st.ind_consts@[i])
+        && forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(crate::expr_arena_bridge::const_levels_of(st.ind_consts@[i])).len()
+            ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(crate::expr_arena_bridge::const_levels_of(st.ind_consts@[i]))[k]) is Param
+}
+
+/// Two level lists, compared element by element by pointer.
+fn levels_ptr_eq<'t, 'p>(ctx: &TcCtx<'t, 'p>, a: LevelsPtr<'t>, b: LevelsPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, a),
+        crate::util_model::owns(*ctx, b),
+    ensures
+        result ==> crate::level_arena_bridge::to_model_of_levels(a) == crate::level_arena_bridge::to_model_of_levels(b),
+        crate::level_arena_bridge::to_model_of_levels(a) == crate::level_arena_bridge::to_model_of_levels(b)
+            && (forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(a).len()
+                ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(a)[k]) is Param) ==> result,
+{
+    let xs = crate::level_arena_bridge::read_levels_vec(ctx, a);
+    let ys = crate::level_arena_bridge::read_levels_vec(ctx, b);
+    if xs.len() != ys.len() {
+        return false;
+    }
+    let mut k: usize = 0;
+    while k < xs.len()
+        invariant
+            xs@.len() == ys@.len(),
+            k <= xs@.len(),
+            crate::util_model::owns_all(*ctx, xs@),
+            crate::util_model::owns_all(*ctx, ys@),
+            xs@.len() == crate::level_arena_bridge::to_model_of_levels(a).len(),
+            ys@.len() == crate::level_arena_bridge::to_model_of_levels(b).len(),
+            forall|i: int| 0 <= i < xs@.len() ==> #[trigger] crate::level_arena_bridge::to_model(xs@[i]) == crate::level_arena_bridge::to_model_of_levels(a)[i],
+            forall|i: int| 0 <= i < ys@.len() ==> #[trigger] crate::level_arena_bridge::to_model(ys@[i]) == crate::level_arena_bridge::to_model_of_levels(b)[i],
+            forall|i: int| 0 <= i < k ==> #[trigger] xs@[i] == ys@[i],
+        decreases xs@.len() - k,
+    {
+        proof {
+            if crate::level_arena_bridge::to_model(xs@[k as int]) is Param && crate::level_arena_bridge::to_model(ys@[k as int]) is Param {
+                crate::level_arena_bridge::level_ptr_eq_iff_same_model_param(*ctx, xs@[k as int], ys@[k as int]);
+            }
+        }
+        proof {
+            crate::util_model::owned_raw_eq(*ctx, xs@[k as int], ys@[k as int]);
+        }
+        if xs[k] != ys[k] {
+            return false;
+        }
+        k += 1;
+    }
+    proof {
+        assert forall|i: int| 0 <= i < xs@.len() implies crate::level_arena_bridge::to_model_of_levels(a)[i]
+            == crate::level_arena_bridge::to_model_of_levels(b)[i] by {
+            assert(xs@[i] == ys@[i]);
+            assert(crate::level_arena_bridge::to_model(xs@[i]) == crate::level_arena_bridge::to_model_of_levels(a)[i]);
+            assert(crate::level_arena_bridge::to_model(ys@[i]) == crate::level_arena_bridge::to_model_of_levels(b)[i]);
+        }
+        assert(crate::level_arena_bridge::to_model_of_levels(a) =~= crate::level_arena_bridge::to_model_of_levels(b));
+    }
+    true
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -6582,6 +6717,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             level_free(*old(self).ctx, ctor_type_cursor),
             rem_params@.len() >= st.local_params@.len(),
             forall|i: int| 0 <= i < rem_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] rem_params@[i]),
+            forall|i: int| 0 <= i < st.local_params@.len() ==> level_free_local(*old(self).ctx, #[trigger] st.local_params@[i]),
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
         ensures
@@ -6604,6 +6740,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             forall|k: int| 0 <= k < result.2@.len() ==> result.1@.contains(#[trigger] result.2@[k]),
             rec_sub_some(result.1@, result.2@),
+            exists|ps: Seq<int>| #[trigger] rec_sub(result.1@, result.2@, ps) && recs_syn(*st, result.1@, ps),
     {
         let ghost c0 = crate::expr_arena_bridge::to_model(ctor_type_cursor);
         let ghost cnt_lo = crate::util::unique_count(*self.ctx) as nat;
@@ -6660,9 +6797,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(crate::kgen::serials_in(aids, rec_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat));
         }
         let ghost mut ps: Seq<int> = Seq::empty();
+        proof {
+            assert(recs_syn(*st, all_args@, ps)) by { reveal(recs_syn); }
+        }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_type_cursor)
             invariant
                 rec_sub(all_args@, rec_args@, ps),
+                recs_syn(*st, all_args@, ps),
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -6684,6 +6825,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::kgen::serials_in(aids, all_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
                 crate::kgen::serials_in(aids, rec_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
                 forall|k: int| 0 <= k < rec_args@.len() ==> all_args@.contains(#[trigger] rec_args@[k]),
+                forall|k: int| 0 <= k < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[k]),
         {
             let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
             let ghost ids0 = pids + local_ids(all_args@);
@@ -6724,7 +6866,33 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost ra0 = rec_args@;
             let ghost c_mid = crate::util::unique_count(*self.ctx) as nat;
             let ghost ps0 = ps;
-            if self.is_rec_argument(st, binder_type).is_some() {
+            let is_rec = self.is_rec_argument(st, binder_type).is_some();
+            // VERUS-REWRITE(tested-env): a field whose type is not a Pi is
+            // recursive exactly when its type is literally a block inductive at
+            // the parameters (`ind_app_shape`); a rejection otherwise, so the
+            // recursor's hypotheses sit at the syntactic recursive positions.
+            // Never fails on a constructor Lean exports.
+            let is_pi = matches!(self.ctx.read_expr(binder_type), Pi { .. });
+            let ghost bm = crate::expr_arena_bridge::to_model(binder_type);
+            if !is_pi {
+                let shape = self.ind_app_shape(st, binder_type);
+                if is_rec != shape.is_some() {
+                    panic!("a field's recursiveness is not syntactic");
+                }
+                proof {
+                    assert((is_rec ==> exists|i: int| shape_at(*st, i, bm))
+                        && (consts_params(*st) && (exists|i: int| shape_at(*st, i, bm)) ==> is_rec)) by {
+                        if let Some(i) = shape {
+                            assert(shape_at(*st, i as int, bm));
+                        }
+                    }
+                }
+            } else {
+                proof {
+                    assert(bm is Bind && bm->Bind_0 == BinderKind::Pi);
+                }
+            }
+            if is_rec {
                 rec_args.push(local);
                 proof {
                     ps = ps.push(all_args@.len() - 1);
@@ -6740,6 +6908,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(all_args@[all_args@.len() - 1] == local);
                     }
                 }
+                assert(crate::quot_model::local_type(local) == bm);
+                recs_syn_push(*st, aa0, local, ps0, ps, is_rec);
                 assert(rec_sub(all_args@, rec_args@, ps)) by {
                     assert forall|k: int| 0 <= k < ps.len() implies 0 <= #[trigger] ps[k] < all_args@.len() && all_args@[ps[k]] == rec_args@[k] by {
                         if k < ps0.len() {
@@ -6768,6 +6938,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         proof {
             assert(rec_sub(all_args@, rec_args@, ps));
+            assert(rec_sub(all_args@, rec_args@, ps) && recs_syn(*st, all_args@, ps));
         }
         (ctor_type_cursor, all_args, rec_args)
     }
@@ -7512,6 +7683,99 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let c = CtorCert { cursors: cs, bts, bodies, locals: locs, sorts };
             assert(ctor_cert_ok(env, *st, crate::level_arena_bridge::name_id(parent_ind_name), crate::expr_arena_bridge::to_model(ctor_type_in), c));
         }
+    }
+
+    /// The syntactic test `shape_at`, decided: `Some(i)` exactly when the
+    /// term is the block's `i`-th inductive at the parameters (first such
+    /// `i`). Used only by the tested check in `sep_nonrec_rec_ctor_args`.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn ind_app_shape(&self, st: &InductiveCheckState<'t>, ty: ExprPtr<'t>) -> (result: Option<usize>)
+        requires
+            crate::util_model::owns(*self.ctx, ty),
+            crate::inductive_model::st_owned(*self.ctx, *st),
+            forall|j: int| 0 <= j < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[j]),
+        ensures
+            result matches Some(i) ==> shape_at(*st, i as int, crate::expr_arena_bridge::to_model(ty)),
+            result is None && consts_params(*st)
+                ==> forall|i: int| !(#[trigger] shape_at(*st, i, crate::expr_arena_bridge::to_model(ty))),
+    {
+        let (head, args) = self.ctx.unfold_apps(ty);
+        let ghost m = crate::expr_arena_bridge::to_model(ty);
+        let ghost am = crate::expr_arena_bridge::ptr_models(args@);
+        proof {
+            crate::beta_model::spine_destruct_app(crate::expr_arena_bridge::to_model(head), am);
+        }
+        let (hname, hlevels) = match self.ctx.read_expr(head) {
+            Const { name, levels, .. } => (name, levels),
+            _ => {
+                proof {
+                    crate::expr_arena_bridge::to_model_shape(head);
+                    if consts_params(*st) {
+                        assert forall|i: int| !(#[trigger] shape_at(*st, i, m)) by {
+                            if shape_at(*st, i, m) {
+                                crate::expr_arena_bridge::is_const_shape_model(st.ind_consts@[i]);
+                            }
+                        }
+                    }
+                }
+                return None
+            },
+        };
+        proof {
+            crate::expr_arena_bridge::is_const_shape_model(head);
+        }
+        let mut i: usize = 0;
+        while i < st.ind_consts.len()
+            invariant
+                crate::util_model::owns(*self.ctx, ty),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                forall|j: int| 0 <= j < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[j]),
+                crate::util_model::owns_all(*self.ctx, args@),
+                crate::util_model::owns(*self.ctx, hname),
+                crate::util_model::owns(*self.ctx, hlevels),
+                m == crate::expr_arena_bridge::to_model(ty),
+                am == crate::expr_arena_bridge::ptr_models(args@),
+                crate::beta_model::spine_head(m) == ExprSpec::Const(crate::level_arena_bridge::name_id(hname),
+                    crate::level_arena_bridge::to_model_of_levels(hlevels)),
+                crate::beta_model::spine_args(m) =~= am,
+                i <= st.ind_consts@.len(),
+                consts_params(*st) ==> forall|q: int| 0 <= q < i ==> !(#[trigger] shape_at(*st, q, m)),
+            decreases st.ind_consts@.len() - i,
+        {
+            let c = st.ind_consts[i];
+            let (cname, clevels) = match self.ctx.read_expr(c) {
+                Const { name, levels, .. } => (name, levels),
+                _ => panic!(),
+            };
+            proof {
+                crate::expr_arena_bridge::is_const_shape_model(c);
+            }
+            let ok = cname == hname && levels_ptr_eq(self.ctx, clevels, hlevels) && i < st.local_indices.len()
+                && st.local_params.len().checked_add(st.local_indices[i].len()) == Some(args.len())
+                && ctor_app_params_ok(args.as_slice(), st.local_params.as_slice());
+            proof {
+                crate::util_model::owned_raw_eq(*self.ctx, cname, hname);
+                if ok {
+                    assert forall|j: int| 0 <= j < st.local_params@.len() implies #[trigger] crate::beta_model::spine_args(m)[j]
+                        == crate::expr_arena_bridge::to_model(st.local_params@[j]) by {
+                        crate::util_model::owned_raw_eq(*self.ctx, args@[j], st.local_params@[j]);
+                    }
+                }
+                if shape_at(*st, i as int, m) {
+                    assert forall|j: int| 0 <= j < st.local_params@.len() implies #[trigger] crate::util_model::ptr_raw(args@[j])
+                        == crate::util_model::ptr_raw(st.local_params@[j]) by {
+                        assert(level_free_local(*self.ctx, st.local_params@[j]));
+                        crate::expr_arena_bridge::free_model_id(args@[j]);
+                        assert(am[j] == crate::expr_arena_bridge::to_model(args@[j]));
+                    }
+                }
+            }
+            if ok {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Verified in place: `Some(i)` means the term is a valid application of

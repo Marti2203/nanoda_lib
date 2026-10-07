@@ -1395,6 +1395,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::expr_arena_bridge::to_model(result.0),
                 crate::expr_arena_bridge::ptr_models(result.1@),
             ),
+            !(crate::expr_arena_bridge::to_model(result.0) is App),
     {
         let mut e = e0;
         let mut args = Vec::new();
@@ -1407,6 +1408,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     crate::expr_arena_bridge::to_model(e),
                     crate::expr_arena_bridge::ptr_models(args@.reverse()),
                 ),
+            ensures
+                crate::util_model::owns(*self, e),
+                crate::util_model::owns_all(*self, args@),
+                crate::expr_arena_bridge::to_model(e0) == crate::beta_model::spine_app(
+                    crate::expr_arena_bridge::to_model(e),
+                    crate::expr_arena_bridge::ptr_models(args@.reverse()),
+                ),
+                !(crate::expr_arena_bridge::to_model(e) is App),
         {
             match self.read_expr(e) {
                 App { fun, arg, .. } => {

@@ -206,6 +206,13 @@ pub proof fn to_model_at<'a>(p: ExprPtr<'a>)
 {
 }
 
+/// A pointer that denotes a local denotes itself: `Free` of its own id.
+pub proof fn free_model_id<'a>(p: ExprPtr<'a>)
+    ensures
+        to_model(p) is Free ==> to_model(p) == ExprSpec::Free(expr_id(p)),
+{
+}
+
 /// Only a stored node of a shape denotes that shape (the four leaf shapes the
 /// payload projections read).
 pub proof fn to_model_shape<'a>(p: ExprPtr<'a>)
