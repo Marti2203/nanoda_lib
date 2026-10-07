@@ -598,6 +598,101 @@ pub(crate) open spec fn rec_ty_gen<'t>(st: InductiveCheckState<'t>, a: int, d: D
     }
 }
 
+/// A SINGLE INDUCTIVE'S GENERATED RECURSOR TYPE IS CANONICAL: each local
+/// at its opened declared type (parameters, indices, the major, the
+/// motive over the indices and major, the minors) and all distinct, the
+/// type `mk_recursors` built is `rec_ty(lm)`.
+#[verifier::spinoff_prover]
+pub(crate) proof fn rec_bridge<'t>(st: InductiveCheckState<'t>, sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec, d: Declar<'t>)
+    requires
+        rec_ty_gen(st, 0, d),
+        st.motives@.len() == 1,
+        st.majors@.len() >= 1,
+        st.local_indices@.len() >= 1,
+        st.minors@.len() == 1,
+        st.minors@[0]@.len() == sh.nmin(),
+        st.local_params@.len() == sh.np,
+        st.local_indices@[0]@.len() == sh.ni,
+        sh.pdoms.len() == sh.np,
+        sh.idoms.len() == sh.ni,
+        forall|k: int| 0 <= k < sh.np ==> #[trigger] crate::quot_model::local_type(st.local_params@[k])
+            == crate::ti_spine::vsub(sh.pdoms[k], crate::kgen::frees(local_ids(st.local_params@).subrange(0, k))),
+        forall|k: int| 0 <= k < sh.ni ==> #[trigger] crate::quot_model::local_type(st.local_indices@[0]@[k])
+            == crate::ti_spine::vsub(sh.idoms[k], crate::kgen::frees(local_ids(st.local_params@))
+                + crate::kgen::frees(local_ids(st.local_indices@[0]@).subrange(0, k))),
+        crate::quot_model::local_type(st.majors@[0]) == crate::rec_canon::ind_app(sh.ind, sh.us(),
+            crate::kgen::frees(local_ids(st.local_params@)) + crate::kgen::frees(local_ids(st.local_indices@[0]@))),
+        crate::quot_model::local_type(st.motives@[0]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+            local_ids(st.local_indices@[0]@), local_tys(st.local_indices@[0]@),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.majors@[0])), Box::new(ExprSpec::Sort(lm)))),
+        forall|j: int| 0 <= j < sh.nmin() ==> #[trigger] crate::quot_model::local_type(st.minors@[0]@[j])
+            == crate::ti_spine::vsub(sh.minor_ty(j), crate::kgen::frees(local_ids(st.local_params@)
+                + seq![crate::expr_arena_bridge::expr_id(st.motives@[0])] + local_ids(st.minors@[0]@.subrange(0, j)))),
+        crate::expr_arena_bridge::to_model(st.motives@[0]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.motives@[0])),
+        crate::expr_arena_bridge::to_model(st.majors@[0]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.majors@[0])),
+        forall|k: int| 0 <= k < sh.ni ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_indices@[0]@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_indices@[0]@[k])),
+        (local_ids(st.local_params@) + local_ids(st.motives@) + local_ids(st.minors@[0]@) + local_ids(st.local_indices@[0]@)
+            + seq![crate::expr_arena_bridge::expr_id(st.majors@[0])]).no_duplicates(),
+        forall|k: int| 0 <= k < sh.np ==> crate::expr_model::nlbv(#[trigger] sh.pdoms[k]) <= k,
+        crate::expr_model::nlbv(sh.motive_ty(lm)) <= sh.np,
+        forall|j: int| 0 <= j < sh.nmin() ==> crate::expr_model::nlbv(#[trigger] sh.minor_ty(j)) <= sh.np + 1 + j,
+        forall|k: int| 0 <= k < sh.ni ==> crate::expr_model::nlbv(#[trigger] sh.idoms[k]) <= sh.np + k,
+        forall|k: int, z: nat| 0 <= k < sh.np ==> #[trigger] crate::expr_model::fv_absent(sh.pdoms[k], z),
+        forall|z: nat| #[trigger] crate::expr_model::fv_absent(sh.motive_ty(lm), z),
+        forall|j: int, z: nat| 0 <= j < sh.nmin() ==> #[trigger] crate::expr_model::fv_absent(sh.minor_ty(j), z),
+        forall|k: int, z: nat| 0 <= k < sh.ni ==> #[trigger] crate::expr_model::fv_absent(sh.idoms[k], z),
+    ensures
+        d is Recursor,
+        crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm),
+{
+    let ps = st.local_params@;
+    let g = st.minors@[0]@;
+    let ix = st.local_indices@[0]@;
+    let mo = st.motives@[0];
+    let mj = st.majors@[0];
+    let pids = local_ids(ps);
+    let mm = local_ids(st.motives@ + g);
+    let iids = local_ids(ix);
+    let majid = crate::expr_arena_bridge::expr_id(mj);
+    assert(st.motives@ =~= seq![mo]);
+    assert(flat_ptrs(st.minors@) =~= g) by {
+        reveal_with_fuel(flat_ptrs, 2);
+        assert(st.minors@.drop_last() =~= Seq::<Vec<ExprPtr<'t>>>::empty());
+    }
+    let ls = ps + st.motives@ + flat_ptrs(st.minors@) + ix + seq![mj];
+    assert(local_ids(ls) =~= pids + mm + iids + seq![majid]);
+    assert(local_tys(ls) =~= local_tys(ps) + local_tys(st.motives@ + g) + local_tys(ix) + seq![crate::quot_model::local_type(mj)]);
+    let all = pids + mm + iids + seq![majid];
+    assert(local_ids(st.motives@ + g) =~= local_ids(st.motives@) + local_ids(g));
+    assert(all =~= pids + local_ids(st.motives@) + local_ids(g) + iids + seq![majid]);
+    // the motive
+    assert((pids + iids).no_duplicates()) by {
+        let pi = pids + iids;
+        assert forall|x: int, y: int| 0 <= x < y < pi.len() implies pi[x] != pi[y] by {
+            let x2 = if x < pids.len() { x } else { x + mm.len() };
+            let y2 = if y < pids.len() { y } else { y + mm.len() };
+            assert(all[x2] == pi[x] && all[y2] == pi[y]);
+        }
+    }
+    let itys = local_tys(ix);
+    crate::kminor::motive_canon(sh, lm, pids, iids, itys, crate::quot_model::local_type(mj));
+    // the telescope
+    let mntys = local_tys(st.motives@ + g);
+    assert(mntys[0] == crate::quot_model::local_type(mo));
+    assert forall|j: int| 0 <= j < sh.nmin() implies #[trigger] mntys[1 + j]
+        == crate::ti_spine::vsub(sh.minor_ty(j), crate::kgen::frees(pids) + crate::kgen::frees(mm.subrange(0, 1 + j))) by {
+        assert(mntys[1 + j] == crate::quot_model::local_type(g[j]));
+        assert(mm.subrange(0, 1 + j) =~= seq![crate::expr_arena_bridge::expr_id(mo)] + local_ids(g.subrange(0, j)));
+        assert(crate::kgen::frees(pids + seq![crate::expr_arena_bridge::expr_id(mo)] + local_ids(g.subrange(0, j)))
+            =~= crate::kgen::frees(pids) + crate::kgen::frees(mm.subrange(0, 1 + j)));
+    }
+    assert(crate::expr_arena_bridge::ptr_models(ix) =~= crate::kgen::frees(iids));
+    assert(mm[0] == crate::expr_arena_bridge::expr_id(mo));
+    crate::kminor::rec_ty_canon(sh, lm, pids, mm, iids, majid, local_tys(ps), mntys, itys, crate::quot_model::local_type(mj),
+        ExprSpec::App(Box::new(crate::beta_model::spine_app(ExprSpec::Free(mm[0]), crate::kgen::frees(iids))), Box::new(ExprSpec::Free(majid))));
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
