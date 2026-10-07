@@ -1580,6 +1580,11 @@ and eta step is vacuous (about thirty sites use that). Stages:
     inductive's type, the motive (`motive_ty`), each minor (`minor_ty`,
     fields and induction hypotheses), the major.
   - **B3** `mk_recursor_ty` is `rec_ty`, `mk_rec_rule_val` is `rule_rhs`.
+    B3a (`kminor.rs`): a minor premise built from opened locals is
+    `minor_ty(j)` opened at the parameters, the motive and the earlier
+    minors (`minor_canon`), given the constructor type's canonical form
+    and the recursive positions; indices included. `tel_canon` is the
+    general step: abstracting locals that opened a substituted telescope.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.
