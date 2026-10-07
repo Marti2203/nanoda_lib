@@ -187,4 +187,177 @@ pub proof fn typed_arity(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     assert(cargs.len() == np + rd.rules[p].nfields);
 }
 
+/// SPINES OF ONE HEAD WITH CONVERTIBLE ARGUMENTS convert, at the first's
+/// type: each argument at the domain the first spine's typing gives it
+/// (generation), where its conversion moves by uniqueness of types.
+pub proof fn spine_cong_inv(sig: Sig, g: Ctx, h: ExprSpec, xs: Seq<ExprSpec>, ys: Seq<ExprSpec>, ts: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, spine_app(h, xs), spine_app(h, xs), t)),
+        ys.len() == xs.len() && ts.len() == xs.len(),
+        forall|i: int| 0 <= i < xs.len() ==> derivable(sig, eq(g, #[trigger] xs[i], ys[i], ts[i])),
+    ensures
+        derivable(sig, eq(g, spine_app(h, xs), spine_app(h, ys), t)),
+    decreases xs.len(),
+{
+    if xs.len() == 0 {
+        assert(spine_app(h, xs) == h && spine_app(h, ys) == h);
+        return;
+    }
+    let n = xs.len() - 1;
+    let (ix, iy, it) = (xs.subrange(0, n), ys.subrange(0, n), ts.subrange(0, n));
+    crate::dom_bound::spine_push(h, xs);
+    crate::dom_bound::spine_push(h, ys);
+    let (f, f2) = (spine_app(h, ix), spine_app(h, iy));
+    let (x, y) = (xs[n], ys[n]);
+    let e = spine_app(h, xs);
+    assert(e == ExprSpec::App(Box::new(f), Box::new(x)));
+    let de = crate::ti_sub::get(sig, eq(g, e, e, t));
+    crate::ti_gen::gen(sig, de);
+    let (pa, pb, l2) = choose|pa: ExprSpec, pb: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(pa, pb, l2, l2)
+        && derivable(sig, eq(g, f, f, pi(pa, pb))) && derivable(sig, eq(g, x, x, pa))
+        && crate::ti_gen::typ(sig, g.push(pa), pb, l2)
+        && crate::ti_chain::tchain(sig, g, t, crate::subst_algebra::inst(0, x, pb));
+    assert forall|i: int| 0 <= i < ix.len() implies derivable(sig, eq(g, #[trigger] ix[i], iy[i], it[i])) by {
+        assert(ix[i] == xs[i] && iy[i] == ys[i] && it[i] == ts[i]);
+    }
+    spine_cong_inv(sig, g, h, ix, iy, it, pi(pa, pb));
+    // the last argument at the domain
+    crate::dom_psimple::der_diag(sig, g, x, y, ts[n]);
+    crate::ti_sr::uniq(sig, g, x, ts[n], pa);
+    crate::ti_chain::conv_chain(sig, g, x, y, ts[n], pa);
+    let dx = crate::ti_sub::get(sig, eq(g, x, x, pa));
+    let w = crate::ti_meta::d_wf(sig, dx);
+    crate::ti_meta::mk_d(sig, w);
+    crate::ti_spine::pi_typed_of(sig, g, f, pa, pb);
+    crate::ti_chain::tchain_refl(sig, g, pi(pa, pb));
+    crate::dom_sem_rel::app_pair(sig, g, f, f2, pi(pa, pb), pa, pb, x, y);
+    crate::ti_chain::tchain_sym(sig, g, t, crate::subst_algebra::inst(0, x, pb));
+    crate::ti_chain::conv_chain(sig, g, e, spine_app(h, ys), crate::subst_algebra::inst(0, x, pb), t);
+}
+
+/// THE KERNEL'S IOTA STEP ON A TYPED REDEX converts with its result at its
+/// type: by Iota where it fires; at a smashed structure's recursor by the
+/// eta step, then each projection of the major its field (ProjIota) under
+/// application congruence.
+#[verifier::spinoff_prover]
+pub proof fn sr_kiota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        crate::dom_rec_end::rec_hyps(sig, spine_head(m)->Const_0),
+        crate::beta_model::rec_ready(sig.ienv, m),
+        !crate::ti_syntax::is_def(sig, spine_head(m)->Const_0, spine_head(m)->Const_1),
+        derivable(sig, eq(g, m, m, t)),
+    ensures
+        derivable(sig, eq(g, m, crate::beta_model::rec_result(sig.ienv, m), t)),
+{
+    assert(crate::dom_rec_end::sig_sr(sig)) by {
+        reveal(crate::dom_rec_end::sig_rec);
+    }
+    typed_arity(sig, g, m, t);
+    crate::ti_hred::fire_inst_interp(sig, m);
+    if !crate::ti_hred::rec_smash(sig, m) {
+        assert(crate::ti_hred::rec_fire(sig, m));
+        crate::ti_hred_rec::fire_hstep(sig, m);
+        crate::ti_sr::sr(sig, g, m, t);
+    } else {
+        sr_kiota_eta(sig, g, m, t);
+    }
+}
+
+/// At a smashed structure's recursor: the redex up to its major steps by
+/// its eta step, and each projection of the major converts with its field.
+#[verifier::spinoff_prover]
+proof fn sr_kiota_eta(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        crate::dom_rec_end::rec_hyps(sig, spine_head(m)->Const_0),
+        crate::dom_rec_end::sig_sr(sig),
+        crate::beta_model::rec_ready(sig.ienv, m),
+        crate::ti_hred::rec_arity(sig, m),
+        crate::ti_hred::rec_smash(sig, m),
+        !crate::ti_syntax::is_def(sig, spine_head(m)->Const_0, spine_head(m)->Const_1),
+        derivable(sig, eq(g, m, m, t)),
+    ensures
+        derivable(sig, eq(g, m, crate::beta_model::rec_result(sig.ienv, m), t)),
+{
+    let h = spine_head(m);
+    let (rid, lv) = (h->Const_0, h->Const_1);
+    let args = spine_args(m);
+    let rd = sig.ienv.recs[rid];
+    let sh = rshape(sig, rid);
+    let (np, nmin, ind) = (sh.np, sh.nmin(), sh.ind);
+    let pre = (np + nmin + 1) as int;
+    crate::ti_syntax::frag_of(sig, rid);
+    assert(crate::dom_rec_end::rec_frag_l(sig, rid));
+    crate::dom_rec_end::rec_canon_ok(sig, rid);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    crate::dom_iota::major_form(sig, rid, lv);
+    crate::beta_model::spine_recompose(m);
+    assert(rd.major_idx == pre);
+    reveal(crate::ti_hred::rec_smash);
+    assert(crate::rec_canon::rec_ind(sig, rid) == ind);
+    reveal(crate::ti_syntax::struct_of);
+    assert(crate::dom_code::canon_shape(sig, ind) == sh);
+    crate::dom_rec_ty::scope_ctor(sig, rid, 0);
+    // the redex up to its major steps by its eta step
+    let a0 = args.subrange(0, pre + 1);
+    let ex = args.subrange(pre + 1, args.len() as int);
+    assert(a0 + ex =~= args);
+    crate::dom_iota::spine_concat(h, a0, ex);
+    let mb = spine_app(h, a0);
+    let tb = prefix_typed(sig, g, h, args, pre + 1, t);
+    crate::beta_model::spine_destruct_app(h, a0);
+    assert(crate::ti_hred::rec_smashed(sig, mb));
+    assert(crate::ti_hred::rec_smash(sig, mb));
+    crate::ti_hred_rec::reta_hstep(sig, mb);
+    let e = crate::ti_hred::rec_eta_result(sig, mb);
+    crate::ti_sr::sr(sig, g, mb, tb);
+    // each projection of the major is its field
+    let x = args[pre];
+    assert(a0[pre] == x);
+    assert(crate::ti_eta::eta_ok(sig, rid, lv, a0));
+    crate::ti_eta::eta_heads(sig, g, rid, lv, a0, tb);
+    crate::ti_eta::eta_facts(sig, rid, lv, a0);
+    let (cid, clv) = (spine_head(x)->Const_0, spine_head(x)->Const_1);
+    crate::beta_model::find_rule_spec(rd.rules, cid);
+    assert(cid == sh.ctors[0]);
+    crate::beta_model::spine_recompose(x);
+    let cargs = spine_args(x);
+    let nf = sh.fields[0].len();
+    let fs = cargs.subrange(np as int, cargs.len() as int);
+    let ci = crate::ti_eta::eta_st(sig, rid, lv, a0);
+    let pj = crate::ti_syntax::projs(x, nf);
+    let ts = Seq::new(nf, |i: int| a0[crate::dom_rec_eta::fq(sig, rid, i)]);
+    assert forall|i: int| 0 <= i < nf implies derivable(sig, eq(g, #[trigger] pj[i], fs[i], ts[i])) by {
+        crate::ti_eta::eta_proj_typed(sig, g, rid, lv, a0, x, i);
+        let q = crate::dom_rec_eta::fq(sig, rid, i);
+        let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, a0[q], a0[q], sort(l)));
+        let px = ExprSpec::Proj(i as usize, Box::new(x));
+        assert(crate::ti_syntax::proj_fire(sig, px)) by {
+            reveal(crate::ti_syntax::proj_fire);
+        }
+        assert(crate::ti_syntax::proj_result(sig, px) == fs[i]) by {
+            reveal(crate::ti_syntax::proj_result);
+        }
+        crate::ti_chain::tchain_refl(sig, g, a0[q]);
+        crate::ti_sr::sr_proj_fire(sig, g, i as usize, x, a0[q], ci, l);
+    }
+    // under application congruence, to the rule's instance
+    let heads = a0.subrange(0, pre);
+    let body = crate::expr_model::subst_expr_levels(rd.rules[0].rhs, rd.uparams, lv);
+    let b = spine_app(body, heads);
+    assert(a0.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
+    assert(e == spine_app(b, pj));
+    crate::dom_psimple::der_diag(sig, g, mb, e, tb);
+    spine_cong_inv(sig, g, b, pj, fs, ts, tb);
+    let core = spine_app(b, fs);
+    assert(cargs.subrange(cargs.len() - rd.rules[0].nfields, cargs.len() as int) =~= fs);
+    assert(args.subrange(0, crate::beta_model::rec_prefix(rd) as int) =~= heads);
+    assert(crate::beta_model::rec_result(sig.ienv, m) == spine_app(core, ex));
+    crate::dom_adeq_syn::dtrans(sig, g, mb, e, core, tb);
+    // the extra arguments
+    crate::ti_spine::reconv_spine(sig, g, mb, core, tb, ex, t);
+}
+
 } // verus!
