@@ -1399,6 +1399,112 @@ pub(crate) proof fn rec_declar_canon<'t>(aids: (nat, nat), st: InductiveCheckSta
     rec_bridge(st, sh, lm, d);
 }
 
+/// THE GENERATED RECURSOR'S TYPE, CONDITIONALLY CANONICAL: from what the
+/// generator's steps ensure, for every shape the block has
+/// (`gen_shape_ok`), the first recursor's type is that shape's `rec_ty`.
+#[verifier::spinoff_prover]
+pub(crate) proof fn declar_rec_glue<'t>(aids: (nat, nat), st: InductiveCheckState<'t>,
+    stm: InductiveCheckState<'t>, d: Declar<'t>,
+    p0: nat, p1: nat, i0: nat, i1: nat, m0: nat, m1: nat, o0: nat, o1: nat, n0: nat, n1: nat)
+    requires
+        rec_ty_gen(st, 0, d),
+        st.motives@.len() == st.ind_consts@.len(),
+        st.majors@.len() == st.ind_consts@.len(),
+        st.minors@.len() == st.all_inductives_incl_specialized@.len(),
+        forall|i: int| 0 <= i < st.minors@.len() ==> (#[trigger] st.minors@[i])@.len() == st.all_inductives_incl_specialized@[i].ctors@.len(),
+        st.ind_consts@.len() <= st.local_indices@.len(),
+        st.tele@.len() == st.all_inductives_incl_specialized@.len(),
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+        forall|i: int, j: int| 0 <= i < st.local_indices@.len() && 0 <= j < st.local_indices@[i]@.len()
+            ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_indices@[i]@[j]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_indices@[i]@[j])),
+        forall|k: int| 0 <= k < st.majors@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.majors@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.majors@[k])),
+        forall|k: int| 0 <= k < st.motives@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.motives@[k])),
+        forall|k: int| 0 <= k < st.local_params@.len() && (#[trigger] crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty),
+            local_ids(st.local_params@).subrange(0, k))) is Bind
+            ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.local_params@[k])), Box::new(
+                *crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty), local_ids(st.local_params@).subrange(0, k))->Bind_2))
+                == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty), local_ids(st.local_params@).subrange(0, k)),
+        st.all_inductives_incl_specialized@.len() > 0 && st.tele@.len() > 0 ==> walk_syn(st, 0),
+        forall|i: int| 0 <= i < st.majors@.len() ==> crate::quot_model::local_type(#[trigger] st.majors@[i])
+            == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st.ind_consts@[i]),
+                crate::expr_arena_bridge::ptr_models(st.local_params@) + crate::expr_arena_bridge::ptr_models(st.local_indices@[i]@)),
+        forall|i: int| 0 <= i < st.motives@.len() ==> crate::quot_model::local_type(#[trigger] st.motives@[i]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+            local_ids(st.local_indices@[i]@),
+            Seq::new(st.local_indices@[i]@.len(), |j: int| crate::quot_model::local_type(st.local_indices@[i]@[j])),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.majors@[i])),
+                Box::new(ExprSpec::Sort(crate::level_arena_bridge::to_model(st.elim_level->0))))),
+        stm == (InductiveCheckState { minors: stm.minors, ..st }),
+        stm.minors@.len() == 0,
+        forall|i: int, j: int| 0 <= i < st.minors@.len() && 0 <= j < st.minors@[i]@.len()
+            ==> minor_some(aids, stm,
+                crate::expr_arena_bridge::to_model(stm.all_inductives_incl_specialized@[i].ctors@[j].ty),
+                crate::level_arena_bridge::name_id(stm.all_inductives_incl_specialized@[i].ctors@[j].name),
+                #[trigger] st.minors@[i]@[j], st.minors@[i]@.subrange(0, j)),
+        crate::kgen::serials_in(aids, st.local_params@, p0, p1),
+        st.local_indices@.len() > 0 ==> crate::kgen::serials_in(aids, st.local_indices@[0]@, i0, i1),
+        crate::kgen::serials_in(aids, st.majors@, m0, m1),
+        crate::kgen::serials_in(aids, st.motives@, o0, o1),
+        forall|i: int| 0 <= i < st.minors@.len() ==> crate::kgen::serials_in(aids, (#[trigger] st.minors@[i])@, n0, n1),
+        p0 <= p1, p1 <= i0, i0 <= i1, i1 <= m0, m0 <= m1, m1 <= o0, o0 <= o1, o1 <= n0, n0 <= n1,
+    ensures
+        forall|sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec| #[trigger] gen_shape_ok(st, sh, lm) ==>
+            d is Recursor && crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm),
+{
+    assert forall|sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec| #[trigger] gen_shape_ok(st, sh, lm) implies
+        d is Recursor && crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm) by {
+        let c = st.tele@[0];
+        assert(walk_syn(st, 0));
+        assert forall|j: int| 0 <= j < st.local_indices@[0]@.len() implies crate::expr_arena_bridge::to_model(#[trigger] st.local_indices@[0]@[j])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_indices@[0]@[j])) by {}
+        assert forall|j: int| 0 <= j < st.minors@[0]@.len() implies minor_some(aids, st,
+            crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty),
+            crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].ctors@[j].name),
+            #[trigger] st.minors@[0]@[j], st.minors@[0]@.subrange(0, j)) by {
+            assert(st == (InductiveCheckState { minors: st.minors, ..stm }));
+            minor_some_minors(aids, stm, st, crate::expr_arena_bridge::to_model(stm.all_inductives_incl_specialized@[0].ctors@[j].ty),
+                crate::level_arena_bridge::name_id(stm.all_inductives_incl_specialized@[0].ctors@[j].name),
+                st.minors@[0]@[j], st.minors@[0]@.subrange(0, j));
+        }
+        assert(crate::kgen::serials_in(aids, st.minors@[0]@, n0, n1));
+        rec_declar_canon(aids, st, sh, lm, d, c, p0, p1, i0, i1, m0, m1, o0, o1, n0, n1);
+    }
+}
+
+/// The syntactic part of the `k`-th walk (`walk_k_ok` without the
+/// environment): its cursors chain from the inductive's type by opening,
+/// each a literal Pi up to a sort, over the parameters then the indices,
+/// each index local at its walked domain.
+pub(crate) open spec fn walk_syn<'t>(st: InductiveCheckState<'t>, k: int) -> bool {
+    let c = st.tele@[k];
+    let ps = st.local_params@;
+    let ix = st.local_indices@[k]@;
+    &&& c.cursors.len() == c.locals.len() + 1
+    &&& c.bts.len() == c.locals.len()
+    &&& c.bodies.len() == c.locals.len()
+    &&& c.cursors[0] == crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[k].ty)
+    &&& forall|q: int| 0 <= q < c.locals.len() ==> #[trigger] c.cursors[q + 1]
+        == crate::expr_model::subst_full(c.bodies[q], seq![ExprSpec::Free(c.locals[q])], 0)
+    &&& tele_lit(c)
+    &&& c.locals == if c.locals.len() <= ps.len() { local_ids(ps.subrange(0, c.locals.len() as int)) } else { local_ids(ps) + local_ids(ix) }
+    &&& (c.locals.len() <= ps.len() ==> ix.len() == 0)
+    &&& forall|j: int| 0 <= j < ix.len() ==> crate::quot_model::local_type(#[trigger] ix[j]) == c.bts[ps.len() + j]
+}
+
+pub(crate) proof fn walk_syn_of<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, k: int)
+    requires
+        walk_k_ok(env, st, k),
+    ensures
+        walk_syn(st, k),
+{
+    reveal(walk_k_ok);
+    let c = st.tele@[k];
+    assert forall|q: int| 0 <= q < c.locals.len() implies #[trigger] c.cursors[q + 1]
+        == crate::expr_model::subst_full(c.bodies[q], seq![ExprSpec::Free(c.locals[q])], 0) by {}
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -3215,6 +3321,10 @@ impl<'t, 'p: 't> ExportFile<'p> {
 
         // Initialize the big chunk of state used throughout the process of checking
         // this inductive declaration.
+        let ghost mut sp0: nat = 0;
+        let ghost mut sp1: nat = 0;
+        let ghost mut ci0: nat = 0;
+        let ghost mut ci1: nat = 0;
         let mut st = {
             let env = crate::env_model::ctx_env(&ctx, env_limit);
             let mut tc = TypeChecker::new(&mut ctx, &env, None);
@@ -3248,7 +3358,13 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 }
                 assert(headers_owned(*tc.ctx, hs@));
             }
-            tc.specialize_nested(ind, hs)
+            let ghost c_a = crate::util::unique_count(*tc.ctx) as nat;
+            let r = tc.specialize_nested(ind, hs);
+            proof {
+                sp0 = c_a;
+                sp1 = crate::util::unique_count(*tc.ctx) as nat;
+            }
+            r
         };
 
         // Check the (potentially modified) inductive specs against the base environment.
@@ -3256,7 +3372,14 @@ impl<'t, 'p: 't> ExportFile<'p> {
         {
             let env = crate::env_model::ctx_env(&ctx, env_limit);
             let mut tc = TypeChecker::new(&mut ctx, &env, None);
+            proof { ci0 = crate::util::unique_count(*tc.ctx) as nat; }
             tc.check_inductive_specs(&mut st);
+            proof {
+                ci1 = crate::util::unique_count(*tc.ctx) as nat;
+                if st.tele@.len() > 0 {
+                    walk_syn_of(*tc.env, st, 0);
+                }
+            }
         }
         proof {
             st_owned_after_specs(ctx, st_spec, st);
@@ -3324,8 +3447,14 @@ impl<'t, 'p: 't> ExportFile<'p> {
             let mut tc = TypeChecker::new(&mut ctx, &env, None);
             tc.mk_elim_level(&mut st);
             tc.init_k_target(&mut st);
+            let ghost cj0 = crate::util::unique_count(*tc.ctx) as nat;
+            let ghost mjo = st.majors@.len();
             tc.mk_majors(&mut st);
             let ghost cm0 = crate::util::unique_count(*tc.ctx) as nat;
+            proof {
+                assert(mjo == 0);
+                assert(st.majors@.subrange(0, st.majors@.len() as int) =~= st.majors@);
+            }
             let ghost mo0 = st.motives@.len();
             tc.mk_motives(&mut st);
             proof {
@@ -3350,7 +3479,9 @@ impl<'t, 'p: 't> ExportFile<'p> {
             proof {
                 assert(st.minors@.len() == 0);
             }
+            let ghost cm1 = cmin;
             tc.mk_minors(&mut st);
+            let ghost cn1 = crate::util::unique_count(*tc.ctx) as nat;
             proof {
                 let aids = crate::util_model::arena_ids(*tc.ctx);
                 let c = crate::util::unique_count(*tc.ctx) as nat;
@@ -3371,7 +3502,14 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 }
                 rule_pre_ok(*tc.ctx, aids, st, c);
             }
-            tc.mk_recursors(&st)
+            let r = tc.mk_recursors(&st);
+            proof {
+                let aids = crate::util_model::arena_ids(*tc.ctx);
+                if r@.len() > 0 {
+                    declar_rec_glue(aids, st, st_m0, r@[0], sp0, sp1, ci0, ci1, cj0, cm0, cm0, cmin, cmin, cn1);
+                }
+            }
+            r
         };
 
         proof {
