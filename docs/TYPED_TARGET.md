@@ -1515,8 +1515,33 @@ eliminators of Prop inductives; S6.7 is where it returns.
 | S6.3 | syntax: the signature carries the kernel's recursor tables (`Sig.ienv`); rule `Iota` relates a ready recursor application (`rec_ready`) to its rule instance (`rec_result`) where both sides are typed; renaming, substitution, local swap/close, level instantiation, validity, generation and signature extension cover it (done). `Iota` also asks `iota_ok(sig)`, the signature condition the model will need: for now "no recursors", so the rule is dead in the model until S6.4 states the real condition |
 | S6.4 | interpretation of inductive constants, constructors, recursor applications; ideal properties; soundness incl. `Iota` |
 | S6.5 | logical relation clauses; their properties; adequacy incl. `Iota`; injectivity re-proven |
-| S6.6 | kernel side: `jsig` from the environment's inductive tables, SR for the kernel's recursor iota, `frag_env` relaxed; literals through `Nat` |
+| S6.6 | kernel side: `jsig` from the environment's inductive tables, SR for the kernel's recursor iota, `frag_env` relaxed; literals through `Nat` (plan below) |
 | S6.7 | projections, structure and unit eta, K-like reduction |
+
+### S6.6 plan (2026-10-07)
+
+The kernel claims (`kclaims`, `jkernel`) hold today for environments
+without inductive tables (`frag_env`), where every recursor, projection
+and eta step is vacuous (about thirty sites use that). Stages:
+
+- **S6.6a, the kernel's steps with inductive tables, under hypotheses**
+  on `jsig` (`iota_ok`, `sig_sr`; every recursor interpreted or Prop-only;
+  every structure the kernel eta-expands in the `struct_of` slice): a
+  typed recursor redex fits its rule (the kernel checks neither the
+  major's arity nor its levels: typing gives both); subject reduction for
+  the kernel's iota (unsmashed: Iota; smashed: RecEta, then ProjIota at
+  each field under application congruence); projection steps (ProjIota);
+  structure and unit eta (StructEta). Proven first as separate lemmas,
+  then the flip: `frag_env` allows inductive tables and the fragment's
+  vacuous cases become these proofs.
+- **S6.6b**: the hypotheses from the verified inductive module, at every
+  export prefix (`export_kh`).
+- **S6.6c**: literals through `Nat`.
+
+Out of the fragment until the model grows: large eliminators of Prop
+inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
+structure eta at structures outside the `struct_of` slice (dependent
+fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
 
 ## The open fork before S4
 
