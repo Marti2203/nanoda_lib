@@ -390,4 +390,70 @@ pub open spec fn rec_canon(sig: Sig, rid: u64) -> bool {
     &&& sig.consts[rid].ty == sh.rec_ty(lm)
 }
 
+/// A CANONICAL RECURSOR UP TO CONVERSION, as nanoda accepts one: as
+/// `rec_canon`, but the declared type and each rule only convert to the
+/// canonical ones (docs/TYPED_TARGET.md, "B5 direction").
+pub open spec fn rec_canon_c(sig: Sig, rid: u64) -> bool {
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let lm = elim_level(sig, rid, ind);
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    &&& sig.ienv.recs.contains_key(rid)
+    &&& sig.consts.contains_key(rid) && sig.consts[rid].val is None && sig.consts[rid].lps == rd.uparams
+    &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
+    &&& rd.num_motives == 1
+    &&& rd.major_idx == np + 1 + nmin + ni
+    &&& nmin == rd.rules.len()
+    // the elimination level and the recursor's level parameters
+    &&& (rd.uparams == sig.consts[ind].lps
+        || (rd.uparams.len() == sig.consts[ind].lps.len() + 1 && rd.uparams.drop_first() == sig.consts[ind].lps
+            && !sig.consts[ind].lps.contains(rd.uparams[0])))
+    // the inductive's type
+    &&& sh.pdoms.len() == np && sh.idoms.len() == ni
+    &&& tbody(sig.consts[ind].ty, np + ni) is Sort
+    &&& sig.consts[ind].ty == binds(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(sig.consts[ind].ty, np + ni))
+    &&& !crate::inductive_model::contains_const_named(sig.consts[ind].ty, seq![ind])
+    // the constructors
+    &&& forall|j: int| 0 <= j < nmin ==> {
+        let c = #[trigger] sh.ctors[j];
+        let nf = rd.rules[j].nfields;
+        let t = sig.consts[c].ty;
+        &&& sig.consts.contains_key(c) && sig.consts[c].val is None && sig.consts[c].lps == sig.consts[ind].lps
+        &&& sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_ind[c] == ind
+        &&& sig.ienv.ctor_np.contains_key(c) && sig.ienv.ctor_np[c] as nat == np
+        &&& !sig.ienv.recs.contains_key(c)
+        &&& sh.fields[j].len() == nf
+        &&& t == binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, np + nf))
+        &&& tbody(t, np + nf) == ind_app(ind, sh.us(), vars(nf, np) + sh.tss[j])
+        &&& sh.tss[j].len() == ni
+        &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
+        &&& forall|k: int| 0 <= k < nf ==> field_kind(sig, ind, sh.pdoms, sh.us(), np, ni, k as nat, #[trigger] sh.fields[j][k])
+        &&& crate::ti_chain::tchain(sig, Seq::empty(), rd.rules[j].rhs, sh.rule_rhs(lm, rid, plevels(rd.uparams), j))
+        // the rule's value is a closed lambda without string literals (stated
+        // on its own, so it survives relaxing the equality above)
+        &&& rule_shape(rd.rules[j].rhs)
+    }
+    // the recursor's type
+    &&& crate::ti_chain::tchain(sig, Seq::empty(), sig.consts[rid].ty, sh.rec_ty(lm))
+}
+
+/// A syntactically canonical recursor is canonical up to conversion.
+pub proof fn rec_canon_c_of(sig: Sig, rid: u64)
+    requires
+        rec_canon(sig, rid),
+    ensures
+        rec_canon_c(sig, rid),
+{
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let lm = elim_level(sig, rid, ind);
+    crate::ti_chain::tchain_refl(sig, Seq::empty(), sig.consts[rid].ty);
+    assert forall|j: int| 0 <= j < sh.nmin() implies crate::ti_chain::tchain(sig, Seq::empty(), rd.rules[j].rhs,
+        sh.rule_rhs(lm, rid, plevels(rd.uparams), j)) by {
+        crate::ti_chain::tchain_refl(sig, Seq::empty(), rd.rules[j].rhs);
+    }
+}
+
 } // verus!
