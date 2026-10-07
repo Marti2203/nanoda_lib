@@ -249,18 +249,6 @@ pub proof fn proj_grow(sig: Sig, sig2: Sig, st: ExprSpec, i: nat, x: ExprSpec, m
     }
 }
 
-/// Without recursors nothing is a recursor redex.
-pub proof fn iota_dead(sig: Sig, m: ExprSpec)
-    requires
-        crate::ti_syntax::no_recs(sig),
-    ensures
-        !crate::beta_model::rec_ready(sig.ienv, m),
-{
-    if let ExprSpec::Const(rid, _) = crate::beta_model::spine_head(m) {
-        assert(!sig.ienv.recs.contains_key(rid));
-    }
-}
-
 /// A recursor redex of a smaller environment is one of a larger, with the
 /// same rule instance.
 pub proof fn rec_sub(env: crate::expr_arena_bridge::EnvSpec, env2: crate::expr_arena_bridge::EnvSpec, m: ExprSpec)

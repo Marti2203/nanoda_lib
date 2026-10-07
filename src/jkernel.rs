@@ -118,10 +118,8 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     }
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
-    if m is Proj {
-        crate::ti_gen::gen_proj_ns(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
-    }
     match m {
+        ExprSpec::Proj(i, x) => sr_proj(dty, denv, lctx, g, i, *x, m2, t),
         ExprSpec::App(f, x) => sr_app(dty, denv, lctx, g, *f, *x, m2, t),
         ExprSpec::Bind(bk, a, b) => sr_bind(dty, denv, lctx, g, bk, *a, *b, m2, t),
         ExprSpec::Let(a, v, b) => sr_let(dty, denv, lctx, g, *a, *v, *b, m2, t),
@@ -134,6 +132,46 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
             crate::ti_sr::sr(sig, g, m, t);
         },
         _ => {},
+    }
+}
+
+/// Projections: congruence, and the kernel's projection step at the
+/// reduced structure.
+#[verifier::spinoff_prover]
+proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
+    requires
+        frag_ok(dty, denv, lctx),
+        derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x)), t)),
+        pstep(denv, ExprSpec::Proj(i, Box::new(x)), m2),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), m2, t)),
+    decreases crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 1int,
+{
+    let sig = jsig(dty, denv, lctx);
+    let m = ExprSpec::Proj(i, Box::new(x));
+    assert(crate::kclaims::ind_ok(sig));
+    assert(crate::ti_zsize::zsize(x) < crate::ti_zsize::zsize(m));
+    let dm = get(sig, eq(g, m, m, t));
+    gen(sig, dm);
+    let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
+        && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some;
+    if m2 is Proj && m2->Proj_0 == i && pstep(denv, x, *m2->Proj_1) {
+        let x2 = *m2->Proj_1;
+        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        crate::kiota::proj_cong_d(sig, g, i, x, x2, st, t);
+        assert(m2 == ExprSpec::Proj(i, Box::new(x2)));
+    } else {
+        let x2 = choose|inner2: ExprSpec| (#[trigger] crate::beta_model::iota_reduct(inner2)) && pstep(denv, x, inner2)
+            && crate::beta_model::iota_extract(denv, i, inner2, m2);
+        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        crate::kiota::proj_cong_d(sig, g, i, x, x2, st, t);
+        let (cid, lv, args2, np) = choose|cid: u64, lv: Seq<LevelSpec>, args2: Seq<ExprSpec>, np: u16|
+            #![trigger crate::beta_model::spine_app(ExprSpec::Const(cid, lv), args2), args2[(np as nat + i as nat) as int]]
+            x2 == crate::beta_model::spine_app(ExprSpec::Const(cid, lv), args2) && denv.ctor_num_params(cid) == Some(np)
+                && ((np as nat + i as nat) < args2.len()) && (m2 == args2[(np as nat + i as nat) as int]);
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, lv), args2);
+        crate::kiota::proj_step_d(sig, g, i, x2, t);
+        crate::dom_adeq_syn::dtrans(sig, g, m, ExprSpec::Proj(i, Box::new(x2)), m2, t);
     }
 }
 

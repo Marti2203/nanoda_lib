@@ -326,16 +326,6 @@ pub open spec fn sig_sr(sig: Sig) -> bool {
     &&& crate::dom_proj_sound::proj_sem(sig)
 }
 
-/// Without recursors the hypothesis holds: no recursors and no structures.
-pub proof fn norecs_sr(sig: Sig)
-    requires
-        crate::ti_syntax::no_recs(sig),
-    ensures
-        sig_sr(sig),
-{
-    crate::ti_syntax::norecs_no_structs(sig);
-}
-
 /// The minor's field binders are the field types at the recursor's
 /// instance of the inductive, lifted.
 pub proof fn msds_at(sig: Sig, c: u64, lv: Seq<LevelSpec>, j: int, k: int)

@@ -73,24 +73,6 @@ pub open spec fn gen_proj(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec) ->
         && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0)
 }
 
-/// Without structures no projection is typed.
-pub proof fn gen_proj_ns(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
-    requires
-        gen_proj(sig, g, i, x, t),
-        crate::ti_syntax::no_structs(sig),
-    ensures
-        false,
-{
-    let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, x, l, l)
-        && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i, x) is Some
-        && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0, l)
-        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l))
-        && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0);
-    reveal(crate::ti_syntax::proj_ty);
-    let s = crate::beta_model::spine_head(st)->Const_0;
-    assert(crate::ti_syntax::struct_of(sig, s));
-}
-
 /// GENERATION: what a typing of `m` at `t` says about `m`'s parts.
 pub open spec fn gen_ok(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> bool {
     match m {

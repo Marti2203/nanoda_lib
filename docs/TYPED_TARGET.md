@@ -1381,9 +1381,7 @@ case:
   reads the subjects' structure off the chain between their types
   (`dom_fund::ind_head_chain`, cycle-free); subject reduction builds
   ProjIota for a firing projection (`ti_sr::sr_proj_fire`). The kernel
-  port has no recursors (`frag_env`), so no structures
-  (`gen_proj_norecs`, `dom_rec_end::norecs_sr`); signature extension asks
-  the smaller signature to have none (`sig_ext`). The flip exposed that
+  port's structures came with S6.6 (below). The flip exposed that
   the rule transports had verified vacuously under the gate; they now
   carry the subject heads through the operations. Adequacy: ProjIota is the Iota
   pattern; ProjCong (`dom_adeq_proj`) takes the subjects' relation at a
@@ -1548,9 +1546,25 @@ and eta step is vacuous (about thirty sites use that). Stages:
   only one (`canon_grow`, `struct_iff`). The kernel's iota is the
   judgment's (`jkernel::sr_iota_at`), and K-like reduction converts by
   proof irrelevance with the constructor typed at the major's parameters
-  (`kiota::ctor_params_typed`). Stage 2: the kernel's structures
-  (projection inference and steps, structure and unit eta), dropping
-  `no_structs`.
+  (`kiota::ctor_params_typed`). Stage 2 (landed): the kernel's
+  structures. `frag_env` no longer empties `struct_ctor` and `ctor_nf`;
+  `ind_ok` asks that each structure the kernel eta-expands is a smashed
+  judgment structure whose canonical constructor is the kernel's, and
+  that the field counts are the canonical shape's (Sigma, Subtype and
+  other structures outside the `struct_of` slice stay out). A typed
+  projection of a constructor application fires (`kiota::kproj_fire`,
+  through `ctor_arity_at`: a constructor application typed at a
+  canonical inductive's application is that inductive's, at its exact
+  arity); projection congruence and the kernel's projection step are
+  derivations (`proj_cong_d`, `proj_step_d`). Structure and unit eta are
+  StructEta over `kstruct`'s facts: a structure application typed at a
+  sort has exactly its parameters (`struct_type_arity`), projections are
+  typed at the parameters their fields name (`struct_proj_typed`), and
+  the eta expansion is typed (`struct_cx_typed`). The projection's
+  inference claim follows the kernel's walk down the constructor's type
+  (`proj_reg::walk_ty`): each stage converts to the telescope
+  instantiated as far, and Pi-injectivity moves each argument's typing
+  to the next stage.
 - **S6.6b**: the hypotheses from the verified inductive module, at every
   export prefix (`export_kh`).
 - **S6.6c**: literals through `Nat`.

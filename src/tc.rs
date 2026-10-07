@@ -1598,7 +1598,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::beta_model::defeq_of_pstep_star(fm, pm, to_model_expr(a));
             crate::tc_model::deq_any_of_defeq(fm, pm, to_model_expr(a));
             kconv_of_deq(env, pm, to_model_expr(a));
-            kcw_of_untypable(env, pm, to_model_expr(a));
             if crate::expr_model::nlbv(s0) <= 0 {
                 // the structure, whnf'd, is convertible with what it
                 // was, and projection is a congruence

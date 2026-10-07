@@ -457,27 +457,6 @@ pub open spec fn proj_fty(sig: Sig, m: ExprSpec) -> ExprSpec {
         crate::beta_model::spine_args(x).subrange(0, (crate::dom_code::canon_shape(sig, s).np + i) as int))
 }
 
-/// The signature has no structures.
-pub open spec fn no_structs(sig: Sig) -> bool {
-    forall|s: u64| !#[trigger] struct_of(sig, s)
-}
-
-/// Without recursors there are no structures.
-pub proof fn norecs_no_structs(sig: Sig)
-    requires
-        forall|rid: u64| !sig.ienv.recs.contains_key(rid),
-    ensures
-        no_structs(sig),
-{
-    reveal(struct_of);
-    assert forall|s: u64| !#[trigger] struct_of(sig, s) by {
-        if struct_of(sig, s) {
-            let rid = choose|rid: u64| crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s;
-            assert(sig.ienv.recs.contains_key(rid));
-        }
-    }
-}
-
 /// The projections of `x` before field `i`.
 pub open spec fn projs(x: ExprSpec, i: nat) -> Seq<ExprSpec> {
     Seq::new(i, |j: int| ExprSpec::Proj(j as usize, Box::new(x)))

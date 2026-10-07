@@ -60,8 +60,6 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_zero_id(denv.export))
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export))
-    &&& denv.struct_ctor == Map::<u64, u64>::empty()
-    &&& denv.ctor_nf == Map::<u64, u16>::empty()
     &&& forall|id: u64| #[trigger] denv.ctor_np.contains_key(id) ==> dty.contains_key(id) && !denv.defs.contains_key(id) && !denv.recs.contains_key(id)
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok(jsig(dty, denv, d))
 }
@@ -90,9 +88,15 @@ pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
     &&& crate::ti_syntax::iota_ok(sig)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
-    &&& crate::ti_syntax::no_structs(sig)
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_np.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
         && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
+    &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
+        && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
+        && forall|j: int| 0 <= j < crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).nmin()
+            && #[trigger] crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors[j] == cid
+            ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat
 }
 
 /// CONVERSION in the judgment: one derivation relating `x` and `y`.
@@ -352,24 +356,6 @@ pub proof fn gen_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<
     assert(typed(dty, denv, d, a, pa));
 }
 
-/// A projection is typed nowhere in the fragment: it has no recursors,
-/// so no structures.
-pub proof fn gen_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, idx: usize, s: ExprSpec)
-    requires
-        kh(dty, denv),
-        rtyped(dty, denv, d, ExprSpec::Proj(idx, Box::new(s))),
-    ensures
-        false,
-{
-    let sig = jsig(dty, denv, d);
-    let e = ExprSpec::Proj(idx, Box::new(s));
-    let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
-    let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
-    crate::ti_gen::gen(sig, de);
-    assert(ind_ok(sig));
-    crate::ti_gen::gen_proj_ns(sig, Seq::empty(), idx as nat, s, t);
-}
-
 pub proof fn cw_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
     requires
         cw(dty, denv, g, f1, f2),
@@ -395,7 +381,7 @@ pub proof fn cw_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
     }
 }
 
-/// A projection is typed nowhere, so its conversion claims hold.
+/// Projection is a congruence for the conversion claim.
 pub proof fn cw_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, idx: usize, s1: ExprSpec, s2: ExprSpec)
     requires
         cw(dty, denv, g, s1, s2),
@@ -405,9 +391,22 @@ pub proof fn cw_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
     let x1 = ExprSpec::Proj(idx, Box::new(s1));
     let x2 = ExprSpec::Proj(idx, Box::new(s2));
     if kh(dty, denv) {
+        rctx_mono(g, s1, x1);
+        rctx_mono(g, s2, x2);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x1), d) && sub(rctx(g, x2), d) && rtyped(dty, denv, d, x1) && rtyped(dty, denv, d, x2)
             implies #[trigger] jconv(dty, denv, d, x1, x2) by {
-            gen_proj(dty, denv, d, idx, s1);
+            let sig = jsig(dty, denv, d);
+            crate::jkernel::kh_at(dty, denv, d);
+            sub_trans(rctx(g, s1), rctx(g, x1), d);
+            sub_trans(rctx(g, s2), rctx(g, x2), d);
+            let t1 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, x1, t);
+            let t2 = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, x2, t);
+            let st1 = crate::kiota::proj_subj(sig, Seq::empty(), idx, s1, t1);
+            let st2 = crate::kiota::proj_subj(sig, Seq::empty(), idx, s2, t2);
+            assert(typed(dty, denv, d, s1, st1) && typed(dty, denv, d, s2, st2));
+            assert(jconv(dty, denv, d, s1, s2));
+            let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), s1, s2, t0));
+            crate::kiota::proj_cong_d(sig, Seq::empty(), idx, s1, s2, t0, t1);
         }
     }
 }
@@ -925,6 +924,48 @@ pub proof fn cw_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
     ensures
         cw(dty, denv, g, x, y),
 {
+    if kh(dty, denv) {
+        let (ls, args) = choose|ls: Seq<LevelSpec>, args: Seq<ExprSpec>| #[trigger] crate::beta_model::spine_app(ExprSpec::Const(ind, ls), args) == a;
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), args);
+        let c = choose|c: u64| #[trigger] denv.struct_ctor(ind) == Some(c) && denv.ctor_num_fields(c) == Some(0u16);
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
+            implies #[trigger] jconv(dty, denv, d, x, y) by {
+            let sig = jsig(dty, denv, d);
+            let g0 = Seq::<ExprSpec>::empty();
+            crate::jkernel::kh_at(dty, denv, d);
+            assert(ind_ok(sig));
+            ci_use(dty, denv, g, d, x, a);
+            ci_use(dty, denv, g, d, y, b);
+            assert(jconv(dty, denv, d, a, b));
+            jconv_symm(dty, denv, d, a, b);
+            typed_move(dty, denv, d, y, b, a);
+            let la = type_sort(dty, denv, d, a);
+            // the unit structure, smashed, with no fields
+            assert(sig.ienv.struct_ctor.contains_key(ind));
+            assert(crate::dom_code::smash(sig, ind));
+            let r = crate::kstruct::struct_rec(sig, ind);
+            let sh = crate::dom_code::canon_shape(sig, ind);
+            assert(sh.nmin() == 1) by {
+                reveal(crate::ti_syntax::struct_of);
+            }
+            assert(sh.ctors[0] == c);
+            assert(sig.ienv.ctor_ind[c] == ind);
+            assert(sig.ienv.ctor_nf.contains_key(c));
+            assert(sh.fields[0].len() == 0);
+            crate::kstruct::struct_type_arity(sig, g0, a, la);
+            // structure eta, without projections
+            let dx = crate::ti_sub::get(sig, eq(g0, x, x, a));
+            let dy = crate::ti_sub::get(sig, eq(g0, y, y, a));
+            let da = crate::ti_sub::get(sig, eq(g0, a, a, crate::ti_syntax::sort(la)));
+            let j = eq(g0, x, y, a);
+            let ps = seq![dx, dy, da];
+            assert(crate::ti_syntax::struct_eta_ok(sig, la, j, ps)) by {
+                reveal(crate::ti_syntax::struct_eta_ok);
+            }
+            crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::StructEta(la), j, ps);
+            crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::StructEta(la), j, ps));
+        }
+    }
 }
 
 
@@ -1001,6 +1042,66 @@ pub proof fn cw_eta(
     ensures
         cw(dty, denv, g, x, y),
 {
+    if kh(dty, denv) {
+        let hy = ExprSpec::Const(cid, ylv);
+        crate::beta_model::spine_destruct_app(hy, am);
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
+            implies #[trigger] jconv(dty, denv, d, x, y) by {
+            let sig = jsig(dty, denv, d);
+            let g0 = Seq::<ExprSpec>::empty();
+            crate::jkernel::kh_at(dty, denv, d);
+            assert(ind_ok(sig));
+            // the structure: smashed, its constructor's arities the kernel's
+            assert(sig.ienv.struct_ctor.contains_key(ind));
+            let r = crate::kstruct::struct_rec(sig, ind);
+            let sh = crate::dom_code::canon_shape(sig, ind);
+            assert(sh.nmin() == 1) by {
+                reveal(crate::ti_syntax::struct_of);
+            }
+            assert(sh.ctors[0] == cid);
+            assert(sig.ienv.ctor_ind[cid] == ind);
+            assert(sig.ienv.ctor_np[cid] as nat == sh.np);
+            assert(sig.ienv.ctor_nf.contains_key(cid));
+            assert(sh.fields[0].len() == nf);
+            // both sides at the structure application
+            ci_use(dty, denv, g, d, x, a);
+            ci_use(dty, denv, g, d, y, b);
+            assert(jconv(dty, denv, d, a, b));
+            typed_move(dty, denv, d, x, a, b);
+            let lt = crate::kstruct::struct_ctor_typed(sig, g0, ind, y, b);
+            let st = spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int));
+            crate::ti_sr::uniq(sig, g0, y, b, st);
+            crate::ti_chain::conv_chain(sig, g0, x, x, b, st);
+            crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int));
+            crate::kstruct::struct_type_arity(sig, g0, st, lt);
+            // each projection of `x` converts with the field, which is `y`'s
+            assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, st) implies #[trigger] derivable(sig, eq(g0, ExprSpec::Proj(k as usize, Box::new(x)),
+                ExprSpec::Proj(k as usize, Box::new(y)), crate::ti_syntax::proj_ty(sig, st, k as nat, x)->Some_0)) by {
+                let q = crate::kstruct::struct_proj_typed(sig, g0, st, lt, x, k);
+                crate::kstruct::struct_proj_typed(sig, g0, st, lt, y, k);
+                let tq = crate::beta_model::spine_args(st)[q];
+                let px = ExprSpec::Proj(k as usize, Box::new(x));
+                let py = ExprSpec::Proj(k as usize, Box::new(y));
+                let f = am[np + k];
+                crate::kiota::proj_step_d(sig, g0, k as usize, y, tq);
+                // the field's conversion claim applies
+                assert(cw(dty, denv, g, ExprSpec::Proj(((np + k) - np) as usize, Box::new(x)), am[np + k]));
+                assert(((np + k) - np) as usize == k as usize);
+                rctx_mono(g, px, x);
+                sub_trans(rctx(g, px), rctx(g, x), d);
+                spine_arg_fv(hy, am, np + k);
+                rctx_mono(g, f, y);
+                sub_trans(rctx(g, f), rctx(g, y), d);
+                assert(typed(dty, denv, d, f, crate::ti_spine::sdom(crate::ti_syntax::dty_at(sig, cid, ylv), am, np + k)));
+                assert(typed(dty, denv, d, px, tq));
+                assert(jconv(dty, denv, d, px, f));
+                jconv_at(dty, denv, d, px, f, tq);
+                crate::dom_adeq_syn::dsym(sig, g0, py, f, tq);
+                crate::dom_adeq_syn::dtrans(sig, g0, px, f, py, tq);
+            }
+            crate::kstruct::struct_eta_d(sig, g0, x, y, st, lt);
+        }
+    }
 }
 
 
@@ -1289,6 +1390,85 @@ pub proof fn cwh_eta_exp(
     ensures
         cwh(dty, denv, g, e, r),
 {
+    if kh(dty, denv) {
+        let hc = ExprSpec::Const(cid, ls);
+        let cargs = args + eta_projs(e, nf);
+        // the expansion reaches only what the term and its type reach
+        assert forall|i: nat| #[trigger] fv_absent(e, i) && fv_absent(ety, i) implies fv_absent(r, i) by {
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(ind, ls), args, i);
+            crate::reduce_fv::spine_app_fv(hc, cargs, i);
+            assert forall|k: int| 0 <= k < cargs.len() implies fv_absent(#[trigger] cargs[k], i) by {
+                if k < np {
+                    assert(cargs[k] == args[k]);
+                } else {
+                    assert(cargs[k] == ExprSpec::Proj((k - np) as usize, Box::new(e)));
+                }
+            }
+        }
+        if nlbv(e) <= 0 {
+            assert(sub(rctx(g, e), rctx(g, e)));
+            rctx_two(g, r, e, ety, rctx(g, e));
+            crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(ind, ls), args);
+            assert forall|k: int| 0 <= k < cargs.len() implies nlbv(#[trigger] cargs[k]) <= 0 by {
+                if k < np {
+                    assert(cargs[k] == args[k]);
+                } else {
+                    assert(cargs[k] == ExprSpec::Proj((k - np) as usize, Box::new(e)));
+                }
+            }
+            crate::ti_proj::spine_nlbv_le(hc, cargs, 0);
+        }
+        // wherever the term is typed, the expansion is, at its type
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies typed(dty, denv, d, r, ety) && tconv(dty, denv, d, ety, t)
+                && derivable(jsig(dty, denv, d), eq(Seq::empty(), e, r, ety)) by {
+            let sig = jsig(dty, denv, d);
+            let g0 = Seq::<ExprSpec>::empty();
+            crate::jkernel::kh_at(dty, denv, d);
+            assert(ind_ok(sig));
+            assert(rtyped(dty, denv, d, e));
+            ci_use(dty, denv, g, d, e, ety);
+            let lt = type_sort(dty, denv, d, ety);
+            crate::ti_sr::uniq(sig, g0, e, ety, t);
+            assert(sig.ienv.struct_ctor.contains_key(ind));
+            let rr = crate::kstruct::struct_rec(sig, ind);
+            let sh = crate::dom_code::canon_shape(sig, ind);
+            assert(sh.nmin() == 1) by {
+                reveal(crate::ti_syntax::struct_of);
+            }
+            assert(sh.ctors[0] == cid);
+            assert(sig.ienv.ctor_ind[cid] == ind);
+            assert(sig.ienv.ctor_np[cid] as nat == sh.np);
+            assert(sig.ienv.ctor_nf.contains_key(cid));
+            assert(sh.fields[0].len() == nf);
+            crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), args);
+            crate::kstruct::struct_type_arity(sig, g0, ety, lt);
+            crate::kstruct::struct_cx_typed(sig, g0, ety, lt, e);
+            assert(eta_projs(e, nf) =~= crate::ti_syntax::projs(e, nf));
+            assert(typed(dty, denv, d, r, ety));
+            // structure eta: each projection of the expansion steps back
+            crate::beta_model::spine_destruct_app(hc, cargs);
+            assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, ety) implies #[trigger] derivable(sig, eq(g0, ExprSpec::Proj(k as usize, Box::new(e)),
+                ExprSpec::Proj(k as usize, Box::new(r)), crate::ti_syntax::proj_ty(sig, ety, k as nat, e)->Some_0)) by {
+                let q = crate::kstruct::struct_proj_typed(sig, g0, ety, lt, e, k);
+                crate::kstruct::struct_proj_typed(sig, g0, ety, lt, r, k);
+                let tq = args[q];
+                crate::kiota::proj_step_d(sig, g0, k as usize, r, tq);
+                assert(cargs[np + k] == ExprSpec::Proj(k as usize, Box::new(e)));
+                crate::dom_adeq_syn::dsym(sig, g0, ExprSpec::Proj(k as usize, Box::new(r)), ExprSpec::Proj(k as usize, Box::new(e)), tq);
+            }
+            crate::kstruct::struct_eta_d(sig, g0, e, r, ety, lt);
+        }
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && #[trigger] typed(dty, denv, d, e, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, r, t2) && tconv(dty, denv, d, t2, t) by {
+            assert(typed(dty, denv, d, r, ety) && tconv(dty, denv, d, ety, t));
+        }
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && sub(rctx(g, r), d) && rtyped(dty, denv, d, e) && rtyped(dty, denv, d, r)
+            implies #[trigger] jconv(dty, denv, d, e, r) by {
+            let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
+            assert(derivable(jsig(dty, denv, d), eq(Seq::empty(), e, r, ety)));
+        }
+    }
 }
 
 
@@ -1585,10 +1765,24 @@ pub proof fn cwh_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
         if nlbv(x1) <= 0 {
             sub_trans(rctx(g, x2), rctx(g, s2), rctx(g, s));
             sub_trans(rctx(g, x2), rctx(g, s), rctx(g, x1));
-        }assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, x1), d) && #[trigger] typed(dty, denv, d, x1, t)
+        }
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, x1), d) && #[trigger] typed(dty, denv, d, x1, t)
             implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, x2, t2) && tconv(dty, denv, d, t2, t) by {
+            let sig = jsig(dty, denv, d);
+            crate::jkernel::kh_at(dty, denv, d);
             assert(rtyped(dty, denv, d, x1));
-            gen_proj(dty, denv, d, idx, s);
+            rtyped_closed(dty, denv, d, x1);
+            sub_trans(rctx(g, s), rctx(g, x1), d);
+            let st = crate::kiota::proj_subj(sig, Seq::empty(), idx, s, t);
+            assert(typed(dty, denv, d, s, st));
+            let st2 = choose|t2: ExprSpec| #[trigger] typed(dty, denv, d, s2, t2) && tconv(dty, denv, d, t2, st);
+            sub_trans(rctx(g, s2), rctx(g, s), d);
+            assert(rtyped(dty, denv, d, s) && rtyped(dty, denv, d, s2));
+            assert(jconv(dty, denv, d, s, s2));
+            let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), s, s2, t0));
+            crate::kiota::proj_cong_d(sig, Seq::empty(), idx, s, s2, t0, t);
+            tconv_refl(dty, denv, d, t);
+            assert(typed(dty, denv, d, x2, t));
         }
     }
 }
@@ -2651,10 +2845,9 @@ pub proof fn cw_eta_lam(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: M
     }
 }
 
-/// Terms the fragment types nowhere: literals and what they reduce to,
-/// and projections.
+/// Terms the fragment types nowhere: literals and what they reduce to.
 pub open spec fn untypable(export: nat, e: ExprSpec) -> bool {
-    crate::jkernel::natish(export, e) || e is StringLit || e is Proj
+    crate::jkernel::natish(export, e) || e is StringLit
 }
 
 pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
@@ -2671,10 +2864,6 @@ pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
         let sig = jsig(dty, denv, d);
         let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
         crate::ti_gen::gen(sig, de);
-        if e is Proj {
-            assert(ind_ok(sig));
-            crate::ti_gen::gen_proj_ns(sig, Seq::empty(), e->Proj_0 as nat, *e->Proj_1, t);
-        }
     }
 }
 
