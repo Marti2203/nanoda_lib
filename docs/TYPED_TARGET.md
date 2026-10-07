@@ -1605,6 +1605,17 @@ and eta step is vacuous (about thirty sites use that). Stages:
     `rules_declar_canon`); `declar_rec_glue` carries both. B3 is
     complete for a single inductive; B4 ties the rules' recursor to the
     declared one and compares with the export.
+    B4a–b: strings and names are hash-consed (proved), so the rules'
+    recursor is the declared one. B4c: the comparison with the export is
+    observed, not enforced: `assert_nonnested_recursors_def_eq` returns
+    whether every exported recursor is syntactically the generated one at
+    its universe parameters (`rec_old`). FINDING: Lean's exported
+    recursors strip `outParam`/`optParam`/`autoParam` from binder types
+    while the declared inductive and constructor types keep them, so the
+    literal canonical form misses those inductives (Init: 97 of the
+    recursor types, 118 rules -- the `H*` classes, `GetElem`,
+    `Membership`, `Rat`, `Std.Format`, ...). They stay outside the
+    fragment; an annotation-stripping canonical form is the widening.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.

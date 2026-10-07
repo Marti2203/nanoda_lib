@@ -2039,6 +2039,38 @@ pub(crate) proof fn rule_rhs_noih(sh: crate::rec_canon::IndShape, lm: crate::lev
     assert(sh.rule_rhs(lm, h1, rls, j) =~~= sh.rule_rhs(lm, h2, rls, j));
 }
 
+/// `od` is a declaration of the environment's persistent (export) part.
+pub(crate) open spec fn env_old<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar<'t>) -> bool {
+    let keys = env.old_keys();
+    exists|i: int| 0 <= i < keys.len() && i < env.visible() && #[trigger] keys[i] == crate::env::declar_info(od).name
+        && env.old_view()[keys[i]] == od
+}
+
+/// Some exported declaration is the generated recursor `nd`.
+pub(crate) open spec fn rec_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_matches(od, nd, rec_up)
+}
+
+/// THE EXPORTED RECURSOR IS THE GENERATED ONE: at the exported recursor's
+/// universe parameters, its type and each rule's value are the generated
+/// ones, rule for rule and constructor for constructor.
+pub(crate) open spec fn rec_matches<'t>(od: Declar<'t>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
+    match (od, nd) {
+        (Declar::Recursor(or), Declar::Recursor(nr)) => {
+            let ks = crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(rec_up));
+            let vs = crate::level_arena_bridge::to_model_of_levels(or.info.uparams);
+            &&& or.info.name == nr.info.name
+            &&& crate::expr_arena_bridge::to_model(or.info.ty)
+                == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(nr.info.ty), ks, vs)
+            &&& or.rec_rules@.len() == nr.rec_rules@.len()
+            &&& forall|j: int| 0 <= j < or.rec_rules@.len() ==> crate::expr_arena_bridge::to_model((#[trigger] or.rec_rules@[j]).val)
+                == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(nr.rec_rules@[j].val), ks, vs)
+                && crate::level_arena_bridge::name_id(or.rec_rules@[j].ctor_name) == crate::level_arena_bridge::name_id(nr.rec_rules@[j].ctor_name)
+        },
+        _ => false,
+    }
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -7757,7 +7789,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         old_uparams: LevelsPtr<'t>,
         imported_rr: &RecRule<'t>,
         constructed_rr: &RecRule<'t>,
-    )
+    ) -> (matched: bool)
         requires
             crate::tc::tc_wf(*old(self)),
             crate::util_model::owns(*old(self).ctx, old_uparams),
@@ -7772,6 +7804,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            matched ==> crate::expr_arena_bridge::to_model(imported_rr.val) == crate::expr_model::subst_expr_levels(
+                crate::expr_arena_bridge::to_model(constructed_rr.val),
+                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
+                crate::level_arena_bridge::to_model_of_levels(old_uparams)),
+            matched ==> crate::level_arena_bridge::name_id(imported_rr.ctor_name) == crate::level_arena_bridge::name_id(constructed_rr.ctor_name),
     {
         assert!(!crate::env_model::same_object(imported_rr, constructed_rr));
         // Should be structurally != because they come from different envs.
@@ -7792,6 +7829,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             level_free_in_scope(*self, rr_made_val);
         }
         self.assert_def_eq(imported_rr.val, rr_made_val);
+        // VERUS-REWRITE(observe): after the conversion check, whether the
+        // generated rule at the exported recursor's universe parameters is the
+        // exported rule syntactically (`model_eq`, and the constructor names by
+        // `==`) is returned; the caller ignores it, so nothing is rejected.
+        // Lean's exports strip `outParam`/`optParam`/`autoParam` from binder
+        // types, so it is false for annotated inductives (S6.6b).
+        crate::expr_arena_bridge::model_eq(self.ctx, imported_rr.val, rr_made_val)
+            && imported_rr.ctor_name == constructed_rr.ctor_name
     }
 
     /// Verified in place: each constructed recursor checked against the
@@ -7810,7 +7855,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// VERUS-REWRITE(name-clash): the pattern binding `old` is `old_d` (the
     /// rule loop's invariant uses Verus's `old`).
     #[verifier::exec_allows_no_decreases_clause]
-    fn assert_nonnested_recursors_def_eq(&mut self, st: &InductiveCheckState<'t>, recursors: &Vec<Declar<'t>>)
+    fn assert_nonnested_recursors_def_eq(&mut self, st: &InductiveCheckState<'t>, recursors: &Vec<Declar<'t>>) -> (matched: bool)
         requires
             crate::tc::tc_wf(*old(self)),
             st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*old(self).ctx, ls)
@@ -7830,7 +7875,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            matched ==> forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
     {
+        let mut ok = true;
         assert!(!st.is_nested());
         proof {
             broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
@@ -7853,6 +7900,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     },
                     _ => true,
                 },
+                n <= recursors@.len(),
+                ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
             decreases recursors@.len() - n,
         {
             let new_rec = &recursors[n];
@@ -7881,6 +7930,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         level_free_in_scope(*self, new_r.info.ty);
                     }
                     self.assert_def_eq(imported_w_new_uparams, new.info().ty);
+                    // VERUS-REWRITE(observe): whether the generated recursor's type at
+                    // the exported recursor's universe parameters is the exported type
+                    // syntactically (`model_eq`) is recorded, as each rule's is in
+                    // `assert_nonnested_rec_rule_def_eq`, and returned; the caller
+                    // ignores it, so nothing is rejected (S6.6b).
+                    let back = self.ctx.subst_expr_levels(new.info().ty, st.rec_uparams.unwrap(), old_d.info().uparams);
+                    ok = ok && crate::expr_arena_bridge::model_eq(self.ctx, old_d.info().ty, back);
+                    proof {
+                        assert(env_old(*old(self).env, *old_d));
+                    }
                     assert_eq!(old_rec_rules.len(), new_rec_rules.len());
                     let mut j: usize = 0;
                     while j < old_rec_rules.len()
@@ -7909,6 +7968,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             new_r.rec_rules == *new_rec_rules,
                             old_r.rec_rules == *old_rec_rules,
                             old_rec_rules@.len() == new_rec_rules@.len(),
+                            j <= old_rec_rules@.len(),
+                            ok ==> forall|q: int| 0 <= q < j ==> crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val)
+                                == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))
+                                && crate::level_arena_bridge::name_id(old_rec_rules@[q].ctor_name) == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name),
+                            env_old(*old(self).env, *old_d),
+                            ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+                            ok ==> crate::expr_arena_bridge::to_model(crate::env::declar_info(*old_d).ty)
+                                == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(crate::env::declar_info(*new).ty),
+                                    crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
+                                    crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams)),
                         decreases old_rec_rules@.len() - j,
                     {
                         let r_old = &old_rec_rules[j];
@@ -7922,7 +7991,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             });
                             assert(crate::util_model::owns(*self.ctx, new_r.rec_rules@[j as int].val));
                         }
-                        self.assert_nonnested_rec_rule_def_eq(st, old_d.info().uparams, r_old, r_new);
+                        let ghost jj = j as int;
+                        let rm = self.assert_nonnested_rec_rule_def_eq(st, old_d.info().uparams, r_old, r_new);
+                        ok = ok && rm;
                         j += 1;
                     }
                 }
@@ -7930,6 +8001,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             };
             n += 1;
         }
+        ok
     }
 
     /// Verified in place: every recursor of the block, and every recursor made
