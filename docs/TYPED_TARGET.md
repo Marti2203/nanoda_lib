@@ -1566,7 +1566,34 @@ and eta step is vacuous (about thirty sites use that). Stages:
   instantiated as far, and Pi-injectivity moves each argument's typing
   to the next stage.
 - **S6.6b**: the hypotheses from the verified inductive module, at every
-  export prefix (`export_kh`).
+  export prefix (`export_kh`). Direction (2026-10-07): prove nanoda's own
+  recursor generator. Today the checker reads recursors from the export
+  and compares them with its generated ones by `def_eq` in a temporary
+  extension, and no contract carries anything out; its only guarantee is
+  `declar_cert_at`. The generator builds exactly the canonical form over
+  locals: `mk_recursor_ty` is `Π params motives minors indices major,
+  motive indices major`, `mk_rec_rule_val` is `λ params motives minors
+  fields, minor fields ihs`. Phases:
+  - **B1** abstraction algebra: abstracting an opened telescope's locals
+    (`abstr_pi_telescope_model`) is the de Bruijn telescope (`binds`).
+  - **B2** the locals' types: parameters and indices from the
+    inductive's type, the motive (`motive_ty`), each minor (`minor_ty`,
+    fields and induction hypotheses), the major.
+  - **B3** `mk_recursor_ty` is `rec_ty`, `mk_rec_rule_val` is `rule_rhs`.
+  - **B4** the comparison: a verified structural (model) equality check
+    of the exported recursor against the generated one (a tested-input
+    check, registered), with the tables' data fields.
+  - **B5** the certificate: `declar_cert_at` for a recursor carries its
+    canonical form at the cutoff.
+  - **B6** the rest of `rec_canon` and `ind_ok`'s tables (the inductive's
+    and constructors' type forms, field kinds, constructor tables,
+    uniqueness), from the constructor and positivity certificates.
+  - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
+    fields typed and blind, semantic constants, from the canonical form
+    and the certificates.
+  - **B8** `kh_hyp` loses `ind_ok`; what is left is the fragment's
+    boundary (single-motive, field kinds, interpreted recursors,
+    structures in the slice), to be widened after.
 - **S6.6c**: literals through `Nat`.
 
 Out of the fragment until the model grows: large eliminators of Prop
