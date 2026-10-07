@@ -192,6 +192,29 @@ pub proof fn abstr_tel(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<n
     }
 }
 
+/// Abstracting two telescopes in turn is abstracting their concatenation.
+pub proof fn abstr_tel_cat(bk: BinderKind, a: Seq<nat>, ta: Seq<ExprSpec>, b: Seq<nat>, tb: Seq<ExprSpec>, e: ExprSpec)
+    requires
+        a.len() == ta.len(),
+        b.len() == tb.len(),
+    ensures
+        crate::expr_arena_bridge::abstr_telescope_model(bk, a + b, ta + tb, e)
+            == crate::expr_arena_bridge::abstr_telescope_model(bk, a, ta, crate::expr_arena_bridge::abstr_telescope_model(bk, b, tb, e)),
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        assert(a + b =~= a);
+        assert(ta + tb =~= ta);
+    } else {
+        let e2 = ExprSpec::Bind(bk, Box::new(tb.last()), Box::new(abstr_full(e, seq![b.last()], 0)));
+        assert((a + b).drop_last() =~= a + b.drop_last());
+        assert((ta + tb).drop_last() =~= ta + tb.drop_last());
+        assert((a + b).last() == b.last());
+        assert((ta + tb).last() == tb.last());
+        abstr_tel_cat(bk, a, ta, b.drop_last(), tb.drop_last(), e2);
+    }
+}
+
 /// Opening through a binder of either kind.
 pub proof fn vsubk_bind(k: nat, bk: BinderKind, t: ExprSpec, r: ExprSpec, xs: Seq<ExprSpec>)
     ensures
@@ -603,7 +626,7 @@ pub open spec fn ih_db(m: ExprSpec, r: ExprSpec, t: ExprSpec, n: nat, np: nat) -
 /// applied to the field at the locals gives the de Bruijn hypothesis over
 /// `t`'s telescope.
 #[verifier::spinoff_prover]
-pub proof fn ih_close(t: ExprSpec, xs: Seq<nat>, n: nat, np: nat, m: ExprSpec, r: ExprSpec, tys: Seq<ExprSpec>)
+pub proof fn ih_close(bk: BinderKind, t: ExprSpec, xs: Seq<nat>, n: nat, np: nat, m: ExprSpec, r: ExprSpec, tys: Seq<ExprSpec>)
     requires
         nlbv(t) == 0,
         crate::rec_canon::tdoms(t, n).len() == n,
@@ -619,12 +642,12 @@ pub proof fn ih_close(t: ExprSpec, xs: Seq<nat>, n: nat, np: nat, m: ExprSpec, r
         tys.len() == n,
         forall|k: int| 0 <= k < n ==> #[trigger] tys[k] == *lit_open(t, xs.subrange(0, k))->Bind_1,
     ensures
-        crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi, xs, tys,
+        crate::expr_arena_bridge::abstr_telescope_model(bk, xs, tys,
             ExprSpec::App(
                 Box::new(crate::beta_model::spine_app(m, crate::beta_model::spine_args(lit_open(t, xs)).subrange(np as int,
                     crate::beta_model::spine_args(lit_open(t, xs)).len() as int))),
                 Box::new(crate::beta_model::spine_app(r, frees(xs)))))
-            == crate::rec_canon::binds(BinderKind::Pi, crate::rec_canon::tdoms(t, n), ih_db(m, r, t, n, np)),
+            == crate::rec_canon::binds(bk, crate::rec_canon::tdoms(t, n), ih_db(m, r, t, n, np)),
 {
     let ds = crate::rec_canon::tdoms(t, n);
     let b = crate::rec_canon::tbody(t, n);
@@ -684,7 +707,7 @@ pub proof fn ih_close(t: ExprSpec, xs: Seq<nat>, n: nat, np: nat, m: ExprSpec, r
         }
         crate::reduce_fv::spine_app_fv(r, tv, z);
     }
-    abstr_tel(BinderKind::Pi, ds, body, xs);
+    abstr_tel(bk, ds, body, xs);
 }
 
 /// Every local `e` mentions is a unique local made before counter value

@@ -114,6 +114,8 @@ either, and it changes the kernel's line more, not less.
 | `mk_ind_tys_env_ext` | `src/inductive.rs` | `enumerate` over the block inductives |
 | `mk_minors1group` | `src/inductive.rs` | `enumerate` over the constructors; also the iterators handed to `foldl_apps`/`abstr_pis` bound to locals so the proof can name their elements (same calls) |
 | `handle_rec_args_minor` | `src/inductive.rs` | `enumerate` over `rec_args`; also the reversed index iterator and the two `xs` iterators bound to locals so the proof can name their elements (same calls) |
+| `mk_rec_rule_val` | `src/inductive.rs` | the two iterators handed to `foldl_apps` (constructor arguments, induction hypotheses) are bound to locals so the proof can name their elements (same calls) |
+| `mk_recursor_ty` | `src/inductive.rs` | the index iterator handed to `foldl_apps` is bound to a local so the proof can name its elements (same call) |
 
 All three of `nth`, `position` and `enumerate` have now been **specified on the
 fork** (`d5d5e80fa`) — they genuinely had none, checked directly rather than
@@ -380,6 +382,7 @@ still a rejection — but each is an improvement.
 | `reduce_proj` | `src/tc.rs` | `num_params + idx` is guarded (`checked_add`, decline) -- nothing bounds either side and there is nothing wider to widen to |
 | `whnf_same`, `handle_rec_args_aux` | `src/inductive.rs` | the induction hypothesis's telescope is walked through `whnf_same`: each `whnf` is tested to denote its input (`model_eq`; a rejection otherwise), so the walk reads the recursive field's declared type itself (S6.6b). Not used where a field's type may legitimately unfold (`is_rec_argument` keeps plain `whnf`: `optParam`, `outParam` fields). Never fails on a type Lean exports |
 | `handle_rec_args_minor` | `src/inductive.rs` | a recursive argument's inferred type (`infer_then_whnf`) is tested to be its declared binder type (`model_eq`; a rejection otherwise), so the induction hypothesis is built from the constructor's field (S6.6b). Never fails on a constructor Lean exports |
+| `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` | a recursive argument's inferred type (`infer_then_whnf`) is tested to be its declared binder type (`model_eq`; a rejection otherwise), so the rule's induction hypothesis is built from the constructor's field (S6.6b). Never fails on a constructor Lean exports |
 | `literal_whnf`, `check_inductive_spec_0th`, `check_inductive_specs_mutual1` | `src/inductive.rs` | an inductive's type is tested to be a literal telescope (tested-env): each step's `whnf` must find its Pi (or the closing sort) already there, and the walk must end in a sort as it stands; a rejection otherwise. The walk then reads the declared type itself, which the canonical recursor (`rec_canon`) is stated over (S6.6b). Never fails on a type Lean exports |
 | `check_inductive_spec_0th`, `check_inductive_specs_mutual1` | `src/inductive.rs` | the binder walk's `i += 1` on a `usize` that nothing bounds (the walk runs until the cursor stops being a `Pi`); overflow is a rejection (`checked_add`). Cannot fire on a real term |
 | `is_valid_ind_app` | `src/inductive.rs` | `np + num_indices` on `usize`, which nothing bounds for Verus; overflow panics, as in a debug build (`checked_add`). The index walk over `np..len` replaces `for .. in &ctor_apps[np..]` (a `RangeFrom` slice fails precondition discharge) |
