@@ -667,4 +667,545 @@ pub proof fn minor_canon(sh: crate::rec_canon::IndShape, j: int, pids: Seq<nat>,
     crate::kgen::abstr_tel_cat(BinderKind::Pi, fids, ftys, vids, vtys, body_m);
 }
 
+/// A telescope mentions a local only through its pieces.
+pub proof fn binds_fv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, z: nat)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> #[trigger] fv_absent(ds[i], z),
+        fv_absent(b, z),
+    ensures
+        fv_absent(binds(bk, ds, b), z),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        let d2 = ds.drop_first();
+        assert forall|i: int| 0 <= i < d2.len() implies #[trigger] fv_absent(d2[i], z) by {
+            assert(d2[i] == ds[i + 1]);
+        }
+        binds_fv(bk, d2, b, z);
+        assert(fv_absent(ds[0], z));
+    }
+}
+
+/// THE RECURSOR'S INDEX AND MAJOR DOMAINS OPENED: after the parameters,
+/// the motive and the minors, index `k` is its declared domain at the
+/// parameters and earlier indices; the major is the inductive at the
+/// parameters and indices; the body is the motive at the indices and the
+/// major.
+#[verifier::spinoff_prover]
+pub proof fn rt_tail(sh: crate::rec_canon::IndShape, pids: Seq<nat>, mm: Seq<nat>, iids: Seq<nat>, majid: nat)
+    requires
+        pids.len() == sh.np,
+        mm.len() == 1 + sh.nmin(),
+        iids.len() == sh.ni,
+        sh.idoms.len() == sh.ni,
+    ensures ({
+        let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+        let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+        let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni));
+        let body = crate::beta_model::spine_app(ExprSpec::Var(nmin + ni + 1), crate::rec_canon::vars(1, ni).push(ExprSpec::Var(0)));
+        &&& forall|k: int| 0 <= k < ni ==> #[trigger] vsub(idx[k], frees(pids) + frees(mm) + frees(iids.subrange(0, k)))
+            == vsub(sh.idoms[k], frees(pids) + frees(iids.subrange(0, k)))
+        &&& vsub(major, frees(pids) + frees(mm) + frees(iids)) == crate::rec_canon::ind_app(sh.ind, sh.us(), frees(pids) + frees(iids))
+        &&& vsub(body, frees(pids) + frees(mm) + frees(iids) + frees(seq![majid])) == ExprSpec::App(
+            Box::new(crate::beta_model::spine_app(ExprSpec::Free(mm[0]), frees(iids))), Box::new(ExprSpec::Free(majid)))
+    }),
+{
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    assert forall|k: int| 0 <= k < ni implies #[trigger] vsub(idx[k], frees(pids) + frees(mm) + frees(iids.subrange(0, k)))
+        == vsub(sh.idoms[k], frees(pids) + frees(iids.subrange(0, k))) by {
+        crate::ti_beta::vsub_lift_mid(sh.idoms[k], frees(pids), frees(mm), frees(iids.subrange(0, k)));
+    }
+    // the major
+    let l = frees(pids) + frees(mm) + frees(iids);
+    let margs = crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni);
+    let c = ExprSpec::Const(sh.ind, sh.us());
+    crate::ti_hred_rec::vsub_spine(c, margs, l);
+    crate::ti_spine::vsub_const(sh.ind, sh.us(), l);
+    assert(Seq::new(margs.len(), |i: int| vsub(margs[i], l)) =~= frees(pids) + frees(iids)) by {
+        assert forall|i: int| 0 <= i < margs.len() implies #[trigger] vsub(margs[i], l) == (frees(pids) + frees(iids))[i] by {
+            if i < np {
+                crate::ti_spine::vsub_var((1 + nmin + ni + np - 1 - i) as nat, l);
+            } else {
+                crate::ti_spine::vsub_var((ni - 1 - (i - np)) as nat, l);
+                assert(l[np + 1 + nmin + (i - np)] == frees(iids)[i - np]);
+            }
+        }
+    }
+    // the body
+    let l2 = l + frees(seq![majid]);
+    let hv = ExprSpec::Var(nmin + ni + 1);
+    let ia = crate::rec_canon::vars(1, ni);
+    crate::beta_model::spine_app_compose_last(hv, ia, ExprSpec::Var(0));
+    crate::ti_spine::vsub_app(crate::beta_model::spine_app(hv, ia), ExprSpec::Var(0), l2);
+    crate::ti_hred_rec::vsub_spine(hv, ia, l2);
+    crate::ti_spine::vsub_var(nmin + ni + 1, l2);
+    crate::ti_spine::vsub_var(0, l2);
+    assert(l2[np as int] == ExprSpec::Free(mm[0]));
+    assert(Seq::new(ia.len(), |i: int| vsub(ia[i], l2)) =~= frees(iids)) by {
+        assert forall|i: int| 0 <= i < ni implies #[trigger] vsub(ia[i], l2) == frees(iids)[i] by {
+            crate::ti_spine::vsub_var((1 + ni - 1 - i) as nat, l2);
+            assert(l2[np + 1 + nmin + i] == frees(iids)[i]);
+        }
+    }
+}
+
+/// The recursor type's domains opened, segment by segment.
+#[verifier::spinoff_prover]
+pub proof fn rt_doms(sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec, pids: Seq<nat>, mm: Seq<nat>, iids: Seq<nat>, majid: nat,
+    ptys: Seq<ExprSpec>, mntys: Seq<ExprSpec>, itys: Seq<ExprSpec>, majty: ExprSpec)
+    requires
+        pids.len() == sh.np,
+        mm.len() == 1 + sh.nmin(),
+        iids.len() == sh.ni,
+        sh.pdoms.len() == sh.np,
+        sh.idoms.len() == sh.ni,
+        ptys.len() == sh.np,
+        mntys.len() == 1 + sh.nmin(),
+        itys.len() == sh.ni,
+        forall|k: int| 0 <= k < sh.np ==> #[trigger] ptys[k] == vsub(sh.pdoms[k], frees(pids.subrange(0, k))),
+        mntys[0] == vsub(sh.motive_ty(lm), frees(pids)),
+        forall|j: int| 0 <= j < sh.nmin() ==> #[trigger] mntys[1 + j] == vsub(sh.minor_ty(j), frees(pids) + frees(mm.subrange(0, 1 + j))),
+        forall|k: int| 0 <= k < sh.ni ==> #[trigger] itys[k] == vsub(sh.idoms[k], frees(pids) + frees(iids.subrange(0, k))),
+        majty == crate::rec_canon::ind_app(sh.ind, sh.us(), frees(pids) + frees(iids)),
+    ensures ({
+        let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+        let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+        let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni));
+        let ds = sh.head_doms(lm) + idx + seq![major];
+        let xs = pids + mm + iids + seq![majid];
+        let tys = ptys + mntys + itys + seq![majty];
+        forall|i: int| 0 <= i < ds.len() ==> #[trigger] tys[i] == vsub(ds[i], frees(Seq::<nat>::empty()) + frees(xs.subrange(0, i)))
+    }),
+{
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni));
+    let hd = sh.head_doms(lm);
+    let ds = hd + idx + seq![major];
+    let xs = pids + mm + iids + seq![majid];
+    let tys = ptys + mntys + itys + seq![majty];
+    rt_tail(sh, pids, mm, iids, majid);
+    assert forall|i: int| 0 <= i < ds.len() implies #[trigger] tys[i] == vsub(ds[i], frees(Seq::<nat>::empty()) + frees(xs.subrange(0, i))) by {
+        let pre = frees(Seq::<nat>::empty()) + frees(xs.subrange(0, i));
+        if i < np {
+            assert(pre =~= frees(pids.subrange(0, i)));
+            assert(ds[i] == sh.pdoms[i]);
+        } else if i < np + 1 + nmin {
+            let j = i - np;
+            assert(pre =~= frees(pids) + frees(mm.subrange(0, j)));
+            if j == 0 {
+                assert(mm.subrange(0, 0) =~= Seq::<nat>::empty());
+                assert(frees(pids) + frees(mm.subrange(0, 0)) =~= frees(pids));
+                assert(ds[i] == sh.motive_ty(lm));
+            } else {
+                assert(ds[i] == sh.minor_ty(j - 1));
+                assert(mntys[1 + (j - 1)] == vsub(sh.minor_ty(j - 1), frees(pids) + frees(mm.subrange(0, 1 + (j - 1)))));
+            }
+        } else if i < np + 1 + nmin + ni {
+            let k = i - np - 1 - nmin;
+            assert(pre =~= frees(pids) + frees(mm) + frees(iids.subrange(0, k)));
+            assert(ds[i] == idx[k]);
+        } else {
+            assert(pre =~= frees(pids) + frees(mm) + frees(iids));
+            assert(ds[i] == major);
+        }
+    }
+}
+
+/// THE GENERATED RECURSOR TYPE IS CANONICAL: abstracting the parameters,
+/// the motive, the minors, the indices and the major (each at its opened
+/// declared type) from the motive at the indices and the major gives
+/// `IndShape::rec_ty(lm)`.
+#[verifier::spinoff_prover]
+pub proof fn rec_ty_canon(sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec, pids: Seq<nat>, mm: Seq<nat>, iids: Seq<nat>, majid: nat,
+    ptys: Seq<ExprSpec>, mntys: Seq<ExprSpec>, itys: Seq<ExprSpec>, majty: ExprSpec, body_m: ExprSpec)
+    requires
+        pids.len() == sh.np,
+        mm.len() == 1 + sh.nmin(),
+        iids.len() == sh.ni,
+        sh.pdoms.len() == sh.np,
+        sh.idoms.len() == sh.ni,
+        ptys.len() == sh.np,
+        mntys.len() == 1 + sh.nmin(),
+        itys.len() == sh.ni,
+        forall|k: int| 0 <= k < sh.np ==> #[trigger] ptys[k] == vsub(sh.pdoms[k], frees(pids.subrange(0, k))),
+        mntys[0] == vsub(sh.motive_ty(lm), frees(pids)),
+        forall|j: int| 0 <= j < sh.nmin() ==> #[trigger] mntys[1 + j] == vsub(sh.minor_ty(j), frees(pids) + frees(mm.subrange(0, 1 + j))),
+        forall|k: int| 0 <= k < sh.ni ==> #[trigger] itys[k] == vsub(sh.idoms[k], frees(pids) + frees(iids.subrange(0, k))),
+        majty == crate::rec_canon::ind_app(sh.ind, sh.us(), frees(pids) + frees(iids)),
+        (pids + mm + iids + seq![majid]).no_duplicates(),
+        forall|k: int| 0 <= k < sh.np ==> nlbv(#[trigger] sh.pdoms[k]) <= k,
+        nlbv(sh.motive_ty(lm)) <= sh.np,
+        forall|j: int| 0 <= j < sh.nmin() ==> nlbv(#[trigger] sh.minor_ty(j)) <= sh.np + 1 + j,
+        forall|k: int| 0 <= k < sh.ni ==> nlbv(#[trigger] sh.idoms[k]) <= sh.np + k,
+        forall|k: int, z: nat| 0 <= k < sh.np ==> #[trigger] fv_absent(sh.pdoms[k], z),
+        forall|z: nat| #[trigger] fv_absent(sh.motive_ty(lm), z),
+        forall|j: int, z: nat| 0 <= j < sh.nmin() ==> #[trigger] fv_absent(sh.minor_ty(j), z),
+        forall|k: int, z: nat| 0 <= k < sh.ni ==> #[trigger] fv_absent(sh.idoms[k], z),
+        body_m == ExprSpec::App(Box::new(crate::beta_model::spine_app(ExprSpec::Free(mm[0]), frees(iids))), Box::new(ExprSpec::Free(majid))),
+    ensures
+        crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi, pids + mm + iids + seq![majid], ptys + mntys + itys + seq![majty], body_m)
+            == sh.rec_ty(lm),
+{
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni));
+    let body = crate::beta_model::spine_app(ExprSpec::Var(nmin + ni + 1), crate::rec_canon::vars(1, ni).push(ExprSpec::Var(0)));
+    let hd = sh.head_doms(lm);
+    let ds = hd + idx + seq![major];
+    let xs = pids + mm + iids + seq![majid];
+    let tys = ptys + mntys + itys + seq![majty];
+    let e = Seq::<nat>::empty();
+    rt_doms(sh, lm, pids, mm, iids, majid, ptys, mntys, itys, majty);
+    rt_tail(sh, pids, mm, iids, majid);
+    // scope and no locals
+    assert forall|i: int| 0 <= i < ds.len() implies nlbv(#[trigger] ds[i]) <= e.len() + i
+        && forall|z: nat| #[trigger] fv_absent(ds[i], z) by {
+        if i < np {
+            assert(ds[i] == sh.pdoms[i]);
+        } else if i < np + 1 + nmin {
+            let j = i - np;
+            if j == 0 { assert(ds[i] == sh.motive_ty(lm)); } else { assert(ds[i] == sh.minor_ty(j - 1)); }
+        } else if i < np + 1 + nmin + ni {
+            let k = i - np - 1 - nmin;
+            assert(ds[i] == idx[k]);
+            crate::ti_scope::lift_scope(1 + nmin, k as nat, sh.idoms[k], np + k as nat);
+            assert forall|z: nat| #[trigger] fv_absent(ds[i], z) by { lift_fv(1 + nmin, k as nat, sh.idoms[k], z); }
+        } else {
+            assert(ds[i] == major);
+            let margs = crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni);
+            assert forall|q: int| 0 <= q < margs.len() implies nlbv(#[trigger] margs[q]) <= (np + 1 + nmin + ni) as nat by {}
+            crate::ti_proj::spine_nlbv_le(ExprSpec::Const(sh.ind, sh.us()), margs, (np + 1 + nmin + ni) as nat);
+            assert forall|z: nat| #[trigger] fv_absent(ds[i], z) by {
+                crate::reduce_fv::spine_app_fv(ExprSpec::Const(sh.ind, sh.us()), margs, z);
+                assert forall|q: int| 0 <= q < margs.len() implies fv_absent(#[trigger] margs[q], z) by {}
+            }
+        }
+    }
+    let ba = crate::rec_canon::vars(1, ni).push(ExprSpec::Var(0));
+    assert forall|q: int| 0 <= q < ba.len() implies nlbv(#[trigger] ba[q]) <= ds.len() by {}
+    crate::ti_proj::spine_nlbv_le(ExprSpec::Var(nmin + ni + 1), ba, ds.len());
+    assert forall|z: nat| xs.contains(z) implies #[trigger] fv_absent(body, z) by {
+        crate::reduce_fv::spine_app_fv(ExprSpec::Var(nmin + ni + 1), ba, z);
+        assert forall|q: int| 0 <= q < ba.len() implies fv_absent(#[trigger] ba[q], z) by {}
+    }
+    assert forall|z: nat| xs.contains(z) implies !(#[trigger] e.contains(z)) by {}
+    assert(frees(e) + frees(xs) =~= frees(pids) + frees(mm) + frees(iids) + frees(seq![majid]));
+    tel_canon(BinderKind::Pi, ds, body, e, xs, tys, body_m);
+    assert(frees(e) =~= Seq::<ExprSpec>::empty());
+    assert(vsub(binds(BinderKind::Pi, ds, body), Seq::<ExprSpec>::empty()) == binds(BinderKind::Pi, ds, body));
+}
+
+/// THE RULE'S HYPOTHESIS OPENED: the `r`-th recursive argument's call of
+/// the recursor, at the parameters, the motive, the minors (`mm`) and the
+/// fields, is the recursor at those, the opened field type's indices and
+/// the field: the hypothesis the kernel builds.
+#[verifier::spinoff_prover]
+pub proof fn rr_ih(sh: crate::rec_canon::IndShape, rid: u64, rls: Seq<crate::level_model::LevelSpec>, j: int, r: int,
+    pids: Seq<nat>, mm: Seq<nat>, fids: Seq<nat>)
+    requires
+        0 <= j < sh.fields.len(),
+        0 <= r < sh.rposj(j).len(),
+        sh.rposj(j)[r] < sh.fields[j].len(),
+        crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]),
+        forall|z: nat| #[trigger] fv_absent(sh.fields[j][sh.rposj(j)[r] as int], z),
+        nlbv(sh.fields[j][sh.rposj(j)[r] as int]) <= sh.np + sh.rposj(j)[r],
+        pids.len() == sh.np,
+        mm.len() == 1 + sh.nmin(),
+        fids.len() == sh.fields[j].len(),
+    ensures ({
+        let (np, nmin, ni) = (sh.np, sh.nmin(), sh.ni);
+        let nf = sh.fields[j].len();
+        let k = sh.rposj(j)[r] as int;
+        let idx = crate::rec_canon::occ_idx(sh.fields[j][k], np, ni);
+        let idx2 = Seq::new(ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k as nat, idx[q])));
+        let ih = crate::beta_model::spine_app(ExprSpec::Const(rid, rls),
+            crate::rec_canon::vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + crate::rec_canon::vars(nf, nmin)
+                + idx2.push(ExprSpec::Var((nf - 1 - k) as nat)));
+        let t = vsub(sh.fields[j][k], frees(pids) + frees(fids.subrange(0, k)));
+        let n = crate::rec_canon::tarity(t);
+        &&& n == 0
+        &&& vsub(ih, frees(pids) + frees(mm) + frees(fids)) == binds(BinderKind::Lam, crate::rec_canon::tdoms(t, n),
+            crate::kgen::ih_db(crate::beta_model::spine_app(ExprSpec::Const(rid, rls), frees(pids) + frees(mm)),
+                ExprSpec::Free(fids[k]), t, n, np))
+        &&& nlbv(ih) <= np + 1 + nmin + nf
+        &&& forall|z: nat| #[trigger] fv_absent(ih, z)
+    }),
+{
+    let (np, nmin, ni) = (sh.np, sh.nmin(), sh.ni);
+    let nf = sh.fields[j].len();
+    let k = sh.rposj(j)[r] as int;
+    let f = sh.fields[j][k];
+    let c = ExprSpec::Const(sh.ind, sh.us());
+    let fa = crate::beta_model::spine_args(f);
+    let idx = crate::rec_canon::occ_idx(f, np, ni);
+    crate::beta_model::spine_recompose(f);
+    assert(fa =~= crate::rec_canon::vars(k as nat, np) + idx);
+    let pk = frees(pids) + frees(fids.subrange(0, k));
+    let ids_k = pids + fids.subrange(0, k);
+    assert(frees(ids_k) =~= pk);
+    crate::ti_hred_rec::vsub_spine(c, fa, pk);
+    crate::ti_spine::vsub_const(sh.ind, sh.us(), pk);
+    vsub_vars_frees(k as nat, np, ids_k);
+    assert(ids_k.subrange((ids_k.len() - k - np) as int, (ids_k.len() - k) as int) =~= pids);
+    let oidx = Seq::new(ni, |q: int| vsub(idx[q], pk));
+    let ta = Seq::new(fa.len(), |i: int| vsub(fa[i], pk));
+    assert(ta =~= frees(pids) + oidx) by {
+        assert forall|i: int| 0 <= i < np implies ta[i] == vsub(crate::rec_canon::vars(k as nat, np)[i], pk) by {}
+    }
+    let t = vsub(f, pk);
+    spine_const_not_bind(c, frees(pids) + oidx);
+    crate::beta_model::spine_destruct_app(c, frees(pids) + oidx);
+    let targs = crate::beta_model::spine_args(t);
+    assert(targs.subrange(np as int, targs.len() as int) =~= oidx);
+    assert(crate::rec_canon::tdoms(t, 0) =~= Seq::<ExprSpec>::empty());
+    assert(crate::kgen::tvars(0) =~= Seq::<ExprSpec>::empty());
+    let rc = ExprSpec::Const(rid, rls);
+    let pre = frees(pids) + frees(mm);
+    crate::beta_model::spine_app_concat(rc, pre, oidx);
+    // the de Bruijn call opened
+    let l = frees(pids) + frees(mm) + frees(fids);
+    let idx2 = Seq::new(ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k as nat, idx[q])));
+    let fv = ExprSpec::Var((nf - 1 - k) as nat);
+    let head = crate::rec_canon::vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + crate::rec_canon::vars(nf, nmin);
+    let args = head + idx2.push(fv);
+    assert(args =~= (head + idx2).push(fv));
+    crate::beta_model::spine_app_compose_last(rc, head + idx2, fv);
+    crate::ti_spine::vsub_app(crate::beta_model::spine_app(rc, head + idx2), fv, l);
+    crate::ti_hred_rec::vsub_spine(rc, head + idx2, l);
+    crate::ti_spine::vsub_const(rid, rls, l);
+    crate::ti_spine::vsub_var((nf - 1 - k) as nat, l);
+    assert(l[np + 1 + nmin + k] == ExprSpec::Free(fids[k]));
+    let a = frees(pids) + frees(mm) + frees(fids.subrange(0, k));
+    let b = frees(fids.subrange(k, nf as int));
+    assert(l =~= a + b + Seq::<ExprSpec>::empty());
+    assert(a + Seq::<ExprSpec>::empty() =~= a);
+    assert(Seq::new((head + idx2).len(), |i: int| vsub((head + idx2)[i], l)) =~= pre + oidx) by {
+        assert forall|i: int| 0 <= i < (head + idx2).len() implies #[trigger] vsub((head + idx2)[i], l) == (pre + oidx)[i] by {
+            if i < np {
+                crate::ti_spine::vsub_var((1 + nmin + nf + np - 1 - i) as nat, l);
+            } else if i == np {
+                crate::ti_spine::vsub_var(nmin + nf, l);
+            } else if i < np + 1 + nmin {
+                crate::ti_spine::vsub_var((nf + nmin - 1 - (i - np - 1)) as nat, l);
+                assert(l[i] == (pre + oidx)[i]);
+            } else {
+                let q = i - np - 1 - nmin;
+                assert((head + idx2)[i] == idx2[q]);
+                crate::ti_beta::vsub_lift_mid(crate::subst_algebra::lift(1 + nmin, k as nat, idx[q]), a, b, Seq::<ExprSpec>::empty());
+                crate::ti_beta::vsub_lift_mid(idx[q], frees(pids), frees(mm), frees(fids.subrange(0, k)));
+            }
+        }
+    }
+    // scope and no locals
+    crate::beta_model::spine_app_nlbv_decompose(crate::beta_model::spine_head(f), fa);
+    let bd = (np + 1 + nmin + nf) as nat;
+    assert forall|q: int| 0 <= q < args.len() implies nlbv(#[trigger] args[q]) <= bd by {
+        if q >= np + 1 + nmin && q < np + 1 + nmin + ni {
+            let qq = q - np - 1 - nmin;
+            assert(idx[qq] == fa[np + qq]);
+            crate::ti_scope::lift_scope(1 + nmin, k as nat, idx[qq], np + k as nat);
+            crate::ti_scope::lift_scope((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k as nat, idx[qq]), (np + k + 1 + nmin) as nat);
+        }
+    }
+    crate::ti_proj::spine_nlbv_le(rc, args, bd);
+    assert forall|z: nat| #[trigger] fv_absent(crate::beta_model::spine_app(rc, args), z) by {
+        crate::reduce_fv::spine_app_fv(rc, args, z);
+        assert forall|q: int| 0 <= q < args.len() implies fv_absent(#[trigger] args[q], z) by {
+            if q >= np + 1 + nmin && q < np + 1 + nmin + ni {
+                let qq = q - np - 1 - nmin;
+                assert(idx[qq] == fa[np + qq]);
+                crate::reduce_fv::spine_parts_fv(f, z);
+                lift_fv(1 + nmin, k as nat, idx[qq], z);
+                lift_fv((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k as nat, idx[qq]), z);
+            }
+        }
+    }
+}
+
+/// The rule's domains opened, segment by segment.
+#[verifier::spinoff_prover]
+pub proof fn rr_doms(sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec, j: int, pids: Seq<nat>, mm: Seq<nat>, fids: Seq<nat>,
+    ptys: Seq<ExprSpec>, mntys: Seq<ExprSpec>, ftys: Seq<ExprSpec>)
+    requires
+        pids.len() == sh.np,
+        mm.len() == 1 + sh.nmin(),
+        sh.pdoms.len() == sh.np,
+        0 <= j < sh.nmin(),
+        j < sh.fields.len(),
+        fids.len() == sh.fields[j].len(),
+        ptys.len() == sh.np,
+        mntys.len() == 1 + sh.nmin(),
+        ftys.len() == fids.len(),
+        forall|k: int| 0 <= k < sh.np ==> #[trigger] ptys[k] == vsub(sh.pdoms[k], frees(pids.subrange(0, k))),
+        mntys[0] == vsub(sh.motive_ty(lm), frees(pids)),
+        forall|q: int| 0 <= q < sh.nmin() ==> #[trigger] mntys[1 + q] == vsub(sh.minor_ty(q), frees(pids) + frees(mm.subrange(0, 1 + q))),
+        forall|k: int| 0 <= k < fids.len() ==> #[trigger] ftys[k] == vsub(sh.fields[j][k], frees(pids) + frees(fids.subrange(0, k))),
+    ensures ({
+        let nf = sh.fields[j].len();
+        let ds = sh.head_doms(lm) + Seq::new(nf, |i: int| sh.field_at(j, i, 1 + sh.nmin()));
+        let xs = pids + mm + fids;
+        let tys = ptys + mntys + ftys;
+        forall|i: int| 0 <= i < ds.len() ==> #[trigger] tys[i] == vsub(ds[i], frees(Seq::<nat>::empty()) + frees(xs.subrange(0, i)))
+    }),
+{
+    let (np, nmin) = (sh.np, sh.nmin());
+    let nf = sh.fields[j].len();
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, 1 + nmin));
+    let ds = sh.head_doms(lm) + fds;
+    let xs = pids + mm + fids;
+    let tys = ptys + mntys + ftys;
+    assert forall|i: int| 0 <= i < ds.len() implies #[trigger] tys[i] == vsub(ds[i], frees(Seq::<nat>::empty()) + frees(xs.subrange(0, i))) by {
+        let pre = frees(Seq::<nat>::empty()) + frees(xs.subrange(0, i));
+        if i < np {
+            assert(pre =~= frees(pids.subrange(0, i)));
+            assert(ds[i] == sh.pdoms[i]);
+        } else if i < np + 1 + nmin {
+            let q = i - np;
+            assert(pre =~= frees(pids) + frees(mm.subrange(0, q)));
+            if q == 0 {
+                assert(frees(pids) + frees(mm.subrange(0, 0)) =~= frees(pids));
+                assert(ds[i] == sh.motive_ty(lm));
+            } else {
+                assert(ds[i] == sh.minor_ty(q - 1));
+                assert(mntys[1 + (q - 1)] == vsub(sh.minor_ty(q - 1), frees(pids) + frees(mm.subrange(0, 1 + (q - 1)))));
+            }
+        } else {
+            let k = i - np - 1 - nmin;
+            assert(pre =~= frees(pids) + frees(mm) + frees(fids.subrange(0, k)));
+            assert(ds[i] == fds[k]);
+            crate::ti_beta::vsub_lift_mid(sh.fields[j][k], frees(pids), frees(mm), frees(fids.subrange(0, k)));
+        }
+    }
+}
+
+/// THE GENERATED RULE IS CANONICAL: abstracting the parameters, the
+/// motive, the minors and the fields (each at its opened declared type)
+/// from the `j`-th minor applied to the fields and the hypotheses (the
+/// recursor `rid` at `rls` called on each recursive field) gives
+/// `IndShape::rule_rhs(lm, rid, rls, j)`.
+#[verifier::spinoff_prover]
+pub proof fn rule_canon(sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec, rid: u64, rls: Seq<crate::level_model::LevelSpec>,
+    j: int, pids: Seq<nat>, mm: Seq<nat>, fids: Seq<nat>, ptys: Seq<ExprSpec>, mntys: Seq<ExprSpec>, ftys: Seq<ExprSpec>, hvals: Seq<ExprSpec>)
+    requires
+        pids.len() == sh.np,
+        mm.len() == 1 + sh.nmin(),
+        sh.pdoms.len() == sh.np,
+        0 <= j < sh.nmin(),
+        j < sh.fields.len(),
+        fids.len() == sh.fields[j].len(),
+        ptys.len() == sh.np,
+        mntys.len() == 1 + sh.nmin(),
+        ftys.len() == fids.len(),
+        forall|k: int| 0 <= k < sh.np ==> #[trigger] ptys[k] == vsub(sh.pdoms[k], frees(pids.subrange(0, k))),
+        mntys[0] == vsub(sh.motive_ty(lm), frees(pids)),
+        forall|q: int| 0 <= q < sh.nmin() ==> #[trigger] mntys[1 + q] == vsub(sh.minor_ty(q), frees(pids) + frees(mm.subrange(0, 1 + q))),
+        forall|k: int| 0 <= k < fids.len() ==> #[trigger] ftys[k] == vsub(sh.fields[j][k], frees(pids) + frees(fids.subrange(0, k))),
+        hvals.len() == sh.rposj(j).len(),
+        (pids + mm + fids).no_duplicates(),
+        forall|r: int| 0 <= r < sh.rposj(j).len() ==> (#[trigger] sh.rposj(j)[r]) < sh.fields[j].len()
+            && crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]),
+        forall|r: int| 0 <= r < hvals.len() ==> #[trigger] hvals[r] == binds(BinderKind::Lam,
+            crate::rec_canon::tdoms(ftys[sh.rposj(j)[r] as int], crate::rec_canon::tarity(ftys[sh.rposj(j)[r] as int])),
+            crate::kgen::ih_db(crate::beta_model::spine_app(ExprSpec::Const(rid, rls), frees(pids) + frees(mm)),
+                ExprSpec::Free(fids[sh.rposj(j)[r] as int]), ftys[sh.rposj(j)[r] as int],
+                crate::rec_canon::tarity(ftys[sh.rposj(j)[r] as int]), sh.np)),
+        forall|k: int| 0 <= k < sh.np ==> nlbv(#[trigger] sh.pdoms[k]) <= k,
+        nlbv(sh.motive_ty(lm)) <= sh.np,
+        forall|q: int| 0 <= q < sh.nmin() ==> nlbv(#[trigger] sh.minor_ty(q)) <= sh.np + 1 + q,
+        forall|k: int| 0 <= k < sh.fields[j].len() ==> nlbv(#[trigger] sh.fields[j][k]) <= sh.np + k,
+        forall|k: int, z: nat| 0 <= k < sh.np ==> #[trigger] fv_absent(sh.pdoms[k], z),
+        forall|z: nat| #[trigger] fv_absent(sh.motive_ty(lm), z),
+        forall|q: int, z: nat| 0 <= q < sh.nmin() ==> #[trigger] fv_absent(sh.minor_ty(q), z),
+        forall|k: int, z: nat| 0 <= k < sh.fields[j].len() ==> #[trigger] fv_absent(sh.fields[j][k], z),
+    ensures
+        crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Lam, pids + mm + fids, ptys + mntys + ftys,
+            crate::beta_model::spine_app(ExprSpec::Free(mm[1 + j]), frees(fids) + hvals))
+            == sh.rule_rhs(lm, rid, rls, j),
+{
+    let (np, nmin, ni) = (sh.np, sh.nmin(), sh.ni);
+    let nf = sh.fields[j].len();
+    let rp = sh.rposj(j);
+    let nr = rp.len();
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, 1 + nmin));
+    let ds = sh.head_doms(lm) + fds;
+    let xs = pids + mm + fids;
+    let tys = ptys + mntys + ftys;
+    let e = Seq::<nat>::empty();
+    let ih = |r: int| {
+        let k = rp[r];
+        let idx = crate::rec_canon::occ_idx(sh.fields[j][k as int], np, ni);
+        let idx2 = Seq::new(ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q])));
+        crate::beta_model::spine_app(ExprSpec::Const(rid, rls),
+            crate::rec_canon::vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + crate::rec_canon::vars(nf, nmin) + idx2.push(ExprSpec::Var((nf - 1 - k) as nat)))
+    };
+    let ihs = Seq::new(nr, ih);
+    let hv = ExprSpec::Var((nmin - 1 - j + nf) as nat);
+    let bargs = crate::rec_canon::vars(0, nf) + ihs;
+    let body = crate::beta_model::spine_app(hv, bargs);
+    assert(sh.rule_rhs(lm, rid, rls, j) == binds(BinderKind::Lam, ds, body));
+    rr_doms(sh, lm, j, pids, mm, fids, ptys, mntys, ftys);
+    // the body opened
+    let l = frees(pids) + frees(mm) + frees(fids);
+    let bd = (np + 1 + nmin + nf) as nat;
+    crate::ti_hred_rec::vsub_spine(hv, bargs, l);
+    crate::ti_spine::vsub_var((nmin - 1 - j + nf) as nat, l);
+    assert(l[np + 1 + j] == ExprSpec::Free(mm[1 + j]));
+    assert forall|r: int| 0 <= r < nr implies #[trigger] vsub(ihs[r], l) == hvals[r] && nlbv(ihs[r]) <= bd
+        && forall|z: nat| #[trigger] fv_absent(ihs[r], z) by {
+        rr_ih(sh, rid, rls, j, r, pids, mm, fids);
+    }
+    assert(Seq::new(bargs.len(), |i: int| vsub(bargs[i], l)) =~= frees(fids) + hvals) by {
+        assert forall|i: int| 0 <= i < bargs.len() implies #[trigger] vsub(bargs[i], l) == (frees(fids) + hvals)[i] by {
+            if i < nf {
+                crate::ti_spine::vsub_var((nf - 1 - i) as nat, l);
+                assert(l[np + 1 + nmin + i] == frees(fids)[i]);
+            } else {
+                assert(bargs[i] == ihs[i - nf]);
+            }
+        }
+    }
+    assert(frees(e) + frees(xs) =~= l);
+    // scope and no locals
+    assert forall|i: int| 0 <= i < ds.len() implies nlbv(#[trigger] ds[i]) <= e.len() + i
+        && forall|z: nat| #[trigger] fv_absent(ds[i], z) by {
+        if i < np {
+            assert(ds[i] == sh.pdoms[i]);
+        } else if i < np + 1 + nmin {
+            let q = i - np;
+            if q == 0 { assert(ds[i] == sh.motive_ty(lm)); } else { assert(ds[i] == sh.minor_ty(q - 1)); }
+        } else {
+            let k = i - np - 1 - nmin;
+            assert(ds[i] == fds[k]);
+            crate::ti_scope::lift_scope(1 + nmin, k as nat, sh.fields[j][k], np + k as nat);
+            assert forall|z: nat| #[trigger] fv_absent(ds[i], z) by { lift_fv(1 + nmin, k as nat, sh.fields[j][k], z); }
+        }
+    }
+    assert forall|q: int| 0 <= q < bargs.len() implies nlbv(#[trigger] bargs[q]) <= bd by {
+        if q >= nf {
+            assert(bargs[q] == ihs[q - nf]);
+            rr_ih(sh, rid, rls, j, q - nf, pids, mm, fids);
+        } else {
+            assert(bargs[q] == ExprSpec::Var((nf - 1 - q) as nat));
+        }
+    }
+    crate::ti_proj::spine_nlbv_le(hv, bargs, bd);
+    assert forall|z: nat| xs.contains(z) implies #[trigger] fv_absent(body, z) by {
+        crate::reduce_fv::spine_app_fv(hv, bargs, z);
+        assert forall|q: int| 0 <= q < bargs.len() implies fv_absent(#[trigger] bargs[q], z) by {
+            if q >= nf {
+                assert(bargs[q] == ihs[q - nf]);
+                rr_ih(sh, rid, rls, j, q - nf, pids, mm, fids);
+            } else {
+                assert(bargs[q] == ExprSpec::Var((nf - 1 - q) as nat));
+            }
+        }
+    }
+    mc_fresh(e, xs, xs);
+    assert(e + xs =~= xs);
+    tel_canon(BinderKind::Lam, ds, body, e, xs, tys, crate::beta_model::spine_app(ExprSpec::Free(mm[1 + j]), frees(fids) + hvals));
+    assert(frees(e) =~= Seq::<ExprSpec>::empty());
+}
+
 } // verus!

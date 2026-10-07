@@ -1585,6 +1585,11 @@ and eta step is vacuous (about thirty sites use that). Stages:
     minors (`minor_canon`), given the constructor type's canonical form
     and the recursive positions; indices included. `tel_canon` is the
     general step: abstracting locals that opened a substituted telescope.
+    B3b (`kminor.rs`): the recursor type built from opened parameters,
+    motive, minors, indices and major is `rec_ty(lm)` (`rec_ty_canon`),
+    and a rule value is `rule_rhs` (`rule_canon`, hypotheses `rr_ih`),
+    given each local's opened declared type. What is left of B3 is the
+    bridge from the generator's witnesses to these lemmas' inputs.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.
