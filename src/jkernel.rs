@@ -43,6 +43,7 @@ pub open spec fn frag_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lct
     &&& crate::kclaims::frag_env(dty, denv)
     &&& defs_in(dty, denv)
     &&& crate::ti_sr::sig_wf(jsig(dty, denv, lctx))
+    &&& crate::kclaims::ind_ok(jsig(dty, denv, lctx))
 }
 
 /// A conversion moves to any type chained to its own.
@@ -118,7 +119,7 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
     if m is Proj {
-        crate::ti_gen::gen_proj_norecs(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
+        crate::ti_gen::gen_proj_ns(sig, g, m->Proj_0 as nat, *m->Proj_1, t);
     }
     match m {
         ExprSpec::App(f, x) => sr_app(dty, denv, lctx, g, *f, *x, m2, t),
@@ -129,7 +130,7 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
             assert(is_def(sig, id, ls));
             assert(dval(sig, id, ls) == m2);
             assert(crate::ti_syntax::iota_ok(sig)) by { reveal(crate::ti_syntax::iota_ok); }
-            crate::dom_rec_end::norecs_sr(sig);
+            assert(crate::kclaims::ind_ok(sig));
             crate::ti_sr::sr(sig, g, m, t);
         },
         _ => {},
@@ -217,14 +218,22 @@ proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<na
         sr_pstep(dty, denv, lctx, g, x, x2, a1);
         app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
         conv_to(sig, g, m, m2, inst(0, x, b1), t);
+    } else if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
+        && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::rec_ready(denv, sapp(f2, a2))
+        && m2 == crate::beta_model::rec_result(denv, sapp(f2, a2)) {
+        let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
+            && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::rec_ready(denv, sapp(f2, a2))
+            && m2 == crate::beta_model::rec_result(denv, sapp(f2, a2));
+        sr_pstep(dty, denv, lctx, g, f, f2, pi(a1, b1));
+        sr_pstep(dty, denv, lctx, g, x, x2, a1);
+        app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
+        sr_iota_at(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+        crate::dom_adeq_syn::dtrans(sig, g, m, sapp(f2, x2), m2, inst(0, x, b1));
+        conv_to(sig, g, m, m2, inst(0, x, b1), t);
     } else {
-        // the remaining steps fire only on a recursor, literal-fold or
-        // quotient head, and their redex is typed
-        let (f2, x2) = if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
-            && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::rec_ready(denv, sapp(f2, a2)) {
-            choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
-                && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::rec_ready(denv, sapp(f2, a2))
-        } else if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
+        // the remaining steps fire only on a literal-fold or quotient
+        // head, and their redex is typed
+        let (f2, x2) = if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
             && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2)) {
             choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
                 && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
@@ -236,8 +245,28 @@ proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<na
         sr_pstep(dty, denv, lctx, g, x, x2, a1);
         app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
         no_builtin_head(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
-        assert(!crate::beta_model::rec_ready(denv, sapp(f2, x2)));
     }
+}
+
+/// SUBJECT REDUCTION FOR THE KERNEL'S IOTA, in the fragment: a typed
+/// recursor redex converts with its rule instance.
+#[verifier::spinoff_prover]
+pub proof fn sr_iota_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, m: ExprSpec, t: ExprSpec)
+    requires
+        frag_ok(dty, denv, lctx),
+        crate::beta_model::rec_ready(denv, m),
+        derivable(jsig(dty, denv, lctx), eq(g, m, m, t)),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, m, crate::beta_model::rec_result(denv, m), t)),
+{
+    let sig = jsig(dty, denv, lctx);
+    let rid = spine_head(m)->Const_0;
+    assert(sig.ienv.recs.contains_key(rid));
+    assert(!crate::ti_syntax::no_recs(sig));
+    crate::ti_syntax::frag_of(sig, rid);
+    assert(crate::rec_canon::rec_canon(sig, rid));
+    assert(crate::dom_rec_end::rec_interp(sig, rid));
+    crate::kiota::sr_kiota(sig, g, m, t);
 }
 
 #[verifier::spinoff_prover]
@@ -264,7 +293,7 @@ proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
     let (bt, j1, j2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, body, l1, l2)
         && typ(sig, g, aa, l1) && derivable(sig, eq(g.push(aa), body, body, bt)) && typ(sig, g.push(aa), bt, l2)
         && tchain(sig, g, pi(a1, b1), pi(aa, bt));
-    crate::dom_rec_end::norecs_sr(sig);
+    assert(crate::kclaims::ind_ok(sig));
     crate::dom_fund::pi_inj_chain(sig, g, a1, b1, aa, bt);
     assert(f == ExprSpec::Bind(BinderKind::Lam, Box::new(aa), Box::new(body)));
     assert(m == ExprSpec::App(Box::new(f), Box::new(x)));
@@ -457,7 +486,7 @@ pub proof fn join_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx:
     sr_star(dty, denv, lctx, g, y, z, ty);
     crate::dom_adeq_syn::dsym(sig, g, x, z, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, z, ty);
-    crate::dom_rec_end::norecs_sr(sig);
+    assert(crate::kclaims::ind_ok(sig));
     crate::ti_sr::uniq(sig, g, z, ty, tx);
     conv_chain(sig, g, y, z, ty, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, z, tx);
@@ -707,7 +736,7 @@ pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
     crate::dom_adeq_syn::dsym(sig, g, y, y2, ty);
     lveq_conv(sig, g, x2, y2, tx);
     crate::dom_adeq_syn::dsym(sig, g, x2, y2, tx);
-    crate::dom_rec_end::norecs_sr(sig);
+    assert(crate::kclaims::ind_ok(sig));
     crate::ti_sr::uniq(sig, g, y2, ty, tx);
     conv_chain(sig, g, y, y2, ty, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, y2, tx);
@@ -719,13 +748,12 @@ pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
 pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
     requires
         crate::ti_sr::sig_wf(jsig(dty, denv, Map::empty())),
-        crate::ti_syntax::no_recs(jsig(dty, denv, Map::empty())),
+        crate::ti_syntax::iota_ok(jsig(dty, denv, lctx)),
     ensures
         crate::ti_valid::sig_ext(jsig(dty, denv, Map::empty()), jsig(dty, denv, lctx)),
 {
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
-    reveal(crate::ti_syntax::iota_ok);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls) by {
         assert(is_def(s0, c, ls));
         assert(def_ok(s0, c, ls));
@@ -743,11 +771,11 @@ pub proof fn kh_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map
         frag_ok(dty, denv, lctx),
         lev_ok(jsig(dty, denv, lctx)),
         crate::conv_frag::cr_env(denv),
-        crate::ti_syntax::no_recs(jsig(dty, denv, lctx)),
 {
     assert(crate::kclaims::frag_env(dty, denv));
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
+    assert(crate::kclaims::ind_ok(s1));
     jsig_ext(dty, denv, lctx);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls)
         && crate::expr_model::nlbv(dty_at(s1, c, ls)) == 0
@@ -890,6 +918,12 @@ proof fn natish_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, e: Exp
         ExprSpec::App(f, x) => {
             assert(!denv.defs.contains_key(sid));
             assert(*f == sc);
+            if denv.recs.contains_key(sid) {
+                crate::kclaims::recs_declared(dty, denv, sid);
+            }
+            assert(spine_head(sapp(sc, *x)) == sc) by {
+                reveal_with_fuel(spine_head, 2);
+            }
             assert(!crate::beta_model::rec_ready(denv, sapp(sc, *x)));
             if exists|f2: ExprSpec, a2: ExprSpec| pstep(denv, *f, f2) && pstep(denv, *x, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)) {
                 let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| pstep(denv, *f, f2) && pstep(denv, *x, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
@@ -897,7 +931,11 @@ proof fn natish_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, e: Exp
             } else {
                 assert forall|f2: ExprSpec| #[trigger] pstep(denv, *f, f2) implies f2 == sc by {}
                 assert forall|f2: ExprSpec, a2: ExprSpec| #[trigger] crate::beta_model::rec_reduct(f2, a2) && pstep(denv, *f, f2)
-                    implies !crate::beta_model::rec_ready(denv, sapp(f2, a2)) by {}
+                    implies !crate::beta_model::rec_ready(denv, sapp(f2, a2)) by {
+                    assert(spine_head(sapp(f2, a2)) == sc) by {
+                        reveal_with_fuel(spine_head, 2);
+                    }
+                }
                 assert forall|f2: ExprSpec, a2: ExprSpec| #[trigger] crate::beta_model::fold_reduct(f2, a2) && pstep(denv, *f, f2)
                     implies !crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2)) by {
                     assert(spine_head(sapp(f2, a2)) == sc) by {

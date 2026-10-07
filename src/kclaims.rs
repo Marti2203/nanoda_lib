@@ -50,8 +50,9 @@ pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool 
         && crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
 }
 
-/// THE FRAGMENT: no inductive tables (so no iota, projections, structure or
-/// unit eta), and the built-in Nat operations, Nat constructors and
+/// THE FRAGMENT: recursors the model interprets (so iota on typed terms
+/// is the judgment's), no kernel structures (so no projections, structure
+/// or unit eta), and the built-in Nat operations, Nat constructors and
 /// quotient eliminators undeclared (so no literal folding, literal
 /// unfolding or quotient steps on typed terms).
 pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
@@ -59,11 +60,39 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_zero_id(denv.export))
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export))
-    &&& denv.recs == Map::<u64, crate::expr_arena_bridge::RecDataSpec>::empty()
-    &&& denv.ctor_np == Map::<u64, u16>::empty()
     &&& denv.struct_ctor == Map::<u64, u64>::empty()
     &&& denv.ctor_nf == Map::<u64, u16>::empty()
-    &&& denv.ctor_ind == Map::<u64, u64>::empty()
+    &&& forall|id: u64| #[trigger] denv.ctor_np.contains_key(id) ==> dty.contains_key(id) && !denv.defs.contains_key(id) && !denv.recs.contains_key(id)
+    &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok(jsig(dty, denv, d))
+}
+
+/// The fragment's recursors are declared constants, not definitions.
+pub proof fn recs_declared(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, id: u64)
+    requires
+        frag_env(dty, denv),
+        denv.recs.contains_key(id),
+    ensures
+        dty.contains_key(id),
+        !denv.defs.contains_key(id),
+{
+    let s0 = jsig(dty, denv, Map::empty());
+    assert(ind_ok(s0));
+    crate::ti_syntax::frag_of(s0, id);
+    assert(crate::rec_canon::rec_canon(s0, id));
+    assert(s0.consts.contains_key(id));
+}
+
+/// What the kernel side asks of a signature's inductive tables
+/// (docs/TYPED_TARGET.md, "S6.6 plan"): its recursors in the model's
+/// fragment and interpreted, the model's hypothesis, no structures yet,
+/// and each constructor one of its inductive's canonical recursor.
+pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
+    &&& crate::ti_syntax::iota_ok(sig)
+    &&& crate::dom_rec_end::sig_sr(sig)
+    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
+    &&& crate::ti_syntax::no_structs(sig)
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
+        && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
 }
 
 /// CONVERSION in the judgment: one derivation relating `x` and `y`.
@@ -337,7 +366,8 @@ pub proof fn gen_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map
     let t = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, e, t);
     let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
     crate::ti_gen::gen(sig, de);
-    crate::ti_gen::gen_proj_norecs(sig, Seq::empty(), idx as nat, s, t);
+    assert(ind_ok(sig));
+    crate::ti_gen::gen_proj_ns(sig, Seq::empty(), idx as nat, s, t);
 }
 
 pub proof fn cw_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
@@ -1153,6 +1183,52 @@ pub proof fn cwh_k(
     ensures
         cwh(dty, denv, g, major, nc),
 {
+    ci_whnf(dty, denv, g, major, t0, mty);
+    cw_irrel(dty, denv, g, major, nc, mty, nty);
+    if kh(dty, denv) {
+        let am = params + rest;
+        // the constructor reaches only what the major's type does
+        assert forall|i: nat| #[trigger] fv_absent(mty, i) implies fv_absent(nc, i) by {
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(ind, ls), am, i);
+            crate::reduce_fv::spine_app_fv(ExprSpec::Const(cid, ls), params, i);
+            assert forall|k: int| 0 <= k < params.len() implies fv_absent(#[trigger] params[k], i) by {
+                assert(am[k] == params[k]);
+            }
+        }
+        rctx_mono(g, nc, mty);
+        if nlbv(major) <= 0 {
+            sub_trans(rctx(g, mty), rctx(g, t0), rctx(g, major));
+            sub_trans(rctx(g, nc), rctx(g, mty), rctx(g, major));
+            crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(ind, ls), am);
+            assert forall|k: int| 0 <= k < params.len() implies nlbv(#[trigger] params[k]) <= 0 by {
+                assert(am[k] == params[k]);
+            }
+            crate::ti_proj::spine_nlbv_le(ExprSpec::Const(cid, ls), params, 0);
+        }
+        // wherever the major is typed, the constructor is, at its type
+        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, major), d) && #[trigger] typed(dty, denv, d, major, t)
+            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, nc, t2) && tconv(dty, denv, d, t2, t) by {
+            let sig = jsig(dty, denv, d);
+            crate::jkernel::kh_at(dty, denv, d);
+            assert(rtyped(dty, denv, d, major));
+            rtyped_closed(dty, denv, d, major);
+            ci_use(dty, denv, g, d, major, mty);
+            let sm = choose|s: ExprSpec| #[trigger] typed(dty, denv, d, mty, s);
+            assert(ind_ok(sig));
+            assert(sig.ienv.ctor_ind.contains_key(cid));
+            let rr = crate::dom_code::canon_rec(sig, ind);
+            assert(crate::rec_canon::rec_canon(sig, rr) && crate::rec_canon::rec_ind(sig, rr) == ind);
+            let sh = crate::rec_canon::shape_of(sig, sig.ienv.recs[rr], ind);
+            let j = choose|j: int| 0 <= j < sh.ctors.len() && sh.ctors[j] == cid;
+            assert(sig.ienv.ctor_np[cid] as nat == sh.np);
+            crate::kiota::ctor_params_typed(sig, rr, j, ls, params, rest, sm);
+            assert(typed(dty, denv, d, nc, crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), params)));
+            assert(rtyped(dty, denv, d, nc));
+            assert(jconv(dty, denv, d, major, nc));
+            jconv_at(dty, denv, d, major, nc, t);
+            tconv_refl(dty, denv, d, t);
+        }
+    }
 }
 
 /// Whatever a term reaches whose locals come from `e1` or `e2` is reached
@@ -1226,11 +1302,12 @@ pub proof fn cwh_rec_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g:
 {
     let r = crate::beta_model::rec_result(denv, e);
     if kh(dty, denv) {
-        assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(r, i) by {
-            crate::reduce_fv::rec_result_fv(denv, e, i);
+        crate::conv_frag::rec_ready_of_u(denv, e);
+        if let ExprSpec::App(f, a) = e {
+            crate::beta_model::pstep_rec_intro(denv, f, a, *f, *a, r);
+            crate::beta_model::pstep_star_one(denv, e, r);
+            cwh_of_pstep_star(dty, denv, g, e, r);
         }
-        rctx_mono(g, r, e);assert(denv.recs == Map::<u64, crate::expr_arena_bridge::RecDataSpec>::empty());
-        assert(!crate::beta_model::rec_ready_u(denv, e));
     }
 }
 
@@ -1399,7 +1476,7 @@ pub proof fn cwh_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
             let s2 = LevelSpec::Succ(Box::new(l2));
             crate::jkernel::typed_sort(dty, denv, d, l1);
             crate::jkernel::typed_sort(dty, denv, d, l2);
-            crate::dom_rec_end::norecs_sr(sig);
+            assert(crate::kclaims::ind_ok(sig));
             crate::ti_sr::uniq(sig, g0, x, t, ExprSpec::Sort(s1));
             crate::jkernel::wf_nil(sig);
             let w = crate::ti_sub::get(sig, crate::ti_syntax::Jd::Wf(g0));
@@ -1691,7 +1768,7 @@ pub proof fn ci_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
             let (a1, b1, l2) = choose|a1: ExprSpec, b1: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a1, b1, l2, l2)
                 && derivable(sig, eq(g0, f, f, crate::ti_syntax::pi(a1, b1))) && derivable(sig, eq(g0, a, a, a1))
                 && crate::ti_gen::typ(sig, g0.push(a1), b1, l2) && crate::ti_chain::tchain(sig, g0, te, crate::subst_algebra::inst(0, a, b1));
-            crate::dom_rec_end::norecs_sr(sig);
+            assert(crate::kclaims::ind_ok(sig));
             crate::ti_sr::uniq(sig, g0, f, crate::ti_syntax::pi(a1, b1), p);
             crate::dom_fund::pi_inj_chain(sig, g0, a1, b1, pa, pb);
             crate::ti_chain::conv_chain(sig, g0, a, a, a1, pa);
@@ -1974,7 +2051,7 @@ pub proof fn jconv_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map
     let sig = jsig(dty, denv, d);
     let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), x, y, t0));
     crate::dom_adeq_syn::dsym(sig, Seq::empty(), x, y, t0);
-    crate::dom_rec_end::norecs_sr(sig);
+    assert(crate::kclaims::ind_ok(sig));
     crate::ti_sr::uniq(sig, Seq::empty(), x, t0, t);
     crate::ti_chain::conv_chain(sig, Seq::empty(), x, y, t0, t);
     crate::dom_adeq_syn::dsym(sig, Seq::empty(), x, y, t);
@@ -2410,7 +2487,7 @@ proof fn bind_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat,
         body_move(sig, t2, t1, l1, b1, b2, cc0);
     }
     crate::dom_adeq_syn::dsym(sig, seq![t1], b1, b2, cc0);
-    crate::dom_rec_end::norecs_sr(sig);
+    assert(crate::kclaims::ind_ok(sig));
     crate::ti_sr::uniq(sig, seq![t1], b1, cc0, c1);
     crate::ti_chain::conv_chain(sig, seq![t1], b1, b2, cc0, c1);
     body_move(sig, t1, t2, l1, b1, b2, c1);
@@ -2595,7 +2672,8 @@ pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
         let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
         crate::ti_gen::gen(sig, de);
         if e is Proj {
-            crate::ti_gen::gen_proj_norecs(sig, Seq::empty(), e->Proj_0 as nat, *e->Proj_1, t);
+            assert(ind_ok(sig));
+            crate::ti_gen::gen_proj_ns(sig, Seq::empty(), e->Proj_0 as nat, *e->Proj_1, t);
         }
     }
 }

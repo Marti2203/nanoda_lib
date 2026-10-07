@@ -360,4 +360,102 @@ proof fn sr_kiota_eta(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     crate::ti_spine::reconv_spine(sig, g, mb, core, tb, ex, t);
 }
 
+/// A telescope's rest before its end is a Pi over its next domain,
+/// instantiated, whatever follows.
+pub proof fn tel_pre(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<ExprSpec>, i: int)
+    requires
+        0 <= i < ds.len(),
+        i <= xs.len(),
+    ensures
+        crate::ti_spine::is_pi(crate::dom_con_rel::trest(crate::rec_canon::binds(BinderKind::Pi, ds, b), xs.subrange(0, i))),
+        crate::ti_spine::sdom(crate::rec_canon::binds(BinderKind::Pi, ds, b), xs, i) == crate::ti_spine::vsub(ds[i], xs.subrange(0, i)),
+{
+    let xi = xs.subrange(0, i);
+    let t = crate::rec_canon::binds(BinderKind::Pi, ds, b);
+    assert(crate::ti_spine::vsub(t, Seq::empty()) == t);
+    crate::dom_rec_minor::trest_vsub(ds, b, Seq::empty(), xi);
+    assert(Seq::<ExprSpec>::empty() + xi =~= xi);
+    let rest = ds.subrange(i, ds.len() as int);
+    let r = crate::rec_canon::binds(BinderKind::Pi, ds.subrange(i + 1, ds.len() as int), b);
+    assert(rest[0] == ds[i]);
+    assert(rest.drop_first() =~= ds.subrange(i + 1, ds.len() as int));
+    assert(crate::rec_canon::binds(BinderKind::Pi, rest, b) == pi(ds[i], r));
+    crate::dom_rec_minor::vsub_pi_dom(ds[i], r, xi);
+}
+
+/// A CONSTRUCTOR AT ITS INDUCTIVE'S PARAMETERS is typed wherever the
+/// inductive's application is: the two share their parameter domains.
+pub proof fn ctor_params_typed(sig: Sig, r: u64, j: int, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, rest: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        crate::jkernel::lev_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        crate::rec_canon::rec_canon(sig, r),
+        0 <= j < crate::rec_canon::shape_of(sig, sig.ienv.recs[r], crate::rec_canon::rec_ind(sig, r)).nmin(),
+        params.len() == crate::rec_canon::shape_of(sig, sig.ienv.recs[r], crate::rec_canon::rec_ind(sig, r)).np,
+        derivable(sig, eq(Seq::empty(), spine_app(ExprSpec::Const(crate::rec_canon::rec_ind(sig, r), ls), params + rest),
+            spine_app(ExprSpec::Const(crate::rec_canon::rec_ind(sig, r), ls), params + rest), t)),
+    ensures ({
+        let cid = crate::rec_canon::shape_of(sig, sig.ienv.recs[r], crate::rec_canon::rec_ind(sig, r)).ctors[j];
+        let nc = spine_app(ExprSpec::Const(cid, ls), params);
+        derivable(sig, eq(Seq::empty(), nc, nc, crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), params)))
+    }),
+{
+    let g = Seq::<ExprSpec>::empty();
+    let ind = crate::rec_canon::rec_ind(sig, r);
+    let sh = crate::rec_canon::shape_of(sig, sig.ienv.recs[r], ind);
+    let np = sh.np;
+    let cid = sh.ctors[j];
+    let lps = sig.consts[ind].lps;
+    let hi = ExprSpec::Const(ind, ls);
+    let hc = ExprSpec::Const(cid, ls);
+    let xs = params + rest;
+    let mty = spine_app(hi, xs);
+    // the instance has the inductive's arity
+    crate::beta_model::spine_destruct_app(hi, xs);
+    let t2 = crate::jkernel::head_typed(sig, g, mty, t);
+    let dh = crate::ti_sub::get(sig, eq(g, hi, hi, t2));
+    crate::ti_gen::gen(sig, dh);
+    assert(ls.len() == lps.len());
+    assert(sig.consts[cid].lps == lps);
+    // both types are telescopes over the parameters
+    let ti = sig.consts[ind].ty;
+    let tc = sig.consts[cid].ty;
+    let nf = sig.ienv.recs[r].rules[j].nfields;
+    let bi = crate::rec_canon::tbody(ti, np + sh.ni);
+    let bc = crate::rec_canon::tbody(tc, np + nf);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, bi, lps, ls);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.fields[j], bc, lps, ls);
+    let di = crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, ls);
+    let dc = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[j], lps, ls);
+    let tyi = crate::ti_syntax::dty_at(sig, ind, ls);
+    let tyc = crate::ti_syntax::dty_at(sig, cid, ls);
+    assert(tyi == crate::rec_canon::binds(BinderKind::Pi, di, crate::expr_model::subst_expr_levels(bi, lps, ls)));
+    assert(tyc == crate::rec_canon::binds(BinderKind::Pi, dc, crate::expr_model::subst_expr_levels(bc, lps, ls)));
+    assert forall|i: int| 0 <= i < params.len() implies
+        #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyi, params.subrange(0, i)))
+        && crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyc, params.subrange(0, i)))
+        && crate::ti_spine::sdom(tyi, params, i) == crate::ti_spine::sdom(tyc, params, i) by {
+        tel_pre(di, crate::expr_model::subst_expr_levels(bi, lps, ls), params, i);
+        tel_pre(dc, crate::expr_model::subst_expr_levels(bc, lps, ls), params, i);
+        assert(di[i] == dc[i]);
+    }
+    // the parameters are typed at the inductive's domains
+    let tp = prefix_typed(sig, g, hi, xs, np as int, t);
+    assert(xs.subrange(0, np as int) =~= params);
+    crate::jkernel::wf_nil(sig);
+    assert(crate::conv_cr::levs_eq(ls, ls));
+    crate::jkernel::const_d(sig, g, ind, ls, ls);
+    crate::ti_spine::spine_ty(sig, g, hi, tyi, params, tp);
+    // so the constructor takes them
+    crate::jkernel::const_d(sig, g, cid, ls, ls);
+    assert forall|i: int| 0 <= i < params.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyc, params.subrange(0, i))) by {
+        assert(crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyi, params.subrange(0, i))));
+    }
+    assert forall|i: int| 0 <= i < params.len() implies derivable(sig, eq(g, #[trigger] params[i], params[i], crate::ti_spine::sdom(tyc, params, i))) by {
+        assert(crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyi, params.subrange(0, i))));
+    }
+    crate::ti_spine::spine_build(sig, g, hc, tyc, params);
+}
+
 } // verus!

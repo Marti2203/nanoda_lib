@@ -73,11 +73,11 @@ pub open spec fn gen_proj(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec) ->
         && tchain(sig, g, t, crate::ti_syntax::proj_ty(sig, st, i, x)->Some_0)
 }
 
-/// Without recursors there are no structures, so no projection is typed.
-pub proof fn gen_proj_norecs(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
+/// Without structures no projection is typed.
+pub proof fn gen_proj_ns(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
     requires
         gen_proj(sig, g, i, x, t),
-        crate::ti_syntax::no_recs(sig),
+        crate::ti_syntax::no_structs(sig),
     ensures
         false,
 {
@@ -89,9 +89,6 @@ pub proof fn gen_proj_norecs(sig: Sig, g: Ctx, i: nat, x: ExprSpec, t: ExprSpec)
     reveal(crate::ti_syntax::proj_ty);
     let s = crate::beta_model::spine_head(st)->Const_0;
     assert(crate::ti_syntax::struct_of(sig, s));
-    reveal(crate::ti_syntax::struct_of);
-    let rid = choose|rid: u64| crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s;
-    assert(sig.ienv.recs.contains_key(rid));
 }
 
 /// GENERATION: what a typing of `m` at `t` says about `m`'s parts.

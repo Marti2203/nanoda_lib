@@ -116,8 +116,14 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     ensures
         crate::conv_frag::cr_env(denv),
 {
-    assert(denv.recs == Map::<u64, crate::expr_arena_bridge::RecDataSpec>::empty());
-    assert(denv.ctor_np == Map::<u64, u16>::empty());
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    assert(crate::kclaims::ind_ok(s0));
+    assert forall|id: u64| #[trigger] denv.recs.contains_key(id) implies dty.contains_key(id) && !denv.defs.contains_key(id)
+        && forall|i: int| 0 <= i < denv.recs[id].rules.len() ==> crate::beta_model::rule_rhs_ok(denv, #[trigger] denv.recs[id].rules[i]) by {
+        crate::ti_syntax::frag_of(s0, id);
+        assert(crate::rec_canon::rec_canon(s0, id));
+        assert(s0.consts.contains_key(id));
+    }
     assert forall|id: u64| #[trigger] denv.defs.contains_key(id) implies !crate::confluence::redex_head(denv, id) by {
         assert(dty.contains_key(id));
     }
@@ -275,16 +281,17 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     (c, crate::ti_level::ll_(l, lps, ls))
 }
 
-/// No recursor is interpreted yet: every cutoff is recursor-free.
+/// Every cutoff's recursors are in the model's fragment.
 proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     requires
         crate::inductive::export_ok(ef),
         forall|c2: int| 0 <= c2 <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c2), m_denv(ef, c2)),
         0 <= c <= ef.declars_keys().len(),
     ensures
-        crate::ti_syntax::no_recs(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
 {
     assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
+    assert(crate::kclaims::ind_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())));
 }
 
 /// THE SIGNATURE IS WELL FORMED at every cutoff.

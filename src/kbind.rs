@@ -60,12 +60,13 @@ pub proof fn jsig_with(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
 /// A signature with more locals extends one with fewer.
 pub proof fn jsig_sub_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, d2: Map<nat, ExprSpec>)
     requires
-        crate::ti_sr::sig_wf(jsig(dty, denv, Map::empty())),
-        crate::ti_syntax::no_recs(jsig(dty, denv, Map::empty())),
+        crate::kclaims::kh(dty, denv),
         crate::weaken::sub(d, d2),
     ensures
         crate::ti_valid::sig_ext(jsig(dty, denv, d), jsig(dty, denv, d2)),
 {
+    assert(crate::kclaims::frag_env(dty, denv));
+    assert(crate::kclaims::ind_ok(jsig(dty, denv, d2)));
     crate::jkernel::jsig_ext(dty, denv, d2);
 }
 

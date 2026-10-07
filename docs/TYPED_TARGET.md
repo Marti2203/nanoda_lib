@@ -1534,6 +1534,23 @@ and eta step is vacuous (about thirty sites use that). Stages:
   structure and unit eta (StructEta). Proven first as separate lemmas,
   then the flip: `frag_env` allows inductive tables and the fragment's
   vacuous cases become these proofs.
+  The flip is staged. Stage 1 (landed): recursors are live. `frag_env`
+  keeps the kernel's structure tables empty (`struct_ctor`, `ctor_nf`:
+  no projections, structure or unit eta) and asks, at every locals map,
+  `kclaims::ind_ok`: `iota_ok`, `sig_sr`, every recursor interpreted, no
+  judgment structures, each constructor one of its inductive's canonical
+  recursor; and constructor entries declared, not definitions, not
+  recursors. The model never reads locals, but the hypotheses are stated
+  at every locals map because the verifier cannot see that across
+  signatures. Signature extension (`ti_valid::sig_ext`) carries every
+  rule, structures included: an old canonical recursor stays canonical
+  with the same shape, and the larger signature's `iota_ok` makes it the
+  only one (`canon_grow`, `struct_iff`). The kernel's iota is the
+  judgment's (`jkernel::sr_iota_at`), and K-like reduction converts by
+  proof irrelevance with the constructor typed at the major's parameters
+  (`kiota::ctor_params_typed`). Stage 2: the kernel's structures
+  (projection inference and steps, structure and unit eta), dropping
+  `no_structs`.
 - **S6.6b**: the hypotheses from the verified inductive module, at every
   export prefix (`export_kh`).
 - **S6.6c**: literals through `Nat`.

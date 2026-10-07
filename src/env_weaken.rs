@@ -40,14 +40,13 @@ pub proof fn ew_sig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
         defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
-        crate::ti_syntax::no_recs(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(dty2, denv2, Map::empty())),
     ensures
         crate::ti_valid::sig_ext(crate::metatheory::jsig(dty, denv, g), crate::metatheory::jsig(dty2, denv2, g)),
 {
     let s1 = crate::metatheory::jsig(dty, denv, g);
     let s2 = crate::metatheory::jsig(dty2, denv2, g);
     let s0 = crate::metatheory::jsig(dty2, denv2, Map::empty());
-    reveal(crate::ti_syntax::iota_ok);
     assert forall|c: u64| #[trigger] s1.consts.contains_key(c) implies s2.consts.contains_key(c) && s2.consts[c] == s1.consts[c] by {
         assert(dty.contains_key(c));
         if denv.defs.contains_key(c) {
@@ -58,14 +57,7 @@ pub proof fn ew_sig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
         assert(crate::ti_syntax::is_def(s0, c, ls));
         crate::ti_locals::crank_same(s0, s2, crate::ti_syntax::dval(s0, c, ls));
     }
-    assert forall|rid: u64| !s1.ienv.recs.contains_key(rid) by {
-        if s1.ienv.recs.contains_key(rid) {
-            assert(denv2.recs.contains_key(rid));
-        }
-    }
-    assert forall|rid: u64| !s2.ienv.recs.contains_key(rid) by {
-        assert(s2.ienv.recs == s0.ienv.recs);
-    }
+    crate::dom_rec_end::frag_congr(s0, s2);
 }
 
 pub proof fn ew_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
@@ -73,7 +65,7 @@ pub proof fn ew_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: 
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
         defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
-        crate::ti_syntax::no_recs(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(dty2, denv2, Map::empty())),
         crate::metatheory::typed(dty, denv, g, e, t),
     ensures
         crate::metatheory::typed(dty2, denv2, g, e, t),
@@ -88,7 +80,7 @@ pub proof fn ew_tconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: 
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
         defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
-        crate::ti_syntax::no_recs(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(dty2, denv2, Map::empty())),
         crate::metatheory::tconv(dty, denv, g, x, y),
     ensures
         crate::metatheory::tconv(dty2, denv2, g, x, y),
@@ -112,7 +104,7 @@ pub proof fn ew_is_type(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
         env_le(dty, denv, dty2, denv2),
         defs_stable(dty, denv, denv2),
         defs_ranked(crate::metatheory::jsig(dty2, denv2, Map::empty())),
-        crate::ti_syntax::no_recs(crate::metatheory::jsig(dty2, denv2, Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(dty2, denv2, Map::empty())),
         crate::metatheory::is_type(dty, denv, g, e),
     ensures
         crate::metatheory::is_type(dty2, denv2, g, e),
