@@ -106,6 +106,33 @@ pub open spec fn str_at<'a>(p: StringPtr<'a>) -> CowStr<'a> {
 }
 
 /// The pointer is within what its tier's dag stores.
+/// The first position of arena `id`'s history holding `s` (when one does).
+pub open spec fn hist_first<'a>(id: nat, s: CowStr<'a>) -> nat {
+    let h = crate::arena_history::arena_hist::<CowStr<'a>>(id);
+    choose|i: nat| i < h.len() && h[i as int] == s && forall|j: nat| j < i ==> h[j as int] != s
+}
+
+/// THE CANONICAL POSITION OF A STRING in a context: the export file's
+/// position when it has the string, else the first position the context's
+/// dag history gives it. A function of the export file and the dag's
+/// arena alone, so it is the same at every point of a context's life.
+pub closed spec fn canon_str_index<'t, 'p>(c: TcCtx<'t, 'p>, s: CowStr<'t>) -> nat {
+    if c.export_file.dag.has_string(s) {
+        crate::indexmap_model::iset_keys(&c.export_file.dag.strings).index_of(s) as nat
+    } else {
+        hist_first(c.dag.id(), s)
+    }
+}
+
+pub proof fn canon_str_same<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>, s: CowStr<'t>)
+    requires
+        crate::util_model::same_arenas(a, b),
+    ensures
+        canon_str_index(a, s) == canon_str_index(b, s),
+        export_has_string(a, s) == export_has_string(b, s),
+{
+}
+
 /// The context's export file stores the string `s`.
 pub closed spec fn export_has_string<'t, 'p>(c: TcCtx<'t, 'p>, s: CowStr<'t>) -> bool {
     c.export_file.dag.has_string(s)
@@ -984,6 +1011,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             str_stored(*final(self), result),
             forall|q: StringPtr<'t>| #[trigger] str_at(q) == s && crate::util_model::owns(*final(self), q) && str_stored(*final(self), q)
                 && crate::util_model::ptr_is_tc(q) == crate::util_model::ptr_is_tc(result) ==> q == result,
+            crate::name_arena_bridge::ptr_index(result) == canon_str_index(*final(self), s),
     {
         proof {
             use_type_invariant(self.export_file);
@@ -1000,6 +1028,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 use_type_invariant(&self.export_file.dag);
                 use_type_invariant(&*self.dag);
                 self.export_file.dag.string_unique(r, s);
+                self.export_file.dag.string_index(r, s);
                 assert forall|q: StringPtr<'t>| #[trigger] str_at(q) == s && crate::util_model::owns(*self, q) && str_stored(*self, q)
                     && crate::util_model::ptr_is_tc(q) == crate::util_model::ptr_is_tc(r) implies q == r by {
                     raw_index_tier(crate::util_model::ptr_raw(q), crate::util_model::ptr_raw(r));
@@ -1014,6 +1043,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             proof {
                 use_type_invariant(&*self.dag);
                 self.dag.string_unique(r, s0);
+                self.dag.string_first(r, s0);
                 assert forall|q: StringPtr<'t>| #[trigger] str_at(q) == s0 && crate::util_model::owns(*self, q) && str_stored(*self, q)
                     && crate::util_model::ptr_is_tc(q) == crate::util_model::ptr_is_tc(r) implies q == r by {
                     raw_index_tier(crate::util_model::ptr_raw(q), crate::util_model::ptr_raw(r));
@@ -1649,6 +1679,45 @@ impl<'a> LeanDag<'a> {
     /// The dag stores the string `s`.
     pub closed spec fn has_string(self, s: CowStr<'a>) -> bool {
         crate::indexmap_model::iset_keys(&self.strings).contains(s)
+    }
+
+    /// A stored string's position is its position among the keys.
+    proof fn string_index(self, r: StringPtr<'a>, s: CowStr<'a>)
+        requires
+            self.inv(),
+            crate::name_arena_bridge::ptr_index(r) < self.n_strings(),
+            crate::indexmap_model::iset_keys(&self.strings)[crate::name_arena_bridge::ptr_index(r) as int] == s,
+        ensures
+            crate::indexmap_model::iset_keys(&self.strings).index_of(s) == crate::name_arena_bridge::ptr_index(r),
+    {
+        let ks = crate::indexmap_model::iset_keys(&self.strings);
+        ks.index_of_first_ensures(s);
+        let i = ks.index_of(s);
+        assert(ks[i] == s);
+        assert(ks.no_duplicates());
+    }
+
+    /// A stored string's position is the first its history gives it.
+    proof fn string_first(self, r: StringPtr<'a>, s: CowStr<'a>)
+        requires
+            self.inv(),
+            arena_of(r) == self.id(),
+            crate::name_arena_bridge::ptr_index(r) < self.n_strings(),
+            crate::indexmap_model::iset_keys(&self.strings)[crate::name_arena_bridge::ptr_index(r) as int] == s,
+        ensures
+            hist_first(self.id(), s) == crate::name_arena_bridge::ptr_index(r),
+    {
+        let h = crate::arena_history::arena_hist::<CowStr<'a>>(self.id());
+        let ks = crate::indexmap_model::iset_keys(&self.strings);
+        let r0 = crate::name_arena_bridge::ptr_index(r);
+        assert(h[r0 as int] == s);
+        assert forall|j: nat| j < r0 implies h[j as int] != s by {
+            assert(ks[j as int] == h[j as int]);
+        }
+        let f = hist_first(self.id(), s);
+        assert(f < h.len() && h[f as int] == s && forall|j: nat| j < f ==> h[j as int] != s);
+        if f < r0 { assert(false); }
+        if f > r0 { assert(h[r0 as int] != s); }
     }
 
     /// A stored string is stored once: a pointer into this dag's strings,
