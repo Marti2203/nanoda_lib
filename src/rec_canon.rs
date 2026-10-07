@@ -334,6 +334,14 @@ pub open spec fn elim_level(sig: Sig, rid: u64, ind: u64) -> LevelSpec {
     if rl.len() == sig.consts[ind].lps.len() + 1 { LevelSpec::Param(rl[0]) } else { LevelSpec::Zero }
 }
 
+/// A rule value's shape: closed, without string literals, a lambda.
+pub open spec fn rule_shape(rhs: ExprSpec) -> bool {
+    &&& crate::expr_model::nlbv(rhs) == 0
+    &&& !crate::expr_model::has_fv(rhs)
+    &&& crate::beta_model::string_free(rhs)
+    &&& rhs is Bind
+}
+
 /// A CANONICAL RECURSOR: `rid` is the recursor the kernel builds for its
 /// inductive, a single one with one motive whose fields are direct
 /// recursive occurrences or simple types.
@@ -374,6 +382,9 @@ pub open spec fn rec_canon(sig: Sig, rid: u64) -> bool {
         &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
         &&& forall|k: int| 0 <= k < nf ==> field_kind(sig, ind, sh.pdoms, sh.us(), np, ni, k as nat, #[trigger] sh.fields[j][k])
         &&& rd.rules[j].rhs == sh.rule_rhs(lm, rid, plevels(rd.uparams), j)
+        // the rule's value is a closed lambda without string literals (stated
+        // on its own, so it survives relaxing the equality above)
+        &&& rule_shape(rd.rules[j].rhs)
     }
     // the recursor's type
     &&& sig.consts[rid].ty == sh.rec_ty(lm)

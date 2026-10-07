@@ -1625,6 +1625,29 @@ and eta step is vacuous (about thirty sites use that). Stages:
     an observation; the difference it exposes -- Lean's export strips
     binder annotations, so exported recursors are canonical only up to
     conversion -- is documented here rather than built into the claim.
+  - **B5 direction: `rec_canon` up to conversion, aligned with nanoda.**
+    nanoda decides an exported recursor by conversion with the one it
+    generates, so the canonical recursor becomes one whose declared type
+    and rules CONVERT to `rec_ty`/`rule_rhs`, not one equal to them.
+    Staged: (1) shape facts the equality used to supply are their own
+    conjuncts; (2) the four split lemmas (`rec_ty_split[_g]`,
+    `rule_split[_g]`) give conversion; (3) typing side: one conversion
+    step after the recursor constant is typed; (4) semantic side: the
+    model reads a recursor at its canonical type, with one agreement
+    lemma; (5) rule side: reduction facts become conversion facts.
+    TRADEOFF, recorded as the work goes:
+    - Gained: every recursor nanoda accepts by conversion is covered,
+      including the annotated inductives Lean exports stripped (`HAdd`,
+      `GetElem`, `Rat`, ...); no stricter check than nanoda's.
+    - Paid: the metatheory reads the recursor's type and rules only up to
+      conversion -- typing goes through a conversion step, the semantic
+      model through an agreement lemma, and iota's right-hand side is a
+      conversion, not a reduction.
+    - Stays an assumption (not checked by nanoda): a rule's value has no
+      string literals and is a lambda (`rule_shape`; nanoda checks only
+      that it is closed). The recursor's inductive is still read off its
+      declared type syntactically (`rec_ind`), as nanoda reads it
+      (`get_major_induct`).
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.
