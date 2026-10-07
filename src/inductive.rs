@@ -373,6 +373,7 @@ pub(crate) open spec fn minor_wit<'t>(aids: (nat, nat), st: InductiveCheckState<
     &&& forall|k: int| 0 <= k < w.fs.len() ==> opened_at(c0, ids, np + k, crate::quot_model::local_type(#[trigger] w.fs[k]))
         && crate::expr_arena_bridge::to_model(w.fs[k]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(w.fs[k]))
     &&& rec_sub(w.fs, w.rs, w.ps)
+    &&& recs_syn(st, w.fs, w.ps)
     &&& w.vs.len() == w.rs.len()
     &&& forall|k: int| 0 <= k < w.vs.len() ==> #[trigger] ih_some(st, w.rs[k], w.vs[k])
     &&& w.lo <= w.mid <= w.hi
@@ -410,6 +411,7 @@ pub(crate) proof fn minor_some_minors<'t>(aids: (nat, nat), st: InductiveCheckSt
     }
     assert(ind_app_ok(st2, crate::expr_arena_bridge::const_id(st2.ind_consts@[w.i]),
         crate::kgen::lit_open(c0, local_ids(st.local_params@) + local_ids(w.fs))));
+    recs_syn_minors(st, st2, w.fs, w.ps);
     assert(minor_wit(aids, st2, c0, cid, mn, prev, w));
 }
 
@@ -512,16 +514,17 @@ pub(crate) proof fn minor_bridge<'t>(aids: (nat, nat), st: InductiveCheckState<'
         c0 == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.fields[j], crate::rec_canon::ind_app(sh.ind, sh.us(),
             crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
         crate::expr_model::nlbv(c0) == 0,
-        forall|r: int| 0 <= r < sh.rposj(j).len() ==> (#[trigger] sh.rposj(j)[r]) < sh.fields[j].len()
-            && crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]),
-        forall|w: MinorWit<'t>| #[trigger] minor_wit(aids, st, c0, sh.ctors[j], mn, prev, w) ==>
-            w.ps.len() == sh.rposj(j).len() && w.fs.len() == sh.fields[j].len()
-            && forall|r: int| 0 <= r < w.ps.len() ==> #[trigger] w.ps[r] == sh.rposj(j)[r] as int,
+        st.local_indices@.len() >= 1,
+        st.local_indices@[0]@.len() == sh.ni,
+        consts_params(st),
+        crate::expr_arena_bridge::to_model(st.ind_consts@[0]) == ExprSpec::Const(sh.ind, sh.us()),
+        forall|k: int| 0 <= k < sh.fields[j].len() ==> fkind_ok(#[trigger] sh.fields[j][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat),
     ensures
         crate::quot_model::local_type(mn) == crate::ti_spine::vsub(sh.minor_ty(j), crate::kgen::frees(local_ids(st.local_params@)
             + seq![crate::expr_arena_bridge::expr_id(st.motives@[0])] + local_ids(prev))),
 {
     let w = choose|w: MinorWit<'t>| #[trigger] minor_wit(aids, st, c0, sh.ctors[j], mn, prev, w);
+    wit_positions(aids, st, sh, j, c0, mn, prev, w);
     let np = sh.np;
     let nf = sh.fields[j].len();
     let nr = sh.rposj(j).len();
@@ -766,6 +769,112 @@ pub(crate) proof fn recs_syn_push<'t>(st: InductiveCheckState<'t>, aa0: Seq<Expr
     }
 }
 
+/// A field kind the recursor fragment admits: a direct occurrence, or
+/// headed by a variable (a parameter) or by another constant.
+pub open spec fn fkind_ok(f: ExprSpec, ind: u64, us: Seq<crate::level_model::LevelSpec>, np: nat, ni: nat, k: nat) -> bool {
+    crate::rec_canon::direct_occ(f, ind, us, np, ni, k)
+        || crate::beta_model::spine_head(f) is Var
+        || (crate::beta_model::spine_head(f) is Const && crate::beta_model::spine_head(f)->Const_0 != ind)
+}
+
+/// AN OPENED FIELD TYPE IS SYNTACTICALLY RECURSIVE EXACTLY WHEN IT IS A
+/// DIRECT OCCURRENCE: for a single inductive, a field of an admitted kind,
+/// opened at the parameters and the earlier fields, is no Pi, and is the
+/// inductive at the parameters (`shape_at`) iff it is `direct_occ`.
+#[verifier::spinoff_prover]
+pub(crate) proof fn occ_shape<'t>(st: InductiveCheckState<'t>, sh: crate::rec_canon::IndShape, f: ExprSpec, k: nat,
+    pids: Seq<nat>, fk: Seq<nat>)
+    requires
+        st.ind_consts@.len() == 1,
+        st.local_indices@.len() >= 1,
+        st.local_indices@[0]@.len() == sh.ni,
+        crate::expr_arena_bridge::to_model(st.ind_consts@[0]) == ExprSpec::Const(sh.ind, sh.us()),
+        pids.len() == sh.np,
+        st.local_params@.len() == sh.np,
+        forall|j: int| 0 <= j < sh.np ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[j]) == ExprSpec::Free(pids[j]),
+        fk.len() == k,
+        fkind_ok(f, sh.ind, sh.us(), sh.np, sh.ni, k),
+    ensures ({
+        let t = crate::ti_spine::vsub(f, crate::kgen::frees(pids) + crate::kgen::frees(fk));
+        &&& !(t is Bind && t->Bind_0 == BinderKind::Pi)
+        &&& (exists|i: int| shape_at(st, i, t)) <==> crate::rec_canon::direct_occ(f, sh.ind, sh.us(), sh.np, sh.ni, k)
+    }),
+{
+    let (np, ni) = (sh.np, sh.ni);
+    let px = crate::kgen::frees(pids) + crate::kgen::frees(fk);
+    let ids = pids + fk;
+    assert(crate::kgen::frees(ids) =~= px);
+    let t = crate::ti_spine::vsub(f, px);
+    let h = crate::beta_model::spine_head(f);
+    let fa = crate::beta_model::spine_args(f);
+    crate::beta_model::spine_recompose(f);
+    crate::ti_hred_rec::vsub_spine(h, fa, px);
+    let ta = Seq::new(fa.len(), |i: int| crate::ti_spine::vsub(fa[i], px));
+    if crate::rec_canon::direct_occ(f, sh.ind, sh.us(), np, ni, k) {
+        let c = ExprSpec::Const(sh.ind, sh.us());
+        crate::ti_spine::vsub_const(sh.ind, sh.us(), px);
+        crate::kminor::vsub_vars_frees(k, np, ids);
+        assert(ids.subrange((ids.len() - k - np) as int, (ids.len() - k) as int) =~= pids);
+        assert(fa.subrange(0, np as int) == crate::rec_canon::vars(k, np));
+        let vv = Seq::new(np, |i: int| crate::ti_spine::vsub(crate::rec_canon::vars(k, np)[i], crate::kgen::frees(ids)));
+        assert(vv == crate::kgen::frees(pids));
+        assert forall|j: int| 0 <= j < np implies #[trigger] ta[j] == ExprSpec::Free(pids[j]) by {
+            assert(fa[j] == fa.subrange(0, np as int)[j]);
+            assert(fa[j] == crate::rec_canon::vars(k, np)[j]);
+            assert(vv[j] == crate::kgen::frees(pids)[j]);
+        }
+        crate::kminor::spine_const_not_bind(c, ta);
+        crate::beta_model::spine_destruct_app(c, ta);
+        assert(shape_at(st, 0, t));
+    } else {
+        crate::kgen::vsub_var_frees(0, ids);
+        if h is Var {
+            crate::kgen::vsub_var_frees(h->Var_0, ids);
+        } else {
+            crate::ti_spine::vsub_const(h->Const_0, h->Const_1, px);
+        }
+        let hv = crate::ti_spine::vsub(h, px);
+        assert(!(hv is App));
+        crate::beta_model::spine_destruct_app(hv, ta);
+        assert(!(hv is Bind));
+        if ta.len() > 0 {
+            assert(t == ExprSpec::App(Box::new(crate::beta_model::spine_app(hv, ta.subrange(0, ta.len() - 1))), Box::new(ta[ta.len() - 1])));
+        }
+        assert forall|i: int| !shape_at(st, i, t) by {
+            if shape_at(st, i, t) {
+                assert(i == 0);
+            }
+        }
+    }
+}
+
+/// The minor premises built so far don't change which fields are recursive.
+pub(crate) proof fn recs_syn_minors<'t>(st: InductiveCheckState<'t>, st2: InductiveCheckState<'t>, fs: Seq<ExprPtr<'t>>, ps: Seq<int>)
+    requires
+        st2 == (InductiveCheckState { minors: st2.minors, ..st }),
+        recs_syn(st, fs, ps),
+    ensures
+        recs_syn(st2, fs, ps),
+{
+    reveal(recs_syn);
+    assert(consts_params(st2) == consts_params(st));
+    assert forall|k: int| 0 <= k < fs.len() && !(crate::quot_model::local_type(#[trigger] fs[k]) is Bind
+        && crate::quot_model::local_type(fs[k])->Bind_0 == BinderKind::Pi) implies
+        ((exists|r: int| 0 <= r < ps.len() && ps[r] == k) ==> exists|i: int| shape_at(st2, i, crate::quot_model::local_type(fs[k])))
+        && (consts_params(st2) && (exists|i: int| shape_at(st2, i, crate::quot_model::local_type(fs[k])))
+            ==> exists|r: int| 0 <= r < ps.len() && ps[r] == k) by {
+        let t = crate::quot_model::local_type(fs[k]);
+        if exists|i: int| shape_at(st, i, t) {
+            let i = choose|i: int| shape_at(st, i, t);
+            assert(shape_at(st2, i, t));
+        }
+        if exists|i: int| shape_at(st2, i, t) {
+            let i = choose|i: int| shape_at(st2, i, t);
+            assert(shape_at(st, i, t));
+        }
+    }
+}
+
 /// The block's recorded inductives are constants at parameter levels.
 pub(crate) open spec fn consts_params<'t>(st: InductiveCheckState<'t>) -> bool {
     forall|i: int| 0 <= i < st.ind_consts@.len() ==> crate::expr_arena_bridge::is_const_shape(#[trigger] st.ind_consts@[i])
@@ -828,6 +937,87 @@ fn levels_ptr_eq<'t, 'p>(ctx: &TcCtx<'t, 'p>, a: LevelsPtr<'t>, b: LevelsPtr<'t>
     true
 }
 
+/// A CANONICAL CONSTRUCTOR'S MINOR WITNESS HAS ITS FIELDS AND RECURSIVE
+/// POSITIONS: as many fields as the constructor has, and the recursive
+/// ones at `rposj(j)`.
+#[verifier::spinoff_prover]
+pub(crate) proof fn wit_positions<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, sh: crate::rec_canon::IndShape, j: int,
+    c0: ExprSpec, mn: ExprPtr<'t>, prev: Seq<ExprPtr<'t>>, w: MinorWit<'t>)
+    requires
+        minor_wit(aids, st, c0, sh.ctors[j], mn, prev, w),
+        st.ind_consts@.len() == 1,
+        st.local_indices@.len() >= 1,
+        st.local_indices@[0]@.len() == sh.ni,
+        consts_params(st),
+        crate::expr_arena_bridge::to_model(st.ind_consts@[0]) == ExprSpec::Const(sh.ind, sh.us()),
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+        0 <= j < sh.fields.len(),
+        0 <= j < sh.tss.len(),
+        sh.tss[j].len() == sh.ni,
+        sh.pdoms.len() == sh.np,
+        st.local_params@.len() == sh.np,
+        c0 == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.fields[j], crate::rec_canon::ind_app(sh.ind, sh.us(),
+            crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
+        crate::expr_model::nlbv(c0) == 0,
+        forall|k: int| 0 <= k < sh.fields[j].len() ==> fkind_ok(#[trigger] sh.fields[j][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat),
+    ensures
+        w.fs.len() == sh.fields[j].len(),
+        w.ps.len() == sh.rposj(j).len(),
+        forall|r: int| 0 <= r < w.ps.len() ==> #[trigger] w.ps[r] == sh.rposj(j)[r] as int,
+        forall|r: int| 0 <= r < sh.rposj(j).len() ==> (#[trigger] sh.rposj(j)[r]) < sh.fields[j].len()
+            && crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]),
+{
+    let (np, ni) = (sh.np, sh.ni);
+    let nf = sh.fields[j].len();
+    let fs = sh.fields[j];
+    let pids = local_ids(st.local_params@);
+    let fids = local_ids(w.fs);
+    let ids = pids + fids;
+    let res = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j]);
+    let ds = sh.pdoms + fs;
+    crate::kminor::tdoms_binds(ds, res);
+    crate::dom_iota::tbody_binds(ds, res);
+    // the field count
+    if w.fs.len() < nf {
+        let xs = ids + Seq::new((nf - w.fs.len()) as nat, |q: int| 0nat);
+        crate::kgen::opened_doms(c0, xs, ds.len());
+        let k0 = (np + w.fs.len()) as int;
+        assert(xs.subrange(0, k0) =~= ids);
+        assert(crate::kgen::lit_open(c0, ids) is Bind);
+        assert(false);
+    }
+    if w.fs.len() > nf {
+        let f2 = fids.subrange(0, nf as int);
+        crate::kminor::mc_open(sh.pdoms, fs, sh.ind, sh.us(), sh.tss[j], pids, f2);
+        assert(ids.subrange(0, (np + nf) as int) =~= pids + f2);
+        assert(opened_at(c0, ids, (np + nf) as int, crate::quot_model::local_type(w.fs[nf as int])));
+        crate::kminor::spine_const_not_bind(ExprSpec::Const(sh.ind, sh.us()),
+            crate::kgen::frees(pids) + Seq::new(ni, |q: int| crate::ti_spine::vsub(sh.tss[j][q], crate::kgen::frees(pids + f2))));
+        assert(false);
+    }
+    crate::kminor::mc_open(sh.pdoms, fs, sh.ind, sh.us(), sh.tss[j], pids, fids);
+    // which fields are recursive
+    reveal(recs_syn);
+    assert forall|k: int| 0 <= k < nf implies ((exists|r: int| 0 <= r < w.ps.len() && w.ps[r] == k)
+        <==> crate::rec_canon::direct_occ(#[trigger] fs[k], sh.ind, sh.us(), np, ni, k as nat)) by {
+        assert(ids.subrange(0, np + k) =~= pids + fids.subrange(0, k));
+        assert(opened_at(c0, ids, np + k, crate::quot_model::local_type(w.fs[k])));
+        assert(crate::quot_model::local_type(w.fs[k]) == crate::ti_spine::vsub(fs[k],
+            crate::kgen::frees(pids) + crate::kgen::frees(fids.subrange(0, k))));
+        assert forall|q: int| 0 <= q < np implies crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[q]) == ExprSpec::Free(pids[q]) by {}
+        occ_shape(st, sh, fs[k], k as nat, pids, fids.subrange(0, k));
+    }
+    assert forall|r: int| 0 <= r < w.ps.len() implies 0 <= #[trigger] w.ps[r] < fs.len() by {}
+    crate::kminor::rpos_prefix(fs, sh.ind, sh.us(), np, ni, w.ps, nf, w.ps.len() as int);
+    assert(w.ps.subrange(0, w.ps.len() as int) =~= w.ps);
+    assert forall|r: int| 0 <= r < sh.rposj(j).len() implies (#[trigger] sh.rposj(j)[r]) < sh.fields[j].len()
+        && crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]) by {
+        assert(sh.rposj(j)[r] == w.ps[r] as nat);
+        assert(exists|r2: int| 0 <= r2 < w.ps.len() && w.ps[r2] == w.ps[r]);
+    }
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -866,7 +1056,7 @@ pub(crate) proof fn minor_built<'t>(
         forall|k: int| 0 <= k < fs.len() ==> opened_at(c0, local_ids(st.local_params@) + local_ids(fs), st.local_params@.len() + k,
             crate::quot_model::local_type(#[trigger] fs[k])),
         forall|k: int| 0 <= k < fs.len() ==> crate::expr_arena_bridge::to_model(#[trigger] fs[k]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(fs[k])),
-        rec_sub_some(fs, rs),
+        exists|ps: Seq<int>| #[trigger] rec_sub(fs, rs, ps) && recs_syn(st, fs, ps),
         vs.len() == rs.len(),
         forall|k: int| 0 <= k < vs.len() ==> #[trigger] ih_some(st, rs[k], vs[k]),
         0 <= i < st.ind_consts@.len(),
@@ -890,7 +1080,7 @@ pub(crate) proof fn minor_built<'t>(
         minor_some(aids, st, c0, cid, mn, prev),
 {
     let np = st.local_params@.len();
-    let ps = choose|ps: Seq<int>| #[trigger] rec_sub(fs, rs, ps);
+    let ps = choose|ps: Seq<int>| #[trigger] rec_sub(fs, rs, ps) && recs_syn(st, fs, ps);
     let w = MinorWit { fs, rs, ps, vs, i, lo, mid, hi };
     crate::kgen::serials_widen(aids, fs, lo, s1, mid);
     let args = crate::beta_model::spine_args(res_m);

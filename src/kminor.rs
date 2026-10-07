@@ -1291,4 +1291,61 @@ pub proof fn motive_canon(sh: crate::rec_canon::IndShape, lm: crate::level_model
     tel_canon(BinderKind::Pi, sh.idoms, b, pids, iids, itys, ExprSpec::Bind(BinderKind::Pi, Box::new(majty), Box::new(ExprSpec::Sort(lm))));
 }
 
+/// STRICTLY INCREASING POSITIONS OF THE DIRECT OCCURRENCES ARE `rec_pos`:
+/// the ones below `n` are a prefix of `ps`, and `rec_pos` lists them.
+pub proof fn rpos_prefix(fs: Seq<ExprSpec>, ind: u64, us: Seq<crate::level_model::LevelSpec>, np: nat, ni: nat,
+    ps: Seq<int>, n: nat, c: int)
+    requires
+        forall|a: int, b: int| 0 <= a < b < ps.len() ==> #[trigger] ps[a] < #[trigger] ps[b],
+        forall|r: int| 0 <= r < ps.len() ==> 0 <= #[trigger] ps[r] < fs.len(),
+        forall|k: int| 0 <= k < fs.len() ==> ((exists|r: int| 0 <= r < ps.len() && ps[r] == k)
+            <==> crate::rec_canon::direct_occ(#[trigger] fs[k], ind, us, np, ni, k as nat)),
+        n <= fs.len(),
+        0 <= c <= ps.len(),
+        forall|r: int| 0 <= r < c ==> #[trigger] ps[r] < n,
+        forall|r: int| c <= r < ps.len() ==> #[trigger] ps[r] >= n,
+    ensures
+        crate::rec_canon::rec_pos(fs, ind, us, np, ni, n) == ps.subrange(0, c).map_values(|x: int| x as nat),
+    decreases n,
+{
+    if n == 0 {
+        if c > 0 {
+            assert(ps[0] < 0);
+        }
+        assert(ps.subrange(0, c).map_values(|x: int| x as nat) =~= Seq::<nat>::empty());
+    } else {
+        let hit = c > 0 && ps[c - 1] == n - 1;
+        let c2 = if hit { c - 1 } else { c };
+        assert forall|r: int| 0 <= r < c2 implies #[trigger] ps[r] < n - 1 by {
+            if hit {
+                assert(ps[r] < ps[c - 1]);
+            } else {
+                assert(ps[r] < n);
+                if ps[r] == n - 1 {
+                    if r < c - 1 { assert(ps[r] < ps[c - 1]); assert(ps[c - 1] < n); }
+                }
+            }
+        }
+        assert forall|r: int| c2 <= r < ps.len() implies #[trigger] ps[r] >= n - 1 by {
+            if r >= c { assert(ps[r] >= n); }
+        }
+        rpos_prefix(fs, ind, us, np, ni, ps, (n - 1) as nat, c2);
+        let k = n - 1;
+        assert(crate::rec_canon::direct_occ(fs[k], ind, us, np, ni, k as nat) == hit) by {
+            if exists|r: int| 0 <= r < ps.len() && ps[r] == k {
+                let r = choose|r: int| 0 <= r < ps.len() && ps[r] == k;
+                if r < c - 1 { assert(ps[r] < ps[c - 1]); }
+                if r >= c { assert(ps[r] >= n); }
+                assert(r == c - 1);
+            }
+            if hit {
+                assert(0 <= c - 1 < ps.len() && ps[c - 1] == k);
+            }
+        }
+        if hit {
+            assert(ps.subrange(0, c2).map_values(|x: int| x as nat).push(k as nat) =~= ps.subrange(0, c).map_values(|x: int| x as nat));
+        }
+    }
+}
+
 } // verus!
