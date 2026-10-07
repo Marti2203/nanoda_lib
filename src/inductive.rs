@@ -192,6 +192,41 @@ pub open spec fn tele_ok<'x, 't>(env: crate::env::Env<'x, 't>, c: TeleCert) -> b
     &&& crate::tc::kconv(env, c.cursors.last(), ExprSpec::Sort(c.sort))
 }
 
+/// The walk is syntactic where its cursors are binders: a cursor that is
+/// one is the Pi the walk read off it (`whnf` returns a binder unchanged).
+pub open spec fn tele_syn(c: TeleCert) -> bool {
+    forall|k: int| 0 <= k < c.locals.len() && (#[trigger] c.cursors[k]) is Bind
+        ==> c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(c.bodies[k]))
+}
+
+/// The walk's first `n` steps are syntactic where their cursors are
+/// binders (opaque: the walk's loop carries it as one fact).
+#[verifier::opaque]
+pub open spec fn syn_upto(cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, bodies: Seq<ExprSpec>, n: int) -> bool {
+    forall|k: int| 0 <= k < n && (#[trigger] cs[k]) is Bind
+        ==> cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(bodies[k]))
+}
+
+/// One step of the walk keeps it syntactic where it is.
+pub proof fn syn_push(cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, bodies: Seq<ExprSpec>, n: int, cur: ExprSpec, bt: ExprSpec, body: ExprSpec, next: ExprSpec)
+    requires
+        cs.len() == n + 1,
+        bts.len() == n,
+        bodies.len() == n,
+        syn_upto(cs, bts, bodies, n),
+        cs.last() is Bind ==> cur == cs.last(),
+        cur == ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)),
+    ensures
+        syn_upto(cs.push(next), bts.push(bt), bodies.push(body), n + 1),
+{
+    reveal(syn_upto);
+    let (cs2, bts2, bodies2) = (cs.push(next), bts.push(bt), bodies.push(body));
+    assert forall|k: int| 0 <= k < n + 1 && (#[trigger] cs2[k]) is Bind
+        implies cs2[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts2[k]), Box::new(bodies2[k])) by {
+        assert(cs2[k] == cs[k] && bts2[k] == (if k < n { bts[k] } else { bt }) && bodies2[k] == (if k < n { bodies[k] } else { body }));
+    }
+}
+
 pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
 }
@@ -6472,6 +6507,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).tele@.len() == final(st).all_inductives_incl_specialized@.len(),
             final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).block_codom is Some,
             walks_ok(*old(self).env, *final(st), final(st).tele@.len() as int),
+            forall|k: int| 0 <= k < final(st).tele@.len() ==> tele_syn(#[trigger] final(st).tele@[k]),
             final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).is_nonzero is Some,
             final(st).is_nonzero == Some(true) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(
                 crate::level_arena_bridge::to_model(final(st).block_codom->0), rho) >= 1,
@@ -6506,6 +6542,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.tele@.len() == i,
                 i > 0 ==> st.block_codom is Some,
                 walks_ok(*old(self).env, *st, i as int),
+                forall|k: int| 0 <= k < i ==> tele_syn(#[trigger] st.tele@[k]),
                 i > 0 ==> st.is_nonzero is Some,
                 i == 0 ==> st.is_nonzero is None,
                 i > 0 ==> st.is_zero is Some,
@@ -6527,6 +6564,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(st.tele@.last() == st.tele@[i as int]);
                 assert(st.local_indices@.last() == st.local_indices@[i as int]);
                 assert(walk_k_ok(*old(self).env, *st, i as int));
+                assert forall|k: int| 0 <= k < i + 1 implies tele_syn(#[trigger] st.tele@[k]) by {
+                    if k < i {
+                        assert(st.tele@[k] == st0.tele@[k]);
+                    }
+                }
                 assert forall|k: int| 0 <= k < i + 1 implies #[trigger] walk_k_ok(*old(self).env, *st, k) by {
                     if k < i {
                         assert(walk_k_ok(*old(self).env, st0, k));
@@ -6581,6 +6623,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < old(st).tele@.len() ==> #[trigger] final(st).tele@[i] == old(st).tele@[i],
             ind_walk_ok(*old(self).env, final(st).tele@.last(), old(st).all_inductives_incl_specialized@[0].ty,
                 final(st).local_params@, final(st).local_indices@.last()@),
+            tele_syn(final(st).tele@.last()),
             final(st).block_codom matches Some(l) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
                 == crate::level_model::interp(crate::level_arena_bridge::to_model(l), rho),
             final(st).block_codom is Some,
@@ -6615,6 +6658,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut locs: Seq<nat> = Seq::empty();
         proof {
             assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<nat>::empty());
+            assert(syn_upto(cs, bts, bodies, 0)) by { reveal(syn_upto); }
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
@@ -6637,6 +6681,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
+                cs.last() is Bind ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
+                syn_upto(cs, bts, bodies, locs.len() as int),
                 i == locs.len(),
                 locs == if i <= st.local_params@.len() {
                     local_ids(st.local_params@.subrange(0, i as int))
@@ -6684,6 +6730,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
                     let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    syn_push(cs, bts, bodies, locs.len() as int, cur_m, crate::expr_arena_bridge::to_model(binder_type),
+                        crate::expr_arena_bridge::to_model(body), next);
                     cs = cs.push(next);
                     bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                     bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
@@ -6718,6 +6766,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
                     let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    syn_push(cs, bts, bodies, locs.len() as int, cur_m, crate::expr_arena_bridge::to_model(binder_type),
+                        crate::expr_arena_bridge::to_model(body), next);
                     cs = cs.push(next);
                     bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                     bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
@@ -6749,6 +6799,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let is_zero = self.ctx.is_zero(block_codom);
         let ind_const = self.ctx.mk_const(ind_name, uparams);
 
+        proof { reveal(syn_upto); }
         let ghost walked = TeleCert { cursors: cs, bts, bodies, locals: locs, sort: crate::level_arena_bridge::to_model(block_codom) };
         proof {
             crate::tc::kconv_trans(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor),
@@ -6803,6 +6854,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < old(st).tele@.len() ==> #[trigger] final(st).tele@[i] == old(st).tele@[i],
             ind_walk_ok(*old(self).env, final(st).tele@.last(), ind.ty,
                 final(st).local_params@, final(st).local_indices@.last()@),
+            tele_syn(final(st).tele@.last()),
             final(st).block_codom == old(st).block_codom,
             final(st).is_nonzero == old(st).is_nonzero,
             final(st).is_zero == old(st).is_zero,
@@ -6828,6 +6880,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost mut locs: Seq<nat> = Seq::empty();
         proof {
             assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<nat>::empty());
+            assert(syn_upto(cs, bts, bodies, 0)) by { reveal(syn_upto); }
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
@@ -6850,6 +6903,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
+                cs.last() is Bind ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
+                syn_upto(cs, bts, bodies, locs.len() as int),
                 i == locs.len(),
                 locs == if i <= st.local_params@.len() {
                     local_ids(st.local_params@.subrange(0, i as int))
@@ -6885,6 +6940,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
                     let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    syn_push(cs, bts, bodies, locs.len() as int, cur_m, crate::expr_arena_bridge::to_model(binder_type),
+                        crate::expr_arena_bridge::to_model(body), next);
                     cs = cs.push(next);
                     bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                     bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
@@ -6919,6 +6976,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
                     let next = crate::expr_model::subst_full(crate::expr_arena_bridge::to_model(body), seq![ExprSpec::Free(lid)], 0);
+                    syn_push(cs, bts, bodies, locs.len() as int, cur_m, crate::expr_arena_bridge::to_model(binder_type),
+                        crate::expr_arena_bridge::to_model(body), next);
                     cs = cs.push(next);
                     bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                     bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
@@ -6950,6 +7009,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         let ghost walked = TeleCert { cursors: cs, bts, bodies, locals: locs, sort: crate::level_arena_bridge::to_model(codom_level) };
         proof {
+            reveal(syn_upto);
             crate::tc::kconv_trans(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor),
                 ExprSpec::Sort(crate::level_arena_bridge::to_model(codom_level)));
         }
