@@ -1616,6 +1616,15 @@ and eta step is vacuous (about thirty sites use that). Stages:
     recursor types, 118 rules -- the `H*` classes, `GetElem`,
     `Membership`, `Rat`, `Std.Format`, ...). They stay outside the
     fragment; an annotation-stripping canonical form is the widening.
+    B4d: the target is nanoda's behaviour, and nanoda accepts an exported
+    recursor when it CONVERTS to the generated one (`assert_def_eq`). The
+    comparison functions now ensure exactly that (`rec_conv_old`: the
+    exported type at the generated universe parameters converts to the
+    generated type, each exported rule to the generated rule), for every
+    recursor, annotated or not. The syntactic flag (`rec_old`) stays as
+    an observation; the difference it exposes -- Lean's export strips
+    binder annotations, so exported recursors are canonical only up to
+    conversion -- is documented here rather than built into the claim.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.

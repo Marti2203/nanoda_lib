@@ -2071,6 +2071,33 @@ pub(crate) open spec fn rec_matches<'t>(od: Declar<'t>, nd: Declar<'t>, rec_up: 
     }
 }
 
+/// THE EXPORTED RECURSOR CONVERTS TO THE GENERATED ONE, as nanoda checks it
+/// (`assert_def_eq`, `def_eq_claim`): its type at the generated universe
+/// parameters converts to the generated type, and each exported rule
+/// converts to the generated rule at the exported parameters.
+pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar<'t>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
+    match (od, nd) {
+        (Declar::Recursor(or), Declar::Recursor(nr)) => {
+            let ru = crate::level_arena_bridge::to_model_of_levels(rec_up);
+            let ou = crate::level_arena_bridge::to_model_of_levels(or.info.uparams);
+            &&& or.info.name == nr.info.name
+            &&& crate::tc::def_eq_claim(env,
+                crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(or.info.ty), crate::level_model::level_names(ou), ru),
+                crate::expr_arena_bridge::to_model(nr.info.ty))
+            &&& or.rec_rules@.len() == nr.rec_rules@.len()
+            &&& forall|j: int| 0 <= j < or.rec_rules@.len() ==> crate::tc::def_eq_claim(env,
+                crate::expr_arena_bridge::to_model((#[trigger] or.rec_rules@[j]).val),
+                crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(nr.rec_rules@[j].val), crate::level_model::level_names(ru), ou))
+        },
+        _ => false,
+    }
+}
+
+/// Some exported declaration converts to the generated recursor `nd`.
+pub(crate) open spec fn rec_conv_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, rec_up)
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -7804,6 +7831,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            crate::tc::def_eq_claim(*old(self).env, crate::expr_arena_bridge::to_model(imported_rr.val), crate::expr_model::subst_expr_levels(
+                crate::expr_arena_bridge::to_model(constructed_rr.val),
+                crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
+                crate::level_arena_bridge::to_model_of_levels(old_uparams))),
             matched ==> crate::expr_arena_bridge::to_model(imported_rr.val) == crate::expr_model::subst_expr_levels(
                 crate::expr_arena_bridge::to_model(constructed_rr.val),
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
@@ -7876,6 +7907,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             matched ==> forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+            forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
     {
         let mut ok = true;
         assert!(!st.is_nested());
@@ -7902,6 +7934,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 },
                 n <= recursors@.len(),
                 ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+                forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
             decreases recursors@.len() - n,
         {
             let new_rec = &recursors[n];
@@ -7974,6 +8007,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 && crate::level_arena_bridge::name_id(old_rec_rules@[q].ctor_name) == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name),
                             env_old(*old(self).env, *old_d),
                             ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+                            forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+                            forall|q: int| 0 <= q < j ==> crate::tc::def_eq_claim(*old(self).env,
+                                crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val),
+                                crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))),
+                            crate::tc::def_eq_claim(*old(self).env,
+                                crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(crate::env::declar_info(*old_d).ty),
+                                    crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams)), crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
+                                crate::expr_arena_bridge::to_model(crate::env::declar_info(*new).ty)),
                             ok ==> crate::expr_arena_bridge::to_model(crate::env::declar_info(*old_d).ty)
                                 == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(crate::env::declar_info(*new).ty),
                                     crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
