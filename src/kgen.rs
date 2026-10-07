@@ -447,4 +447,122 @@ pub proof fn serials_cat<'t>(aids: (nat, nat), a: Seq<crate::util::ExprPtr<'t>>,
     }
 }
 
+/// Substituting a local keeps the number of leading Pis.
+pub proof fn sf_tdoms_len(b: ExprSpec, x: nat, k: nat, m: nat)
+    ensures
+        crate::rec_canon::tdoms(subst_full(b, seq![ExprSpec::Free(x)], k), m).len() == crate::rec_canon::tdoms(b, m).len(),
+    decreases m,
+{
+    if m > 0 {
+        match b {
+            ExprSpec::Bind(BinderKind::Pi, a, c) => {
+                sf_tdoms_len(*c, x, k + 1, (m - 1) as nat);
+            },
+            _ => {},
+        }
+    }
+}
+
+/// A telescope that opens to a Pi at each of its first `n` levels has `n`
+/// leading Pis.
+pub proof fn lit_open_pis(t: ExprSpec, ids: Seq<nat>, n: nat)
+    requires
+        n <= ids.len(),
+        forall|k: int| 0 <= k < n ==> (#[trigger] lit_open(t, ids.subrange(0, k))) is Bind
+            && lit_open(t, ids.subrange(0, k))->Bind_0 == BinderKind::Pi,
+    ensures
+        crate::rec_canon::tdoms(t, n).len() == n,
+    decreases n,
+{
+    if n > 0 {
+        assert(ids.subrange(0, 0) =~= Seq::<nat>::empty());
+        assert(lit_open(t, ids.subrange(0, 0)) == t);
+        let b = *t->Bind_2;
+        let t2 = subst_full(b, seq![ExprSpec::Free(ids[0])], 0);
+        let ids2 = ids.drop_first();
+        assert forall|k: int| 0 <= k < n - 1 implies (#[trigger] lit_open(t2, ids2.subrange(0, k))) is Bind
+            && lit_open(t2, ids2.subrange(0, k))->Bind_0 == BinderKind::Pi by {
+            assert(ids.subrange(0, k + 1)[0] == ids[0]);
+            assert(ids.subrange(0, k + 1).drop_first() =~= ids2.subrange(0, k));
+            assert(lit_open(t, ids.subrange(0, k + 1)) == lit_open(t2, ids2.subrange(0, k)));
+        }
+        lit_open_pis(t2, ids2, (n - 1) as nat);
+        sf_tdoms_len(b, ids[0], 0, (n - 1) as nat);
+    }
+}
+
+/// A type with `n` leading Pis is its telescope over its body.
+pub proof fn tel_split(t: ExprSpec, n: nat)
+    requires
+        crate::rec_canon::tdoms(t, n).len() == n,
+    ensures
+        t == crate::rec_canon::binds(BinderKind::Pi, crate::rec_canon::tdoms(t, n), crate::rec_canon::tbody(t, n)),
+    decreases n,
+{
+    if n > 0 {
+        let (a, c) = (*t->Bind_1, *t->Bind_2);
+        tel_split(c, (n - 1) as nat);
+        let ds = crate::rec_canon::tdoms(t, n);
+        assert(ds == seq![a] + crate::rec_canon::tdoms(c, (n - 1) as nat));
+        assert(ds[0] == a);
+        assert(ds.drop_first() =~= crate::rec_canon::tdoms(c, (n - 1) as nat));
+    }
+}
+
+/// The converse of `binds_nlbv`.
+pub proof fn binds_nlbv_inv(ds: Seq<ExprSpec>, b: ExprSpec, m: nat)
+    requires
+        nlbv(crate::rec_canon::binds(BinderKind::Pi, ds, b)) <= m,
+    ensures
+        forall|i: int| 0 <= i < ds.len() ==> nlbv(#[trigger] ds[i]) <= m + i,
+        nlbv(b) <= m + ds.len(),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        let d2 = ds.drop_first();
+        binds_nlbv_inv(d2, b, m + 1);
+        assert forall|i: int| 0 <= i < ds.len() implies nlbv(#[trigger] ds[i]) <= m + i by {
+            if i > 0 { assert(ds[i] == d2[i - 1]); }
+        }
+    }
+}
+
+/// A CLOSED TYPE OPENED WITH LOCALS: before its `n`-th binder, a Pi over
+/// its next domain with the locals so far for its variables; after them,
+/// its body so.
+pub proof fn opened_doms(t: ExprSpec, xs: Seq<nat>, n: nat)
+    requires
+        crate::rec_canon::tdoms(t, n).len() == n,
+        n <= xs.len(),
+        nlbv(t) == 0,
+    ensures ({
+        let ds = crate::rec_canon::tdoms(t, n);
+        let b = crate::rec_canon::tbody(t, n);
+        &&& forall|k: int| 0 <= k < n ==> (#[trigger] lit_open(t, xs.subrange(0, k))) is Bind
+            && lit_open(t, xs.subrange(0, k))->Bind_0 == BinderKind::Pi
+            && *lit_open(t, xs.subrange(0, k))->Bind_1 == vsub(ds[k], frees(xs.subrange(0, k)))
+        &&& lit_open(t, xs.subrange(0, n as int)) == vsub(b, frees(xs.subrange(0, n as int)))
+        &&& forall|k: int| 0 <= k < n ==> nlbv(#[trigger] ds[k]) <= k
+        &&& nlbv(b) <= n
+    }),
+{
+    let ds = crate::rec_canon::tdoms(t, n);
+    let b = crate::rec_canon::tbody(t, n);
+    tel_split(t, n);
+    binds_nlbv_inv(ds, b, 0);
+    assert forall|k: int| 0 <= k < n implies (#[trigger] lit_open(t, xs.subrange(0, k))) is Bind
+        && lit_open(t, xs.subrange(0, k))->Bind_0 == BinderKind::Pi
+        && *lit_open(t, xs.subrange(0, k))->Bind_1 == vsub(ds[k], frees(xs.subrange(0, k))) by {
+        lit_open_binds(ds, b, xs, k as nat);
+        let rest = ds.subrange(k, n as int);
+        let r = crate::rec_canon::binds(BinderKind::Pi, ds.subrange(k + 1, n as int), b);
+        assert(rest[0] == ds[k]);
+        assert(rest.drop_first() =~= ds.subrange(k + 1, n as int));
+        assert(crate::rec_canon::binds(BinderKind::Pi, rest, b) == crate::ti_syntax::pi(ds[k], r));
+        crate::dom_rec_minor::vsub_pi_dom(ds[k], r, frees(xs.subrange(0, k)));
+    }
+    lit_open_binds(ds, b, xs, n);
+    assert(ds.subrange(n as int, n as int) =~= Seq::<ExprSpec>::empty());
+}
+
 } // verus!
