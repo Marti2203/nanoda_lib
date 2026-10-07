@@ -247,6 +247,14 @@ pub open spec fn prefix_kept<'t>(a: Seq<IndTyHeader<'t>>, b: Seq<IndTyHeader<'t>
     a.len() <= b.len() && forall|i: int| 0 <= i < a.len() ==> #[trigger] b[i] == a[i]
 }
 
+/// A literal telescope opened with the first `k` locals is a Pi over `ty`.
+pub open spec fn opened_at(c0: ExprSpec, ids: Seq<nat>, k: int, ty: ExprSpec) -> bool {
+    let t = crate::kgen::lit_open(c0, ids.subrange(0, k));
+    &&& t is Bind
+    &&& t->Bind_0 == BinderKind::Pi
+    &&& *t->Bind_1 == ty
+}
+
 pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
 }
@@ -2011,6 +2019,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns_all(*(*final(self)).ctx, result.1@),
             crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(ind_ty_app)) <= 0 ==>
                 forall|j: int| 0 <= j < result.1@.len() ==> crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(#[trigger] result.1@[j])) <= 0,
+            ind_app_ok(*st, crate::expr_arena_bridge::const_id(st.ind_consts@[result.0 as int]), crate::expr_arena_bridge::to_model(ind_ty_app)),
+            crate::expr_arena_bridge::ptr_models(result.1@) =~= crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(ind_ty_app))
+                .subrange(st.local_params@.len() as int, crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(ind_ty_app)).len() as int).reverse(),
     {
         let valid_app_idx = self.which_valid_ind_app(st, ind_ty_app).unwrap();
         let (_, mut ctor_args_wo_params) = self.ctx.unfold_apps_stack(ind_ty_app);
@@ -2026,14 +2037,34 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         // Compensate for stack-like unfold
+        let ghost sa = crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(ind_ty_app));
+        let ghost np = st.local_params@.len();
         for _ in it: 0..st.local_params.len()
             invariant
+                np == st.local_params@.len(),
+                sa == crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(ind_ty_app)),
+                sa.len() >= np,
+                crate::expr_arena_bridge::ptr_models(ctor_args_wo_params@) =~= sa.reverse().subrange(0, sa.len() - it.index()),
+                it.seq().len() == np,
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, ctor_args_wo_params@),
                 crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(ind_ty_app)) <= 0 ==>
                     forall|j: int| 0 <= j < ctor_args_wo_params@.len() ==> crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(#[trigger] ctor_args_wo_params@[j])) <= 0,
         {
+            let ghost before = ctor_args_wo_params@;
+            proof {
+                assert(crate::expr_arena_bridge::ptr_models(before).len() == before.len());
+                assert(before.len() == sa.len() - it.index());
+                assert(before.len() > 0);
+            }
             ctor_args_wo_params.pop();
+            proof {
+                assert(ctor_args_wo_params@ =~= before.drop_last());
+                assert(crate::expr_arena_bridge::ptr_models(ctor_args_wo_params@) =~= sa.reverse().subrange(0, sa.len() - it.index() - 1));
+            }
+        }
+        proof {
+            assert(sa.reverse().subrange(0, sa.len() - np) =~= sa.subrange(np as int, sa.len() as int).reverse());
         }
         (valid_app_idx, ctor_args_wo_params)
     }
@@ -5219,7 +5250,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             level_free(*(*final(self)).ctx, result.0),
             forall|i: int| 0 <= i < result.1@.len() ==> level_free_local(*(*final(self)).ctx, #[trigger] result.1@[i]),
             forall|i: int| 0 <= i < result.2@.len() ==> level_free_local(*(*final(self)).ctx, #[trigger] result.2@[i]),
+            crate::expr_arena_bridge::to_model(result.0) == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(ctor_type_cursor),
+                local_ids(rem_params@.subrange(0, st.local_params@.len() as int)) + local_ids(result.1@)),
+            forall|k: int| 0 <= k < result.1@.len() ==> opened_at(crate::expr_arena_bridge::to_model(ctor_type_cursor),
+                local_ids(rem_params@.subrange(0, st.local_params@.len() as int)) + local_ids(result.1@), st.local_params@.len() + k, crate::quot_model::local_type(#[trigger] result.1@[k])),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.1@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
     {
+        let ghost c0 = crate::expr_arena_bridge::to_model(ctor_type_cursor);
+        let ghost cnt_lo = crate::util::unique_count(*self.ctx) as nat;
+        let ghost aids = crate::util_model::arena_ids(*self.ctx);
+        let ghost pids = local_ids(rem_params@.subrange(0, st.local_params@.len() as int));
         let mut all_args = Vec::new();
         let mut rec_args = Vec::new();
         self.tc_cache.clear();
@@ -5234,11 +5275,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 level_free(*self.ctx, ctor_type_cursor),
                 rem_params@.len() >= st.local_params@.len(),
                 forall|k: int| 0 <= k < rem_params@.len() ==> level_free_local(*self.ctx, #[trigger] rem_params@[k]),
+                crate::expr_arena_bridge::to_model(ctor_type_cursor) == crate::kgen::lit_open(c0, pids.subrange(0, i as int)),
+                pids.len() == st.local_params@.len(),
+                pids == local_ids(rem_params@.subrange(0, st.local_params@.len() as int)),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
         {
             match (self.ctx.read_expr(ctor_type_cursor), rem_params[i]) {
-                (Pi { body, .. }, local_param) => {
+                (Pi { binder_type, body, .. }, local_param) => {
                     proof {
                         assert(level_free_local(*self.ctx, rem_params@[i as int]));
+                        assert(crate::expr_arena_bridge::to_model(ctor_type_cursor) == ExprSpec::Bind(BinderKind::Pi,
+                            Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
+                        assert(rem_params@.subrange(0, st.local_params@.len() as int)[i as int] == rem_params@[i as int]);
+                        assert(pids[i as int] == crate::expr_arena_bridge::expr_id(rem_params@[i as int]));
+                        crate::kgen::lit_open_push(c0, pids.subrange(0, i as int), pids[i as int]);
+                        assert(pids.subrange(0, i as int).push(pids[i as int]) =~= pids.subrange(0, i as int + 1));
                     }
                     ctor_type_cursor = self.ctx.inst(body, &[local_param]);
                     proof {
@@ -5251,6 +5303,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 _ => panic!(),
             }
+        }
+        proof {
+            assert(pids.subrange(0, pids.len() as int) =~= pids);
+            assert(local_ids(all_args@) =~= Seq::<nat>::empty());
+            assert(pids + local_ids(all_args@) =~= pids);
+            assert(crate::kgen::serials_in(aids, all_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat));
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_type_cursor)
             invariant
@@ -5265,7 +5323,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.ind_consts@.len() <= st.local_indices@.len(),
                 forall|k: int| 0 <= k < all_args@.len() ==> level_free_local(*self.ctx, #[trigger] all_args@[k]),
                 forall|k: int| 0 <= k < rec_args@.len() ==> level_free_local(*self.ctx, #[trigger] rec_args@[k]),
+                crate::expr_arena_bridge::to_model(ctor_type_cursor) == crate::kgen::lit_open(c0, pids + local_ids(all_args@)),
+                forall|k: int| 0 <= k < all_args@.len() ==> opened_at(c0, pids + local_ids(all_args@), pids.len() + k,
+                    crate::quot_model::local_type(#[trigger] all_args@[k])),
+                pids.len() == st.local_params@.len(),
+                pids == local_ids(rem_params@.subrange(0, st.local_params@.len() as int)),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, all_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
         {
+            let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
+            let ghost ids0 = pids + local_ids(all_args@);
+            let ghost cur = crate::expr_arena_bridge::to_model(ctor_type_cursor);
             let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
             proof {
                 assert(level_free(*self.ctx, binder_type));
@@ -5282,6 +5351,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost aa0 = all_args@;
             all_args.push(local);
             proof {
+                let lid = crate::expr_arena_bridge::expr_id(local);
+                crate::kgen::serials_push(aids, aa0, cnt_lo, cnt0, local, crate::util::unique_count(*self.ctx) as nat);
+                assert(pids + local_ids(all_args@) =~= ids0.push(lid));
+                crate::kgen::lit_open_push(c0, ids0, lid);
+                assert forall|k: int| 0 <= k < all_args@.len() implies opened_at(c0, pids + local_ids(all_args@), pids.len() + k,
+                    crate::quot_model::local_type(#[trigger] all_args@[k])) by {
+                    assert((pids + local_ids(all_args@)).subrange(0, pids.len() + k) =~= ids0.subrange(0, pids.len() + k));
+                    if k < aa0.len() {
+                        assert(all_args@[k] == aa0[k]);
+                    } else {
+                        assert(ids0.subrange(0, pids.len() + k) =~= ids0);
+                    }
+                }
                 assert forall|k: int| 0 <= k < all_args@.len() implies level_free_local(*self.ctx, #[trigger] all_args@[k]) by {
                     if k < aa0.len() { assert(all_args@[k] == aa0[k]); }
                 }
