@@ -255,6 +255,167 @@ pub open spec fn opened_at(c0: ExprSpec, ids: Seq<nat>, k: int, ty: ExprSpec) ->
     &&& *t->Bind_1 == ty
 }
 
+/// THE INDUCTION HYPOTHESIS `v` FOR THE RECURSIVE FIELD `r`: `r`'s type is a
+/// telescope over the block's `i`-th inductive at the parameters, and `v`'s
+/// type is the motive at the indices applied to `r` at the telescope's
+/// variables, under the telescope.
+pub(crate) open spec fn ih_at<'t>(st: InductiveCheckState<'t>, i: int, r: ExprPtr<'t>, v: ExprPtr<'t>) -> bool {
+    let t = crate::quot_model::local_type(r);
+    let n = crate::rec_canon::tarity(t);
+    let b = crate::rec_canon::tbody(t, n);
+    &&& 0 <= i < st.ind_consts@.len()
+    &&& i < st.motives@.len()
+    &&& crate::rec_canon::tdoms(t, n).len() == n
+    &&& crate::beta_model::spine_head(b) is Const
+    &&& crate::beta_model::spine_head(b)->Const_0 == crate::expr_arena_bridge::const_id(st.ind_consts@[i])
+    &&& st.local_params@.len() <= crate::beta_model::spine_args(b).len()
+    &&& crate::quot_model::local_type(v) == crate::rec_canon::binds(BinderKind::Pi, crate::rec_canon::tdoms(t, n),
+        crate::kgen::ih_db(crate::expr_arena_bridge::to_model(st.motives@[i]), crate::expr_arena_bridge::to_model(r), t, n,
+            st.local_params@.len()))
+}
+
+/// The recursive arguments a constructor walk found are fresh enough for
+/// their induction hypotheses: their types mention only the parameters and
+/// earlier fields, all made before `c`.
+#[verifier::spinoff_prover]
+pub(crate) proof fn minor_fresh<'t>(
+    aids: (nat, nat),
+    c0: ExprSpec,
+    params: Seq<ExprPtr<'t>>,
+    all_args: Seq<ExprPtr<'t>>,
+    rec_args: Seq<ExprPtr<'t>>,
+    c: nat,
+)
+    requires
+        crate::kgen::fv_below(aids, c0, 0),
+        forall|k: int| 0 <= k < params.len() ==> crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(#[trigger] params[k])) is Some
+            && (crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(params[k]))->Some_0 as nat) < c,
+        crate::kgen::serials_in(aids, all_args, 0, c),
+        forall|k: int| 0 <= k < all_args.len() ==> opened_at(c0, local_ids(params) + local_ids(all_args), params.len() + k,
+            crate::quot_model::local_type(#[trigger] all_args[k])),
+        forall|k: int| 0 <= k < all_args.len() ==> crate::expr_arena_bridge::to_model(#[trigger] all_args[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(all_args[k])),
+        forall|k: int| 0 <= k < rec_args.len() ==> all_args.contains(#[trigger] rec_args[k]),
+    ensures
+        forall|k: int| 0 <= k < rec_args.len() ==> crate::kgen::fv_below(aids, crate::quot_model::local_type(#[trigger] rec_args[k]), c)
+            && crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(rec_args[k]), c),
+{
+    assert forall|k: int| 0 <= k < rec_args.len() implies crate::kgen::fv_below(aids, crate::quot_model::local_type(#[trigger] rec_args[k]), c)
+        && crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(rec_args[k]), c) by {
+        let p = choose|p: int| 0 <= p < all_args.len() && all_args[p] == rec_args[k];
+        let ls = params + all_args.subrange(0, p);
+        assert(local_ids(ls) =~= (local_ids(params) + local_ids(all_args)).subrange(0, params.len() + p));
+        assert forall|q: int| 0 <= q < ls.len() implies crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(#[trigger] ls[q])) is Some
+            && (crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[q]))->Some_0 as nat) < c by {
+            if q < params.len() {
+                assert(ls[q] == params[q]);
+            } else {
+                assert(ls[q] == all_args[q - params.len()]);
+            }
+        }
+        crate::kgen::fv_below_mono(aids, c0, 0, c);
+        crate::kgen::lit_open_below(aids, c0, ls, c);
+        assert(opened_at(c0, local_ids(params) + local_ids(all_args), params.len() + p, crate::quot_model::local_type(all_args[p])));
+        assert(crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(all_args[p])) is Some);
+    }
+}
+
+/// `v` is an induction hypothesis for `r`, for one of the block's
+/// inductives.
+pub(crate) open spec fn ih_some<'t>(st: InductiveCheckState<'t>, r: ExprPtr<'t>, v: ExprPtr<'t>) -> bool {
+    exists|i: int| #[trigger] ih_at(st, i, r, v)
+}
+
+/// One induction hypothesis built: its type is the canonical one.
+#[verifier::spinoff_prover]
+pub(crate) proof fn ih_step<'t>(
+    st: InductiveCheckState<'t>,
+    aids: (nat, nat),
+    r: ExprPtr<'t>,
+    xs: Seq<ExprPtr<'t>>,
+    arg_ty_m: ExprSpec,
+    idx: int,
+    rev_m: Seq<ExprSpec>,
+    body_m: ExprSpec,
+    v: ExprPtr<'t>,
+    lo: nat,
+    hi: nat,
+)
+    requires
+        crate::expr_model::nlbv(crate::quot_model::local_type(r)) == 0,
+        crate::expr_arena_bridge::to_model(r) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(r)),
+        0 <= idx < st.ind_consts@.len(),
+        idx < st.motives@.len(),
+        crate::expr_arena_bridge::to_model(st.motives@[idx]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.motives@[idx])),
+        arg_ty_m == crate::kgen::lit_open(crate::quot_model::local_type(r), local_ids(xs)),
+        forall|k: int| 0 <= k < xs.len() ==> opened_at(crate::quot_model::local_type(r), local_ids(xs), k,
+            crate::quot_model::local_type(#[trigger] xs[k])),
+        forall|k: int| 0 <= k < xs.len() ==> crate::expr_arena_bridge::to_model(#[trigger] xs[k]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(xs[k])),
+        crate::kgen::serials_in(aids, xs, lo, hi),
+        crate::kgen::fv_below(aids, crate::quot_model::local_type(r), lo),
+        crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(r), lo),
+        crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(st.motives@[idx]), lo),
+        ind_app_ok(st, crate::expr_arena_bridge::const_id(st.ind_consts@[idx]), arg_ty_m),
+        rev_m == crate::beta_model::spine_args(arg_ty_m).subrange(st.local_params@.len() as int, crate::beta_model::spine_args(arg_ty_m).len() as int),
+        body_m == ExprSpec::App(
+            Box::new(crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st.motives@[idx]), rev_m)),
+            Box::new(crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(r), crate::expr_arena_bridge::ptr_models(xs)))),
+        crate::quot_model::local_type(v) == crate::expr_arena_bridge::abstr_pi_telescope_model(local_ids(xs),
+            Seq::new(xs.len(), |k: int| crate::quot_model::local_type(xs[k])), body_m),
+    ensures
+        ih_at(st, idx, r, v),
+{
+    let t = crate::quot_model::local_type(r);
+    let ids = local_ids(xs);
+    let n = xs.len();
+    let np = st.local_params@.len();
+    let m = crate::expr_arena_bridge::to_model(st.motives@[idx]);
+    let rm = crate::expr_arena_bridge::to_model(r);
+    // the telescope
+    assert forall|k: int| 0 <= k < n implies (#[trigger] crate::kgen::lit_open(t, ids.subrange(0, k))) is Bind
+        && crate::kgen::lit_open(t, ids.subrange(0, k))->Bind_0 == BinderKind::Pi by {
+        assert(opened_at(t, ids, k, crate::quot_model::local_type(xs[k])));
+    }
+    crate::kgen::lit_open_pis(t, ids, n);
+    crate::kgen::opened_doms(t, ids, n);
+    assert(ids.subrange(0, n as int) =~= ids);
+    let b = crate::rec_canon::tbody(t, n);
+    // its body: the inductive's application, not a Pi
+    crate::kgen::vsub_head(b, ids);
+    if b is Bind && b->Bind_0 == BinderKind::Pi {
+        crate::kgen::vsub_tag(b, crate::kgen::frees(ids));
+    }
+    crate::kgen::tarity_eq(t, n);
+    // fresh locals
+    crate::kgen::serials_distinct(aids, xs, lo, hi);
+    crate::kgen::fresh_of_below(aids, t, xs, lo, hi);
+    crate::kgen::fresh_of_below(aids, m, xs, lo, hi);
+    crate::kgen::fresh_of_below(aids, rm, xs, lo, hi);
+    assert(crate::expr_arena_bridge::ptr_models(xs) =~= crate::kgen::frees(ids));
+    let tys = Seq::new(n, |k: int| crate::quot_model::local_type(xs[k]));
+    assert forall|k: int| 0 <= k < n implies #[trigger] tys[k] == *crate::kgen::lit_open(t, ids.subrange(0, k))->Bind_1 by {
+        assert(opened_at(t, ids, k, crate::quot_model::local_type(xs[k])));
+    }
+    crate::kgen::ih_close(t, ids, n, np, m, rm, tys);
+}
+
+/// An inductive's constructor types mention no locals.
+pub(crate) open spec fn ctors_closed<'t>(h: IndTyHeader<'t>) -> bool {
+    forall|b: int| 0 <= b < h.ctors@.len() ==> !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(#[trigger] h.ctors@[b].ty))
+}
+
+pub proof fn prefix_kept_trans<'t>(a: Seq<IndTyHeader<'t>>, b: Seq<IndTyHeader<'t>>, c: Seq<IndTyHeader<'t>>)
+    requires
+        prefix_kept(a, b),
+        prefix_kept(b, c),
+    ensures
+        prefix_kept(a, c),
+{
+    assert forall|i: int| 0 <= i < a.len() implies #[trigger] c[i] == a[i] by {
+        assert(b[i] == a[i]);
+    }
+}
+
 pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
 }
@@ -361,6 +522,7 @@ pub proof fn local_type_level_free<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>)
 
 
 /// Type `k` of the block was walked, ending in a sort equivalent to the block's.
+#[verifier::opaque]
 pub(crate) open spec fn walk_k_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, k: int) -> bool {
     &&& ind_walk_ok(env, st.tele@[k], st.all_inductives_incl_specialized@[k].ty, st.local_params@, st.local_indices@[k]@)
     &&& tele_lit(st.tele@[k])
@@ -387,6 +549,7 @@ pub(crate) proof fn walk_k_frame<'x, 't>(env: crate::env::Env<'x, 't>, a: Induct
     ensures
         walk_k_ok(env, b, k),
 {
+    reveal(walk_k_ok);
 }
 
 impl<'a> Clone for CtorHeader<'a> {
@@ -1750,7 +1913,26 @@ impl<'t, 'p: 't> ExportFile<'p> {
             tc.mk_elim_level(&mut st);
             tc.init_k_target(&mut st);
             tc.mk_majors(&mut st);
+            let ghost cm0 = crate::util::unique_count(*tc.ctx) as nat;
+            let ghost mo0 = st.motives@.len();
             tc.mk_motives(&mut st);
+            proof {
+                let aids = crate::util_model::arena_ids(*tc.ctx);
+                let c = crate::util::unique_count(*tc.ctx) as nat;
+                assert(mo0 == 0);
+                assert(st.motives@.subrange(0, st.motives@.len() as int) =~= st.motives@);
+                assert forall|k: int| 0 <= k < st.motives@.len() implies crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k])
+                    == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.motives@[k])) by {
+                    assert(major_ok(*tc.ctx, st.motives@[k]));
+                }
+                crate::kgen::serials_fv_below(aids, st.motives@, cm0, c);
+                assert forall|i: int, j: int| 0 <= i < st.all_inductives_incl_specialized@.len()
+                    && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+                    implies crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[i].ctors@[j].ty), 0) by {
+                    assert(ctors_closed(st.all_inductives_incl_specialized@[i]));
+                    crate::kgen::closed_fv_below(aids, crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty));
+                }
+            }
             tc.mk_minors(&mut st);
             tc.mk_recursors(&st)
         };
@@ -2299,6 +2481,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
+            forall|k: int| 0 <= k < rec_args@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::quot_model::local_type(#[trigger] rec_args@[k]), crate::util::unique_count(*old(self).ctx) as nat)
+                && crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(rec_args@[k]),
+                    crate::util::unique_count(*old(self).ctx) as nat),
+            forall|k: int| 0 <= k < st.motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
@@ -2307,7 +2495,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             forall|i: int| 0 <= i < result@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] result@[i]),
+            result@.len() == rec_args@.len(),
+            forall|k: int| 0 <= k < result@.len() ==> #[trigger] ih_some(*st, rec_args@[k], result@[k]),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
     {
+        let ghost aids = crate::util_model::arena_ids(*self.ctx);
+        let ghost c_lo = crate::util::unique_count(*self.ctx) as nat;
         let mut out = Vec::new();
         let mut i: usize = 0;
         while i < rec_args.len()
@@ -2324,6 +2518,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.ind_consts@.len() <= st.local_indices@.len(),
                 forall|k: int| 0 <= k < out@.len() ==> major_ok(*self.ctx, #[trigger] out@[k]),
                 i <= rec_args@.len(),
+                out@.len() == i,
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                aids == crate::util_model::arena_ids(*old(self).ctx),
+                c_lo == crate::util::unique_count(*old(self).ctx) as nat,
+                c_lo <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, out@, c_lo, crate::util::unique_count(*self.ctx) as nat),
+                forall|k: int| 0 <= k < out@.len() ==> #[trigger] ih_some(*st, rec_args@[k], out@[k]),
+                forall|k: int| 0 <= k < rec_args@.len() ==> crate::kgen::fv_below(aids,
+                    crate::quot_model::local_type(#[trigger] rec_args@[k]), c_lo)
+                    && crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(rec_args@[k]), c_lo),
+                forall|k: int| 0 <= k < st.motives@.len() ==> crate::kgen::fv_below(aids,
+                    crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), c_lo),
             decreases rec_args@.len() - i,
         {
             let rec_arg = rec_args[i];
@@ -2349,7 +2555,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             if !crate::expr_arena_bridge::model_eq(self.ctx, u_i_ty, rec_arg_ty) {
                 panic!("a recursive argument's type is not its declared one");
             }
+            let ghost c1 = crate::util::unique_count(*self.ctx) as nat;
             let (arg_ty, xs) = self.handle_rec_args_aux(u_i_ty);
+            let ghost c2 = crate::util::unique_count(*self.ctx) as nat;
             let (ind_ty_idx, applied_indices) = self.get_i_indices(st, arg_ty);
             let motive = st.motives.get(ind_ty_idx).copied().expect("Failed to get specified motive");
             // VERUS-REWRITE(named-temp): the reversed index iterator and the two
@@ -2411,10 +2619,39 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // rec_arg often has a hygienic name
             let v_name = self.ctx.append_index_after(v_name, ctor_idx as u64);
             let v_name = self.ctx.append_index_after(v_name, i as u64);
+            let ghost c3 = crate::util::unique_count(*self.ctx) as nat;
             let v_i = self.ctx.mk_unique(v_name, BinderStyle::Default, v_i_ty);
             let ghost o0 = out@;
             out.push(v_i);
             proof {
+                crate::kgen::serials_push(aids, o0, c_lo, c3, v_i, crate::util::unique_count(*self.ctx) as nat);
+                let np = st.local_params@.len();
+                let am = crate::beta_model::spine_args(crate::expr_arena_bridge::to_model(arg_ty));
+                let rv = am.subrange(np as int, am.len() as int);
+                assert(crate::expr_arena_bridge::ptr_models(rev_rem) =~= rv) by {
+                    assert(crate::expr_arena_bridge::ptr_models(idx_seq) =~= rv.reverse());
+                    assert(rev_rem.len() == idx_seq.len());
+                    assert forall|k: int| 0 <= k < rv.len() implies crate::expr_arena_bridge::ptr_models(rev_rem)[k] == rv[k] by {
+                        assert(rev_rem[k] == idx_seq[idx_seq.len() - 1 - k]);
+                        assert(crate::expr_arena_bridge::ptr_models(idx_seq)[idx_seq.len() - 1 - k] == rv.reverse()[idx_seq.len() - 1 - k]);
+                    }
+                }
+                assert(crate::expr_arena_bridge::to_model(u_i_ty) == crate::quot_model::local_type(rec_arg));
+                assert forall|k: int| 0 <= k < xs@.len() implies crate::expr_arena_bridge::to_model(#[trigger] xs@[k])
+                    == ExprSpec::Free(crate::expr_arena_bridge::expr_id(xs@[k])) by {
+                    assert(level_free_local(*self.ctx, xs@[k]));
+                }
+                local_type_closed(*self.ctx, rec_arg);
+                assert(major_ok(*self.ctx, st.motives@[ind_ty_idx as int]));
+                ih_step(*st, aids, rec_arg, xs@, crate::expr_arena_bridge::to_model(arg_ty), ind_ty_idx as int, rv,
+                    crate::expr_arena_bridge::to_model(motive_base), v_i, c1, c2);
+                assert forall|k: int| 0 <= k < out@.len() implies #[trigger] ih_some(*st, rec_args@[k], out@[k]) by {
+                    if k < o0.len() {
+                        assert(out@[k] == o0[k]);
+                    } else {
+                        assert(ih_at(*st, ind_ty_idx as int, rec_args@[k], out@[k]));
+                    }
+                }
                 assert forall|k: int| 0 <= k < out@.len() implies major_ok(*self.ctx, #[trigger] out@[k]) by {
                     if k < o0.len() { assert(out@[k] == o0[k]); }
                 }
@@ -2443,6 +2680,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*old(self).ctx, #[trigger] st.motives@[i]),
             crate::inductive_model::st_owned(*old(self).ctx, *st),
             st.ind_consts@.len() <= st.local_indices@.len(),
+            forall|i: int| 0 <= i < ctors@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::to_model(#[trigger] ctors@[i].ty), 0),
+            forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::expr_id(#[trigger] st.local_params@[k])) is Some
+                && (crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx),
+                    crate::expr_arena_bridge::expr_id(st.local_params@[k]))->Some_0 as nat) < crate::util::unique_count(*old(self).ctx) as nat,
+            forall|k: int| 0 <= k < st.motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
@@ -2471,6 +2716,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.ind_consts@.len() <= st.local_indices@.len(),
                 out@.len() == ctor_idx,
                 forall|k: int| 0 <= k < out@.len() ==> major_ok(*self.ctx, #[trigger] out@[k]),
+                crate::util_model::arena_ids(*self.ctx) == crate::util_model::arena_ids(*old(self).ctx),
+                crate::util::unique_count(*old(self).ctx) <= crate::util::unique_count(*self.ctx),
+                forall|i: int| 0 <= i < ctors@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::to_model(#[trigger] ctors@[i].ty), 0),
+                forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::expr_id(#[trigger] st.local_params@[k])) is Some
+                && (crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx),
+                    crate::expr_arena_bridge::expr_id(st.local_params@[k]))->Some_0 as nat) < crate::util::unique_count(*old(self).ctx) as nat,
+                forall|k: int| 0 <= k < st.motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
+
                 ctor_idx <= ctors@.len(),
             decreases ctors@.len() - ctor_idx,
         {
@@ -2478,8 +2734,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 assert(level_free(*self.ctx, ctors@[ctor_idx as int].ty));
             }
+            let ghost c_ser0 = crate::util::unique_count(*self.ctx) as nat;
             let (stripd_instd_ctor_type, all_ctor_args, rec_ctor_args) =
                 self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
+            let ghost c_ser1 = crate::util::unique_count(*self.ctx) as nat;
             let (ind_ty_idx, applied_indices) = self.get_i_indices(st, stripd_instd_ctor_type);
             let motive = st.motives.get(ind_ty_idx).copied().expect("Failed to get specified motive");
             proof {
@@ -2537,6 +2795,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 assert forall|k: int| 0 <= k < rec_ctor_args@.len() implies level_free_local(*self.ctx, #[trigger] rec_ctor_args@[k]) by {
                     assert(level_free_local(*self.ctx, rec_ctor_args@[k]));
+                }
+            }
+            proof {
+                let aids = crate::util_model::arena_ids(*self.ctx);
+                let c = crate::util::unique_count(*self.ctx) as nat;
+                let c_old = crate::util::unique_count(*old(self).ctx) as nat;
+                assert(st.local_params@.subrange(0, st.local_params@.len() as int) =~= st.local_params@);
+                crate::kgen::serials_lower(aids, all_ctor_args@, c_ser0, 0, c_ser1);
+                crate::kgen::serials_widen(aids, all_ctor_args@, 0, c_ser1, c);
+                assert forall|k: int| 0 <= k < all_ctor_args@.len() implies crate::expr_arena_bridge::to_model(#[trigger] all_ctor_args@[k])
+                    == ExprSpec::Free(crate::expr_arena_bridge::expr_id(all_ctor_args@[k])) by {
+                    assert(level_free_local(*self.ctx, all_ctor_args@[k]));
+                }
+                minor_fresh(aids, crate::expr_arena_bridge::to_model(ctor.ty), st.local_params@, all_ctor_args@, rec_ctor_args@, c);
+                assert forall|k: int| 0 <= k < st.motives@.len() implies crate::kgen::fv_below(aids,
+                    crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), c) by {
+                    crate::kgen::fv_below_mono(aids, crate::expr_arena_bridge::to_model(st.motives@[k]), c_old, c);
                 }
             }
             let v = self.handle_rec_args_minor(st, ctor_idx, rec_ctor_args.as_slice());
@@ -2605,6 +2880,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int| 0 <= i < old(st).motives@.len() ==> major_ok(*old(self).ctx, #[trigger] old(st).motives@[i]),
             crate::inductive_model::st_owned(*old(self).ctx, *old(st)),
             old(st).ind_consts@.len() <= old(st).local_indices@.len(),
+            forall|i: int, j: int| 0 <= i < old(st).all_inductives_incl_specialized@.len()
+                && 0 <= j < old(st).all_inductives_incl_specialized@[i].ctors@.len()
+                ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(#[trigger] old(st).all_inductives_incl_specialized@[i].ctors@[j].ty), 0),
+            forall|k: int| 0 <= k < old(st).local_params@.len() ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::expr_id(#[trigger] old(st).local_params@[k])) is Some
+                && (crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::expr_id(old(st).local_params@[k]))->Some_0 as nat) < crate::util::unique_count(*old(self).ctx) as nat,
+            forall|k: int| 0 <= k < old(st).motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                crate::expr_arena_bridge::to_model(#[trigger] old(st).motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
@@ -2641,6 +2924,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 st0.ind_consts@.len() <= st0.local_indices@.len(),
                 i <= st0.all_inductives_incl_specialized@.len(),
+                crate::util_model::arena_ids(*self.ctx) == crate::util_model::arena_ids(*old(self).ctx),
+                crate::util::unique_count(*old(self).ctx) <= crate::util::unique_count(*self.ctx),
+                forall|i: int, j: int| 0 <= i < st0.all_inductives_incl_specialized@.len()
+                    && 0 <= j < st0.all_inductives_incl_specialized@[i].ctors@.len()
+                    ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(#[trigger] st0.all_inductives_incl_specialized@[i].ctors@[j].ty), 0),
+                forall|k: int| 0 <= k < st0.local_params@.len() ==> crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx),
+                    crate::expr_arena_bridge::expr_id(#[trigger] st0.local_params@[k])) is Some
+                    && (crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::expr_id(st0.local_params@[k]))->Some_0 as nat) < crate::util::unique_count(*old(self).ctx) as nat,
+                forall|k: int| 0 <= k < st0.motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
+                    crate::expr_arena_bridge::to_model(#[trigger] st0.motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
+
                 st.minors@.len() == st0.minors@.len() + i,
                 forall|k: int| 0 <= k < st0.minors@.len() ==> #[trigger] st.minors@[k] == st0.minors@[k],
                 forall|k: int, j: int| st0.minors@.len() <= k < st.minors@.len() && 0 <= j < st.minors@[k]@.len()
@@ -2656,6 +2950,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert forall|j: int| 0 <= j < ind_ty.ctors@.len() implies level_free(*self.ctx, #[trigger] ind_ty.ctors@[j].ty)
                     && crate::util_model::owns(*self.ctx, ind_ty.ctors@[j].name) by {
                     assert(level_free(*self.ctx, st0.all_inductives_incl_specialized@[i as int].ctors@[j].ty));
+                }
+            }
+            proof {
+                let c = crate::util::unique_count(*self.ctx) as nat;
+                assert forall|j: int| 0 <= j < ind_ty.ctors@.len() implies crate::kgen::fv_below(crate::util_model::arena_ids(*self.ctx),
+                    crate::expr_arena_bridge::to_model(#[trigger] ind_ty.ctors@[j].ty), 0) by {
+                    assert(ind_ty.ctors@[j] == st0.all_inductives_incl_specialized@[i as int].ctors@[j]);
+                }
+                assert forall|k: int| 0 <= k < st.motives@.len() implies crate::kgen::fv_below(crate::util_model::arena_ids(*self.ctx),
+                    crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), c) by {
+                    crate::kgen::fv_below_mono(crate::util_model::arena_ids(*self.ctx), crate::expr_arena_bridge::to_model(st.motives@[k]),
+                        crate::util::unique_count(*old(self).ctx) as nat, c);
                 }
             }
             let ghost ms0 = st.minors@;
@@ -3479,6 +3785,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             result.k_target is None,
             result.all_inductives_incl_specialized@[0].name == unmodified_tys_ctors@[0].name,
             result.all_inductives_incl_specialized@[0].ty == unmodified_tys_ctors@[0].ty,
+            forall|x: int| 0 <= x < result.all_inductives_incl_specialized@.len() ==> ctors_closed(#[trigger] result.all_inductives_incl_specialized@[x]),
             crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.local_params@,
                 crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             forall|k: int| 0 <= k < result.local_params@.len() && (#[trigger] crate::kgen::lit_open(crate::expr_arena_bridge::to_model(unmodified_tys_ctors@[0].ty),
@@ -3603,6 +3910,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
             forall|x: int| 0 <= x < old(st).all_inductives_incl_specialized@.len() ==> #[trigger] final(st).all_inductives_incl_specialized@[x].name == old(st).all_inductives_incl_specialized@[x].name
                 && final(st).all_inductives_incl_specialized@[x].ty == old(st).all_inductives_incl_specialized@[x].ty,
+            forall|x: int| 0 <= x < final(st).all_inductives_incl_specialized@.len() ==> ctors_closed(#[trigger] final(st).all_inductives_incl_specialized@[x]),
             crate::indexmap_model::imap_wf(&final(st).nested_to_unspecialized_ty_nofvars),
             forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&final(st).nested_to_unspecialized_ty_nofvars).contains_key(n)
                 ==> crate::util_model::owns(*(*final(self)).ctx, n)
@@ -3634,6 +3942,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 nest_ok(*self.ctx, *st),
                 st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
                 forall|x: int| 0 <= x < st0.all_inductives_incl_specialized@.len() ==> #[trigger] st.all_inductives_incl_specialized@[x].name == st0.all_inductives_incl_specialized@[x].name && st.all_inductives_incl_specialized@[x].ty == st0.all_inductives_incl_specialized@[x].ty,
+                i <= st.all_inductives_incl_specialized@.len(),
+                forall|x: int| 0 <= x < i ==> ctors_closed(#[trigger] st.all_inductives_incl_specialized@[x]),
                 *st == (InductiveCheckState {
                     nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
                     all_inductives_incl_specialized: st.all_inductives_incl_specialized,
@@ -3641,6 +3951,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ..st0
                 }),
         {
+            let ghost sti = *st;
             let mut new_ctors_for_i: Vec<CtorHeader<'t>> = Vec::new();
             let hdr = st.all_inductives_incl_specialized[i].clone();
             proof {
@@ -3665,6 +3976,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     nest_ok(*self.ctx, *st),
                     st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
                     forall|x: int| 0 <= x < st0.all_inductives_incl_specialized@.len() ==> #[trigger] st.all_inductives_incl_specialized@[x].name == st0.all_inductives_incl_specialized@[x].name && st.all_inductives_incl_specialized@[x].ty == st0.all_inductives_incl_specialized@[x].ty,
+                    prefix_kept(sti.all_inductives_incl_specialized@, st.all_inductives_incl_specialized@),
+                    i < sti.all_inductives_incl_specialized@.len(),
+                    forall|x: int| 0 <= x < i ==> ctors_closed(#[trigger] sti.all_inductives_incl_specialized@[x]),
+                    forall|b: int| 0 <= b < new_ctors_for_i@.len() ==> !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(#[trigger] new_ctors_for_i@[b].ty)),
                     *st == (InductiveCheckState {
                         nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
                         all_inductives_incl_specialized: st.all_inductives_incl_specialized,
@@ -3698,11 +4013,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let replaced_ctor_w_params =
                     self.ctx.abstr_pis(lp_it, replaced_ctor_wo_params);
                 assert!(!self.ctx.read_expr(replaced_ctor_w_params).has_fvars());
+                proof {
+                    assert(!crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(replaced_ctor_w_params)));
+                }
                 // Push the constructor with the params put back, free variables abstracted,
                 // and ococurrences of nested inductives replaced with specialized types.
                 let ghost n0 = new_ctors_for_i@;
                 new_ctors_for_i.push(CtorHeader { name: adjusted_ctor.name, ty: replaced_ctor_w_params });
                 proof {
+                    assert forall|b: int| 0 <= b < new_ctors_for_i@.len() implies !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(#[trigger] new_ctors_for_i@[b].ty)) by {
+                        if b < n0.len() { assert(new_ctors_for_i@[b] == n0[b]); }
+                    }
                     assert forall|b: int| 0 <= b < new_ctors_for_i@.len() implies crate::util_model::owns(*self.ctx, #[trigger] new_ctors_for_i@[b].name) by {
                         if b < n0.len() { assert(new_ctors_for_i@[b] == n0[b]); }
                     }
@@ -3719,6 +4040,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost a0 = st.all_inductives_incl_specialized@;
             st.all_inductives_incl_specialized.set(i, IndTyHeader { name, ty, ctors: new_ctors_for_i });
             proof {
+                assert forall|x: int| 0 <= x < i + 1 implies ctors_closed(#[trigger] st.all_inductives_incl_specialized@[x]) by {
+                    if x < i {
+                        assert(st.all_inductives_incl_specialized@[x] == a0[x]);
+                        assert(a0[x] == sti.all_inductives_incl_specialized@[x]);
+                    }
+                }
                 assert forall|x: int| 0 <= x < st.all_inductives_incl_specialized@.len() implies {
                     let h = #[trigger] st.all_inductives_incl_specialized@[x];
                     &&& crate::util_model::owns(*self.ctx, h.name)
@@ -3746,6 +4073,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::tc::tc_wf(*self),
                     st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
                     forall|x: int| 0 <= x < st0.all_inductives_incl_specialized@.len() ==> #[trigger] st.all_inductives_incl_specialized@[x].name == st0.all_inductives_incl_specialized@[x].name && st.all_inductives_incl_specialized@[x].ty == st0.all_inductives_incl_specialized@[x].ty,
+                    forall|x: int| 0 <= x < st.all_inductives_incl_specialized@.len() ==> ctors_closed(#[trigger] st.all_inductives_incl_specialized@[x]),
                     crate::indexmap_model::imap_wf(&out),
                     forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&out).contains_key(n)
                         ==> crate::util_model::owns(*self.ctx, n) && crate::util_model::owns(*self.ctx, crate::indexmap_model::imap_view(&out)[n]),
@@ -5298,6 +5626,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 local_ids(rem_params@.subrange(0, st.local_params@.len() as int)) + local_ids(result.1@), st.local_params@.len() + k, crate::quot_model::local_type(#[trigger] result.1@[k])),
             crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.1@,
                 crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.2@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
+            forall|k: int| 0 <= k < result.2@.len() ==> result.1@.contains(#[trigger] result.2@[k]),
     {
         let ghost c0 = crate::expr_arena_bridge::to_model(ctor_type_cursor);
         let ghost cnt_lo = crate::util::unique_count(*self.ctx) as nat;
@@ -5351,6 +5682,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(local_ids(all_args@) =~= Seq::<nat>::empty());
             assert(pids + local_ids(all_args@) =~= pids);
             assert(crate::kgen::serials_in(aids, all_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat));
+            assert(crate::kgen::serials_in(aids, rec_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat));
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_type_cursor)
             invariant
@@ -5373,6 +5705,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::arena_ids(*self.ctx) == aids,
                 cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
                 crate::kgen::serials_in(aids, all_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
+                crate::kgen::serials_in(aids, rec_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
+                forall|k: int| 0 <= k < rec_args@.len() ==> all_args@.contains(#[trigger] rec_args@[k]),
         {
             let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
             let ghost ids0 = pids + local_ids(all_args@);
@@ -5411,10 +5745,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
             }
             let ghost ra0 = rec_args@;
+            let ghost c_mid = crate::util::unique_count(*self.ctx) as nat;
             if self.is_rec_argument(st, binder_type).is_some() {
                 rec_args.push(local);
             }
             proof {
+                assert forall|k: int| 0 <= k < rec_args@.len() implies all_args@.contains(#[trigger] rec_args@[k]) by {
+                    if k < ra0.len() {
+                        assert(rec_args@[k] == ra0[k]);
+                        let q = choose|q: int| 0 <= q < aa0.len() && aa0[q] == ra0[k];
+                        assert(all_args@[q] == aa0[q]);
+                    } else {
+                        assert(all_args@[all_args@.len() - 1] == local);
+                    }
+                }
+                if rec_args@.len() > ra0.len() {
+                    crate::kgen::serials_push(aids, ra0, cnt_lo, cnt0, local, crate::util::unique_count(*self.ctx) as nat);
+                } else {
+                    crate::kgen::serials_widen(aids, ra0, cnt_lo, cnt0, crate::util::unique_count(*self.ctx) as nat);
+                }
                 assert forall|k: int| 0 <= k < rec_args@.len() implies level_free_local(*self.ctx, #[trigger] rec_args@[k]) by {
                     if k < ra0.len() { assert(rec_args@[k] == ra0[k]); }
                 }
@@ -6901,7 +7250,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 assert(st.tele@.last() == st.tele@[i as int]);
                 assert(st.local_indices@.last() == st.local_indices@[i as int]);
-                assert(walk_k_ok(*old(self).env, *st, i as int));
+                assert(walk_k_ok(*old(self).env, *st, i as int)) by { reveal(walk_k_ok); }
                 assert(teles_syn(st.tele@, i + 1)) by {
                     reveal(teles_syn);
                     assert forall|k: int| 0 <= k < i + 1 implies tele_syn(#[trigger] st.tele@[k]) by {

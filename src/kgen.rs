@@ -565,4 +565,328 @@ pub proof fn opened_doms(t: ExprSpec, xs: Seq<nat>, n: nat)
     assert(ds.subrange(n as int, n as int) =~= Seq::<ExprSpec>::empty());
 }
 
+/// A telescope's locals are its domains' and its body's.
+pub proof fn binds_fv_absent(ds: Seq<ExprSpec>, b: ExprSpec, z: nat)
+    requires
+        fv_absent(crate::rec_canon::binds(BinderKind::Pi, ds, b), z),
+    ensures
+        forall|j: int| 0 <= j < ds.len() ==> fv_absent(#[trigger] ds[j], z),
+        fv_absent(b, z),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        binds_fv_absent(ds.drop_first(), b, z);
+        assert forall|j: int| 0 <= j < ds.len() implies fv_absent(#[trigger] ds[j], z) by {
+            if j > 0 { assert(ds[j] == ds.drop_first()[j - 1]); }
+        }
+    }
+}
+
+/// The variables of a telescope of `n` binders, outermost first.
+pub open spec fn tvars(n: nat) -> Seq<ExprSpec> {
+    Seq::new(n, |i: int| ExprSpec::Var((n - 1 - i) as nat))
+}
+
+/// The de Bruijn induction hypothesis over the recursive field's type
+/// `t` of `n` leading Pis: the motive at the body's arguments after `np`,
+/// applied to the field at the telescope's variables.
+pub open spec fn ih_db(m: ExprSpec, r: ExprSpec, t: ExprSpec, n: nat, np: nat) -> ExprSpec {
+    let b = crate::rec_canon::tbody(t, n);
+    let args = crate::beta_model::spine_args(b);
+    ExprSpec::App(
+        Box::new(crate::beta_model::spine_app(m, args.subrange(np as int, args.len() as int))),
+        Box::new(crate::beta_model::spine_app(r, tvars(n))))
+}
+
+/// CLOSING AN INDUCTION HYPOTHESIS: its locals opened the recursive field's
+/// type `t`; abstracting them from the motive at the opened body's indices
+/// applied to the field at the locals gives the de Bruijn hypothesis over
+/// `t`'s telescope.
+#[verifier::spinoff_prover]
+pub proof fn ih_close(t: ExprSpec, xs: Seq<nat>, n: nat, np: nat, m: ExprSpec, r: ExprSpec, tys: Seq<ExprSpec>)
+    requires
+        nlbv(t) == 0,
+        crate::rec_canon::tdoms(t, n).len() == n,
+        xs.len() == n,
+        xs.no_duplicates(),
+        forall|z: nat| xs.contains(z) ==> #[trigger] fv_absent(t, z),
+        forall|z: nat| xs.contains(z) ==> #[trigger] fv_absent(m, z),
+        forall|z: nat| xs.contains(z) ==> #[trigger] fv_absent(r, z),
+        nlbv(m) == 0,
+        nlbv(r) == 0,
+        crate::beta_model::spine_head(crate::rec_canon::tbody(t, n)) is Const,
+        np <= crate::beta_model::spine_args(crate::rec_canon::tbody(t, n)).len(),
+        tys.len() == n,
+        forall|k: int| 0 <= k < n ==> #[trigger] tys[k] == *lit_open(t, xs.subrange(0, k))->Bind_1,
+    ensures
+        crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi, xs, tys,
+            ExprSpec::App(
+                Box::new(crate::beta_model::spine_app(m, crate::beta_model::spine_args(lit_open(t, xs)).subrange(np as int,
+                    crate::beta_model::spine_args(lit_open(t, xs)).len() as int))),
+                Box::new(crate::beta_model::spine_app(r, frees(xs)))))
+            == crate::rec_canon::binds(BinderKind::Pi, crate::rec_canon::tdoms(t, n), ih_db(m, r, t, n, np)),
+{
+    let ds = crate::rec_canon::tdoms(t, n);
+    let b = crate::rec_canon::tbody(t, n);
+    let fx = frees(xs);
+    opened_doms(t, xs, n);
+    assert(xs.subrange(0, n as int) =~= xs);
+    assert forall|k: int| 0 <= k < n implies #[trigger] tys[k] == open_doms(ds, xs)[k] by {
+        assert(frees(xs.subrange(0, k)) =~= fx.subrange(0, k));
+    }
+    assert(tys =~= open_doms(ds, xs));
+    // the opened body's indices
+    let h = crate::beta_model::spine_head(b);
+    let args = crate::beta_model::spine_args(b);
+    crate::beta_model::spine_recompose(b);
+    crate::ti_hred_rec::vsub_spine(h, args, fx);
+    crate::ti_spine::vsub_const(h->Const_0, h->Const_1, fx);
+    let margs = Seq::new(args.len(), |i: int| vsub(args[i], fx));
+    crate::beta_model::spine_destruct_app(h, margs);
+    assert(lit_open(t, xs) == crate::beta_model::spine_app(h, margs));
+    let idxdb = args.subrange(np as int, args.len() as int);
+    let midx = Seq::new(idxdb.len(), |i: int| vsub(idxdb[i], fx));
+    assert(margs.subrange(np as int, margs.len() as int) =~= midx);
+    // the de Bruijn body opened is the built one
+    let tv = tvars(n);
+    let body = ih_db(m, r, t, n, np);
+    crate::ti_spine::vsub_app(crate::beta_model::spine_app(m, idxdb), crate::beta_model::spine_app(r, tv), fx);
+    crate::ti_hred_rec::vsub_spine(m, idxdb, fx);
+    crate::ti_hred_rec::vsub_spine(r, tv, fx);
+    crate::ti_spine::vsub_closed(m, fx);
+    crate::ti_spine::vsub_closed(r, fx);
+    assert(Seq::new(tv.len(), |i: int| vsub(tv[i], fx)) =~= fx) by {
+        assert forall|i: int| 0 <= i < n implies #[trigger] vsub(tv[i], fx) == fx[i] by {
+            crate::ti_spine::vsub_var((n - 1 - i) as nat, fx);
+        }
+    }
+    assert(vsub(body, fx) == ExprSpec::App(Box::new(crate::beta_model::spine_app(m, midx)), Box::new(crate::beta_model::spine_app(r, fx))));
+    // scope and freshness of the de Bruijn body
+    crate::beta_model::spine_app_nlbv_decompose(h, args);
+    assert forall|q: int| 0 <= q < idxdb.len() implies nlbv(#[trigger] idxdb[q]) <= n by {
+        assert(idxdb[q] == args[np + q]);
+    }
+    crate::ti_proj::spine_nlbv_le(m, idxdb, n);
+    assert forall|q: int| 0 <= q < tv.len() implies nlbv(#[trigger] tv[q]) <= n by {}
+    crate::ti_proj::spine_nlbv_le(r, tv, n);
+    tel_split(t, n);
+    assert forall|i: int, z: nat| 0 <= i < ds.len() && xs.contains(z) implies #[trigger] fv_absent(ds[i], z) by {
+        binds_fv_absent(ds, b, z);
+    }
+    assert forall|z: nat| xs.contains(z) implies #[trigger] fv_absent(body, z) by {
+        assert(fv_absent(t, z) && fv_absent(m, z) && fv_absent(r, z));
+        binds_fv_absent(ds, b, z);
+        assert forall|k: int| 0 <= k < tv.len() implies fv_absent(#[trigger] tv[k], z) by {}
+        crate::reduce_fv::spine_app_fv(h, args, z);
+        crate::reduce_fv::spine_app_fv(m, idxdb, z);
+        assert forall|k: int| 0 <= k < idxdb.len() implies fv_absent(#[trigger] idxdb[k], z) by {
+            assert(idxdb[k] == args[np + k]);
+        }
+        crate::reduce_fv::spine_app_fv(r, tv, z);
+    }
+    abstr_tel(BinderKind::Pi, ds, body, xs);
+}
+
+/// Every local `e` mentions is a unique local made before counter value
+/// `hi`.
+pub open spec fn fv_below(aids: (nat, nat), e: ExprSpec, hi: nat) -> bool {
+    forall|i: nat| !(#[trigger] fv_absent(e, i)) ==> crate::expr_arena_bridge::unique_serial(aids, i) is Some
+        && (crate::expr_arena_bridge::unique_serial(aids, i)->Some_0 as nat) < hi
+}
+
+/// Locals made from `lo` on are absent from a term whose locals came
+/// before.
+pub proof fn fresh_of_below<'t>(aids: (nat, nat), e: ExprSpec, ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, hi: nat)
+    requires
+        fv_below(aids, e, lo),
+        serials_in(aids, ls, lo, hi),
+    ensures
+        forall|z: nat| crate::inductive::local_ids(ls).contains(z) ==> #[trigger] fv_absent(e, z),
+{
+    assert forall|z: nat| crate::inductive::local_ids(ls).contains(z) implies #[trigger] fv_absent(e, z) by {
+        let k = choose|k: int| 0 <= k < ls.len() && crate::inductive::local_ids(ls)[k] == z;
+        assert(crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[k])) is Some);
+        assert(lo <= crate::expr_arena_bridge::unique_serial(aids, z)->Some_0);
+    }
+}
+
+/// `n` leading Pis over a body that is not one: the type's arity.
+pub proof fn tarity_eq(t: ExprSpec, n: nat)
+    requires
+        crate::rec_canon::tdoms(t, n).len() == n,
+        !(crate::rec_canon::tbody(t, n) is Bind && crate::rec_canon::tbody(t, n)->Bind_0 == BinderKind::Pi),
+    ensures
+        crate::rec_canon::tarity(t) == n,
+    decreases n,
+{
+    if n > 0 {
+        tarity_eq(*t->Bind_2, (n - 1) as nat);
+    } else {
+        assert(crate::rec_canon::tbody(t, 0) == t);
+    }
+}
+
+/// Opening keeps a non-variable term's constructor, and a constant.
+pub proof fn vsub_tag(h: ExprSpec, xs: Seq<ExprSpec>)
+    requires
+        !(h is Var),
+    ensures
+        (vsub(h, xs) is App) == (h is App),
+        (vsub(h, xs) is Const) == (h is Const),
+        h is Const ==> vsub(h, xs) == h,
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        let h2 = inst((xs.len() - 1) as nat, xs[0], h);
+        assert(!(h2 is Var) && ((h2 is App) == (h is App)) && ((h2 is Const) == (h is Const)) && (h is Const ==> h2 == h));
+        vsub_tag(h2, xs.drop_first());
+    }
+}
+
+/// Opening a variable with locals gives a variable or a local.
+pub proof fn vsub_var_frees(j: nat, ids: Seq<nat>)
+    ensures
+        vsub(ExprSpec::Var(j), frees(ids)) is Var || vsub(ExprSpec::Var(j), frees(ids)) is Free,
+    decreases ids.len(),
+{
+    if ids.len() > 0 {
+        let fs = frees(ids);
+        let m = (fs.len() - 1) as nat;
+        assert(fs.drop_first() =~= frees(ids.drop_first()));
+        if j == m {
+            assert(inst(m, fs[0], ExprSpec::Var(j)) == lift(m, 0, fs[0]));
+            assert(lift(m, 0, ExprSpec::Free(ids[0])) == ExprSpec::Free(ids[0]));
+            crate::ti_spine::vsub_closed(ExprSpec::Free(ids[0]), fs.drop_first());
+        } else if j < m {
+            vsub_var_frees(j, ids.drop_first());
+        } else {
+            vsub_var_frees((j - 1) as nat, ids.drop_first());
+        }
+    }
+}
+
+/// A SPINE OPENED WITH LOCALS whose head is a constant had that head, and
+/// its arguments are the original's opened.
+pub proof fn vsub_head(e: ExprSpec, ids: Seq<nat>)
+    requires
+        crate::beta_model::spine_head(vsub(e, frees(ids))) is Const,
+    ensures
+        crate::beta_model::spine_head(e) == crate::beta_model::spine_head(vsub(e, frees(ids))),
+        crate::beta_model::spine_args(vsub(e, frees(ids)))
+            == Seq::new(crate::beta_model::spine_args(e).len(), |i: int| vsub(crate::beta_model::spine_args(e)[i], frees(ids))),
+{
+    let fx = frees(ids);
+    let h = crate::beta_model::spine_head(e);
+    let args = crate::beta_model::spine_args(e);
+    crate::beta_model::spine_recompose(e);
+    crate::ti_hred_rec::vsub_spine(h, args, fx);
+    let margs = Seq::new(args.len(), |i: int| vsub(args[i], fx));
+    head_not_app(e);
+    if h is Var {
+        vsub_var_frees(h->Var_0, ids);
+    } else {
+        vsub_tag(h, fx);
+    }
+    crate::beta_model::spine_destruct_app(vsub(h, fx), margs);
+}
+
+/// A spine's head is not an application.
+pub proof fn head_not_app(e: ExprSpec)
+    ensures
+        !(crate::beta_model::spine_head(e) is App),
+    decreases e,
+{
+    if let ExprSpec::App(f, _) = e {
+        head_not_app(*f);
+    }
+}
+
+/// `fv_below` holds at any later counter value.
+pub proof fn fv_below_mono(aids: (nat, nat), e: ExprSpec, hi: nat, hi2: nat)
+    requires
+        fv_below(aids, e, hi),
+        hi <= hi2,
+    ensures
+        fv_below(aids, e, hi2),
+{
+}
+
+/// OPENING WITH LOCALS adds only those locals: a telescope opened with
+/// earlier locals mentions only earlier locals, and so does each domain it
+/// opens to.
+pub proof fn lit_open_below<'t>(aids: (nat, nat), t: ExprSpec, ls: Seq<crate::util::ExprPtr<'t>>, hi: nat)
+    requires
+        fv_below(aids, t, hi),
+        forall|k: int| 0 <= k < ls.len() ==> crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(#[trigger] ls[k])) is Some
+            && (crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[k]))->Some_0 as nat) < hi,
+    ensures
+        fv_below(aids, lit_open(t, crate::inductive::local_ids(ls)), hi),
+        lit_open(t, crate::inductive::local_ids(ls)) is Bind ==> fv_below(aids, *lit_open(t, crate::inductive::local_ids(ls))->Bind_1, hi),
+    decreases ls.len(),
+{
+    let ids = crate::inductive::local_ids(ls);
+    if ls.len() > 0 {
+        let n = ls.len() - 1;
+        let l0 = ls.subrange(0, n as int);
+        lit_open_below(aids, t, l0, hi);
+        assert(ids =~= crate::inductive::local_ids(l0).push(ids[n]));
+        lit_open_push(t, crate::inductive::local_ids(l0), ids[n]);
+        let p = lit_open(t, crate::inductive::local_ids(l0));
+        if let ExprSpec::Bind(BinderKind::Pi, a, b) = p {
+            assert forall|i: nat| !(#[trigger] fv_absent(lit_open(t, ids), i)) implies crate::expr_arena_bridge::unique_serial(aids, i) is Some
+                && (crate::expr_arena_bridge::unique_serial(aids, i)->Some_0 as nat) < hi by {
+                crate::rctx::subst_free_fv(*b, ExprSpec::Free(ids[n]), 0, i);
+                if !fv_absent(*b, i) {
+                    assert(!fv_absent(p, i));
+                } else {
+                    assert(i == ids[n]);
+                }
+            }
+        }
+    }
+    let q = lit_open(t, ids);
+    if let ExprSpec::Bind(_, a, _) = q {
+        assert forall|i: nat| !(#[trigger] fv_absent(*a, i)) implies crate::expr_arena_bridge::unique_serial(aids, i) is Some
+            && (crate::expr_arena_bridge::unique_serial(aids, i)->Some_0 as nat) < hi by {
+            assert(!fv_absent(q, i));
+        }
+    }
+}
+
+/// A run stays one with a lower floor.
+pub proof fn serials_lower<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, lo2: nat, hi: nat)
+    requires
+        serials_in(aids, ls, lo, hi),
+        lo2 <= lo,
+    ensures
+        serials_in(aids, ls, lo2, hi),
+{
+}
+
+/// Locals made in a window mention themselves only, all below its top.
+pub proof fn serials_fv_below<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, hi: nat)
+    requires
+        serials_in(aids, ls, lo, hi),
+        forall|k: int| 0 <= k < ls.len() ==> crate::expr_arena_bridge::to_model(#[trigger] ls[k]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(ls[k])),
+    ensures
+        forall|k: int| 0 <= k < ls.len() ==> fv_below(aids, crate::expr_arena_bridge::to_model(#[trigger] ls[k]), hi),
+{
+    assert forall|k: int| 0 <= k < ls.len() implies fv_below(aids, crate::expr_arena_bridge::to_model(#[trigger] ls[k]), hi) by {
+        assert(crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[k])) is Some);
+    }
+}
+
+/// A term with no locals is below any counter value.
+pub proof fn closed_fv_below(aids: (nat, nat), e: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(e),
+    ensures
+        fv_below(aids, e, 0),
+{
+    assert forall|i: nat| !(#[trigger] fv_absent(e, i)) implies crate::expr_arena_bridge::unique_serial(aids, i) is Some
+        && (crate::expr_arena_bridge::unique_serial(aids, i)->Some_0 as nat) < 0 by {
+        crate::kclaims::no_fv_absent(e, i);
+    }
+}
+
 } // verus!
