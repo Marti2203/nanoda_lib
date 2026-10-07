@@ -1598,8 +1598,13 @@ and eta step is vacuous (about thirty sites use that). Stages:
     records the creation windows and proves, for every shape the block
     has (`gen_shape_ok`: single inductive, canonical type and constructor
     forms, admitted field kinds), that its recursor's type is that
-    shape's `rec_ty` (`declar_rec_glue`). Left in B3: the rule values
-    (`rule_canon` via the fields `mk_rec_rule1` re-opens).
+    shape's `rec_ty` (`declar_rec_glue`). B3j–l: the rules. Each rule's
+    hypotheses call one recursor name (hash-consed names), its re-opened
+    fields are the constructor's at `rposj` (`fields_canon`), and its
+    value is `rule_rhs` with that recursor (`rule_bridge`,
+    `rules_declar_canon`); `declar_rec_glue` carries both. B3 is
+    complete for a single inductive; B4 ties the rules' recursor to the
+    declared one and compares with the export.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.

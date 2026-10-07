@@ -1449,12 +1449,23 @@ pub(crate) proof fn declar_rec_glue<'t>(aids: (nat, nat), st: InductiveCheckStat
         crate::kgen::serials_in(aids, st.motives@, o0, o1),
         forall|i: int| 0 <= i < st.minors@.len() ==> crate::kgen::serials_in(aids, (#[trigger] st.minors@[i])@, n0, n1),
         p0 <= p1, p1 <= i0, i0 <= i1, i1 <= m0, m0 <= m1, m1 <= o0, o0 <= o1, o1 <= n0, n0 <= n1,
+        rec_rules_gen(aids, st, 0, d),
+        st.rec_uparams is Some,
+        forall|i: int, j: int| 0 <= i < st.minors@.len() && 0 <= j < st.minors@[i]@.len()
+            ==> crate::expr_arena_bridge::to_model(#[trigger] st.minors@[i]@[j]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.minors@[i]@[j])),
+        st.all_inductives_incl_specialized@.len() > 0 ==> ctors_closed(st.all_inductives_incl_specialized@[0]),
     ensures
         forall|sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec| #[trigger] gen_shape_ok(st, sh, lm) ==>
-            d is Recursor && crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm),
+            d is Recursor && crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm)
+            && drules(d).len() == sh.nmin()
+            && forall|j: int| 0 <= j < sh.nmin() ==> rule_canon_at(sh, lm, crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0), j,
+                crate::expr_arena_bridge::to_model((#[trigger] drules(d)[j]).val)),
 {
     assert forall|sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec| #[trigger] gen_shape_ok(st, sh, lm) implies
-        d is Recursor && crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm) by {
+        d is Recursor && crate::expr_arena_bridge::to_model(crate::env::declar_info(d).ty) == sh.rec_ty(lm)
+            && drules(d).len() == sh.nmin()
+            && forall|j: int| 0 <= j < sh.nmin() ==> rule_canon_at(sh, lm, crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0), j,
+                crate::expr_arena_bridge::to_model((#[trigger] drules(d)[j]).val)) by {
         let c = st.tele@[0];
         assert(walk_syn(st, 0));
         assert forall|j: int| 0 <= j < st.local_indices@[0]@.len() implies crate::expr_arena_bridge::to_model(#[trigger] st.local_indices@[0]@[j])
@@ -1470,6 +1481,13 @@ pub(crate) proof fn declar_rec_glue<'t>(aids: (nat, nat), st: InductiveCheckStat
         }
         assert(crate::kgen::serials_in(aids, st.minors@[0]@, n0, n1));
         rec_declar_canon(aids, st, sh, lm, d, c, p0, p1, i0, i1, m0, m1, o0, o1, n0, n1);
+        assert forall|j: int, z: nat| 0 <= j < st.all_inductives_incl_specialized@[0].ctors@.len() implies
+            #[trigger] crate::expr_model::fv_absent(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty), z) by {
+            crate::reduce_fv::closed_fv_absent(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty), z);
+        }
+        assert forall|k: int| 0 <= k < st.minors@[0]@.len() implies crate::expr_arena_bridge::to_model(#[trigger] st.minors@[0]@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.minors@[0]@[k])) by {}
+        rules_declar_canon(aids, st, sh, lm, d, c, p0, p1, i0, i1, m0, m1, o0, o1, n0, n1);
     }
 }
 
@@ -1647,6 +1665,274 @@ pub(crate) open spec fn rec_rules_gen<'t>(aids: (nat, nat), st: InductiveCheckSt
         },
         _ => false,
     }
+}
+
+/// A RULE OF A SINGLE INDUCTIVE IS CANONICAL: its witness, the
+/// constructor's canonical form and the head locals' opened types give
+/// `rule_rhs`, with the recursor the hypotheses call.
+#[verifier::spinoff_prover]
+pub(crate) proof fn rule_bridge<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, sh: crate::rec_canon::IndShape,
+    lm: crate::level_model::LevelSpec, j: int, c0: ExprSpec, val: ExprSpec)
+    requires
+        rule_some(aids, st, c0, st.minors@[0]@[j], flat_ptrs(st.minors@), val),
+        st.ind_consts@.len() == 1,
+        st.motives@.len() == 1,
+        st.minors@.len() == 1,
+        st.minors@[0]@.len() == sh.nmin(),
+        st.local_indices@.len() >= 1,
+        st.local_indices@[0]@.len() == sh.ni,
+        consts_params(st),
+        st.rec_uparams is Some,
+        crate::expr_arena_bridge::to_model(st.ind_consts@[0]) == ExprSpec::Const(sh.ind, sh.us()),
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+        crate::expr_arena_bridge::to_model(st.motives@[0]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.motives@[0])),
+        forall|k: int| 0 <= k < st.minors@[0]@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.minors@[0]@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.minors@[0]@[k])),
+        0 <= j < sh.nmin(),
+        0 <= j < sh.fields.len(),
+        0 <= j < sh.tss.len(),
+        sh.tss[j].len() == sh.ni,
+        sh.pdoms.len() == sh.np,
+        st.local_params@.len() == sh.np,
+        c0 == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.fields[j], crate::rec_canon::ind_app(sh.ind, sh.us(),
+            crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
+        crate::expr_model::nlbv(c0) == 0,
+        forall|z: nat| #[trigger] crate::expr_model::fv_absent(c0, z),
+        forall|k: int| 0 <= k < sh.fields[j].len() ==> fkind_ok(#[trigger] sh.fields[j][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat),
+        forall|k: int| 0 <= k < sh.np ==> #[trigger] crate::quot_model::local_type(st.local_params@[k])
+            == crate::ti_spine::vsub(sh.pdoms[k], crate::kgen::frees(local_ids(st.local_params@).subrange(0, k))),
+        crate::quot_model::local_type(st.motives@[0]) == crate::ti_spine::vsub(sh.motive_ty(lm), crate::kgen::frees(local_ids(st.local_params@))),
+        forall|q: int| 0 <= q < sh.nmin() ==> #[trigger] crate::quot_model::local_type(st.minors@[0]@[q])
+            == crate::ti_spine::vsub(sh.minor_ty(q), crate::kgen::frees(local_ids(st.local_params@)
+                + seq![crate::expr_arena_bridge::expr_id(st.motives@[0])] + local_ids(st.minors@[0]@.subrange(0, q)))),
+        (local_ids(st.local_params@) + local_ids(st.motives@) + local_ids(st.minors@[0]@)).no_duplicates(),
+        forall|k: int| 0 <= k < sh.np ==> crate::expr_model::nlbv(#[trigger] sh.pdoms[k]) <= k,
+        crate::expr_model::nlbv(sh.motive_ty(lm)) <= sh.np,
+        forall|q: int| 0 <= q < sh.nmin() ==> crate::expr_model::nlbv(#[trigger] sh.minor_ty(q)) <= sh.np + 1 + q,
+        forall|k: int, z: nat| 0 <= k < sh.np ==> #[trigger] crate::expr_model::fv_absent(sh.pdoms[k], z),
+        forall|z: nat| #[trigger] crate::expr_model::fv_absent(sh.motive_ty(lm), z),
+        forall|q: int, z: nat| 0 <= q < sh.nmin() ==> #[trigger] crate::expr_model::fv_absent(sh.minor_ty(q), z),
+    ensures
+        exists|hid: u64| val == #[trigger] sh.rule_rhs(lm, hid, crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0), j),
+{
+    let w = choose|w: RuleWit<'t>| #[trigger] rule_wit(aids, st, c0, st.minors@[0]@[j], flat_ptrs(st.minors@), val, w);
+    let np = sh.np;
+    let nf = sh.fields[j].len();
+    let g = st.minors@[0]@;
+    let ps = st.local_params@;
+    let pids = local_ids(ps);
+    let mm = local_ids(st.motives@ + g);
+    let fids = local_ids(w.fs);
+    let rls = crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0);
+    assert(flat_ptrs(st.minors@) =~= g) by {
+        reveal_with_fuel(flat_ptrs, 2);
+        assert(st.minors@.drop_last() =~= Seq::<Vec<ExprPtr<'t>>>::empty());
+    }
+    // the fields
+    assert forall|a: int, b: int| 0 <= a < b < w.ps.len() implies #[trigger] w.ps[a] < #[trigger] w.ps[b] by {}
+    fields_canon(st, sh, j, c0, w.fs, w.ps);
+    let ftys = local_tys(w.fs);
+    // the hypotheses
+    let fx = crate::kgen::frees(pids) + crate::kgen::frees(mm);
+    assert(rule_pre(st) =~= fx) by {
+        assert(local_ids(st.motives@ + g) =~= local_ids(st.motives@) + local_ids(g));
+        assert forall|k: int| 0 <= k < rule_pre(st).len() implies rule_pre(st)[k] == fx[k] by {
+            let all = ps + st.motives@ + g;
+            if k < np {
+                assert(all[k] == ps[k]);
+            } else if k == np {
+                assert(all[k] == st.motives@[0]);
+            } else {
+                assert(all[k] == g[k - np - 1]);
+            }
+        }
+    }
+    let hvals = crate::expr_arena_bridge::ptr_models(w.hs);
+    assert forall|r: int| 0 <= r < hvals.len() implies #[trigger] hvals[r] == crate::rec_canon::binds(BinderKind::Lam,
+        crate::rec_canon::tdoms(ftys[sh.rposj(j)[r] as int], crate::rec_canon::tarity(ftys[sh.rposj(j)[r] as int])),
+        crate::kgen::ih_db(crate::beta_model::spine_app(ExprSpec::Const(w.hid, rls), fx),
+            ExprSpec::Free(fids[sh.rposj(j)[r] as int]), ftys[sh.rposj(j)[r] as int],
+            crate::rec_canon::tarity(ftys[sh.rposj(j)[r] as int]), np)) by {
+        assert(rule_ih_hid(st, w.hid, w.rs[r], w.hs[r]));
+        let i = choose|i: int| #[trigger] rule_ih_at(st, i, w.hid, w.rs[r], w.hs[r]);
+        let k = w.ps[r];
+        assert(w.fs[k] == w.rs[r]);
+    }
+    // distinct locals
+    let pre = pids + mm;
+    assert(pids + local_ids(st.motives@) + local_ids(g) =~= pre) by {
+        assert(local_ids(st.motives@ + g) =~= local_ids(st.motives@) + local_ids(g));
+    }
+    assert forall|k: int| 0 <= k < pre.len() implies crate::expr_arena_bridge::unique_serial(aids, #[trigger] pre[k]) is Some
+        && (crate::expr_arena_bridge::unique_serial(aids, pre[k])->Some_0 as nat) < w.lo by {
+        assert(crate::kgen::fv_below(aids, rule_pre(st)[k], w.lo));
+        assert(rule_pre(st)[k] == ExprSpec::Free(pre[k]));
+        assert(!crate::expr_model::fv_absent(rule_pre(st)[k], pre[k]));
+    }
+    ids_windows(aids, pre, w.fs, Seq::<ExprPtr<'t>>::empty(), w.lo, w.hi, w.hi);
+    assert(local_ids(Seq::<ExprPtr<'t>>::empty()) =~= Seq::<nat>::empty());
+    assert(pre + fids + local_ids(Seq::<ExprPtr<'t>>::empty()) =~= pids + mm + fids);
+    // the head locals' types
+    let mntys = local_tys(st.motives@ + g);
+    assert(st.motives@ =~= seq![st.motives@[0]]);
+    assert forall|q: int| 0 <= q < sh.nmin() implies #[trigger] mntys[1 + q]
+        == crate::ti_spine::vsub(sh.minor_ty(q), crate::kgen::frees(pids) + crate::kgen::frees(mm.subrange(0, 1 + q))) by {
+        assert(mntys[1 + q] == crate::quot_model::local_type(g[q]));
+        assert(mm.subrange(0, 1 + q) =~= seq![crate::expr_arena_bridge::expr_id(st.motives@[0])] + local_ids(g.subrange(0, q)));
+        assert(crate::kgen::frees(pids + seq![crate::expr_arena_bridge::expr_id(st.motives@[0])] + local_ids(g.subrange(0, q)))
+            =~= crate::kgen::frees(pids) + crate::kgen::frees(mm.subrange(0, 1 + q)));
+    }
+    assert forall|k: int| 0 <= k < fids.len() implies #[trigger] ftys[k] == crate::ti_spine::vsub(sh.fields[j][k],
+        crate::kgen::frees(pids) + crate::kgen::frees(fids.subrange(0, k))) by {}
+    assert(crate::expr_model::nlbv(c0) == 0);
+    crate::kgen::binds_nlbv_inv(sh.pdoms + sh.fields[j], crate::rec_canon::ind_app(sh.ind, sh.us(),
+        crate::rec_canon::vars(nf, np) + sh.tss[j]), 0);
+    assert forall|k: int| 0 <= k < nf implies crate::expr_model::nlbv(#[trigger] sh.fields[j][k]) <= np + k by {
+        assert((sh.pdoms + sh.fields[j])[np + k] == sh.fields[j][k]);
+    }
+    assert forall|k: int, z: nat| 0 <= k < nf implies #[trigger] crate::expr_model::fv_absent(sh.fields[j][k], z) by {
+        crate::kgen::binds_fv_absent(sh.pdoms + sh.fields[j], crate::rec_canon::ind_app(sh.ind, sh.us(),
+            crate::rec_canon::vars(nf, np) + sh.tss[j]), z);
+        assert((sh.pdoms + sh.fields[j])[np + k] == sh.fields[j][k]);
+    }
+    // the value
+    let all = ps + st.motives@ + g + w.fs;
+    assert(local_ids(all) =~= pids + mm + fids);
+    assert(local_tys(all) =~= local_tys(ps) + mntys + ftys);
+    assert(crate::expr_arena_bridge::ptr_models(w.fs) =~= crate::kgen::frees(fids));
+    assert(mm[1 + j] == crate::expr_arena_bridge::expr_id(g[j]));
+    crate::kminor::rule_canon(sh, lm, w.hid, rls, j, pids, mm, fids, local_tys(ps), mntys, ftys, hvals);
+}
+
+/// THE GENERATED RULES OF A CANONICAL SINGLE INDUCTIVE ARE CANONICAL: as
+/// `rec_declar_canon`, for the rules, each with the recursor its
+/// hypotheses call.
+#[verifier::spinoff_prover]
+pub(crate) proof fn rules_declar_canon<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, sh: crate::rec_canon::IndShape,
+    lm: crate::level_model::LevelSpec, d: Declar<'t>, c: TeleCert,
+    p0: nat, p1: nat, i0: nat, i1: nat, m0: nat, m1: nat, o0: nat, o1: nat, n0: nat, n1: nat)
+    requires
+        gen_shape_ok(st, sh, lm),
+        rec_ty_gen(st, 0, d),
+        st.motives@.len() == 1,
+        st.majors@.len() == 1,
+        st.minors@.len() == 1,
+        st.minors@[0]@.len() == st.all_inductives_incl_specialized@[0].ctors@.len(),
+        st.local_indices@.len() >= 1,
+        // the parameters
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+        forall|k: int| 0 <= k < st.local_params@.len() && (#[trigger] crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty),
+            local_ids(st.local_params@).subrange(0, k))) is Bind
+            ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.local_params@[k])), Box::new(
+                *crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty), local_ids(st.local_params@).subrange(0, k))->Bind_2))
+                == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty), local_ids(st.local_params@).subrange(0, k)),
+        // the walk over the inductive's type
+        c.cursors.len() == c.locals.len() + 1,
+        c.bts.len() == c.locals.len(),
+        c.bodies.len() == c.locals.len(),
+        c.cursors[0] == crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty),
+        forall|k: int| 0 <= k < c.locals.len() ==> #[trigger] c.cursors[k + 1]
+            == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0),
+        tele_lit(c),
+        c.locals == if c.locals.len() <= st.local_params@.len() { local_ids(st.local_params@.subrange(0, c.locals.len() as int)) }
+            else { local_ids(st.local_params@) + local_ids(st.local_indices@[0]@) },
+        c.locals.len() <= st.local_params@.len() ==> st.local_indices@[0]@.len() == 0,
+        forall|j: int| 0 <= j < st.local_indices@[0]@.len() ==> crate::quot_model::local_type(#[trigger] st.local_indices@[0]@[j])
+            == c.bts[st.local_params@.len() + j],
+        forall|j: int| 0 <= j < st.local_indices@[0]@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_indices@[0]@[j])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_indices@[0]@[j])),
+        // the major and the motive
+        crate::expr_arena_bridge::to_model(st.majors@[0]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.majors@[0])),
+        crate::quot_model::local_type(st.majors@[0]) == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st.ind_consts@[0]),
+            crate::expr_arena_bridge::ptr_models(st.local_params@) + crate::expr_arena_bridge::ptr_models(st.local_indices@[0]@)),
+        crate::expr_arena_bridge::to_model(st.motives@[0]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.motives@[0])),
+        crate::quot_model::local_type(st.motives@[0]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+            local_ids(st.local_indices@[0]@),
+            Seq::new(st.local_indices@[0]@.len(), |j: int| crate::quot_model::local_type(st.local_indices@[0]@[j])),
+            ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.majors@[0])), Box::new(ExprSpec::Sort(lm)))),
+        // the minors
+        forall|j: int| 0 <= j < st.minors@[0]@.len() ==> minor_some(aids, st,
+            crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty),
+            crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].ctors@[j].name),
+            #[trigger] st.minors@[0]@[j], st.minors@[0]@.subrange(0, j)),
+        // the creation windows
+        crate::kgen::serials_in(aids, st.local_params@, p0, p1),
+        crate::kgen::serials_in(aids, st.local_indices@[0]@, i0, i1),
+        crate::kgen::serials_in(aids, st.majors@, m0, m1),
+        crate::kgen::serials_in(aids, st.motives@, o0, o1),
+        crate::kgen::serials_in(aids, st.minors@[0]@, n0, n1),
+        p0 <= p1, p1 <= i0, i0 <= i1, i1 <= m0, m0 <= m1, m1 <= o0, o0 <= o1, o1 <= n0, n0 <= n1,
+        rec_rules_gen(aids, st, 0, d),
+        st.rec_uparams is Some,
+        forall|k: int| 0 <= k < st.minors@[0]@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.minors@[0]@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.minors@[0]@[k])),
+        forall|j: int, z: nat| 0 <= j < st.all_inductives_incl_specialized@[0].ctors@.len() ==>
+            #[trigger] crate::expr_model::fv_absent(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty), z),
+    ensures
+        d is Recursor,
+        drules(d).len() == sh.nmin(),
+        forall|j: int| 0 <= j < sh.nmin() ==> rule_canon_at(sh, lm, crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0), j,
+            crate::expr_arena_bridge::to_model((#[trigger] drules(d)[j]).val)),
+{
+    let h = st.all_inductives_incl_specialized@[0];
+    let ti = crate::expr_arena_bridge::to_model(h.ty);
+    let s0 = crate::rec_canon::tbody(ti, sh.np + sh.ni)->Sort_0;
+    let ps = st.local_params@;
+    let ix = st.local_indices@[0]@;
+    let g = st.minors@[0]@;
+    let pids = local_ids(ps);
+    let iids = local_ids(ix);
+    head_types(c, ti, sh, s0, ps, ix);
+    assert(crate::expr_arena_bridge::ptr_models(ps) =~= crate::kgen::frees(pids));
+    assert(crate::expr_arena_bridge::ptr_models(ix) =~= crate::kgen::frees(iids));
+    // the motive
+    rd_ids(aids, st, p0, p1, i0, i1, m0, m1, o0, o1, n0, n1);
+    seg_ids(aids, ps, p0, p1);
+    seg_ids(aids, ix, i0, i1);
+    seg_ids(aids, st.motives@, o0, o1);
+    seg_ids(aids, g, n0, n1);
+    app_ids(aids, pids, iids, p0, p1, i0, i1);
+    app_ids(aids, local_ids(st.motives@), local_ids(g), o0, o1, n0, n1);
+    app_ids(aids, pids, local_ids(st.motives@) + local_ids(g), p0, p1, o0, n1);
+    assert(pids + (local_ids(st.motives@) + local_ids(g)) =~= pids + local_ids(st.motives@) + local_ids(g));
+    crate::kminor::motive_canon(sh, lm, pids, iids, local_tys(ix), crate::quot_model::local_type(st.majors@[0]));
+    assert(Seq::new(ix.len(), |j: int| crate::quot_model::local_type(ix[j])) =~= local_tys(ix));
+    // the minors
+    assert forall|q: int| 0 <= q < sh.nmin() implies #[trigger] crate::quot_model::local_type(g[q])
+        == crate::ti_spine::vsub(sh.minor_ty(q), crate::kgen::frees(pids
+            + seq![crate::expr_arena_bridge::expr_id(st.motives@[0])] + local_ids(g.subrange(0, q)))) by {
+        rd_minor(aids, st, sh, lm, q, p0, p1, o0, o1, n0, n1);
+    }
+    // each rule
+    let rr = drules(d);
+    assert forall|j: int| 0 <= j < sh.nmin() implies rule_canon_at(sh, lm, crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0), j,
+        crate::expr_arena_bridge::to_model((#[trigger] rr[j]).val)) by {
+        assert(sh.ctors[j] == crate::level_arena_bridge::name_id(h.ctors@[j].name));
+        assert(flat_ptrs(st.minors@.subrange(0, 0)).len() == 0) by {
+            assert(st.minors@.subrange(0, 0) =~= Seq::<Vec<ExprPtr<'t>>>::empty());
+        }
+        assert(flat_ptrs(st.minors@) =~= g) by {
+            reveal_with_fuel(flat_ptrs, 2);
+            assert(st.minors@.drop_last() =~= Seq::<Vec<ExprPtr<'t>>>::empty());
+        }
+        rule_bridge(aids, st, sh, lm, j, crate::expr_arena_bridge::to_model(h.ctors@[j].ty), crate::expr_arena_bridge::to_model(rr[j].val));
+    }
+}
+
+/// A recursor declaration's rules (none for any other declaration).
+pub(crate) open spec fn drules<'t>(d: Declar<'t>) -> Seq<RecRule<'t>> {
+    match d {
+        Declar::Recursor(r) => r.rec_rules@,
+        _ => Seq::empty(),
+    }
+}
+
+/// `val` is the canonical `j`-th rule, calling some recursor.
+pub(crate) open spec fn rule_canon_at(sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec,
+    rls: Seq<crate::level_model::LevelSpec>, j: int, val: ExprSpec) -> bool {
+    exists|hid: u64| val == #[trigger] sh.rule_rhs(lm, hid, rls, j)
 }
 
 /// One minor premise built: its witness.
