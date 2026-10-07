@@ -1339,6 +1339,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Some(r) => whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
+            to_model_expr(e) is Bind ==> result is None,
     {
         if !self.ctx.export_file.config.nat_extension_on() {
             return None
@@ -1350,6 +1351,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost am = crate::expr_arena_bridge::ptr_models(args@);
         proof {
             spine_scope(*self, e, f, args@);
+            if to_model_expr(e) is Bind {
+                spine_bind(to_model_expr(f), am);
+            }
         }
         // VERUS-REWRITE(slice-pattern): the original matches on
         // `args.as_slice()` with `[arg]` and `[arg1, arg2]`. Slice patterns are
@@ -3339,6 +3343,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // THE CORE CONTRACT: on a closed input, the weak head normal form
             // is definitionally equal to the input, and closed.
             whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(result)),
+            keeps_bind(to_model_expr(e), to_model_expr(result)),
     {
         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
             proof { whnf_claim_refl(*old(self).env, to_model_expr(e)); }
@@ -3369,6 +3374,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 // has done to a closed `e` so far preserves definitional
                 // equality and closedness
                 whnf_claim(*old(self).env, to_model_expr(e), to_model_expr(cursor)),
+                keeps_bind(to_model_expr(e), to_model_expr(cursor)),
                 in_scope(*self, cursor),
         {
             let whnfd = self.whnf_no_unfolding(cursor);
@@ -3427,6 +3433,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
+            keeps_bind(to_model_expr(e), to_model_expr(result)),
     {
         self.whnf_no_unfolding_aux(e, true)
     }
@@ -3447,6 +3454,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
+            keeps_bind(to_model_expr(e), to_model_expr(result)),
     {
         self.whnf_no_unfolding_aux(e, false)
     }
@@ -3470,6 +3478,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // arms re-assemble the spine unchanged, so they pay it by
             // reflexivity; the four that actually reduce owe a real step.
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(result)),
+            keeps_bind(to_model_expr(e), to_model_expr(result)),
     {
         // The verified reader rather than a raw `get`: it already does the
         // `obeys_key_model` / `builds_valid_hashers` pair that gives the
@@ -3484,6 +3493,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost am = crate::expr_arena_bridge::ptr_models(args@);
         proof {
             spine_scope(*self, e, e_fun, args@);
+            if em0 is Bind {
+                spine_bind(to_model_expr(e_fun), am);
+            }
         }
         let (should_cache, eprime) = match self.ctx.read_expr(e_fun) {
             Proj { idx, structure, .. } => if let Some(pr) = self.reduce_proj(
@@ -10374,6 +10386,23 @@ pub open spec fn tc_owns<'x, 't, 'p, A>(tc: TypeChecker<'x, 't, 'p>, p: crate::u
     crate::util_model::owns(*tc.ctx, p)
 }
 
+/// A binder's spine is itself.
+pub proof fn spine_bind(h: ExprSpec, xs: Seq<ExprSpec>)
+    requires
+        crate::beta_model::spine_app(h, xs) is Bind,
+    ensures
+        xs.len() == 0,
+        crate::beta_model::spine_app(h, xs) == h,
+{
+    reveal_with_fuel(crate::beta_model::spine_app, 1);
+}
+
+/// `whnf` returns a binder unchanged (it is already a weak head normal
+/// form): what makes the inductive checker's telescopes syntactic.
+pub open spec fn keeps_bind(e: ExprSpec, r: ExprSpec) -> bool {
+    e is Bind ==> r == e
+}
+
 pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
     &&& crate::env_model::env_matches(*tc.env, *tc.ctx)
     &&& crate::util_model::ctx_ok(*tc.ctx)
@@ -10398,13 +10427,15 @@ pub open spec fn tc_wf<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>) -> bool {
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.whnf_cache@[e]),
-        ) && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.whnf_cache@[e])
+        ) && keeps_bind(to_model_expr(e), to_model_expr(tc.tc_cache.whnf_cache@[e]))
+            && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.whnf_cache@[e])
     &&& forall|e: crate::util::ExprPtr<'t>| #[trigger]
         tc.tc_cache.whnf_no_unfolding_cache@.contains_key(e) ==> whnf_claim(
             *tc.env,
             to_model_expr(e),
             to_model_expr(tc.tc_cache.whnf_no_unfolding_cache@[e]),
-        ) && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.whnf_no_unfolding_cache@[e])
+        ) && keeps_bind(to_model_expr(e), to_model_expr(tc.tc_cache.whnf_no_unfolding_cache@[e]))
+            && tc_owns(tc, e) && tc_owns(tc, tc.tc_cache.whnf_no_unfolding_cache@[e])
     &&& forall|p: crate::util::SortedPair<'t>| #[trigger]
         tc.tc_cache.eq_cache@.contains(p) ==> def_eq_claim(*tc.env, to_model_expr(p.0), to_model_expr(p.1))
             && tc_owns(tc, p.0) && tc_owns(tc, p.1)
@@ -10889,6 +10920,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
+            keeps_bind(to_model_expr(e), to_model_expr(r)),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
@@ -10921,6 +10953,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, r),
             tc_wf(*old(self)),
             whnf_claim(*(*old(self)).env, to_model_expr(e), to_model_expr(r)),
+            keeps_bind(to_model_expr(e), to_model_expr(r)),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             tc_wf(*final(self)),
@@ -11047,7 +11080,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             result matches Some(r) ==> tc_owns(*self, r),
             match result {
-                Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)),
+                Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)) && keeps_bind(to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
     {
@@ -11072,7 +11105,7 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             result matches Some(r) ==> tc_owns(*self, r),
             match result {
-                Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)),
+                Some(r) => whnf_claim(*self.env, to_model_expr(e), to_model_expr(r)) && keeps_bind(to_model_expr(e), to_model_expr(r)),
                 None => true,
             },
     {
@@ -11743,9 +11776,13 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            to_model_expr(e) is Bind ==> result is None,
     {
         let (fun, args) = self.ctx.unfold_apps(e);
         proof {
+            if to_model_expr(e) is Bind {
+                spine_bind(to_model_expr(fun), Seq::new(args@.len(), |i: int| to_model_expr(args@[i])));
+            }
             crate::beta_model::spine_app_nlbv_decompose(
                 to_model_expr(fun),
                 Seq::new(args@.len(), |i: int| to_model_expr(args@[i])),
