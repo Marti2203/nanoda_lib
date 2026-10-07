@@ -2307,6 +2307,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             proof {
                 level_free_pres(*self.ctx, rec_arg, u_i_ty);
             }
+            // VERUS-REWRITE(tested-env): the recursive argument's inferred type
+            // is tested to be its declared one (`model_eq`; a rejection
+            // otherwise), so the induction hypothesis is built from the
+            // constructor's field. Never fails on a constructor Lean exports.
+            let rec_arg_ty = match crate::expr_arena_bridge::expr_as_local(self.ctx, rec_arg) {
+                Some((_, t)) => t,
+                None => panic!("a recursive argument is not a local"),
+            };
+            if !crate::expr_arena_bridge::model_eq(self.ctx, u_i_ty, rec_arg_ty) {
+                panic!("a recursive argument's type is not its declared one");
+            }
             let (arg_ty, xs) = self.handle_rec_args_aux(u_i_ty);
             let (ind_ty_idx, applied_indices) = self.get_i_indices(st, arg_ty);
             let motive = st.motives.get(ind_ty_idx).copied().expect("Failed to get specified motive");
@@ -5474,6 +5485,37 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         IndTyHeader { name: t.info.name, ty: t.info.ty, ctors }
     }
 
+    /// `whnf` on a type the checker expects in weak head normal form already.
+    ///
+    /// VERUS-REWRITE(tested-env): the reduct is tested to denote the input
+    /// (`model_eq`; a rejection otherwise), so what the checker builds from it
+    /// is built from the declared type itself. Never fails on a type Lean
+    /// exports.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn whnf_same(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            crate::tc::tc_wf(*old(self)),
+            crate::tc::in_scope(*old(self), e),
+        ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).declar_info == (*old(self)).declar_info,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::whnf_claim(*old(self).env, crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::to_model(result)),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::to_model(e),
+    {
+        let r = self.whnf(e);
+        if !crate::expr_arena_bridge::model_eq(self.ctx, r, e) {
+            panic!("a type the inductive checker reads is not in weak head normal form");
+        }
+        r
+    }
+
     /// `whnf` on an inductive's telescope, which must already be literal.
     ///
     /// VERUS-REWRITE(tested-env): the reduct is tested to have found its
@@ -5629,8 +5671,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             level_free(*(*final(self)).ctx, result.0),
             forall|i: int| 0 <= i < result.1@.len() ==> level_free_local(*(*final(self)).ctx, #[trigger] result.1@[i]),
+            crate::expr_arena_bridge::to_model(result.0) == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(rec_arg_cursor), local_ids(result.1@)),
+            forall|k: int| 0 <= k < result.1@.len() ==> opened_at(crate::expr_arena_bridge::to_model(rec_arg_cursor), local_ids(result.1@), k,
+                crate::quot_model::local_type(#[trigger] result.1@[k])),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.1@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
     {
+        let ghost c0 = crate::expr_arena_bridge::to_model(rec_arg_cursor);
+        let ghost cnt_lo = crate::util::unique_count(*self.ctx) as nat;
+        let ghost aids = crate::util_model::arena_ids(*self.ctx);
         let mut xs = Vec::new();
+        proof {
+            assert(local_ids(xs@) =~= Seq::<nat>::empty());
+        }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(rec_arg_cursor)
             invariant
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
@@ -5641,7 +5694,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.live == old(self).live,
                 level_free(*self.ctx, rec_arg_cursor),
                 forall|i: int| 0 <= i < xs@.len() ==> level_free_local(*self.ctx, #[trigger] xs@[i]),
+                crate::expr_arena_bridge::to_model(rec_arg_cursor) == crate::kgen::lit_open(c0, local_ids(xs@)),
+                forall|k: int| 0 <= k < xs@.len() ==> opened_at(c0, local_ids(xs@), k, crate::quot_model::local_type(#[trigger] xs@[k])),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, xs@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
         {
+            let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
+            let ghost ids0 = local_ids(xs@);
+            proof {
+                assert(crate::expr_arena_bridge::to_model(rec_arg_cursor) == ExprSpec::Bind(BinderKind::Pi,
+                    Box::new(crate::expr_arena_bridge::to_model(binder_type)), Box::new(crate::expr_arena_bridge::to_model(body))));
+            }
             let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
             proof {
                 assert(level_free(*self.ctx, binder_type));
@@ -5657,11 +5721,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 level_free_in_scope(*self, rec_arg_cursor);
             }
             let ghost pre = rec_arg_cursor;
-            rec_arg_cursor = self.whnf(rec_arg_cursor);
+            rec_arg_cursor = self.whnf_same(rec_arg_cursor);
             proof {
                 level_free_pres(*self.ctx, pre, rec_arg_cursor);
             }
-            xs.push(local)
+            let ghost xs0 = xs@;
+            xs.push(local);
+            proof {
+                let lid = crate::expr_arena_bridge::expr_id(local);
+                crate::kgen::serials_push(aids, xs0, cnt_lo, cnt0, local, crate::util::unique_count(*self.ctx) as nat);
+                assert(local_ids(xs@) =~= ids0.push(lid));
+                crate::kgen::lit_open_push(c0, ids0, lid);
+                assert forall|k: int| 0 <= k < xs@.len() implies opened_at(c0, local_ids(xs@), k, crate::quot_model::local_type(#[trigger] xs@[k])) by {
+                    assert(local_ids(xs@).subrange(0, k) =~= ids0.subrange(0, k));
+                    if k < xs0.len() {
+                        assert(xs@[k] == xs0[k]);
+                    } else {
+                        assert(ids0.subrange(0, k) =~= ids0);
+                    }
+                }
+            }
         }
         (rec_arg_cursor, xs)
     }
