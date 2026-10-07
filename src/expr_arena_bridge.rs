@@ -1677,6 +1677,56 @@ pub fn verified_size<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, e: ExprPtr<'t>, fuel: u32)
     None
 }
 
+/// STRUCTURAL EQUALITY of the denoted terms, ignoring binder names and
+/// styles: a sufficient test, pointer equality at the leaves (a constant's
+/// name and levels, a sort's level, a local, a literal).
+#[verifier::exec_allows_no_decreases_clause]
+pub fn model_eq<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, a: ExprPtr<'t>, b: ExprPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, a),
+        crate::util_model::owns(*ctx, b),
+    ensures
+        result ==> to_model(a) == to_model(b),
+{
+    if a == b {
+        return true;
+    }
+    let ea = ctx.read_expr(a);
+    let eb = ctx.read_expr(b);
+    if let (Some((fa, xa)), Some((fb, xb))) = (expr_as_app(&ea), expr_as_app(&eb)) {
+        return model_eq(ctx, fa, fb) && model_eq(ctx, xa, xb);
+    }
+    if let (Some((_, _, ta, ba)), Some((_, _, tb, bb))) = (expr_as_pi(&ea), expr_as_pi(&eb)) {
+        return model_eq(ctx, ta, tb) && model_eq(ctx, ba, bb);
+    }
+    if let (Some((_, _, ta, ba)), Some((_, _, tb, bb))) = (expr_as_lambda(&ea), expr_as_lambda(&eb)) {
+        return model_eq(ctx, ta, tb) && model_eq(ctx, ba, bb);
+    }
+    if let (Some((_, ta, va, ba, _)), Some((_, tb, vb, bb, _))) = (expr_as_let(&ea), expr_as_let(&eb)) {
+        return model_eq(ctx, ta, tb) && model_eq(ctx, va, vb) && model_eq(ctx, ba, bb);
+    }
+    if let (Some((_, ia, sa)), Some((_, ib, sb))) = (expr_as_proj(&ea), expr_as_proj(&eb)) {
+        return ia == ib && model_eq(ctx, sa, sb);
+    }
+    if let (Some(ia), Some(ib)) = (expr_as_var(&ea), expr_as_var(&eb)) {
+        return ia == ib;
+    }
+    if let (Some(la), Some(lb)) = (expr_as_sort(&ea), expr_as_sort(&eb)) {
+        return la == lb;
+    }
+    if let (Some((na, lsa)), Some((nb, lsb))) = (ctx.try_const_info(a), ctx.try_const_info(b)) {
+        if na == nb && lsa == lsb {
+            proof {
+                is_const_shape_model(a);
+                is_const_shape_model(b);
+            }
+            return true;
+        }
+        return false;
+    }
+    false
+}
+
 /// Freshness walker for the binder fresh-instance rule: `Some(true)`
 /// certifies `fv_absent(to_model(e), expr_id(local))` by POINTER
 /// comparison at every `Local` node (`expr_id` is injective on pointers,

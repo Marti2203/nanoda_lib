@@ -391,4 +391,30 @@ pub proof fn serials_widen<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t
 {
 }
 
+/// A LITERAL WALK reads the opened telescope: a chain of cursors, each the
+/// Pi it was read as, each next one its body opened with the step's local,
+/// is the telescope opened with the locals so far.
+pub proof fn chain_lit_open(t: ExprSpec, cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, bodies: Seq<ExprSpec>, ids: Seq<nat>, k: int)
+    requires
+        cs.len() == ids.len() + 1,
+        bts.len() == ids.len(),
+        bodies.len() == ids.len(),
+        cs[0] == t,
+        forall|j: int| 0 <= j < ids.len() ==> #[trigger] cs[j] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[j]), Box::new(bodies[j]))
+            && cs[j + 1] == subst_full(bodies[j], seq![ExprSpec::Free(ids[j])], 0),
+        0 <= k <= ids.len(),
+    ensures
+        cs[k] == lit_open(t, ids.subrange(0, k)),
+    decreases k,
+{
+    if k == 0 {
+        assert(ids.subrange(0, 0) =~= Seq::<nat>::empty());
+    } else {
+        chain_lit_open(t, cs, bts, bodies, ids, k - 1);
+        lit_open_push(t, ids.subrange(0, k - 1), ids[k - 1]);
+        assert(ids.subrange(0, k - 1).push(ids[k - 1]) =~= ids.subrange(0, k));
+        assert(cs[k - 1] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k - 1]), Box::new(bodies[k - 1])));
+    }
+}
+
 } // verus!

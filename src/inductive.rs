@@ -355,6 +355,9 @@ pub proof fn local_type_level_free<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>)
 /// Type `k` of the block was walked, ending in a sort equivalent to the block's.
 pub(crate) open spec fn walk_k_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, k: int) -> bool {
     &&& ind_walk_ok(env, st.tele@[k], st.all_inductives_incl_specialized@[k].ty, st.local_params@, st.local_indices@[k]@)
+    &&& tele_lit(st.tele@[k])
+    &&& forall|j: int| 0 <= j < st.local_indices@[k]@.len() ==> crate::quot_model::local_type(#[trigger] st.local_indices@[k]@[j])
+        == st.tele@[k].bts[st.local_params@.len() + j]
     &&& st.block_codom is Some
     &&& forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(st.tele@[k].sort, rho)
         == crate::level_model::interp(crate::level_arena_bridge::to_model(st.block_codom->0), rho)
@@ -6747,6 +6750,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 final(st).local_params@, final(st).local_indices@.last()@),
             tele_syn(final(st).tele@.last()),
             tele_lit(final(st).tele@.last()),
+            forall|j: int| 0 <= j < final(st).local_indices@.last()@.len() ==> crate::quot_model::local_type(#[trigger] final(st).local_indices@.last()@[j])
+                == final(st).tele@.last().bts[final(st).local_params@.len() + j],
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), final(st).local_indices@.last()@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             final(st).block_codom matches Some(l) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
                 == crate::level_model::interp(crate::level_arena_bridge::to_model(l), rho),
             final(st).block_codom is Some,
@@ -6782,6 +6789,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             assert(local_ids(st.local_params@.subrange(0, 0)) =~= Seq::<nat>::empty());
             assert(syn_upto(cs, bts, bodies, 0)) by { reveal(syn_upto); }
+            assert(crate::kgen::serials_in(crate::util_model::arena_ids(*old(self).ctx), Seq::<ExprPtr<'t>>::empty(),
+                crate::util::unique_count(*old(self).ctx) as nat, crate::util::unique_count(*self.ctx) as nat));
         }
         while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ind_ty_cursor)
             invariant
@@ -6807,6 +6816,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_arena_bridge::to_model(ind_ty_cursor) is Bind && crate::expr_arena_bridge::to_model(ind_ty_cursor)->Bind_0 == BinderKind::Pi
                     ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
                 crate::expr_arena_bridge::to_model(ind_ty_cursor) is Sort ==> cs.last() is Sort,
+                forall|j: int| 0 <= j < indices_locals@.len() ==> crate::quot_model::local_type(#[trigger] indices_locals@[j])
+                    == bts[st.local_params@.len() + j],
+                crate::util_model::arena_ids(*self.ctx) == crate::util_model::arena_ids(*old(self).ctx),
+                crate::kgen::serials_in(crate::util_model::arena_ids(*old(self).ctx), indices_locals@,
+                    crate::util::unique_count(*old(self).ctx) as nat, crate::util::unique_count(*self.ctx) as nat),
                 syn_upto(cs, bts, bodies, locs.len() as int),
                 i == locs.len(),
                 locs == if i <= st.local_params@.len() {
@@ -6870,6 +6884,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }
                 }
             } else {
+                let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
                 let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
                 proof {
                     crate::quot_model::mk_unique_deep(*self.ctx, local_, binder_type);
@@ -6901,6 +6916,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ghost old_idx = indices_locals@;
                 indices_locals.push(local_);
                 proof {
+                    crate::kgen::serials_push(crate::util_model::arena_ids(*old(self).ctx), old_idx,
+                        crate::util::unique_count(*old(self).ctx) as nat, cnt0, local_, crate::util::unique_count(*self.ctx) as nat);
+                    assert forall|j: int| 0 <= j < indices_locals@.len() implies crate::quot_model::local_type(#[trigger] indices_locals@[j])
+                        == bts[st.local_params@.len() + j] by {
+                        if j < old_idx.len() { assert(indices_locals@[j] == old_idx[j]); }
+                    }
                     assert(local_ids(indices_locals@) =~= local_ids(old_idx).push(crate::expr_arena_bridge::expr_id(local_)));
                     if i == st.local_params@.len() {
                         assert(st.local_params@.subrange(0, i as int) =~= st.local_params@);
@@ -6986,6 +7007,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 final(st).local_params@, final(st).local_indices@.last()@),
             tele_syn(final(st).tele@.last()),
             tele_lit(final(st).tele@.last()),
+            forall|j: int| 0 <= j < final(st).local_indices@.last()@.len() ==> crate::quot_model::local_type(#[trigger] final(st).local_indices@.last()@[j])
+                == final(st).tele@.last().bts[final(st).local_params@.len() + j],
             final(st).block_codom == old(st).block_codom,
             final(st).is_nonzero == old(st).is_nonzero,
             final(st).is_zero == old(st).is_zero,
@@ -7037,6 +7060,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_arena_bridge::to_model(ind_ty_cursor) is Bind && crate::expr_arena_bridge::to_model(ind_ty_cursor)->Bind_0 == BinderKind::Pi
                     ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
                 crate::expr_arena_bridge::to_model(ind_ty_cursor) is Sort ==> cs.last() is Sort,
+                forall|j: int| 0 <= j < indices_locals@.len() ==> crate::quot_model::local_type(#[trigger] indices_locals@[j])
+                    == bts[st.local_params@.len() + j],
                 syn_upto(cs, bts, bodies, locs.len() as int),
                 i == locs.len(),
                 locs == if i <= st.local_params@.len() {
@@ -7119,6 +7144,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let ghost old_idx = indices_locals@;
                 indices_locals.push(local_);
                 proof {
+                    assert forall|j: int| 0 <= j < indices_locals@.len() implies crate::quot_model::local_type(#[trigger] indices_locals@[j])
+                        == bts[st.local_params@.len() + j] by {
+                        if j < old_idx.len() { assert(indices_locals@[j] == old_idx[j]); }
+                    }
                     assert(local_ids(indices_locals@) =~= local_ids(old_idx).push(crate::expr_arena_bridge::expr_id(local_)));
                     if i == st.local_params@.len() {
                         assert(st.local_params@.subrange(0, i as int) =~= st.local_params@);
