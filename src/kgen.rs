@@ -206,4 +206,179 @@ pub proof fn vsubk_bind(k: nat, bk: BinderKind, t: ExprSpec, r: ExprSpec, xs: Se
     }
 }
 
+/// A literal telescope opened with locals, binder by binder (`Closed` once
+/// it is not a Pi): the kernel's walks over a declared type.
+pub open spec fn lit_open(t: ExprSpec, ids: Seq<nat>) -> ExprSpec
+    decreases ids.len(),
+{
+    if ids.len() == 0 {
+        t
+    } else {
+        match t {
+            ExprSpec::Bind(BinderKind::Pi, _, b) => lit_open(subst_full(*b, seq![ExprSpec::Free(ids[0])], 0), ids.drop_first()),
+            _ => ExprSpec::Closed,
+        }
+    }
+}
+
+/// A telescope's loose variables: each domain's above the binders before
+/// it, the body's above all of them.
+pub proof fn binds_nlbv(ds: Seq<ExprSpec>, b: ExprSpec, m: nat)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> nlbv(#[trigger] ds[i]) <= m + i,
+        nlbv(b) <= m + ds.len(),
+    ensures
+        nlbv(crate::rec_canon::binds(BinderKind::Pi, ds, b)) <= m,
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        let d2 = ds.drop_first();
+        assert forall|i: int| 0 <= i < d2.len() implies nlbv(#[trigger] d2[i]) <= (m + 1) + i by {
+            assert(d2[i] == ds[i + 1]);
+        }
+        binds_nlbv(d2, b, m + 1);
+    }
+}
+
+/// OPENING A DE BRUIJN TELESCOPE: opened with `k` locals, the telescope is
+/// its rest with the locals for its first variables.
+pub proof fn lit_open_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<nat>, k: nat)
+    requires
+        k <= ds.len(),
+        k <= xs.len(),
+        forall|i: int| 0 <= i < ds.len() ==> nlbv(#[trigger] ds[i]) <= i,
+        nlbv(b) <= ds.len(),
+    ensures
+        lit_open(crate::rec_canon::binds(BinderKind::Pi, ds, b), xs.subrange(0, k as int))
+            == vsub(crate::rec_canon::binds(BinderKind::Pi, ds.subrange(k as int, ds.len() as int), b), frees(xs.subrange(0, k as int))),
+    decreases k,
+{
+    let n = ds.len();
+    if k == 0 {
+        assert(ds.subrange(0, n as int) =~= ds);
+        assert(frees(xs.subrange(0, 0)) =~= Seq::<ExprSpec>::empty());
+        return;
+    }
+    let x0 = xs[0];
+    let fx = ExprSpec::Free(x0);
+    let d1 = ds.drop_first();
+    let n1 = d1.len();
+    assert forall|i: int| 0 <= i < n1 implies nlbv(#[trigger] d1[i]) <= 1 + i by {
+        assert(d1[i] == ds[i + 1]);
+    }
+    binds_nlbv(d1, b, 1);
+    let inner = crate::rec_canon::binds(BinderKind::Pi, d1, b);
+    crate::kclaims::sf_inst(inner, fx);
+    crate::ti_spine::inst_binds(0, fx, d1, b);
+    let d2 = Seq::new(n1, |i: int| inst(0 + i as nat, fx, d1[i]));
+    let b2 = inst(0 + n1, fx, b);
+    assert forall|i: int| 0 <= i < n1 implies nlbv(#[trigger] d2[i]) <= i by {
+        assert(d1[i] == ds[i + 1]);
+        crate::ti_scope::inst_scope(i as nat, fx, d1[i], i as nat);
+    }
+    crate::ti_scope::inst_scope(n1, fx, b, n1);
+    let xs1 = xs.drop_first();
+    lit_open_binds(d2, b2, xs1, (k - 1) as nat);
+    // the left side: one binder opened
+    let xk = xs.subrange(0, k as int);
+    assert(crate::rec_canon::binds(BinderKind::Pi, ds, b) == ExprSpec::Bind(BinderKind::Pi, Box::new(ds[0]), Box::new(inner)));
+    assert(xk[0] == x0);
+    assert(xk.drop_first() =~= xs1.subrange(0, (k - 1) as int));
+    assert(lit_open(crate::rec_canon::binds(BinderKind::Pi, ds, b), xk)
+        == lit_open(crate::rec_canon::binds(BinderKind::Pi, d2, b2), xs1.subrange(0, (k - 1) as int)));
+    // the right side: the first local instantiated
+    let rest = ds.subrange(k as int, n as int);
+    let fk = frees(xk);
+    assert(fk[0] == fx);
+    assert(fk.drop_first() =~= frees(xs1.subrange(0, (k - 1) as int)));
+    let e = crate::rec_canon::binds(BinderKind::Pi, rest, b);
+    assert(vsub(e, fk) == vsub(inst((fk.len() - 1) as nat, fk[0], e), fk.drop_first()));
+    crate::ti_spine::inst_binds((k - 1) as nat, fx, rest, b);
+    assert(Seq::new(rest.len(), |i: int| inst((k - 1) as nat + i as nat, fx, rest[i])) =~= d2.subrange((k - 1) as int, n1 as int)) by {
+        assert forall|i: int| 0 <= i < rest.len() implies #[trigger] d2.subrange((k - 1) as int, n1 as int)[i]
+            == inst((k - 1) as nat + i as nat, fx, rest[i]) by {
+            assert(rest[i] == ds[k + i]);
+            assert(d1[k - 1 + i] == ds[k + i]);
+        }
+    }
+    assert(((k - 1) as nat + rest.len()) as nat == n1);
+}
+
+/// Opening one more binder.
+pub proof fn lit_open_push(t: ExprSpec, ids: Seq<nat>, x: nat)
+    ensures
+        lit_open(t, ids.push(x)) == match lit_open(t, ids) {
+            ExprSpec::Bind(BinderKind::Pi, _, b) => subst_full(*b, seq![ExprSpec::Free(x)], 0),
+            _ => ExprSpec::Closed,
+        },
+    decreases ids.len(),
+{
+    if ids.len() == 0 {
+        assert(ids.push(x).drop_first() =~= Seq::<nat>::empty());
+        reveal_with_fuel(lit_open, 2);
+    } else {
+        assert(ids.push(x).drop_first() =~= ids.drop_first().push(x));
+        assert(ids.push(x)[0] == ids[0]);
+        if let ExprSpec::Bind(BinderKind::Pi, _, b) = t {
+            lit_open_push(subst_full(*b, seq![ExprSpec::Free(ids[0])], 0), ids.drop_first(), x);
+        }
+    }
+}
+
+/// A run of unique locals made one after another between counter values
+/// `lo` and `hi`: their serials increase.
+pub open spec fn serials_in<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, hi: nat) -> bool {
+    &&& forall|k: int| 0 <= k < ls.len() ==> (#[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[k]))) is Some
+        && lo <= crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[k]))->Some_0
+        && (crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[k]))->Some_0 as nat) < hi
+    &&& forall|i: int, j: int| 0 <= i < j < ls.len() ==>
+        #[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[i]))->Some_0
+        < #[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[j]))->Some_0
+}
+
+/// One more local, made at the counter's current value.
+pub proof fn serials_push<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, hi: nat, l: crate::util::ExprPtr<'t>, hi2: nat)
+    requires
+        serials_in(aids, ls, lo, hi),
+        crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(l)) == Some(hi as u32),
+        hi < hi2,
+        lo <= hi,
+        hi < 0x1_0000_0000,
+    ensures
+        serials_in(aids, ls.push(l), lo, hi2),
+{
+    let l2 = ls.push(l);
+    assert forall|k: int| 0 <= k < l2.len() implies (#[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(l2[k]))) is Some
+        && lo <= crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(l2[k]))->Some_0
+        && (crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(l2[k]))->Some_0 as nat) < hi2 by {
+        if k < ls.len() { assert(l2[k] == ls[k]); }
+    }
+    assert forall|i: int, j: int| 0 <= i < j < l2.len() implies
+        #[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(l2[i]))->Some_0
+        < #[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(l2[j]))->Some_0 by {
+        assert(l2[i] == ls[i]);
+        if j < ls.len() {
+            assert(l2[j] == ls[j]);
+        } else {
+            assert(l2[j] == l);
+            assert((crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[i]))->Some_0 as nat) < hi);
+        }
+    }
+}
+
+/// Locals with distinct serials are distinct.
+pub proof fn serials_distinct<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, hi: nat)
+    requires
+        serials_in(aids, ls, lo, hi),
+    ensures
+        crate::inductive::local_ids(ls).no_duplicates(),
+{
+    let ids = crate::inductive::local_ids(ls);
+    assert forall|i: int, j: int| 0 <= i < ids.len() && 0 <= j < ids.len() && i != j implies ids[i] != ids[j] by {
+        let (a, b) = if i < j { (i, j) } else { (j, i) };
+        assert(crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[a]))->Some_0
+            < crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(ls[b]))->Some_0);
+    }
+}
+
 } // verus!

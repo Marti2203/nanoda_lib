@@ -227,6 +227,13 @@ pub proof fn syn_push(cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, bodies: Seq<ExprSpe
     }
 }
 
+/// Every one of the first `n` walks is syntactic (opaque: one fact for
+/// the loops that collect them).
+#[verifier::opaque]
+pub open spec fn teles_syn(ts: Seq<TeleCert>, n: int) -> bool {
+    forall|k: int| 0 <= k < n ==> tele_syn(#[trigger] ts[k])
+}
+
 pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
 }
@@ -5344,7 +5351,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             result.0@.len() == num_params,
             forall|i: int| 0 <= i < result.0@.len() ==> level_free_local(*(*final(self)).ctx, #[trigger] result.0@[i]),
             level_free(*(*final(self)).ctx, result.1),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.0@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
+            forall|k: int| 0 <= k < result.0@.len() && (#[trigger] crate::kgen::lit_open(crate::expr_arena_bridge::to_model(e),
+                local_ids(result.0@).subrange(0, k))) is Bind
+                ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(result.0@[k])), Box::new(
+                    *crate::kgen::lit_open(crate::expr_arena_bridge::to_model(e), local_ids(result.0@).subrange(0, k))->Bind_2))
+                    == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(e), local_ids(result.0@).subrange(0, k)),
     {
+        let ghost e0m = crate::expr_arena_bridge::to_model(e);
+        let ghost c0 = crate::util::unique_count(*self.ctx) as nat;
+        let ghost aids = crate::util_model::arena_ids(*self.ctx);
         let mut param_locals = Vec::with_capacity(num_params as usize);
         for _ in it: 0..num_params
             invariant
@@ -5358,9 +5375,22 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 param_locals@.len() == it.index(),
                 it.seq().len() == num_params,
                 forall|i: int| 0 <= i < param_locals@.len() ==> level_free_local(*self.ctx, #[trigger] param_locals@[i]),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                c0 <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, param_locals@, c0, crate::util::unique_count(*self.ctx) as nat),
+                crate::kgen::lit_open(e0m, local_ids(param_locals@)) is Bind
+                    ==> crate::expr_arena_bridge::to_model(e) == crate::kgen::lit_open(e0m, local_ids(param_locals@)),
+                forall|k: int| 0 <= k < param_locals@.len() && (#[trigger] crate::kgen::lit_open(e0m, local_ids(param_locals@).subrange(0, k))) is Bind
+                    ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(param_locals@[k])), Box::new(
+                        *crate::kgen::lit_open(e0m, local_ids(param_locals@).subrange(0, k))->Bind_2))
+                        == crate::kgen::lit_open(e0m, local_ids(param_locals@).subrange(0, k)),
         {
+            let ghost ids0 = local_ids(param_locals@);
+            let ghost lo0 = crate::kgen::lit_open(e0m, ids0);
             match self.ctx.read_expr(e) {
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
+                    let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
+                    let ghost cur = crate::expr_arena_bridge::to_model(e);
                     let local_ = self.ctx.mk_unique(binder_name, binder_style, binder_type);
                     proof {
                         assert(level_free(*self.ctx, binder_type));
@@ -5380,7 +5410,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     proof {
                         level_free_pres(*self.ctx, pre, e);
                     }
+                    let ghost pl0 = param_locals@;
                     param_locals.push(local_);
+                    proof {
+                        let lid = crate::expr_arena_bridge::expr_id(local_);
+                        crate::kgen::serials_push(aids, pl0, c0, cnt0, local_, crate::util::unique_count(*self.ctx) as nat);
+                        assert(local_ids(param_locals@) =~= ids0.push(lid));
+                        crate::kgen::lit_open_push(e0m, ids0, lid);
+                        assert forall|k: int| 0 <= k < param_locals@.len() && (#[trigger] crate::kgen::lit_open(e0m, local_ids(param_locals@).subrange(0, k))) is Bind
+                            implies ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(param_locals@[k])), Box::new(
+                                *crate::kgen::lit_open(e0m, local_ids(param_locals@).subrange(0, k))->Bind_2))
+                                == crate::kgen::lit_open(e0m, local_ids(param_locals@).subrange(0, k)) by {
+                            if k < pl0.len() {
+                                assert(local_ids(param_locals@).subrange(0, k) =~= local_ids(pl0).subrange(0, k));
+                                assert(param_locals@[k] == pl0[k]);
+                            } else {
+                                assert(local_ids(param_locals@).subrange(0, k) =~= ids0);
+                            }
+                        }
+                    }
                 }
                 _ => panic!("exhausted telescope early"),
             }
@@ -6474,6 +6522,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// walk recorded (`ind_walk_ok`), each ending in a sort equivalent to the
     /// block's.
     #[verifier::exec_allows_no_decreases_clause]
+    #[verifier::spinoff_prover]
     fn check_inductive_specs(&mut self, st: &mut InductiveCheckState<'t>)
         requires
             crate::tc::tc_wf(*old(self)),
@@ -6507,7 +6556,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).tele@.len() == final(st).all_inductives_incl_specialized@.len(),
             final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).block_codom is Some,
             walks_ok(*old(self).env, *final(st), final(st).tele@.len() as int),
-            forall|k: int| 0 <= k < final(st).tele@.len() ==> tele_syn(#[trigger] final(st).tele@[k]),
+            teles_syn(final(st).tele@, final(st).tele@.len() as int),
             final(st).all_inductives_incl_specialized@.len() > 0 ==> final(st).is_nonzero is Some,
             final(st).is_nonzero == Some(true) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(
                 crate::level_arena_bridge::to_model(final(st).block_codom->0), rho) >= 1,
@@ -6516,6 +6565,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::level_arena_bridge::to_model(final(st).block_codom->0), rho) == 0,
     {
         let nbefore = st.all_inductives_incl_specialized.len();
+        proof {
+            assert(teles_syn(st.tele@, 0)) by { reveal(teles_syn); }
+        }
         for i in 0..st.all_inductives_incl_specialized.len()
             invariant
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
@@ -6542,7 +6594,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.tele@.len() == i,
                 i > 0 ==> st.block_codom is Some,
                 walks_ok(*old(self).env, *st, i as int),
-                forall|k: int| 0 <= k < i ==> tele_syn(#[trigger] st.tele@[k]),
+                teles_syn(st.tele@, i as int),
                 i > 0 ==> st.is_nonzero is Some,
                 i == 0 ==> st.is_nonzero is None,
                 i > 0 ==> st.is_zero is Some,
@@ -6564,9 +6616,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(st.tele@.last() == st.tele@[i as int]);
                 assert(st.local_indices@.last() == st.local_indices@[i as int]);
                 assert(walk_k_ok(*old(self).env, *st, i as int));
-                assert forall|k: int| 0 <= k < i + 1 implies tele_syn(#[trigger] st.tele@[k]) by {
-                    if k < i {
-                        assert(st.tele@[k] == st0.tele@[k]);
+                assert(teles_syn(st.tele@, i + 1)) by {
+                    reveal(teles_syn);
+                    assert forall|k: int| 0 <= k < i + 1 implies tele_syn(#[trigger] st.tele@[k]) by {
+                        if k < i {
+                            assert(st.tele@[k] == st0.tele@[k]);
+                        }
                     }
                 }
                 assert forall|k: int| 0 <= k < i + 1 implies #[trigger] walk_k_ok(*old(self).env, *st, k) by {
