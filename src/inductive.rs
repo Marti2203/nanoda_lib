@@ -2103,6 +2103,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
             major_ok(*(*final(self)).ctx, result),
+            crate::quot_model::local_type(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                local_ids(st.local_indices@[ind_type_idx as int]@),
+                Seq::new(st.local_indices@[ind_type_idx as int]@.len(), |j: int| crate::quot_model::local_type(st.local_indices@[ind_type_idx as int]@[j])),
+                ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(major)),
+                    Box::new(ExprSpec::Sort(crate::level_arena_bridge::to_model(st.elim_level->0))))),
     {
         let elim_sort = self.ctx.mk_sort(st.elim_level.unwrap());
         let w_major = self.ctx.abstr_pi(major, elim_sort);
@@ -2156,6 +2161,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).motives@.len() == old(st).motives@.len() + old(st).ind_consts@.len(),
             forall|i: int| 0 <= i < old(st).motives@.len() ==> #[trigger] final(st).motives@[i] == old(st).motives@[i],
             forall|i: int| old(st).motives@.len() <= i < final(st).motives@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).motives@[i]),
+            forall|i: int| old(st).motives@.len() <= i < final(st).motives@.len() ==> crate::quot_model::local_type(#[trigger] final(st).motives@[i]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                local_ids(old(st).local_indices@[i - old(st).motives@.len()]@),
+                Seq::new(old(st).local_indices@[i - old(st).motives@.len()]@.len(), |j: int| crate::quot_model::local_type(old(st).local_indices@[i - old(st).motives@.len()]@[j])),
+                ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(old(st).majors@[i - old(st).motives@.len()])),
+                    Box::new(ExprSpec::Sort(crate::level_arena_bridge::to_model(old(st).elim_level->0))))),
     {
         let ghost st0 = *st;
         debug_assert_eq!(st.local_indices.len(), st.ind_consts.len());
@@ -2179,12 +2189,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.motives@.len() == st0.motives@.len() + i,
                 forall|k: int| 0 <= k < st0.motives@.len() ==> #[trigger] st.motives@[k] == st0.motives@[k],
                 forall|k: int| st0.motives@.len() <= k < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[k]),
+                forall|k: int| st0.motives@.len() <= k < st.motives@.len() ==> crate::quot_model::local_type(#[trigger] st.motives@[k]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                local_ids(st0.local_indices@[k - st0.motives@.len()]@),
+                Seq::new(st0.local_indices@[k - st0.motives@.len()]@.len(), |j: int| crate::quot_model::local_type(st0.local_indices@[k - st0.motives@.len()]@[j])),
+                ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st0.majors@[k - st0.motives@.len()])),
+                    Box::new(ExprSpec::Sort(crate::level_arena_bridge::to_model(st0.elim_level->0))))),
         {
             let major = st.majors[i];
             let ghost ms0 = st.motives@;
             st.motives.push(self.mk_motive_dep(st, major, i as u64));
             proof {
                 assert forall|k: int| st0.motives@.len() <= k < st.motives@.len() implies major_ok(*self.ctx, #[trigger] st.motives@[k]) by {
+                    if k < st.motives@.len() - 1 {
+                        assert(st.motives@[k] == ms0[k]);
+                    }
+                }
+                assert forall|k: int| st0.motives@.len() <= k < st.motives@.len() implies crate::quot_model::local_type(#[trigger] st.motives@[k]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
+                local_ids(st0.local_indices@[k - st0.motives@.len()]@),
+                Seq::new(st0.local_indices@[k - st0.motives@.len()]@.len(), |j: int| crate::quot_model::local_type(st0.local_indices@[k - st0.motives@.len()]@[j])),
+                ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st0.majors@[k - st0.motives@.len()])),
+                    Box::new(ExprSpec::Sort(crate::level_arena_bridge::to_model(st0.elim_level->0))))) by {
                     if k < st.motives@.len() - 1 {
                         assert(st.motives@[k] == ms0[k]);
                     }
@@ -7309,6 +7333,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).majors@.len() == old(st).majors@.len() + old(st).ind_consts@.len(),
             forall|i: int| 0 <= i < old(st).majors@.len() ==> #[trigger] final(st).majors@[i] == old(st).majors@[i],
             forall|i: int| old(st).majors@.len() <= i < final(st).majors@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).majors@[i]),
+            forall|i: int| old(st).majors@.len() <= i < final(st).majors@.len() ==> crate::quot_model::local_type(#[trigger] final(st).majors@[i])
+                == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(old(st).ind_consts@[i - old(st).majors@.len()]),
+                    crate::expr_arena_bridge::ptr_models(old(st).local_params@) + crate::expr_arena_bridge::ptr_models(old(st).local_indices@[i - old(st).majors@.len()]@)),
     {
         let ghost st0 = *st;
         let n = st.ind_consts.len();
@@ -7335,11 +7362,29 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.majors@.len() == st0.majors@.len() + idx,
                 forall|i: int| 0 <= i < st0.majors@.len() ==> #[trigger] st.majors@[i] == st0.majors@[i],
                 forall|i: int| st0.majors@.len() <= i < st.majors@.len() ==> major_ok(*self.ctx, #[trigger] st.majors@[i]),
+                forall|k: int| st0.majors@.len() <= k < st.majors@.len() ==> crate::quot_model::local_type(#[trigger] st.majors@[k])
+                    == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st0.ind_consts@[k - st0.majors@.len()]),
+                        crate::expr_arena_bridge::ptr_models(st0.local_params@) + crate::expr_arena_bridge::ptr_models(st0.local_indices@[k - st0.majors@.len()]@)),
             decreases n - idx,
         {
             let ind_const = st.ind_consts[idx];
-            let mut ty = self.ctx.foldl_apps(ind_const, st.local_params.iter().copied());
-            ty = self.ctx.foldl_apps(ty, st.local_indices[idx].iter().copied());
+            let ps_it = st.local_params.iter().copied();
+            proof {
+                broadcast use vstd::std_specs::iter::copied_postcondition;
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&ps_it) =~= st.local_params@);
+            }
+            let mut ty = self.ctx.foldl_apps(ind_const, ps_it);
+            let is_it = st.local_indices[idx].iter().copied();
+            proof {
+                broadcast use vstd::std_specs::iter::copied_postcondition;
+                assert(vstd::std_specs::iter::IteratorSpec::remaining(&is_it) =~= st.local_indices@[idx as int]@);
+            }
+            let ghost ty1 = ty;
+            ty = self.ctx.foldl_apps(ty, is_it);
+            proof {
+                crate::beta_model::spine_app_concat(crate::expr_arena_bridge::to_model(ind_const),
+                    crate::expr_arena_bridge::ptr_models(st.local_params@), crate::expr_arena_bridge::ptr_models(st.local_indices@[idx as int]@));
+            }
             let t = self.ctx.str1("t");
             // VERUS-REWRITE(tested-closed): a major premise's type is the
             // inductive applied to locals, so it is closed; `mk_unique`
@@ -7352,6 +7397,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert forall|i: int| st0.majors@.len() <= i < st.majors@.len() implies major_ok(*self.ctx, #[trigger] st.majors@[i]) by {
                     if i < st.majors@.len() - 1 {
                         assert(st.majors@[i] == ms0[i]);
+                    }
+                }
+                assert forall|k: int| st0.majors@.len() <= k < st.majors@.len() implies crate::quot_model::local_type(#[trigger] st.majors@[k])
+                    == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st0.ind_consts@[k - st0.majors@.len()]),
+                        crate::expr_arena_bridge::ptr_models(st0.local_params@) + crate::expr_arena_bridge::ptr_models(st0.local_indices@[k - st0.majors@.len()]@)) by {
+                    if k < st.majors@.len() - 1 {
+                        assert(st.majors@[k] == ms0[k]);
                     }
                 }
             }
