@@ -213,6 +213,13 @@ pub proof fn free_model_id<'a>(p: ExprPtr<'a>)
 {
 }
 
+/// Only a stored `Pi` denotes a `Pi`.
+pub proof fn pi_model_node<'a>(p: ExprPtr<'a>)
+    ensures
+        to_model(p) is Bind && to_model(p)->Bind_0 == BinderKind::Pi ==> expr_node_at(p) matches Some(Expr::Pi { .. }),
+{
+}
+
 /// Only a stored node of a shape denotes that shape (the four leaf shapes the
 /// payload projections read).
 pub proof fn to_model_shape<'a>(p: ExprPtr<'a>)

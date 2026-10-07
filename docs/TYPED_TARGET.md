@@ -1590,6 +1590,16 @@ and eta step is vacuous (about thirty sites use that). Stages:
     and a rule value is `rule_rhs` (`rule_canon`, hypotheses `rr_ih`),
     given each local's opened declared type. What is left of B3 is the
     bridge from the generator's witnesses to these lemmas' inputs.
+    B3c–i: the bridge for the type. The minor witnesses carry the earlier
+    minors (`prev`) and the tested fact that non-Pi fields are recursive
+    exactly when syntactically the inductive at the parameters
+    (`recs_syn`, B3f, corpus clean), so a canonical constructor's
+    positions are `rposj` (`wit_positions`). `check_inductive_declar`
+    records the creation windows and proves, for every shape the block
+    has (`gen_shape_ok`: single inductive, canonical type and constructor
+    forms, admitted field kinds), that its recursor's type is that
+    shape's `rec_ty` (`declar_rec_glue`). Left in B3: the rule values
+    (`rule_canon` via the fields `mk_rec_rule1` re-opens).
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.

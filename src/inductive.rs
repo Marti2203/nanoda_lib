@@ -1748,6 +1748,17 @@ pub(crate) open spec fn rule_ih_at<'t>(st: InductiveCheckState<'t>, i: int, hid:
         crate::kgen::ih_db(h, crate::expr_arena_bridge::to_model(r), t, n, st.local_params@.len()))
 }
 
+/// `v` is a rule induction hypothesis for `r` through the recursor `hid`.
+pub(crate) open spec fn rule_ih_hid<'t>(st: InductiveCheckState<'t>, hid: u64, r: ExprPtr<'t>, v: ExprPtr<'t>) -> bool {
+    exists|i: int| #[trigger] rule_ih_at(st, i, hid, r, v)
+}
+
+/// The rule's hypotheses all call the one recursor `hid`.
+pub(crate) open spec fn rule_ihs_at<'t>(st: InductiveCheckState<'t>, hid: u64, rs: Seq<ExprPtr<'t>>, vs: Seq<ExprPtr<'t>>) -> bool {
+    &&& rs.len() == vs.len()
+    &&& forall|k: int| 0 <= k < vs.len() ==> #[trigger] rule_ih_hid(st, hid, rs[k], vs[k])
+}
+
 pub(crate) open spec fn rule_ih_some<'t>(st: InductiveCheckState<'t>, r: ExprPtr<'t>, v: ExprPtr<'t>) -> bool {
     exists|p: (int, u64)| #[trigger] rule_ih_at(st, p.0, p.1, r, v)
 }
@@ -4684,7 +4695,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns_all(*(*final(self)).ctx, result@),
             result@.len() == rec_ctor_args@.len(),
             forall|k: int| 0 <= k < result@.len() ==> #[trigger] rule_ih_some(*st, rec_ctor_args@[k], result@[k]),
+            st.ind_consts@.len() == 1 ==> exists|hid: u64| #[trigger] rule_ihs_at(*st, hid, rec_ctor_args@, result@),
     {
+        let ghost mut hid0: u64 = 0;
+        let ghost mut hn0: Option<NamePtr<'t>> = None;
         let ghost aids = crate::util_model::arena_ids(*self.ctx);
         let ghost c_lo = crate::util::unique_count(*self.ctx) as nat;
         let mut out = Vec::new();
@@ -4716,6 +4730,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 c_lo == crate::util::unique_count(*old(self).ctx) as nat,
                 c_lo <= crate::util::unique_count(*self.ctx) as nat,
                 forall|k: int| 0 <= k < out@.len() ==> #[trigger] rule_ih_some(*st, rec_ctor_args@[k], out@[k]),
+                st.ind_consts@.len() == 1 ==> forall|k: int| 0 <= k < out@.len() ==> #[trigger] rule_ih_hid(*st, hid0, rec_ctor_args@[k], out@[k]),
+                st.ind_consts@.len() == 1 && out@.len() > 0 ==> hn0 is Some && crate::util_model::owns(*self.ctx, hn0->Some_0)
+                    && hid0 == crate::level_arena_bridge::name_id(hn0->Some_0)
+                    && crate::name_arena_bridge::to_model_name(hn0->Some_0) == crate::name_model::NameSpec::Str(
+                        Box::new(crate::name_arena_bridge::to_model_name(st.all_inductives_incl_specialized@[0].name)),
+                        crate::name_arena_bridge::string_id(rec_str_ptr)),
                 forall|k: int| 0 <= k < rec_ctor_args@.len() ==> crate::kgen::fv_below(aids,
                     crate::quot_model::local_type(#[trigger] rec_ctor_args@[k]), c_lo)
                     && crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(rec_ctor_args@[k]), c_lo),
@@ -4757,6 +4777,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[it_idx as int].name));
             }
             let rec_name = self.ctx.str(it_name, rec_str_ptr);
+            proof {
+                if st.ind_consts@.len() == 1 {
+                    assert(it_idx == 0);
+                    if out@.len() > 0 {
+                        crate::name_arena_bridge::to_model_name_injective(*self.ctx, rec_name, hn0->Some_0);
+                    } else {
+                        hn0 = Some(rec_name);
+                        hid0 = crate::level_arena_bridge::name_id(rec_name);
+                    }
+                }
+            }
             let rec_app = self.ctx.mk_const(rec_name, st.rec_uparams.unwrap());
             let ghost hid = crate::level_arena_bridge::name_id(rec_name);
             proof {
@@ -4834,11 +4865,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(rule_ih_at(*st, pw.0, pw.1, rec_ctor_args@[k], out@[k]));
                     }
                 }
+                if st.ind_consts@.len() == 1 {
+                    assert(hid == hid0);
+                    assert forall|k: int| 0 <= k < out@.len() implies #[trigger] rule_ih_hid(*st, hid0, rec_ctor_args@[k], out@[k]) by {
+                        if k < o0.len() {
+                            assert(out@[k] == o0[k]);
+                        } else {
+                            assert(rule_ih_at(*st, it_idx as int, hid0, rec_ctor_args@[k], out@[k]));
+                        }
+                    }
+                }
                 assert forall|k: int| 0 <= k < out@.len() implies crate::util_model::owns(*self.ctx, #[trigger] out@[k]) by {
                     if k < o0.len() { assert(out@[k] == o0[k]); }
                 }
             }
             i += 1;
+        }
+        proof {
+            if st.ind_consts@.len() == 1 {
+                assert(rule_ihs_at(*st, hid0, rec_ctor_args@, out@));
+            }
         }
         out
     }
@@ -7448,6 +7494,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.2@,
                 crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             forall|k: int| 0 <= k < result.2@.len() ==> result.1@.contains(#[trigger] result.2@[k]),
+            !(crate::expr_arena_bridge::to_model(result.0) is Bind && crate::expr_arena_bridge::to_model(result.0)->Bind_0 == BinderKind::Pi),
             rec_sub_some(result.1@, result.2@),
             exists|ps: Seq<int>| #[trigger] rec_sub(result.1@, result.2@, ps) && recs_syn(*st, result.1@, ps),
     {
@@ -7509,7 +7556,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             assert(recs_syn(*st, all_args@, ps)) by { reveal(recs_syn); }
         }
-        while let Pi { binder_name, binder_style, binder_type, body, .. } = self.ctx.read_expr(ctor_type_cursor)
+        // VERUS-REWRITE(while-let-exit): `while let Pi { .. } = self.ctx.read_expr(ctor_type_cursor)`
+        // is the `loop`/`match` it stands for, so the walk's exit -- the
+        // cursor is no Pi -- reaches the proof. Same reads, same order.
+        loop
             invariant
                 rec_sub(all_args@, rec_args@, ps),
                 recs_syn(*st, all_args@, ps),
@@ -7535,7 +7585,43 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::kgen::serials_in(aids, rec_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
                 forall|k: int| 0 <= k < rec_args@.len() ==> all_args@.contains(#[trigger] rec_args@[k]),
                 forall|k: int| 0 <= k < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[k]),
+            ensures
+                rec_sub(all_args@, rec_args@, ps),
+                recs_syn(*st, all_args@, ps),
+                mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
+                crate::tc::tc_wf(*self),
+                self.env == old(self).env,
+                self.ctx.dbj_level_counter == 0,
+                crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
+                self.live == old(self).live,
+                level_free(*self.ctx, ctor_type_cursor),
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                st.ind_consts@.len() <= st.local_indices@.len(),
+                forall|k: int| 0 <= k < all_args@.len() ==> level_free_local(*self.ctx, #[trigger] all_args@[k]),
+                forall|k: int| 0 <= k < rec_args@.len() ==> level_free_local(*self.ctx, #[trigger] rec_args@[k]),
+                crate::expr_arena_bridge::to_model(ctor_type_cursor) == crate::kgen::lit_open(c0, pids + local_ids(all_args@)),
+                forall|k: int| 0 <= k < all_args@.len() ==> opened_at(c0, pids + local_ids(all_args@), pids.len() + k,
+                    crate::quot_model::local_type(#[trigger] all_args@[k])),
+                pids.len() == st.local_params@.len(),
+                pids == local_ids(rem_params@.subrange(0, st.local_params@.len() as int)),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, all_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
+                crate::kgen::serials_in(aids, rec_args@, cnt_lo, crate::util::unique_count(*self.ctx) as nat),
+                forall|k: int| 0 <= k < rec_args@.len() ==> all_args@.contains(#[trigger] rec_args@[k]),
+                forall|k: int| 0 <= k < st.local_params@.len() ==> level_free_local(*self.ctx, #[trigger] st.local_params@[k]),
+                !(crate::expr_arena_bridge::to_model(ctor_type_cursor) is Bind
+                    && crate::expr_arena_bridge::to_model(ctor_type_cursor)->Bind_0 == BinderKind::Pi),
         {
+            let (binder_name, binder_style, binder_type, body) = match self.ctx.read_expr(ctor_type_cursor) {
+                Pi { binder_name, binder_style, binder_type, body, .. } => (binder_name, binder_style, binder_type, body),
+                _ => {
+                    proof {
+                        crate::expr_arena_bridge::pi_model_node(ctor_type_cursor);
+                    }
+                    break
+                },
+            };
             let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
             let ghost ids0 = pids + local_ids(all_args@);
             let ghost cur = crate::expr_arena_bridge::to_model(ctor_type_cursor);
