@@ -199,12 +199,19 @@ pub open spec fn tele_syn(c: TeleCert) -> bool {
         ==> c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(c.bodies[k]))
 }
 
-/// The walk's first `n` steps are syntactic where their cursors are
-/// binders (opaque: the walk's loop carries it as one fact).
+/// The walk's first `n` cursors are the Pis it read off them (opaque: the
+/// walk's loop carries it as one fact).
 #[verifier::opaque]
 pub open spec fn syn_upto(cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, bodies: Seq<ExprSpec>, n: int) -> bool {
-    forall|k: int| 0 <= k < n && (#[trigger] cs[k]) is Bind
-        ==> cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(bodies[k]))
+    forall|k: int| 0 <= k < n ==> #[trigger] cs[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(bodies[k]))
+}
+
+/// The walk is literal: each cursor is the Pi it read off it, and the last
+/// is a sort.
+pub open spec fn tele_lit(c: TeleCert) -> bool {
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> #[trigger] c.cursors[k]
+        == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(c.bodies[k]))
+    &&& c.cursors.last() is Sort
 }
 
 /// One step of the walk keeps it syntactic where it is.
@@ -214,15 +221,15 @@ pub proof fn syn_push(cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, bodies: Seq<ExprSpe
         bts.len() == n,
         bodies.len() == n,
         syn_upto(cs, bts, bodies, n),
-        cs.last() is Bind ==> cur == cs.last(),
+        cs.last() == cur,
         cur == ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)),
     ensures
         syn_upto(cs.push(next), bts.push(bt), bodies.push(body), n + 1),
 {
     reveal(syn_upto);
     let (cs2, bts2, bodies2) = (cs.push(next), bts.push(bt), bodies.push(body));
-    assert forall|k: int| 0 <= k < n + 1 && (#[trigger] cs2[k]) is Bind
-        implies cs2[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts2[k]), Box::new(bodies2[k])) by {
+    assert forall|k: int| 0 <= k < n + 1
+        implies #[trigger] cs2[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(bts2[k]), Box::new(bodies2[k])) by {
         assert(cs2[k] == cs[k] && bts2[k] == (if k < n { bts[k] } else { bt }) && bodies2[k] == (if k < n { bodies[k] } else { body }));
     }
 }
@@ -5358,6 +5365,41 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         IndTyHeader { name: t.info.name, ty: t.info.ty, ctors }
     }
 
+    /// `whnf` on an inductive's telescope, which must already be literal.
+    ///
+    /// VERUS-REWRITE(tested-env): the reduct is tested to have found its
+    /// binder or sort already there (a rejection otherwise), so the walk reads
+    /// the declared telescope itself, which the canonical recursor is stated
+    /// over. Never fails on a type Lean exports.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn literal_whnf(&mut self, e: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, e),
+            crate::tc::tc_wf(*old(self)),
+            crate::tc::in_scope(*old(self), e),
+        ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
+            crate::util_model::owns(*(*final(self)).ctx, result),
+            crate::tc::tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).declar_info == (*old(self)).declar_info,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            crate::tc::whnf_claim(*old(self).env, crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::to_model(result)),
+            crate::tc::keeps_bind(crate::expr_arena_bridge::to_model(e), crate::expr_arena_bridge::to_model(result)),
+            crate::expr_arena_bridge::to_model(result) is Bind && crate::expr_arena_bridge::to_model(result)->Bind_0 == BinderKind::Pi
+                ==> crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::to_model(e),
+            crate::expr_arena_bridge::to_model(result) is Sort ==> crate::expr_arena_bridge::to_model(e) is Sort,
+    {
+        let r = self.whnf(e);
+        match (self.ctx.read_expr(r), self.ctx.read_expr(e)) {
+            (Pi { .. }, Pi { .. }) | (Sort { .. }, Sort { .. }) => r,
+            (Pi { .. }, _) | (Sort { .. }, _) => panic!("an inductive's type is not a literal telescope"),
+            _ => r,
+        }
+    }
+
     /// Verified in place, body unchanged: the parameter locals are well-scoped
     /// unique locals, and the telescope's remainder stays level free.
     #[verifier::exec_allows_no_decreases_clause]
@@ -6704,6 +6746,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ind_walk_ok(*old(self).env, final(st).tele@.last(), old(st).all_inductives_incl_specialized@[0].ty,
                 final(st).local_params@, final(st).local_indices@.last()@),
             tele_syn(final(st).tele@.last()),
+            tele_lit(final(st).tele@.last()),
             final(st).block_codom matches Some(l) ==> forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(final(st).tele@.last().sort, rho)
                 == crate::level_model::interp(crate::level_arena_bridge::to_model(l), rho),
             final(st).block_codom is Some,
@@ -6726,7 +6769,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(level_free(*self.ctx, ty0));
             level_free_in_scope(*self, ind_ty_cursor);
         }
-        ind_ty_cursor = self.whnf(ind_ty_cursor);
+        ind_ty_cursor = self.literal_whnf(ind_ty_cursor);
         proof {
             level_free_pres(*self.ctx, ty0, ind_ty_cursor);
         }
@@ -6761,7 +6804,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
-                cs.last() is Bind ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
+                crate::expr_arena_bridge::to_model(ind_ty_cursor) is Bind && crate::expr_arena_bridge::to_model(ind_ty_cursor)->Bind_0 == BinderKind::Pi
+                    ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
+                crate::expr_arena_bridge::to_model(ind_ty_cursor) is Sort ==> cs.last() is Sort,
                 syn_upto(cs, bts, bodies, locs.len() as int),
                 i == locs.len(),
                 locs == if i <= st.local_params@.len() {
@@ -6805,7 +6850,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_in_scope(*self, ind_ty_cursor);
                 }
                 let ghost pre = ind_ty_cursor;
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                ind_ty_cursor = self.literal_whnf(ind_ty_cursor);
                 proof {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
@@ -6841,7 +6886,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_in_scope(*self, ind_ty_cursor);
                 }
                 let ghost pre = ind_ty_cursor;
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                ind_ty_cursor = self.literal_whnf(ind_ty_cursor);
                 proof {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
@@ -6871,6 +6916,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 None => panic!("binder walk counter overflow"),
             };
         }
+        // VERUS-REWRITE(tested-env): the telescope is tested literal (each
+        // step through `literal_whnf`, and the end a sort as it stands), so
+        // the walk reads the declared type itself. Never fails on a type Lean
+        // exports.
+        assert!(matches!(self.ctx.read_expr(ind_ty_cursor), Sort { .. }), "an inductive's type does not end in a sort");
         proof {
             level_free_in_scope(*self, ind_ty_cursor);
         }
@@ -6935,6 +6985,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             ind_walk_ok(*old(self).env, final(st).tele@.last(), ind.ty,
                 final(st).local_params@, final(st).local_indices@.last()@),
             tele_syn(final(st).tele@.last()),
+            tele_lit(final(st).tele@.last()),
             final(st).block_codom == old(st).block_codom,
             final(st).is_nonzero == old(st).is_nonzero,
             final(st).is_zero == old(st).is_zero,
@@ -6948,7 +6999,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(level_free(*self.ctx, ty0));
             level_free_in_scope(*self, ind.ty);
         }
-        let mut ind_ty_cursor = self.whnf(ind.ty);
+        let mut ind_ty_cursor = self.literal_whnf(ind.ty);
         proof {
             level_free_pres(*self.ctx, ty0, ind_ty_cursor);
         }
@@ -6983,7 +7034,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ExprSpec::Bind(BinderKind::Pi, Box::new(bts[k]), Box::new(#[trigger] bodies[k])))
                     && cs[k + 1] == crate::expr_model::subst_full(bodies[k], seq![ExprSpec::Free(locs[k])], 0),
                 crate::tc::kconv(env, cs.last(), crate::expr_arena_bridge::to_model(ind_ty_cursor)),
-                cs.last() is Bind ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
+                crate::expr_arena_bridge::to_model(ind_ty_cursor) is Bind && crate::expr_arena_bridge::to_model(ind_ty_cursor)->Bind_0 == BinderKind::Pi
+                    ==> crate::expr_arena_bridge::to_model(ind_ty_cursor) == cs.last(),
+                crate::expr_arena_bridge::to_model(ind_ty_cursor) is Sort ==> cs.last() is Sort,
                 syn_upto(cs, bts, bodies, locs.len() as int),
                 i == locs.len(),
                 locs == if i <= st.local_params@.len() {
@@ -7015,7 +7068,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_in_scope(*self, ind_ty_cursor);
                 }
                 let ghost pre = ind_ty_cursor;
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                ind_ty_cursor = self.literal_whnf(ind_ty_cursor);
                 proof {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
@@ -7051,7 +7104,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     level_free_in_scope(*self, ind_ty_cursor);
                 }
                 let ghost pre = ind_ty_cursor;
-                ind_ty_cursor = self.whnf(ind_ty_cursor);
+                ind_ty_cursor = self.literal_whnf(ind_ty_cursor);
                 proof {
                     level_free_pres(*self.ctx, pre, ind_ty_cursor);
                     let lid = crate::expr_arena_bridge::expr_id(local_);
@@ -7081,6 +7134,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 None => panic!("binder walk counter overflow"),
             };
         }
+        // VERUS-REWRITE(tested-env): the telescope is tested literal (each
+        // step through `literal_whnf`, and the end a sort as it stands), so
+        // the walk reads the declared type itself. Never fails on a type Lean
+        // exports.
+        assert!(matches!(self.ctx.read_expr(ind_ty_cursor), Sort { .. }), "an inductive's type does not end in a sort");
         proof {
             level_free_in_scope(*self, ind_ty_cursor);
         }
