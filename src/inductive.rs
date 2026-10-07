@@ -234,6 +234,12 @@ pub open spec fn teles_syn(ts: Seq<TeleCert>, n: int) -> bool {
     forall|k: int| 0 <= k < n ==> tele_syn(#[trigger] ts[k])
 }
 
+/// The inductives already in the block are left as they are; new ones
+/// (nested specializations) only follow them.
+pub open spec fn prefix_kept<'t>(a: Seq<IndTyHeader<'t>>, b: Seq<IndTyHeader<'t>>) -> bool {
+    a.len() <= b.len() && forall|i: int| 0 <= i < a.len() ==> #[trigger] b[i] == a[i]
+}
+
 pub open spec fn local_ids<'t>(ls: Seq<ExprPtr<'t>>) -> Seq<nat> {
     Seq::new(ls.len(), |i: int| crate::expr_arena_bridge::expr_id(ls[i]))
 }
@@ -3364,6 +3370,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             result.rec_uparams is None,
             result.elim_level is None,
             result.k_target is None,
+            result.all_inductives_incl_specialized@[0].name == unmodified_tys_ctors@[0].name,
+            result.all_inductives_incl_specialized@[0].ty == unmodified_tys_ctors@[0].ty,
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), result.local_params@,
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
+            forall|k: int| 0 <= k < result.local_params@.len() && (#[trigger] crate::kgen::lit_open(crate::expr_arena_bridge::to_model(unmodified_tys_ctors@[0].ty),
+                local_ids(result.local_params@).subrange(0, k))) is Bind
+                ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(result.local_params@[k])), Box::new(
+                    *crate::kgen::lit_open(crate::expr_arena_bridge::to_model(unmodified_tys_ctors@[0].ty), local_ids(result.local_params@).subrange(0, k))->Bind_2))
+                    == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(unmodified_tys_ctors@[0].ty), local_ids(result.local_params@).subrange(0, k)),
     {
         proof {
             let h0 = unmodified_tys_ctors@[0];
@@ -3479,6 +3494,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             nest_ok(*(*final(self)).ctx, *final(st)),
             final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+            forall|x: int| 0 <= x < old(st).all_inductives_incl_specialized@.len() ==> #[trigger] final(st).all_inductives_incl_specialized@[x].name == old(st).all_inductives_incl_specialized@[x].name
+                && final(st).all_inductives_incl_specialized@[x].ty == old(st).all_inductives_incl_specialized@[x].ty,
             crate::indexmap_model::imap_wf(&final(st).nested_to_unspecialized_ty_nofvars),
             forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&final(st).nested_to_unspecialized_ty_nofvars).contains_key(n)
                 ==> crate::util_model::owns(*(*final(self)).ctx, n)
@@ -3509,6 +3526,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.live == old(self).live,
                 nest_ok(*self.ctx, *st),
                 st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
+                forall|x: int| 0 <= x < st0.all_inductives_incl_specialized@.len() ==> #[trigger] st.all_inductives_incl_specialized@[x].name == st0.all_inductives_incl_specialized@[x].name && st.all_inductives_incl_specialized@[x].ty == st0.all_inductives_incl_specialized@[x].ty,
                 *st == (InductiveCheckState {
                     nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
                     all_inductives_incl_specialized: st.all_inductives_incl_specialized,
@@ -3539,6 +3557,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     self.live == old(self).live,
                     nest_ok(*self.ctx, *st),
                     st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
+                    forall|x: int| 0 <= x < st0.all_inductives_incl_specialized@.len() ==> #[trigger] st.all_inductives_incl_specialized@[x].name == st0.all_inductives_incl_specialized@[x].name && st.all_inductives_incl_specialized@[x].ty == st0.all_inductives_incl_specialized@[x].ty,
                     *st == (InductiveCheckState {
                         nested_to_unspecialized_ty_wfvars: st.nested_to_unspecialized_ty_wfvars,
                         all_inductives_incl_specialized: st.all_inductives_incl_specialized,
@@ -3619,6 +3638,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     self.live == old(self).live,
                     crate::tc::tc_wf(*self),
                     st.all_inductives_incl_specialized@.len() >= st0.all_inductives_incl_specialized@.len(),
+                    forall|x: int| 0 <= x < st0.all_inductives_incl_specialized@.len() ==> #[trigger] st.all_inductives_incl_specialized@[x].name == st0.all_inductives_incl_specialized@[x].name && st.all_inductives_incl_specialized@[x].ty == st0.all_inductives_incl_specialized@[x].ty,
                     crate::indexmap_model::imap_wf(&out),
                     forall|n: NamePtr<'t>| #[trigger] crate::indexmap_model::imap_view(&out).contains_key(n)
                         ==> crate::util_model::owns(*self.ctx, n) && crate::util_model::owns(*self.ctx, crate::indexmap_model::imap_view(&out)[n]),
@@ -3670,6 +3690,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ..*old(st)
             }),
             final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+            prefix_kept(old(st).all_inductives_incl_specialized@, final(st).all_inductives_incl_specialized@),
             crate::util_model::owns(*(*final(self)).ctx, result),
     {
         // Try to replace locally before traversing into the lower parts.
@@ -3760,6 +3781,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ..*old(st)
             }),
             final(st).all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+            prefix_kept(old(st).all_inductives_incl_specialized@, final(st).all_inductives_incl_specialized@),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
     {
         // Using the `Lean.Syntax.node` constructor as an example, if `e` is the application of
@@ -3846,6 +3868,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }),
                     crate::env_model::inductive_data_owned(*self.env, nested_container_ty),
                     st.all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+                    prefix_kept(old(st).all_inductives_incl_specialized@, st.all_inductives_incl_specialized@),
                     outgoing_param_locals@.len() <= u16::MAX,
                     crate::util_model::owns_all(*self.ctx, args@),
                     crate::util_model::owns(*self.ctx, i_levels),
@@ -3938,6 +3961,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::util_model::owns(*self.ctx, nested_container_aux_type),
                         forall|b: int| 0 <= b < all_nested_container_ctor_names@.len() ==> crate::env_model::env_owns(*self.env, #[trigger] all_nested_container_ctor_names@[b]),
                         st.all_inductives_incl_specialized@.len() >= old(st).all_inductives_incl_specialized@.len(),
+                        prefix_kept(old(st).all_inductives_incl_specialized@, st.all_inductives_incl_specialized@),
                         outgoing_param_locals@.len() <= u16::MAX,
                         forall|b: int| 0 <= b < outgoing_param_locals@.len() ==> level_free_local(*self.ctx, #[trigger] outgoing_param_locals@[b]),
                         nested_container_ty.num_params as usize <= args@.len(),
@@ -5295,6 +5319,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Verified in place, body unchanged: the header of `t` with its
     /// constructors, all of it owned by the checker's context.
+    #[verifier::spinoff_prover]
     fn header_of_ty(&self, t: &InductiveData<'t>) -> (result: IndTyHeader<'t>)
         requires
             crate::env_model::inductive_data_owned(*self.env, *t),

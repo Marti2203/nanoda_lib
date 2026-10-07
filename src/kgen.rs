@@ -381,4 +381,14 @@ pub proof fn serials_distinct<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr
     }
 }
 
+/// A run stays one as the counter moves on.
+pub proof fn serials_widen<'t>(aids: (nat, nat), ls: Seq<crate::util::ExprPtr<'t>>, lo: nat, hi: nat, hi2: nat)
+    requires
+        serials_in(aids, ls, lo, hi),
+        hi <= hi2,
+    ensures
+        serials_in(aids, ls, lo, hi2),
+{
+}
+
 } // verus!
