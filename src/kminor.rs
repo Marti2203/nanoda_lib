@@ -1208,4 +1208,87 @@ pub proof fn rule_canon(sh: crate::rec_canon::IndShape, lm: crate::level_model::
     assert(frees(e) =~= Seq::<ExprSpec>::empty());
 }
 
+/// Substituting into a sort leaves it.
+pub proof fn vsubk_sort(k: nat, l: crate::level_model::LevelSpec, xs: Seq<ExprSpec>)
+    ensures
+        vsubk(k, ExprSpec::Sort(l), xs) == ExprSpec::Sort(l),
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        vsubk_sort(k, l, xs.drop_first());
+    }
+}
+
+/// THE GENERATED MOTIVE IS CANONICAL: abstracting the index locals (at
+/// their opened declared domains) from `Π (ind params indices), Sort lm`
+/// is `motive_ty(lm)` opened at the parameters.
+#[verifier::spinoff_prover]
+pub proof fn motive_canon(sh: crate::rec_canon::IndShape, lm: crate::level_model::LevelSpec, pids: Seq<nat>, iids: Seq<nat>,
+    itys: Seq<ExprSpec>, majty: ExprSpec)
+    requires
+        pids.len() == sh.np,
+        iids.len() == sh.ni,
+        sh.idoms.len() == sh.ni,
+        itys.len() == sh.ni,
+        (pids + iids).no_duplicates(),
+        forall|k: int| 0 <= k < sh.ni ==> nlbv(#[trigger] sh.idoms[k]) <= sh.np + k,
+        forall|k: int, z: nat| 0 <= k < sh.ni ==> #[trigger] fv_absent(sh.idoms[k], z),
+        forall|k: int| 0 <= k < sh.ni ==> #[trigger] itys[k] == vsub(sh.idoms[k], frees(pids) + frees(iids.subrange(0, k))),
+        majty == crate::rec_canon::ind_app(sh.ind, sh.us(), frees(pids) + frees(iids)),
+    ensures
+        crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi, iids, itys,
+            ExprSpec::Bind(BinderKind::Pi, Box::new(majty), Box::new(ExprSpec::Sort(lm))))
+            == vsub(sh.motive_ty(lm), frees(pids)),
+{
+    let (np, ni) = (sh.np, sh.ni);
+    let c = ExprSpec::Const(sh.ind, sh.us());
+    let margs = crate::rec_canon::vars(ni, np) + crate::rec_canon::vars(0, ni);
+    let mj = crate::rec_canon::ind_app(sh.ind, sh.us(), margs);
+    let b = ExprSpec::Bind(BinderKind::Pi, Box::new(mj), Box::new(ExprSpec::Sort(lm)));
+    let l = frees(pids) + frees(iids);
+    // the body opened
+    crate::dom_rec_minor::vsub_pi_dom(mj, ExprSpec::Sort(lm), l);
+    assert(crate::ti_syntax::pi(mj, ExprSpec::Sort(lm)) == b);
+    vsubk_sort(1, lm, l);
+    crate::ti_hred_rec::vsub_spine(c, margs, l);
+    crate::ti_spine::vsub_const(sh.ind, sh.us(), l);
+    assert(Seq::new(margs.len(), |i: int| vsub(margs[i], l)) =~= frees(pids) + frees(iids)) by {
+        assert forall|i: int| 0 <= i < margs.len() implies #[trigger] vsub(margs[i], l) == (frees(pids) + frees(iids))[i] by {
+            if i < np {
+                crate::ti_spine::vsub_var((ni + np - 1 - i) as nat, l);
+            } else {
+                crate::ti_spine::vsub_var((ni - 1 - (i - np)) as nat, l);
+            }
+        }
+    }
+    // the telescope
+    assert forall|z: nat| iids.contains(z) implies !(#[trigger] pids.contains(z)) by {
+        let all = pids + iids;
+        let a = choose|a: int| 0 <= a < iids.len() && iids[a] == z;
+        if pids.contains(z) {
+            let q = choose|q: int| 0 <= q < pids.len() && pids[q] == z;
+            assert(all[q] == all[pids.len() + a]);
+        }
+    }
+    assert(iids.no_duplicates()) by {
+        let all = pids + iids;
+        assert forall|x: int, y: int| 0 <= x < y < iids.len() implies iids[x] != iids[y] by {
+            assert(all[pids.len() + x] == iids[x] && all[pids.len() + y] == iids[y]);
+        }
+    }
+    assert forall|q: int| 0 <= q < margs.len() implies nlbv(#[trigger] margs[q]) <= np + ni by {}
+    crate::ti_proj::spine_nlbv_le(c, margs, np + ni);
+    assert(mj == crate::beta_model::spine_app(c, margs));
+    assert(nlbv(b) <= np + ni) by {
+        reveal_with_fuel(nlbv, 2);
+    }
+    assert forall|z: nat| iids.contains(z) implies #[trigger] fv_absent(b, z) by {
+        crate::reduce_fv::spine_app_fv(c, margs, z);
+        assert forall|q: int| 0 <= q < margs.len() implies fv_absent(#[trigger] margs[q], z) by {}
+        assert(fv_absent(mj, z));
+        assert(fv_absent(b, z)) by { reveal_with_fuel(fv_absent, 2); }
+    }
+    tel_canon(BinderKind::Pi, sh.idoms, b, pids, iids, itys, ExprSpec::Bind(BinderKind::Pi, Box::new(majty), Box::new(ExprSpec::Sort(lm))));
+}
+
 } // verus!

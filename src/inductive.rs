@@ -582,6 +582,22 @@ pub(crate) proof fn minor_bridge<'t>(aids: (nat, nat), st: InductiveCheckState<'
     assert(pids + sids =~= local_ids(st.local_params@) + seq![mid] + local_ids(prev));
 }
 
+/// The `a`-th recursor's type, as the generator built it: the motive at
+/// the indices and the major, under the parameters, motives, minors, the
+/// `a`-th inductive's indices and its major.
+pub(crate) open spec fn rec_ty_gen<'t>(st: InductiveCheckState<'t>, a: int, d: Declar<'t>) -> bool {
+    match d {
+        Declar::Recursor(r) => {
+            let ls = st.local_params@ + st.motives@ + flat_ptrs(st.minors@) + st.local_indices@[a]@ + seq![st.majors@[a]];
+            crate::expr_arena_bridge::to_model(r.info.ty) == crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi,
+                local_ids(ls), local_tys(ls),
+                ExprSpec::App(Box::new(crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st.motives@[a]),
+                    crate::expr_arena_bridge::ptr_models(st.local_indices@[a]@))), Box::new(crate::expr_arena_bridge::to_model(st.majors@[a]))))
+        },
+        _ => false,
+    }
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -4226,6 +4242,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                         == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                     &&& r.rec_rules@.len() == rec_rules@.len()
+                    &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> (#[trigger] r.rec_rules@[k]).val == rec_rules@[k].val
+                    &&& crate::expr_arena_bridge::to_model(r.info.ty) == crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi,
+                        local_ids(st.local_params@ + st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major]),
+                        local_tys(st.local_params@ + st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major]),
+                        ExprSpec::App(Box::new(crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(motive),
+                            crate::expr_arena_bridge::ptr_models(local_indices@))), Box::new(crate::expr_arena_bridge::to_model(major))))
                 },
                 _ => false,
             },
@@ -4284,6 +4306,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             assert forall|k: int| 0 <= k < recursor.rec_rules@.len() implies crate::util_model::owns_in(ids, #[trigger] recursor.rec_rules@[k].val) by {
                 assert(crate::util_model::owns_in(ids, recursor.rec_rules@[k].ctor_name) && crate::util_model::owns_in(ids, recursor.rec_rules@[k].val));
+            }
+            assert forall|k: int| 0 <= k < recursor.rec_rules@.len() implies (#[trigger] recursor.rec_rules@[k]).val == rec_rules@[k].val by {
+                assert(vstd::pervasive::cloned::<RecRule<'t>>(rec_rules@[k], recursor.rec_rules@[k]));
+                if recursor.rec_rules@[k] != rec_rules@[k] {
+                    assert(vstd::pervasive::strictly_cloned::<RecRule<'t>>(rec_rules@[k], recursor.rec_rules@[k]));
+                }
             }
         }
 
@@ -4348,6 +4376,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 },
                 _ => false,
             },
+            forall|a: int| 0 <= a < result@.len() ==> #[trigger] rec_ty_gen(*st, a, result@[a]),
     {
         let rec_rules = self.mk_rec_rules(st);
         proof {
@@ -4387,6 +4416,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
                 i <= st.all_inductives_incl_specialized@.len(),
                 recursors@.len() == i,
+                forall|a: int| 0 <= a < recursors@.len() ==> #[trigger] rec_ty_gen(*st, a, recursors@[a]),
                 forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]),
                 forall|a: int| 0 <= a < recursors@.len() ==> crate::env::declar_info(#[trigger] recursors@[a]).uparams == st.rec_uparams->0,
                 forall|a: int| 0 <= a < recursors@.len() ==> match #[trigger] recursors@[a] {
@@ -4436,6 +4466,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost r0 = recursors@;
             recursors.push(recursor);
             proof {
+                assert forall|a: int| 0 <= a < recursors@.len() implies #[trigger] rec_ty_gen(*st, a, recursors@[a]) by {
+                    if a < r0.len() {
+                        assert(recursors@[a] == r0[a]);
+                    } else {
+                        assert(local_indices@ == st.local_indices@[i as int]@);
+                        assert(minors@ == flat_ptrs(st.minors@));
+                    }
+                }
                 assert forall|a: int| 0 <= a < recursors@.len() implies crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]) by {
                     if a < r0.len() { assert(recursors@[a] == r0[a]); }
                 }
