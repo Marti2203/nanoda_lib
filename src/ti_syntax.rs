@@ -617,56 +617,6 @@ pub open spec fn rec_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bo
     }
 }
 
-/// The recursor's eta step is dead in a signature without structures.
-pub proof fn reta_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
-    requires
-        step_ok(sig, r, j, ps),
-        r is RecEta,
-        no_structs(sig),
-    ensures
-        false,
-{
-    reveal(rec_eta_ok);
-    let rid = crate::beta_model::spine_head(j->Eq_1)->Const_0;
-    assert(struct_of(sig, crate::rec_canon::rec_ind(sig, rid)));
-}
-
-/// Structure eta is dead in a signature without structures.
-pub proof fn seta_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
-    requires
-        step_ok(sig, r, j, ps),
-        r is StructEta,
-        no_structs(sig),
-    ensures
-        false,
-{
-    reveal(struct_eta_ok);
-    assert(struct_of(sig, crate::beta_model::spine_head(j->Eq_3)->Const_0));
-}
-
-/// The projection rules are dead in a signature without structures.
-pub proof fn proj_dead_ns(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
-    requires
-        step_ok(sig, r, j, ps),
-        r is ProjCong || r is ProjIota,
-        no_structs(sig),
-    ensures
-        false,
-{
-    reveal(proj_cong_ok);
-    reveal(proj_iota_ok);
-    reveal(proj_ty);
-    reveal(proj_fire);
-    let m = j->Eq_1;
-    if r is ProjCong {
-        let st = concl(ps[0])->Eq_3;
-        assert(struct_of(sig, crate::beta_model::spine_head(st)->Const_0));
-    } else {
-        let x = *m->Proj_1;
-        assert(struct_of(sig, sig.ienv.ctor_ind[crate::beta_model::spine_head(x)->Const_0]));
-    }
-}
-
 /// The redex's motive level: the recursor's elimination level at its
 /// instance.
 #[verifier::opaque]

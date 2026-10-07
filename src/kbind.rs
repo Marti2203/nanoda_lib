@@ -67,8 +67,6 @@ pub proof fn jsig_sub_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d:
         crate::ti_valid::sig_ext(jsig(dty, denv, d), jsig(dty, denv, d2)),
 {
     crate::jkernel::jsig_ext(dty, denv, d2);
-    crate::ti_syntax::norecs_no_structs(jsig(dty, denv, d));
-    crate::ti_syntax::norecs_no_structs(jsig(dty, denv, d2));
 }
 
 /// A well-formed context's last entry is a type.
