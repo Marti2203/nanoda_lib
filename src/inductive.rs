@@ -1505,6 +1505,150 @@ pub(crate) proof fn walk_syn_of<'x, 't>(env: crate::env::Env<'x, 't>, st: Induct
         == crate::expr_model::subst_full(c.bodies[q], seq![ExprSpec::Free(c.locals[q])], 0) by {}
 }
 
+/// A CANONICAL CONSTRUCTOR'S FIELDS, WALKED: walked to a non-Pi from the
+/// constructor type at the parameters, its locals are exactly the
+/// constructor's fields, each at its opened declared type, and the
+/// recursive ones (by the tested fact) sit at `rposj(j)`.
+#[verifier::spinoff_prover]
+pub(crate) proof fn fields_canon<'t>(st: InductiveCheckState<'t>, sh: crate::rec_canon::IndShape, j: int,
+    c0: ExprSpec, fs: Seq<ExprPtr<'t>>, ps: Seq<int>)
+    requires
+        st.ind_consts@.len() == 1,
+        st.local_indices@.len() >= 1,
+        st.local_indices@[0]@.len() == sh.ni,
+        consts_params(st),
+        crate::expr_arena_bridge::to_model(st.ind_consts@[0]) == ExprSpec::Const(sh.ind, sh.us()),
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+        0 <= j < sh.fields.len(),
+        0 <= j < sh.tss.len(),
+        sh.tss[j].len() == sh.ni,
+        sh.pdoms.len() == sh.np,
+        st.local_params@.len() == sh.np,
+        c0 == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.fields[j], crate::rec_canon::ind_app(sh.ind, sh.us(),
+            crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
+        crate::expr_model::nlbv(c0) == 0,
+        forall|k: int| 0 <= k < sh.fields[j].len() ==> fkind_ok(#[trigger] sh.fields[j][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat),
+        forall|k: int| 0 <= k < fs.len() ==> opened_at(c0, local_ids(st.local_params@) + local_ids(fs), sh.np + k,
+            crate::quot_model::local_type(#[trigger] fs[k])),
+        !(crate::kgen::lit_open(c0, local_ids(st.local_params@) + local_ids(fs)) is Bind
+            && crate::kgen::lit_open(c0, local_ids(st.local_params@) + local_ids(fs))->Bind_0 == BinderKind::Pi),
+        forall|a: int, b: int| 0 <= a < b < ps.len() ==> #[trigger] ps[a] < #[trigger] ps[b],
+        forall|r: int| 0 <= r < ps.len() ==> 0 <= #[trigger] ps[r] < fs.len(),
+        recs_syn(st, fs, ps),
+    ensures
+        fs.len() == sh.fields[j].len(),
+        ps.len() == sh.rposj(j).len(),
+        forall|r: int| 0 <= r < ps.len() ==> #[trigger] ps[r] == sh.rposj(j)[r] as int,
+        forall|r: int| 0 <= r < sh.rposj(j).len() ==> (#[trigger] sh.rposj(j)[r]) < sh.fields[j].len()
+            && crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]),
+        forall|k: int| 0 <= k < fs.len() ==> #[trigger] crate::quot_model::local_type(fs[k]) == crate::ti_spine::vsub(sh.fields[j][k],
+            crate::kgen::frees(local_ids(st.local_params@)) + crate::kgen::frees(local_ids(fs).subrange(0, k))),
+{
+    let (np, ni) = (sh.np, sh.ni);
+    let nf = sh.fields[j].len();
+    let fds = sh.fields[j];
+    let pids = local_ids(st.local_params@);
+    let fids = local_ids(fs);
+    let ids = pids + fids;
+    let res = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j]);
+    let ds = sh.pdoms + fds;
+    crate::kminor::tdoms_binds(ds, res);
+    crate::dom_iota::tbody_binds(ds, res);
+    if fs.len() < nf {
+        let xs = ids + Seq::new((nf - fs.len()) as nat, |q: int| 0nat);
+        crate::kgen::opened_doms(c0, xs, ds.len());
+        let k0 = (np + fs.len()) as int;
+        assert(xs.subrange(0, k0) =~= ids);
+        assert(false);
+    }
+    if fs.len() > nf {
+        let f2 = fids.subrange(0, nf as int);
+        crate::kminor::mc_open(sh.pdoms, fds, sh.ind, sh.us(), sh.tss[j], pids, f2);
+        assert(ids.subrange(0, (np + nf) as int) =~= pids + f2);
+        assert(opened_at(c0, ids, (np + nf) as int, crate::quot_model::local_type(fs[nf as int])));
+        crate::kminor::spine_const_not_bind(ExprSpec::Const(sh.ind, sh.us()),
+            crate::kgen::frees(pids) + Seq::new(ni, |q: int| crate::ti_spine::vsub(sh.tss[j][q], crate::kgen::frees(pids + f2))));
+        assert(false);
+    }
+    crate::kminor::mc_open(sh.pdoms, fds, sh.ind, sh.us(), sh.tss[j], pids, fids);
+    assert forall|k: int| 0 <= k < fs.len() implies #[trigger] crate::quot_model::local_type(fs[k]) == crate::ti_spine::vsub(fds[k],
+        crate::kgen::frees(pids) + crate::kgen::frees(fids.subrange(0, k))) by {
+        assert(ids.subrange(0, np + k) =~= pids + fids.subrange(0, k));
+        assert(opened_at(c0, ids, np + k, crate::quot_model::local_type(fs[k])));
+    }
+    reveal(recs_syn);
+    assert forall|k: int| 0 <= k < nf implies ((exists|r: int| 0 <= r < ps.len() && ps[r] == k)
+        <==> crate::rec_canon::direct_occ(#[trigger] fds[k], sh.ind, sh.us(), np, ni, k as nat)) by {
+        assert(crate::quot_model::local_type(fs[k]) == crate::ti_spine::vsub(fds[k],
+            crate::kgen::frees(pids) + crate::kgen::frees(fids.subrange(0, k))));
+        assert forall|q: int| 0 <= q < np implies crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[q]) == ExprSpec::Free(pids[q]) by {}
+        occ_shape(st, sh, fds[k], k as nat, pids, fids.subrange(0, k));
+    }
+    crate::kminor::rpos_prefix(fds, sh.ind, sh.us(), np, ni, ps, nf, ps.len() as int);
+    assert(ps.subrange(0, ps.len() as int) =~= ps);
+    assert forall|r: int| 0 <= r < sh.rposj(j).len() implies (#[trigger] sh.rposj(j)[r]) < sh.fields[j].len()
+        && crate::rec_canon::direct_occ(sh.fields[j][sh.rposj(j)[r] as int], sh.ind, sh.us(), sh.np, sh.ni, sh.rposj(j)[r]) by {
+        assert(sh.rposj(j)[r] == ps[r] as nat);
+        assert(exists|r2: int| 0 <= r2 < ps.len() && ps[r2] == ps[r]);
+    }
+}
+
+/// What a recursor rule's value was built from.
+pub(crate) ghost struct RuleWit<'t> {
+    pub fs: Seq<ExprPtr<'t>>,
+    pub rs: Seq<ExprPtr<'t>>,
+    pub ps: Seq<int>,
+    pub hs: Seq<ExprPtr<'t>>,
+    pub hid: u64,
+    pub lo: nat,
+    pub hi: nat,
+}
+
+/// THE RULE VALUE `val` FOR THE CONSTRUCTOR OF TYPE `c0` WITH MINOR `mn`:
+/// the parameters, motives, minors (`mins`) and the constructor's fields
+/// (opened from `c0` at the parameters, the walk ending at a non-Pi)
+/// abstracted from the minor applied to the fields and the hypotheses
+/// (one per recursive field, all calling the recursor `hid`).
+pub(crate) open spec fn rule_wit<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, c0: ExprSpec, mn: ExprPtr<'t>,
+    mins: Seq<ExprPtr<'t>>, val: ExprSpec, w: RuleWit<'t>) -> bool
+{
+    let ids = local_ids(st.local_params@) + local_ids(w.fs);
+    let all = st.local_params@ + st.motives@ + mins + w.fs;
+    &&& forall|k: int| 0 <= k < w.fs.len() ==> opened_at(c0, ids, st.local_params@.len() + k, crate::quot_model::local_type(#[trigger] w.fs[k]))
+        && crate::expr_arena_bridge::to_model(w.fs[k]) == ExprSpec::Free(crate::expr_arena_bridge::expr_id(w.fs[k]))
+    &&& !(crate::kgen::lit_open(c0, ids) is Bind && crate::kgen::lit_open(c0, ids)->Bind_0 == BinderKind::Pi)
+    &&& rec_sub(w.fs, w.rs, w.ps)
+    &&& recs_syn(st, w.fs, w.ps)
+    &&& st.ind_consts@.len() == 1 ==> rule_ihs_at(st, w.hid, w.rs, w.hs)
+    &&& w.lo <= w.hi
+    &&& crate::kgen::serials_in(aids, w.fs, w.lo, w.hi)
+    &&& forall|k: int| 0 <= k < rule_pre(st).len() ==> crate::kgen::fv_below(aids, #[trigger] rule_pre(st)[k], w.lo)
+    &&& val == crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Lam, local_ids(all), local_tys(all),
+        crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(mn),
+            crate::expr_arena_bridge::ptr_models(w.fs) + crate::expr_arena_bridge::ptr_models(w.hs)))
+}
+
+pub(crate) open spec fn rule_some<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, c0: ExprSpec, mn: ExprPtr<'t>,
+    mins: Seq<ExprPtr<'t>>, val: ExprSpec) -> bool {
+    exists|w: RuleWit<'t>| #[trigger] rule_wit(aids, st, c0, mn, mins, val, w)
+}
+
+/// The `a`-th recursor's rules, as the generator built them: one per
+/// constructor, each its constructor's rule value (`rule_some`).
+pub(crate) open spec fn rec_rules_gen<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, a: int, d: Declar<'t>) -> bool {
+    match d {
+        Declar::Recursor(r) => {
+            &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
+            &&& forall|b: int| 0 <= b < r.rec_rules@.len() ==> rule_some(aids, st,
+                crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, a)).len() + b], flat_ptrs(st.minors@),
+                crate::expr_arena_bridge::to_model((#[trigger] r.rec_rules@[b]).val))
+        },
+        _ => false,
+    }
+}
+
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
 pub(crate) proof fn minor_built<'t>(
@@ -4934,9 +5078,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*final(self)).ctx, result.val),
             crate::inductive_model::telescope_size_spec(BinderKind::Lam, crate::expr_arena_bridge::to_model(result.val))
                 >= st.local_params@.len() + st.motives@.len() + flat_mapped_minors@.len(),
+            flat_mapped_minors@ == flat_ptrs(st.minors@) ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                crate::expr_arena_bridge::to_model(ctor.ty), this_minor, flat_mapped_minors@, crate::expr_arena_bridge::to_model(result.val)),
     {
         let ghost c_ser0 = crate::util::unique_count(*self.ctx) as nat;
-        let (_, all_ctor_args, rec_ctor_args) = self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
+        let (stripd, all_ctor_args, rec_ctor_args) = self.sep_nonrec_rec_ctor_args(st, ctor.ty, st.local_params.as_slice());
+        let ghost c_ser1 = crate::util::unique_count(*self.ctx) as nat;
         proof {
             let aids = crate::util_model::arena_ids(*self.ctx);
             let c = crate::util::unique_count(*self.ctx) as nat;
@@ -4976,6 +5123,27 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // `mk_rec_rule_val` (the same calls, same order); the `RecRule` is
         // assembled here.
         let comp_rhs = self.mk_rec_rule_val(st, this_minor, flat_mapped_minors, all_ctor_args.as_slice(), handled_rec_args.as_slice());
+        proof {
+            if flat_mapped_minors@ == flat_ptrs(st.minors@) {
+                let aids = crate::util_model::arena_ids(*old(self).ctx);
+                let c_old = crate::util::unique_count(*old(self).ctx) as nat;
+                let ps = choose|ps: Seq<int>| #[trigger] rec_sub(all_ctor_args@, rec_ctor_args@, ps) && recs_syn(*st, all_ctor_args@, ps);
+                let hid = if st.ind_consts@.len() == 1 {
+                    choose|hid: u64| #[trigger] rule_ihs_at(*st, hid, rec_ctor_args@, handled_rec_args@)
+                } else { 0 };
+                let w = RuleWit { fs: all_ctor_args@, rs: rec_ctor_args@, ps, hs: handled_rec_args@, hid, lo: c_ser0, hi: c_ser1 };
+                assert(st.local_params@.subrange(0, st.local_params@.len() as int) =~= st.local_params@);
+                assert forall|k: int| 0 <= k < all_ctor_args@.len() implies crate::expr_arena_bridge::to_model(#[trigger] all_ctor_args@[k])
+                    == ExprSpec::Free(crate::expr_arena_bridge::expr_id(all_ctor_args@[k])) by {
+                    assert(level_free_local(*self.ctx, all_ctor_args@[k]));
+                }
+                assert forall|k: int| 0 <= k < rule_pre(*st).len() implies crate::kgen::fv_below(aids, #[trigger] rule_pre(*st)[k], c_ser0) by {
+                    crate::kgen::fv_below_mono(aids, rule_pre(*st)[k], c_old, c_ser0);
+                }
+                assert(rule_wit(aids, *st, crate::expr_arena_bridge::to_model(ctor.ty), this_minor, flat_mapped_minors@,
+                    crate::expr_arena_bridge::to_model(comp_rhs), w));
+            }
+        }
         let tele = self.ctx.pi_telescope_size(ctor.ty) as usize;
         assert!(tele >= st.local_params.len(), "mk_rec_rule1: constructor telescope shorter than its parameters");
         let num_fields = tele - st.local_params.len();
@@ -5032,6 +5200,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             forall|i: int, j: int| 0 <= i < result@.len() && 0 <= j < result@[i]@.len()
                 ==> (#[trigger] result@[i]@[j]).ctor_name == st.all_inductives_incl_specialized@[i].ctors@[j].name
                     && crate::util_model::owns(*(*final(self)).ctx, result@[i]@[j].val),
+            forall|a: int, b: int| 0 <= a < result@.len() && 0 <= b < result@[a]@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                    crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                    flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, a)).len() + b], flat_ptrs(st.minors@),
+                    crate::expr_arena_bridge::to_model((#[trigger] result@[a]@[b]).val)),
     {
         let mut rec_rules: Vec<Vec<RecRule<'t>>> = Vec::new();
         let minors = flatten_minors(&st.minors);
@@ -5077,6 +5249,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util::unique_count(*old(self).ctx) as nat <= crate::util::unique_count(*self.ctx) as nat,
                 forall|a: int| 0 <= a < rec_rules@.len()
                     ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
+                forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                    crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                    flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, a)).len() + b], flat_ptrs(st.minors@),
+                    crate::expr_arena_bridge::to_model((#[trigger] rec_rules@[a]@[b]).val)),
                 forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
                     ==> (#[trigger] rec_rules@[a]@[j]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[j].name
                         && crate::util_model::owns(*self.ctx, rec_rules@[a]@[j].val),
@@ -5112,6 +5288,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     j <= ind_ty.ctors@.len(),
                     overall_ctor_idx + ind_ty.ctors@.len() - j <= minors@.len(),
                     overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, i as int)).len() + j,
+                    minors@ == flat_ptrs(st.minors@),
                     grp@.len() == j,
                     forall|a: int, b: int| 0 <= a < st.all_inductives_incl_specialized@.len()
                         && 0 <= b < st.all_inductives_incl_specialized@[a].ctors@.len()
@@ -5126,6 +5303,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     forall|b: int| 0 <= b < grp@.len()
                         ==> (#[trigger] grp@[b]).ctor_name == ind_ty.ctors@[b].name
                             && crate::util_model::owns(*self.ctx, grp@[b].val),
+                    forall|b: int| 0 <= b < grp@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                        crate::expr_arena_bridge::to_model(ind_ty.ctors@[b].ty),
+                        flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, i as int)).len() + b], flat_ptrs(st.minors@),
+                        crate::expr_arena_bridge::to_model((#[trigger] grp@[b]).val)),
+                    forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                    crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                    flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, a)).len() + b], flat_ptrs(st.minors@),
+                    crate::expr_arena_bridge::to_model((#[trigger] rec_rules@[a]@[b]).val)),
                     forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len()
                         ==> (#[trigger] rec_rules@[a]@[b]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[b].name
                             && crate::util_model::owns(*self.ctx, rec_rules@[a]@[b].val),
@@ -5146,11 +5331,29 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::kgen::fv_below_mono(crate::util_model::arena_ids(*old(self).ctx), rule_pre(*st)[k], crate::util::unique_count(*old(self).ctx) as nat, c);
                     }
                 }
+                let ghost oci = overall_ctor_idx as int;
                 let rec_rule = self.mk_rec_rule1(st, ctor, minors.as_slice(), this_minor);
+                proof {
+                    assert(minors@ == flat_ptrs(st.minors@));
+                    assert(rule_some(crate::util_model::arena_ids(*old(self).ctx), *st, crate::expr_arena_bridge::to_model(ctor.ty),
+                        this_minor, minors@, crate::expr_arena_bridge::to_model(rec_rule.val)));
+                }
                 overall_ctor_idx += 1;
                 let ghost g0 = grp@;
                 grp.push(rec_rule);
                 proof {
+                    assert forall|b: int| 0 <= b < grp@.len() implies rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                        crate::expr_arena_bridge::to_model(ind_ty.ctors@[b].ty),
+                        flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, i as int)).len() + b], flat_ptrs(st.minors@),
+                        crate::expr_arena_bridge::to_model((#[trigger] grp@[b]).val)) by {
+                        if b < g0.len() {
+                            assert(grp@[b] == g0[b]);
+                        } else {
+                            assert(this_minor == minors@[oci]);
+                            assert(oci == flat_ptrs(st.minors@.subrange(0, i as int)).len() + b);
+                            assert(ctor == ind_ty.ctors@[b]);
+                        }
+                    }
                     assert forall|b: int| 0 <= b < grp@.len() implies (#[trigger] grp@[b]).ctor_name == ind_ty.ctors@[b].name
                         && crate::util_model::owns(*self.ctx, grp@[b].val) by {
                         if b < g0.len() { assert(grp@[b] == g0[b]); }
@@ -5161,6 +5364,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost r0 = rec_rules@;
             rec_rules.push(grp);
             proof {
+                assert forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len() implies rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                    crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                    flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, a)).len() + b], flat_ptrs(st.minors@),
+                    crate::expr_arena_bridge::to_model((#[trigger] rec_rules@[a]@[b]).val)) by {
+                    if a < r0.len() {
+                        assert(rec_rules@[a] == r0[a]);
+                    } else {
+                        assert(*ind_ty == st.all_inductives_incl_specialized@[a]);
+                    }
+                }
                 assert(st.minors@[i as int]@.len() == ind_ty.ctors@.len());
                 assert forall|a: int| 0 <= a < rec_rules@.len()
                     implies (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len() by {
@@ -5362,6 +5575,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 _ => false,
             },
             forall|a: int| 0 <= a < result@.len() ==> #[trigger] rec_ty_gen(*st, a, result@[a]),
+            forall|a: int| 0 <= a < result@.len() ==> #[trigger] rec_rules_gen(crate::util_model::arena_ids(*old(self).ctx), *st, a, result@[a]),
     {
         let rec_rules = self.mk_rec_rules(st);
         proof {
@@ -5402,6 +5616,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 i <= st.all_inductives_incl_specialized@.len(),
                 recursors@.len() == i,
                 forall|a: int| 0 <= a < recursors@.len() ==> #[trigger] rec_ty_gen(*st, a, recursors@[a]),
+                forall|a: int| 0 <= a < recursors@.len() ==> #[trigger] rec_rules_gen(crate::util_model::arena_ids(*old(self).ctx), *st, a, recursors@[a]),
+                forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), *st,
+                    crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
+                    flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, a)).len() + b], flat_ptrs(st.minors@),
+                    crate::expr_arena_bridge::to_model((#[trigger] rec_rules@[a]@[b]).val)),
+                crate::util_model::arena_ids(*self.ctx) == crate::util_model::arena_ids(*old(self).ctx),
                 forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self.ctx), #[trigger] recursors@[a]),
                 forall|a: int| 0 <= a < recursors@.len() ==> crate::env::declar_info(#[trigger] recursors@[a]).uparams == st.rec_uparams->0,
                 forall|a: int| 0 <= a < recursors@.len() ==> match #[trigger] recursors@[a] {
@@ -5451,6 +5671,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             let ghost r0 = recursors@;
             recursors.push(recursor);
             proof {
+                assert forall|a: int| 0 <= a < recursors@.len() implies #[trigger] rec_rules_gen(crate::util_model::arena_ids(*old(self).ctx), *st, a, recursors@[a]) by {
+                    if a < r0.len() {
+                        assert(recursors@[a] == r0[a]);
+                    } else {
+                        assert(rec_rules@[i as int]@.len() == st.all_inductives_incl_specialized@[i as int].ctors@.len());
+                    }
+                }
                 assert forall|a: int| 0 <= a < recursors@.len() implies #[trigger] rec_ty_gen(*st, a, recursors@[a]) by {
                     if a < r0.len() {
                         assert(recursors@[a] == r0[a]);
