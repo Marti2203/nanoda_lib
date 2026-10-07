@@ -134,8 +134,8 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls)
     &&& sig.ienv.sub(sig2.ienv)
     &&& iota_ok(sig2)
-    &&& crate::ti_syntax::no_structs(sig)
-    &&& crate::ti_syntax::no_structs(sig2)
+    &&& (crate::ti_syntax::no_structs(sig) && crate::ti_syntax::no_structs(sig2))
+        || (sig.consts == sig2.consts && sig.ienv == sig2.ienv)
 }
 
 /// Without recursors nothing is a recursor redex.
@@ -206,6 +206,73 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
     assert(crate::dom_rec_ty::rshape(sig2, rid).us() == crate::dom_rec_ty::rshape(sig, rid).us());
 }
 
+/// A rule instance stays correct when only the locals grow: every rule
+/// but `Local` reads just the constants and the inductive tables.
+proof fn step_congr(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
+    requires
+        step_ok(sig, r, j, ps),
+        sig_ext(sig, sig2),
+        sig.consts == sig2.consts,
+        sig.ienv == sig2.ienv,
+    ensures
+        step_ok(sig2, r, j, ps),
+{
+    match r {
+        Rule::ConstDef(_) | Rule::Delta(_) => {
+            let c = j->Eq_1->Const_0;
+            let ls = j->Eq_1->Const_1;
+            assert(is_def(sig2, c, ls));
+            assert(def_ok(sig2, c, ls));
+            if r is ConstDef {
+                let ls2 = j->Eq_2->Const_1;
+                assert(is_def(sig2, c, ls2));
+                assert(def_ok(sig2, c, ls2));
+            }
+        },
+        Rule::Local(_) => {
+            let k = j->Eq_1->Free_0;
+            assert(sig.locals.contains_key(k));
+        },
+        Rule::Iota(_) => {
+            let m = j->Eq_1;
+            crate::dom_rec_end::frag_congr(sig, sig2);
+            crate::ti_hred::fire_inst_sig(sig, sig2, m);
+            let rid = crate::beta_model::spine_head(m)->Const_0;
+            assert(crate::dom_rec_ty::rshape(sig, rid) == crate::dom_rec_ty::rshape(sig2, rid));
+            reveal(crate::ti_syntax::iota_lv);
+            reveal(crate::ti_syntax::iota_pjs);
+            assert(crate::ti_syntax::iota_lv(sig2, m) == crate::ti_syntax::iota_lv(sig, m));
+            assert(crate::ti_syntax::iota_pjs(sig2, j->Eq_0, m) == crate::ti_syntax::iota_pjs(sig, j->Eq_0, m));
+        },
+        Rule::ProjCong(_) => {
+            reveal(crate::ti_syntax::proj_cong_ok);
+            let st = concl(ps[0])->Eq_3;
+            crate::ti_proj::proj_sig_congr(sig, sig2, st, j->Eq_1->Proj_0 as nat, *j->Eq_1->Proj_1, j->Eq_1);
+        },
+        Rule::ProjIota(_) => {
+            reveal(crate::ti_syntax::proj_iota_ok);
+            let st = concl(ps[2])->Eq_3;
+            crate::ti_proj::proj_sig_congr(sig, sig2, st, j->Eq_1->Proj_0 as nat, *j->Eq_1->Proj_1, j->Eq_1);
+            crate::ti_proj::proj_fty_congr(sig, sig2, j->Eq_1);
+        },
+        Rule::StructEta(_) => {
+            reveal(crate::ti_syntax::struct_eta_ok);
+            let (g, m, n, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+            crate::ti_proj::seta_sig_congr(sig, sig2, t);
+            assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig2, t) implies #[trigger] concl(ps[3 + k])
+                == eq(g, ExprSpec::Proj(k as usize, Box::new(m)), ExprSpec::Proj(k as usize, Box::new(n)), crate::ti_syntax::proj_ty(sig2, t, k as nat, m)->Some_0) by {
+                crate::ti_proj::proj_sig_congr(sig, sig2, t, k as nat, m, m);
+            }
+        },
+        Rule::RecEta(_) => {
+            reveal(crate::ti_syntax::rec_eta_ok);
+            crate::dom_rec_end::frag_congr(sig, sig2);
+            crate::ti_hred::reta_sig(sig, sig2, j->Eq_1);
+        },
+        _ => {},
+    }
+}
+
 /// One rule instance stays correct in an extended signature.
 proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     requires
@@ -214,6 +281,10 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
     ensures
         step_ok(sig2, r, j, ps),
 {
+    if !(crate::ti_syntax::no_structs(sig) && crate::ti_syntax::no_structs(sig2)) {
+        step_congr(sig, sig2, r, j, ps);
+        return;
+    }
     if r is ProjCong || r is ProjIota {
         crate::ti_syntax::proj_dead_ns(sig, r, j, ps);
     }
