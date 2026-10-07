@@ -2134,6 +2134,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*final(self)),
             major_ok(*(*final(self)).ctx, result),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx), seq![result],
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             crate::quot_model::local_type(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
                 local_ids(st.local_indices@[ind_type_idx as int]@),
                 Seq::new(st.local_indices@[ind_type_idx as int]@.len(), |j: int| crate::quot_model::local_type(st.local_indices@[ind_type_idx as int]@[j])),
@@ -2167,7 +2169,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             motive_name_base
         };
 
-        self.ctx.mk_unique(motive_name, BinderStyle::Implicit, motive_type)
+        let ghost cnt0 = crate::util::unique_count(*self.ctx) as nat;
+        let ghost cnt_lo = crate::util::unique_count(*old(self).ctx) as nat;
+        let r = self.ctx.mk_unique(motive_name, BinderStyle::Implicit, motive_type);
+        proof {
+            let aids = crate::util_model::arena_ids(*self.ctx);
+            assert(crate::kgen::serials_in(aids, Seq::<ExprPtr<'t>>::empty(), cnt_lo, cnt0));
+            crate::kgen::serials_push(aids, Seq::<ExprPtr<'t>>::empty(), cnt_lo, cnt0, r, crate::util::unique_count(*self.ctx) as nat);
+            assert(Seq::<ExprPtr<'t>>::empty().push(r) =~= seq![r]);
+        }
+        r
     }
 
     /// Verified in place, body unchanged: one motive per block inductive,
@@ -2192,6 +2203,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).motives@.len() == old(st).motives@.len() + old(st).ind_consts@.len(),
             forall|i: int| 0 <= i < old(st).motives@.len() ==> #[trigger] final(st).motives@[i] == old(st).motives@[i],
             forall|i: int| old(st).motives@.len() <= i < final(st).motives@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).motives@[i]),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx),
+                final(st).motives@.subrange(old(st).motives@.len() as int, final(st).motives@.len() as int),
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             forall|i: int| old(st).motives@.len() <= i < final(st).motives@.len() ==> crate::quot_model::local_type(#[trigger] final(st).motives@[i]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
                 local_ids(old(st).local_indices@[i - old(st).motives@.len()]@),
                 Seq::new(old(st).local_indices@[i - old(st).motives@.len()]@.len(), |j: int| crate::quot_model::local_type(old(st).local_indices@[i - old(st).motives@.len()]@[j])),
@@ -2199,6 +2213,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     Box::new(ExprSpec::Sort(crate::level_arena_bridge::to_model(old(st).elim_level->0))))),
     {
         let ghost st0 = *st;
+        let ghost aids = crate::util_model::arena_ids(*self.ctx);
+        let ghost cnt_lo = crate::util::unique_count(*self.ctx) as nat;
+        proof {
+            assert(st.motives@.subrange(st0.motives@.len() as int, st.motives@.len() as int) =~= Seq::<ExprPtr<'t>>::empty());
+        }
         debug_assert_eq!(st.local_indices.len(), st.ind_consts.len());
         debug_assert_eq!(st.majors.len(), st.ind_consts.len());
         for i in 0..st.ind_consts.len()
@@ -2220,6 +2239,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.motives@.len() == st0.motives@.len() + i,
                 forall|k: int| 0 <= k < st0.motives@.len() ==> #[trigger] st.motives@[k] == st0.motives@[k],
                 forall|k: int| st0.motives@.len() <= k < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[k]),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, st.motives@.subrange(st0.motives@.len() as int, st.motives@.len() as int),
+                    cnt_lo, crate::util::unique_count(*self.ctx) as nat),
                 forall|k: int| st0.motives@.len() <= k < st.motives@.len() ==> crate::quot_model::local_type(#[trigger] st.motives@[k]) == crate::expr_arena_bridge::abstr_pi_telescope_model(
                 local_ids(st0.local_indices@[k - st0.motives@.len()]@),
                 Seq::new(st0.local_indices@[k - st0.motives@.len()]@.len(), |j: int| crate::quot_model::local_type(st0.local_indices@[k - st0.motives@.len()]@[j])),
@@ -2228,7 +2251,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         {
             let major = st.majors[i];
             let ghost ms0 = st.motives@;
-            st.motives.push(self.mk_motive_dep(st, major, i as u64));
+            let ghost cb = crate::util::unique_count(*self.ctx) as nat;
+            let m = self.mk_motive_dep(st, major, i as u64);
+            st.motives.push(m);
+            proof {
+                crate::kgen::serials_cat(aids, ms0.subrange(st0.motives@.len() as int, ms0.len() as int), seq![m],
+                    cnt_lo, cb, crate::util::unique_count(*self.ctx) as nat);
+                assert(ms0.subrange(st0.motives@.len() as int, ms0.len() as int) + seq![m]
+                    =~= st.motives@.subrange(st0.motives@.len() as int, st.motives@.len() as int));
+            }
             proof {
                 assert forall|k: int| st0.motives@.len() <= k < st.motives@.len() implies major_ok(*self.ctx, #[trigger] st.motives@[k]) by {
                     if k < st.motives@.len() - 1 {
@@ -7494,11 +7525,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             final(st).majors@.len() == old(st).majors@.len() + old(st).ind_consts@.len(),
             forall|i: int| 0 <= i < old(st).majors@.len() ==> #[trigger] final(st).majors@[i] == old(st).majors@[i],
             forall|i: int| old(st).majors@.len() <= i < final(st).majors@.len() ==> major_ok(*(*final(self)).ctx, #[trigger] final(st).majors@[i]),
+            crate::kgen::serials_in(crate::util_model::arena_ids(*(*final(self)).ctx),
+                final(st).majors@.subrange(old(st).majors@.len() as int, final(st).majors@.len() as int),
+                crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
             forall|i: int| old(st).majors@.len() <= i < final(st).majors@.len() ==> crate::quot_model::local_type(#[trigger] final(st).majors@[i])
                 == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(old(st).ind_consts@[i - old(st).majors@.len()]),
                     crate::expr_arena_bridge::ptr_models(old(st).local_params@) + crate::expr_arena_bridge::ptr_models(old(st).local_indices@[i - old(st).majors@.len()]@)),
     {
         let ghost st0 = *st;
+        let ghost aids = crate::util_model::arena_ids(*self.ctx);
+        let ghost cnt_lo = crate::util::unique_count(*self.ctx) as nat;
+        proof {
+            assert(st.majors@.subrange(st0.majors@.len() as int, st.majors@.len() as int) =~= Seq::<ExprPtr<'t>>::empty());
+        }
         let n = st.ind_consts.len();
         if st.local_indices.len() < n {
             panic!("mk_majors: local_indices is shorter than ind_consts");
@@ -7523,6 +7562,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.majors@.len() == st0.majors@.len() + idx,
                 forall|i: int| 0 <= i < st0.majors@.len() ==> #[trigger] st.majors@[i] == st0.majors@[i],
                 forall|i: int| st0.majors@.len() <= i < st.majors@.len() ==> major_ok(*self.ctx, #[trigger] st.majors@[i]),
+                crate::util_model::arena_ids(*self.ctx) == aids,
+                cnt_lo <= crate::util::unique_count(*self.ctx) as nat,
+                crate::kgen::serials_in(aids, st.majors@.subrange(st0.majors@.len() as int, st.majors@.len() as int),
+                    cnt_lo, crate::util::unique_count(*self.ctx) as nat),
                 forall|k: int| st0.majors@.len() <= k < st.majors@.len() ==> crate::quot_model::local_type(#[trigger] st.majors@[k])
                     == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st0.ind_consts@[k - st0.majors@.len()]),
                         crate::expr_arena_bridge::ptr_models(st0.local_params@) + crate::expr_arena_bridge::ptr_models(st0.local_indices@[k - st0.majors@.len()]@)),
@@ -7553,7 +7596,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // well-formed declaration.
             assert!(self.ctx.num_loose_bvars(ty) == 0, "mk_majors: a major premise's type has loose bound variables");
             let ghost ms0 = st.majors@;
-            st.majors.push(self.ctx.mk_unique(t, BinderStyle::Default, ty));
+            let ghost cb = crate::util::unique_count(*self.ctx) as nat;
+            let mj = self.ctx.mk_unique(t, BinderStyle::Default, ty);
+            st.majors.push(mj);
+            proof {
+                crate::kgen::serials_push(aids, ms0.subrange(st0.majors@.len() as int, ms0.len() as int), cnt_lo, cb, mj,
+                    crate::util::unique_count(*self.ctx) as nat);
+                assert(ms0.subrange(st0.majors@.len() as int, ms0.len() as int).push(mj)
+                    =~= st.majors@.subrange(st0.majors@.len() as int, st.majors@.len() as int));
+            }
             proof {
                 assert forall|i: int| st0.majors@.len() <= i < st.majors@.len() implies major_ok(*self.ctx, #[trigger] st.majors@[i]) by {
                     if i < st.majors@.len() - 1 {

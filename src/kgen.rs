@@ -417,4 +417,34 @@ pub proof fn chain_lit_open(t: ExprSpec, cs: Seq<ExprSpec>, bts: Seq<ExprSpec>, 
     }
 }
 
+/// Two runs in adjacent windows are one run.
+pub proof fn serials_cat<'t>(aids: (nat, nat), a: Seq<crate::util::ExprPtr<'t>>, b: Seq<crate::util::ExprPtr<'t>>, lo: nat, mid: nat, hi: nat)
+    requires
+        serials_in(aids, a, lo, mid),
+        serials_in(aids, b, mid, hi),
+        lo <= mid <= hi,
+    ensures
+        serials_in(aids, a + b, lo, hi),
+{
+    let c = a + b;
+    assert forall|k: int| 0 <= k < c.len() implies (#[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(c[k]))) is Some
+        && lo <= crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(c[k]))->Some_0
+        && (crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(c[k]))->Some_0 as nat) < hi by {
+        if k < a.len() { assert(c[k] == a[k]); } else { assert(c[k] == b[k - a.len()]); }
+    }
+    assert forall|i: int, j: int| 0 <= i < j < c.len() implies
+        #[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(c[i]))->Some_0
+        < #[trigger] crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(c[j]))->Some_0 by {
+        if j < a.len() {
+            assert(c[i] == a[i] && c[j] == a[j]);
+        } else if i >= a.len() {
+            assert(c[i] == b[i - a.len()] && c[j] == b[j - a.len()]);
+        } else {
+            assert(c[i] == a[i] && c[j] == b[j - a.len()]);
+            assert((crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(a[i]))->Some_0 as nat) < mid);
+            assert(mid <= crate::expr_arena_bridge::unique_serial(aids, crate::expr_arena_bridge::expr_id(b[j - a.len()]))->Some_0);
+        }
+    }
+}
+
 } // verus!
