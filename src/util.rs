@@ -86,6 +86,55 @@ pub closed spec fn raw_of<A>(p: Ptr<A>) -> u32 {
 }
 
 /// The arena the pointer indexes into.
+/// A pointer's raw value is its index and its tier.
+pub proof fn raw_index_tier(a: u32, b: u32)
+    requires
+        (a & 0x7FFF_FFFFu32) == (b & 0x7FFF_FFFFu32),
+        (a >= 0x8000_0000u32) == (b >= 0x8000_0000u32),
+    ensures
+        a == b,
+{
+    assert(a == b) by (bit_vector)
+        requires
+            (a & 0x7FFF_FFFFu32) == (b & 0x7FFF_FFFFu32),
+            (a >= 0x8000_0000u32) == (b >= 0x8000_0000u32);
+}
+
+/// The string a pointer denotes: what its arena holds at its position.
+pub open spec fn str_at<'a>(p: StringPtr<'a>) -> CowStr<'a> {
+    crate::arena_history::arena_hist::<CowStr<'a>>(arena_of(p))[crate::name_arena_bridge::ptr_index(p) as int]
+}
+
+/// The pointer is within what its tier's dag stores.
+/// The context's export file stores the string `s`.
+pub closed spec fn export_has_string<'t, 'p>(c: TcCtx<'t, 'p>, s: CowStr<'t>) -> bool {
+    c.export_file.dag.has_string(s)
+}
+
+pub closed spec fn str_stored<'t, 'p>(c: TcCtx<'t, 'p>, p: StringPtr<'t>) -> bool {
+    if crate::util_model::ptr_is_tc(p) { crate::name_arena_bridge::ptr_index(p) < c.dag.n_strings() }
+    else { crate::name_arena_bridge::ptr_index(p) < c.export_file.dag.n_strings() }
+}
+
+/// A stored string stays stored, in the same tier's dag.
+pub proof fn str_stored_mono<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>, p: StringPtr<'t>)
+    requires
+        crate::util_model::same_arenas(a, b),
+        str_stored(a, p),
+    ensures
+        str_stored(b, p),
+{
+}
+
+/// The export file's strings are fixed.
+pub proof fn export_has_string_same<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>, s: CowStr<'t>)
+    requires
+        crate::util_model::same_arenas(a, b),
+    ensures
+        export_has_string(a, s) == export_has_string(b, s),
+{
+}
+
 pub closed spec fn arena_of<A>(p: Ptr<A>) -> nat {
     p.arena@
 }
@@ -927,6 +976,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
+            // hash-consed: the string stored there is `s`, in the export
+            // file's tier exactly when the export file has it, and no other
+            // stored copy of `s` is in that tier
+            str_at(result) == s,
+            !crate::util_model::ptr_is_tc(result) <==> export_has_string(*final(self), s),
+            str_stored(*final(self), result),
+            forall|q: StringPtr<'t>| #[trigger] str_at(q) == s && crate::util_model::owns(*final(self), q) && str_stored(*final(self), q)
+                && crate::util_model::ptr_is_tc(q) == crate::util_model::ptr_is_tc(result) ==> q == result,
     {
         proof {
             use_type_invariant(self.export_file);
@@ -938,10 +995,32 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             vstd::std_specs::hash::axiom_obeys_key_model_borrowed_keys(crate::indexmap_model::iset_keys(&self.export_file.dag.strings).to_set(), &s);
         }
         if let Some(idx) = self.export_file.dag.strings.get_index_of(&s) {
-            Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()))
+            let r = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()));
+            proof {
+                use_type_invariant(&self.export_file.dag);
+                use_type_invariant(&*self.dag);
+                self.export_file.dag.string_unique(r, s);
+                assert forall|q: StringPtr<'t>| #[trigger] str_at(q) == s && crate::util_model::owns(*self, q) && str_stored(*self, q)
+                    && crate::util_model::ptr_is_tc(q) == crate::util_model::ptr_is_tc(r) implies q == r by {
+                    raw_index_tier(crate::util_model::ptr_raw(q), crate::util_model::ptr_raw(r));
+                    ptr_ext(q, r);
+                }
+            }
+            r
         } else {
+            let ghost s0 = s;
             let (idx, _) = self.dag.insert_export_string(s);
-            Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()))
+            let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
+            proof {
+                use_type_invariant(&*self.dag);
+                self.dag.string_unique(r, s0);
+                assert forall|q: StringPtr<'t>| #[trigger] str_at(q) == s0 && crate::util_model::owns(*self, q) && str_stored(*self, q)
+                    && crate::util_model::ptr_is_tc(q) == crate::util_model::ptr_is_tc(r) implies q == r by {
+                    raw_index_tier(crate::util_model::ptr_raw(q), crate::util_model::ptr_raw(r));
+                    ptr_ext(q, r);
+                }
+            }
+            r
         }
     }
 
@@ -1562,6 +1641,42 @@ impl<'a> LeanDag<'a> {
         self.toks@.names.id()
     }
 
+    /// How many strings the dag stores.
+    pub closed spec fn n_strings(self) -> nat {
+        crate::indexmap_model::iset_keys(&self.strings).len()
+    }
+
+    /// The dag stores the string `s`.
+    pub closed spec fn has_string(self, s: CowStr<'a>) -> bool {
+        crate::indexmap_model::iset_keys(&self.strings).contains(s)
+    }
+
+    /// A stored string is stored once: a pointer into this dag's strings,
+    /// within what it stores, holding `s`, is the one at `s`'s position.
+    proof fn string_unique(self, r: StringPtr<'a>, s: CowStr<'a>)
+        requires
+            self.inv(),
+            arena_of(r) == self.id(),
+            crate::name_arena_bridge::ptr_index(r) < self.n_strings(),
+            crate::indexmap_model::iset_keys(&self.strings)[crate::name_arena_bridge::ptr_index(r) as int] == s,
+        ensures
+            str_at(r) == s,
+            self.has_string(s),
+            forall|q: StringPtr<'a>| #[trigger] str_at(q) == s && arena_of(q) == self.id()
+                && crate::name_arena_bridge::ptr_index(q) < self.n_strings()
+                ==> crate::name_arena_bridge::ptr_index(q) == crate::name_arena_bridge::ptr_index(r),
+    {
+        let ks = crate::indexmap_model::iset_keys(&self.strings);
+        assert(ks[crate::name_arena_bridge::ptr_index(r) as int] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[crate::name_arena_bridge::ptr_index(r) as int]);
+        assert forall|q: StringPtr<'a>| #[trigger] str_at(q) == s && arena_of(q) == self.id()
+            && crate::name_arena_bridge::ptr_index(q) < self.n_strings()
+            implies crate::name_arena_bridge::ptr_index(q) == crate::name_arena_bridge::ptr_index(r) by {
+            let i = crate::name_arena_bridge::ptr_index(q) as int;
+            let j = crate::name_arena_bridge::ptr_index(r) as int;
+            assert(ks[i] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[i]);
+        }
+    }
+
     /// A checker's dag, rather than an export file's.
     pub closed spec fn is_tc(self) -> bool {
         self.toks@.is_tc
@@ -1707,6 +1822,8 @@ impl<'a> LeanDag<'a> {
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
             result.0 < crate::indexmap_model::iset_keys(&final(self).strings).len(),
+            crate::indexmap_model::iset_keys(&old(self).strings).len() <= crate::indexmap_model::iset_keys(&final(self).strings).len(),
+            crate::indexmap_model::iset_keys(&final(self).strings)[result.0 as int] == t,
             crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
             crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
             crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),

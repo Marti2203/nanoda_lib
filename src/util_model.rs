@@ -522,6 +522,7 @@ pub open spec fn owns_all<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, s: Seq<crate
 pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::util::TcCtx<'t, 'p>) -> bool {
     &&& arena_ids(a) == arena_ids(b)
     &&& crate::util::unique_count(a) <= crate::util::unique_count(b)
+    &&& a.dag.n_strings() <= b.dag.n_strings()
     &&& a.export_file == b.export_file
     &&& a.dag.is_tc() == b.dag.is_tc()
     &&& a.dag.partner() == b.dag.partner()
@@ -702,16 +703,6 @@ pub open spec fn ptr_raw<A>(p: Ptr<A>) -> u32 {
     crate::util::raw_of(p)
 }
 
-// `get_index_of` is deliberately NOT specified. indexmap's signature is
-// generic over any `Q: Equivalent<T>`, Verus requires an
-// `assume_specification` to match that signature exactly, and at that
-// generality there is nothing truthful to say -- no spec can relate an
-// arbitrary `Q` to `T`. Pinning it at `Q = T` (the instantiation the kernel
-// uses) is rejected for signature mismatch.
-//
-// It is not needed for the readers, which only index by position. It would
-// be needed to verify `alloc_*`'s hash-consing LOOKUP branch, so that stays
-// out of reach until Verus can express the instantiation.
 /// Abstract model of the two-tier "hash-consing" pattern every
 /// `alloc_X`/`read_X` pair in `util.rs` follows (`alloc_name`/`alloc_level`/
 /// `alloc_expr`/`alloc_string`/`alloc_bignum`/`alloc_levels`, paired with
