@@ -1648,6 +1648,30 @@ and eta step is vacuous (about thirty sites use that). Stages:
       that it is closed). The recursor's inductive is still read off its
       declared type syntactically (`rec_ind`), as nanoda reads it
       (`get_major_induct`).
+    FINDING (5b): `rec_canon` cannot itself be relaxed to typed conversion
+    -- the typed judgment (`derivable`, `tconvd`/`chain_ok`, `iota_ok`,
+    `rec_fire`) is defined through `rec_canon`, so the definition is
+    circular. `rec_canon_c` stays as a standalone predicate.
+  - **B5 design: the canonical twin signature** (user's choice over an
+    untyped δβ notion, because it keeps nanoda's own relation).
+    `rec_canon` stays syntactic. `twin(sig)` is `sig` with each recursor
+    whose inductive side is canonical (`rec_canon` minus its two
+    equalities) given the canonical type `rec_ty` and rules `rule_rhs`;
+    `rec_canon(twin(sig), rid)` then holds by construction. The kernel's
+    claims are proved in the twin and TRANSFERRED back: the twin and
+    `sig` differ only at those recursors, whose declared type and rules
+    convert (in `sig`) to the twin's -- exactly what nanoda's `def_eq`
+    certifies (B4d). Layers:
+    T1 `twin` and `rec_canon(twin(sig), rid)`.
+    T2 transfer of derivations: a constant's typing step uses the twin's
+       type, then one conversion to the declared one; an iota step's
+       right-hand side differs by conversion.
+    T3 the certificate: `declar_cert_at` for the inductive carries the
+       conversions (kconv), bridged to the typed ones the transfer needs.
+    T4 `kh_hyp` assumes `ind_ok` of the twin instead of `sig`.
+    Trade-off: closest to nanoda's relation (def_eq, incl. eta and proof
+    irrelevance) at the cost of a judgment-transfer layer; the untyped
+    alternative would have been smaller but narrower than nanoda.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.
