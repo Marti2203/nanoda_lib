@@ -1693,6 +1693,30 @@ and eta step is vacuous (about thirty sites use that). Stages:
     - `export_sound::twin_types`: a twinned recursor's canonical type is
       a type in the environment of its certificate (nanoda types the
       generated recursor before the recursor itself is added).
+    FINDING (T3): two of these obligations cannot be certified from
+    nanoda's checks, and stay named hypotheses (user's decision, 2026-10-08):
+    - `twin_types`: nanoda, like Lean, never type-checks the recursor it
+      generates; that the canonical type is a type is metatheory (the
+      generated recursor is well typed when the inductive and
+      constructors are), not a check nanoda makes.
+    - the conversions in `twin_ok` (declared type, `rule_conv`): nanoda
+      compares by `def_eq` in the environment holding the whole block,
+      recursors included. The typed half of that claim (`cw`) holds
+      under `kh` of that environment, which already assumes `twin_ok` of
+      the same recursors -- circular -- and needs both sides typed
+      (`twin_types` again). The untyped half (`kconv`) is not circular,
+      but `kconv` to typed conversion is the research-level step
+      (unique typing, inversion; see METATHEORY.md). A strengthening
+      lemma (the comparison holds in the environment before the block's
+      recursors) would also break the cycle; not attempted.
+    Certified instead: `twins_stable` and the level facts, which follow
+    from the environment's growth and the declarations' own checks.
+    T3a: a recursor's rule constructors are declared before it (a
+    tested-input check beside nanoda's own `recursor_before_inductive`;
+    Init.Core and Init clean), and its certificate records it. With the
+    inductive (in the recursor's checked type) and the constructors'
+    field types (in their checked types) also earlier, everything the
+    twin's decision reads is fixed when the recursor is declared.
     Trade-off as built: a constant's typing in the twin is at the
     canonical type, and `typed_const` recovers the declared type through
     `twin_ok`'s conversion. So the claims follow nanoda's `def_eq`. The
