@@ -62,6 +62,44 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export))
     &&& forall|id: u64| #[trigger] denv.ctor_np.contains_key(id) ==> dty.contains_key(id) && !denv.defs.contains_key(id) && !denv.recs.contains_key(id)
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok(jsig(dty, denv, d))
+    &&& twin_ok(dty, denv)
+}
+
+/// THE CANONICAL TWIN'S OBLIGATIONS (docs/TYPED_TARGET.md, "B5 design";
+/// certified from nanoda's checks, T3): the environment's own rule values
+/// are closed lambdas, and each recursor the twin replaces has a declared
+/// type converting -- at every level instance, in the twin -- to its
+/// canonical one, which mentions no local.
+pub open spec fn twin_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let s0 = jsig(dty, denv, Map::empty());
+    &&& forall|rid: u64, i: int| denv.recs.contains_key(rid) && 0 <= i < denv.recs[rid].rules.len()
+        ==> #[trigger] crate::beta_model::rule_rhs_ok(denv, denv.recs[rid].rules[i])
+    &&& forall|rid: u64| #[trigger] denv.recs.contains_key(rid) && crate::twin::rec_core(raw, rid) ==> {
+        &&& !crate::expr_model::has_fv(crate::twin::canon_ty(raw, rid))
+        &&& crate::level_inst::elp_in(crate::twin::canon_ty(raw, rid), dty[rid].0)
+        &&& forall|j: int| 0 <= j < denv.recs[rid].rules.len() ==>
+            crate::level_inst::elp_in(#[trigger] crate::twin::canon_rules(raw, rid)[j].rhs, denv.recs[rid].uparams)
+        &&& forall|j: int, ls: Seq<LevelSpec>| 0 <= j < denv.recs[rid].rules.len() && ls.len() == denv.recs[rid].uparams.len() ==>
+            #[trigger] rule_conv(dty, denv, rid, j, ls)
+        &&& forall|ls: Seq<LevelSpec>| #[trigger] ls.len() == dty[rid].0.len() ==> exists|l: LevelSpec|
+            #[trigger] crate::ti_syntax::derivable(s0, crate::ti_syntax::eq(Seq::empty(),
+                crate::expr_model::subst_expr_levels(dty[rid].1, dty[rid].0, ls),
+                crate::expr_model::subst_expr_levels(crate::twin::canon_ty(raw, rid), dty[rid].0, ls),
+                crate::ti_syntax::sort(l)))
+    }
+}
+
+/// A twinned recursor's exported rule converts to its canonical one, at
+/// any type the canonical one has (nanoda's `def_eq` of the rules, B4d).
+pub open spec fn rule_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, rid: u64, j: int, ls: Seq<LevelSpec>) -> bool {
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let up = denv.recs[rid].uparams;
+    let r = crate::expr_model::subst_expr_levels(denv.recs[rid].rules[j].rhs, up, ls);
+    let c = crate::expr_model::subst_expr_levels(crate::twin::canon_rules(raw, rid)[j].rhs, up, ls);
+    forall|d: Map<nat, ExprSpec>, g: Seq<ExprSpec>, t: ExprSpec|
+        #[trigger] crate::ti_syntax::derivable(jsig(dty, denv, d), crate::ti_syntax::eq(g, c, c, t))
+        ==> crate::ti_syntax::derivable(jsig(dty, denv, d), crate::ti_syntax::eq(g, r, c, t))
 }
 
 /// The fragment's recursors are declared constants, not definitions.
@@ -1886,8 +1924,21 @@ pub proof fn ci_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
             crate::jkernel::kh_at(dty, denv, d);
             assert(crate::conv_cr::levs_eq(ls, ls));
             assert(crate::jkernel::lev_inst_ok(sig, cid, ls, ls));
-            let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, ls), crate::ti_syntax::dty_at(sig, cid, ls), crate::ti_syntax::sort(l)));
-            is_type_of_sort(dty, denv, d, t, l);
+            let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+            if denv.recs.contains_key(cid) && crate::twin::rec_core(raw, cid) {
+                // a twinned recursor: its declared type converts to the
+                // canonical one at a sort (`twin_ok`), so it is a type
+                let can = crate::expr_model::subst_expr_levels(crate::twin::canon_ty(raw, cid), dty[cid].0, ls);
+                assert(twin_ok(dty, denv));
+                let l = choose|l: LevelSpec| #[trigger] derivable(sig0, eq(Seq::empty(), t, can, crate::ti_syntax::sort(l)));
+                crate::jkernel::jsig_ext(dty, denv, d);
+                crate::ti_valid::derivable_ext(sig0, sig, eq(Seq::empty(), t, can, crate::ti_syntax::sort(l)));
+                crate::dom_adeq_syn::dsym(sig, Seq::empty(), t, can, crate::ti_syntax::sort(l));
+                is_type_of_sort(dty, denv, d, t, l);
+            } else {
+                let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, ls), crate::ti_syntax::dty_at(sig, cid, ls), crate::ti_syntax::sort(l)));
+                is_type_of_sort(dty, denv, d, t, l);
+            }
         }
     }
 }

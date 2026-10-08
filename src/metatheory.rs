@@ -17,6 +17,11 @@ verus! {
 /// The signature of an environment: its constants (definitions with
 /// values), the local context's locals as axioms, and constant ranks.
 pub open spec fn jsig(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> crate::ti_syntax::Sig {
+    crate::twin::twin(jsig_raw(dty, denv, lctx))
+}
+
+/// The environment's signature as declared, before its canonical twin.
+pub open spec fn jsig_raw(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> crate::ti_syntax::Sig {
     crate::ti_syntax::Sig {
         consts: Map::new(dty.dom(), |c: u64| crate::ti_syntax::ConstDecl {
             lps: dty[c].0,

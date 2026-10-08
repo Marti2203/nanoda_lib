@@ -24,7 +24,7 @@ use crate::subst_algebra::inst;
 #[cfg(verus_only)]
 use crate::dom_rel::sapp;
 #[cfg(verus_only)]
-use crate::beta_model::{pstep, spine_head};
+use crate::beta_model::{pstep, spine_app, spine_head};
 #[cfg(verus_only)]
 use crate::metatheory::jsig;
 #[allow(unused_imports)]
@@ -286,8 +286,107 @@ proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<na
     }
 }
 
+/// The rule instance at rule `j`'s right-hand side `b`, as `rec_result`
+/// builds it.
+pub open spec fn rinst(rd: crate::expr_arena_bridge::RecDataSpec, m: ExprSpec, j: int, b: ExprSpec) -> ExprSpec {
+    let args = crate::beta_model::spine_args(m);
+    let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
+    spine_app(spine_app(spine_app(b, args.subrange(0, crate::beta_model::rec_prefix(rd) as int)),
+        cargs.subrange((cargs.len() - rd.rules[j].nfields) as int, cargs.len() as int)),
+        args.subrange((rd.major_idx + 1) as int, args.len() as int))
+}
+
+/// THE TWIN'S RULE TABLE fires where nanoda's does: on a recursor it
+/// keeps, at the same rule instance; on a twinned one, at the canonical
+/// right-hand side of the same rule.
+#[verifier::spinoff_prover]
+proof fn iota_table(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, m: ExprSpec) -> (j: int)
+    requires
+        crate::beta_model::rec_ready(denv, m),
+    ensures
+        crate::beta_model::rec_ready(jsig(dty, denv, lctx).ienv, m),
+        !crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), spine_head(m)->Const_0) ==>
+            crate::beta_model::rec_result(jsig(dty, denv, lctx).ienv, m) == crate::beta_model::rec_result(denv, m),
+        crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), spine_head(m)->Const_0) ==> {
+            let rid = spine_head(m)->Const_0;
+            let lv = spine_head(m)->Const_1;
+            let rd = denv.recs[rid];
+            let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+            &&& 0 <= j < rd.rules.len()
+            &&& lv.len() == rd.uparams.len()
+            &&& crate::beta_model::rec_result(denv, m)
+                == rinst(rd, m, j, crate::expr_model::subst_expr_levels(rd.rules[j].rhs, rd.uparams, lv))
+            &&& crate::beta_model::rec_result(jsig(dty, denv, lctx).ienv, m)
+                == rinst(rd, m, j, crate::expr_model::subst_expr_levels(crate::twin::canon_rules(raw, rid)[j].rhs, rd.uparams, lv))
+        },
+{
+    let sig = jsig(dty, denv, lctx);
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    jsig_locals(dty, denv, lctx);
+    assert(sig.ienv == crate::twin::twin(raw).ienv);
+    let rid = spine_head(m)->Const_0;
+    let args = crate::beta_model::spine_args(m);
+    let rd = denv.recs[rid];
+    let major = args[rd.major_idx as int];
+    let cid = spine_head(major)->Const_0;
+    let ri = crate::beta_model::find_rule(rd.rules, cid)->Some_0;
+    crate::beta_model::find_rule_spec(rd.rules, cid);
+    assert(sig.ienv.recs.contains_key(rid));
+    let srd = sig.ienv.recs[rid];
+    if crate::twin::rec_core(raw, rid) {
+        assert(srd == crate::expr_arena_bridge::RecDataSpec { rules: crate::twin::canon_rules(raw, rid), ..rd });
+        crate::twin::rec_core_rule_shape(raw, rid, 0);
+        assert forall|k: int| 0 <= k < rd.rules.len() implies #[trigger] rd.rules[k].ctor_id == srd.rules[k].ctor_id
+            && rd.rules[k].nfields == srd.rules[k].nfields by {
+        }
+        crate::twin::find_rule_same(rd.rules, srd.rules, cid);
+        crate::twin::rec_core_rule_shape(raw, rid, ri);
+        assert(crate::beta_model::rec_prefix(srd) == crate::beta_model::rec_prefix(rd));
+    } else {
+        assert(srd == rd);
+    }
+    ri
+}
+
+/// A twinned recursor's rule instance converts to the canonical one.
+#[verifier::spinoff_prover]
+proof fn iota_rule_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, m: ExprSpec, rid: u64, j: int, lv: Seq<LevelSpec>)
+    requires
+        crate::kclaims::twin_ok(dty, denv),
+        denv.recs.contains_key(rid),
+        crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid),
+        0 <= j < denv.recs[rid].rules.len(),
+        lv.len() == denv.recs[rid].uparams.len(),
+    ensures
+        forall|t: ExprSpec| #[trigger] derivable(jsig(dty, denv, lctx), eq(g,
+            rinst(denv.recs[rid], m, j, crate::expr_model::subst_expr_levels(crate::twin::canon_rules(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid)[j].rhs, denv.recs[rid].uparams, lv)),
+            rinst(denv.recs[rid], m, j, crate::expr_model::subst_expr_levels(crate::twin::canon_rules(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid)[j].rhs, denv.recs[rid].uparams, lv)), t))
+            ==> derivable(jsig(dty, denv, lctx), eq(g,
+            rinst(denv.recs[rid], m, j, crate::expr_model::subst_expr_levels(denv.recs[rid].rules[j].rhs, denv.recs[rid].uparams, lv)),
+            rinst(denv.recs[rid], m, j, crate::expr_model::subst_expr_levels(crate::twin::canon_rules(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid)[j].rhs, denv.recs[rid].uparams, lv)), t)),
+{
+    let sig = jsig(dty, denv, lctx);
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let rd = denv.recs[rid];
+    let args = crate::beta_model::spine_args(m);
+    let cargs = crate::beta_model::spine_args(args[rd.major_idx as int]);
+    let aa = args.subrange(0, crate::beta_model::rec_prefix(rd) as int);
+    let bb = cargs.subrange((cargs.len() - rd.rules[j].nfields) as int, cargs.len() as int);
+    let cc = args.subrange((rd.major_idx + 1) as int, args.len() as int);
+    let br = crate::expr_model::subst_expr_levels(rd.rules[j].rhs, rd.uparams, lv);
+    let bc = crate::expr_model::subst_expr_levels(crate::twin::canon_rules(raw, rid)[j].rhs, rd.uparams, lv);
+    assert(crate::kclaims::rule_conv(dty, denv, rid, j, lv));
+    assert forall|t2: ExprSpec| #[trigger] derivable(sig, eq(g, bc, bc, t2)) implies derivable(sig, eq(g, br, bc, t2)) by {
+        assert(derivable(jsig(dty, denv, lctx), eq(g, bc, bc, t2)));
+    }
+    spine_conv(sig, g, br, bc, aa);
+    spine_conv(sig, g, spine_app(br, aa), spine_app(bc, aa), bb);
+    spine_conv(sig, g, spine_app(spine_app(br, aa), bb), spine_app(spine_app(bc, aa), bb), cc);
+}
+
 /// SUBJECT REDUCTION FOR THE KERNEL'S IOTA, in the fragment: a typed
-/// recursor redex converts with its rule instance.
+/// recursor redex converts with its rule instance. The twin fires the
+/// canonical rule; nanoda's exported rule converts to it (`twin_ok`).
 #[verifier::spinoff_prover]
 pub proof fn sr_iota_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
@@ -298,13 +397,56 @@ pub proof fn sr_iota_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx
         derivable(jsig(dty, denv, lctx), eq(g, m, crate::beta_model::rec_result(denv, m), t)),
 {
     let sig = jsig(dty, denv, lctx);
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     let rid = spine_head(m)->Const_0;
+    let j = iota_table(dty, denv, lctx, m);
     assert(sig.ienv.recs.contains_key(rid));
     assert(!crate::ti_syntax::no_recs(sig));
     crate::ti_syntax::frag_of(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid));
     assert(crate::dom_rec_end::rec_interp(sig, rid));
     crate::kiota::sr_kiota(sig, g, m, t);
+    let rc = crate::beta_model::rec_result(sig.ienv, m);
+    let rr = crate::beta_model::rec_result(denv, m);
+    if crate::twin::rec_core(raw, rid) {
+        assert(crate::kclaims::frag_env(dty, denv));
+        iota_rule_conv(dty, denv, lctx, g, m, rid, j, spine_head(m)->Const_1);
+        crate::dom_adeq_syn::dsym(sig, g, m, rc, t);
+        crate::dom_adeq_syn::dsym(sig, g, rr, rc, t);
+        crate::dom_adeq_syn::dtrans(sig, g, m, rc, rr, t);
+    }
+}
+
+/// CONVERTING HEADS CONVERT THEIR SPINES: a head converting to another at
+/// every type of the other, applied to the same arguments.
+pub proof fn spine_conv(sig: Sig, g: Ctx, f1: ExprSpec, f2: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        forall|t: ExprSpec| #[trigger] derivable(sig, eq(g, f2, f2, t)) ==> derivable(sig, eq(g, f1, f2, t)),
+    ensures
+        forall|t: ExprSpec| #[trigger] derivable(sig, eq(g, spine_app(f2, args), spine_app(f2, args), t))
+            ==> derivable(sig, eq(g, spine_app(f1, args), spine_app(f2, args), t)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let init = args.subrange(0, args.len() - 1);
+        let x = args[args.len() - 1];
+        spine_conv(sig, g, f1, f2, init);
+        let (h1, h2) = (spine_app(f1, init), spine_app(f2, init));
+        assert(spine_app(f1, args) == sapp(h1, x));
+        assert(spine_app(f2, args) == sapp(h2, x));
+        assert forall|t: ExprSpec| #[trigger] derivable(sig, eq(g, spine_app(f2, args), spine_app(f2, args), t))
+            implies derivable(sig, eq(g, spine_app(f1, args), spine_app(f2, args), t)) by {
+            let d = get(sig, eq(g, sapp(h2, x), sapp(h2, x), t));
+            gen(sig, d);
+            let (a1, b1, k1, k2) = app_parts(sig, g, h2, x, t);
+            assert(derivable(sig, eq(g, h2, h2, pi(a1, b1))));
+            app_cong_d(sig, g, h1, h2, x, x, a1, b1, k1, k2);
+            conv_to(sig, g, sapp(h1, x), sapp(h2, x), inst(0, x, b1), t);
+        }
+    } else {
+        assert(spine_app(f1, args) == f1);
+        assert(spine_app(f2, args) == f2);
+    }
 }
 
 #[verifier::spinoff_prover]
@@ -782,6 +924,17 @@ pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
     crate::dom_adeq_syn::dtrans(sig, g, x, y2, y, tx);
 }
 
+/// The environment's signature at some locals is the one at none, with
+/// those locals: the twin reads no local.
+pub proof fn jsig_locals(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
+    ensures
+        jsig(dty, denv, lctx) == (crate::ti_syntax::Sig { locals: lctx, ..jsig(dty, denv, Map::empty()) }),
+{
+    let r0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    assert(crate::metatheory::jsig_raw(dty, denv, lctx) == (crate::ti_syntax::Sig { locals: lctx, ..r0 }));
+    crate::twin::twin_locals(r0, lctx);
+}
+
 /// The empty-locals signature extends to any locals.
 pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
     requires
@@ -792,6 +945,7 @@ pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
 {
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
+    jsig_locals(dty, denv, lctx);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls) by {
         assert(is_def(s0, c, ls));
         assert(def_ok(s0, c, ls));
@@ -908,13 +1062,30 @@ pub proof fn typed_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
         ls.len() == dty[c].0.len(),
     ensures
         crate::metatheory::typed(dty, denv, d, ExprSpec::Const(c, ls), crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls)),
-        dty_at(jsig(dty, denv, d), c, ls) == crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls),
+        !(denv.recs.contains_key(c) && crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), c))
+            ==> dty_at(jsig(dty, denv, d), c, ls) == crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls),
 {
     let sig = jsig(dty, denv, d);
+    let s0 = jsig(dty, denv, Map::empty());
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     kh_at(dty, denv, d);
+    jsig_locals(dty, denv, d);
     wf_nil(sig);
     assert(crate::conv_cr::levs_eq(ls, ls));
     const_d(sig, Seq::empty(), c, ls, ls);
+    if denv.recs.contains_key(c) && crate::twin::rec_core(raw, c) {
+        // the twin types the recursor at its canonical type, which its
+        // declared one converts to (`twin_ok`, nanoda's def_eq)
+        let decl = crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls);
+        let can = crate::expr_model::subst_expr_levels(crate::twin::canon_ty(raw, c), dty[c].0, ls);
+        assert(crate::kclaims::twin_ok(dty, denv));
+        let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, eq(Seq::empty(), decl, can, sort(l)));
+        jsig_ext(dty, denv, d);
+        crate::ti_valid::derivable_ext(s0, sig, eq(Seq::empty(), decl, can, sort(l)));
+        crate::dom_adeq_syn::dsym(sig, Seq::empty(), decl, can, sort(l));
+        assert(dty_at(sig, c, ls) == can);
+        crate::dom_adeq_syn::dconv(sig, Seq::empty(), ExprSpec::Const(c, ls), ExprSpec::Const(c, ls), can, decl, l);
+    }
 }
 
 /// What a literal reduces to: a literal, `Nat.zero`, or `Nat.succ` of one.

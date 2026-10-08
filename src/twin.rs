@@ -24,6 +24,7 @@ verus! {
 /// THE INDUCTIVE SIDE OF A CANONICAL RECURSOR: `rec_canon` without its two
 /// equalities (the declared type and rules), with the canonical rules'
 /// shape instead, and the inductive no recursor.
+#[verifier::opaque]
 pub open spec fn rec_core(sig: Sig, rid: u64) -> bool {
     let rd = sig.ienv.recs[rid];
     let ind = rec_ind(sig, rid);
@@ -63,6 +64,52 @@ pub open spec fn rec_core(sig: Sig, rid: u64) -> bool {
         &&& forall|k: int| 0 <= k < nf ==> field_kind(sig, ind, sh.pdoms, sh.us(), np, ni, k as nat, #[trigger] sh.fields[j][k])
         &&& rule_shape(sh.rule_rhs(lm, rid, plevels(rd.uparams), j))
     }
+}
+
+/// The canonical rules are well shaped.
+pub proof fn rec_core_rule_shape(sig: Sig, rid: u64, j: int)
+    requires
+        rec_core(sig, rid),
+        0 <= j < sig.ienv.recs[rid].rules.len(),
+    ensures
+        rule_shape(canon_rules(sig, rid)[j].rhs),
+        canon_rules(sig, rid).len() == sig.ienv.recs[rid].rules.len(),
+{
+    reveal(rec_core);
+    let rd = sig.ienv.recs[rid];
+    let sh = shape_of(sig, rd, rec_ind(sig, rid));
+    assert(rd.rules.len() == sh.nmin());
+    let c = sh.ctors[j];
+}
+
+/// Rule tables with the same constructors find the same rule.
+pub proof fn find_rule_same(r1: Seq<RecRuleSpec>, r2: Seq<RecRuleSpec>, cid: u64)
+    requires
+        r1.len() == r2.len(),
+        forall|j: int| 0 <= j < r1.len() ==> #[trigger] r1[j].ctor_id == r2[j].ctor_id,
+    ensures
+        crate::beta_model::find_rule(r1, cid) == crate::beta_model::find_rule(r2, cid),
+    decreases r1.len(),
+{
+    if r1.len() > 0 {
+        assert forall|j: int| 0 <= j < r1.drop_first().len() implies #[trigger] r1.drop_first()[j].ctor_id == r2.drop_first()[j].ctor_id by {
+            assert(r1[j + 1].ctor_id == r2[j + 1].ctor_id);
+        }
+        find_rule_same(r1.drop_first(), r2.drop_first(), cid);
+    }
+}
+
+/// What a recursor with a canonical inductive side is, as a constant.
+pub proof fn rec_core_basic(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+    ensures
+        sig.ienv.recs.contains_key(rid),
+        sig.consts.contains_key(rid),
+        sig.consts[rid].val is None,
+        sig.consts[rid].lps == sig.ienv.recs[rid].uparams,
+{
+    reveal(rec_core);
 }
 
 /// The canonical type and rules of a recursor with a canonical inductive
@@ -191,6 +238,45 @@ pub proof fn field_kind_twin(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, us: Seq<L
     psimple_twin(sig, ind, pdoms, np, k, e);
 }
 
+/// A recursor's inductive side reads no local.
+pub proof fn rec_core_locals(sig: Sig, l2: Map<nat, ExprSpec>, rid: u64)
+    ensures
+        rec_core(Sig { locals: l2, ..sig }, rid) == rec_core(sig, rid),
+{
+    reveal(rec_core);
+    let s2 = Sig { locals: l2, ..sig };
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    assert(rec_ind(s2, rid) == ind);
+    assert(shape_of(s2, rd, ind) == sh);
+    assert forall|k: nat, e: ExprSpec| #[trigger] field_kind(s2, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, e)
+        == field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, e) by {
+        reveal(field_kind);
+        crate::dom_rec_end::psimple_congr(s2, sig, ind, sh.pdoms, sh.np, k, e);
+    }
+}
+
+/// The twin of a signature with other locals is the twin with those
+/// locals.
+pub proof fn twin_locals(sig: Sig, l2: Map<nat, ExprSpec>)
+    ensures
+        twin(Sig { locals: l2, ..sig }) == (Sig { locals: l2, ..twin(sig) }),
+{
+    let s2 = Sig { locals: l2, ..sig };
+    assert forall|r: u64| rec_core(s2, r) == rec_core(sig, r) by {
+        rec_core_locals(sig, l2, r);
+    }
+    assert forall|r: u64| #[trigger] canon_ty(s2, r) == canon_ty(sig, r) by {
+        assert(rec_ind(s2, r) == rec_ind(sig, r));
+    }
+    assert forall|r: u64| #[trigger] canon_rules(s2, r) == canon_rules(sig, r) by {
+        assert(rec_ind(s2, r) == rec_ind(sig, r));
+    }
+    assert(twin(s2).consts =~= twin(sig).consts);
+    assert(twin(s2).ienv.recs =~= twin(sig).ienv.recs);
+}
+
 /// THE TWIN'S RECURSOR IS CANONICAL.
 #[verifier::spinoff_prover]
 pub proof fn twin_canon(sig: Sig, rid: u64)
@@ -199,6 +285,7 @@ pub proof fn twin_canon(sig: Sig, rid: u64)
     ensures
         rec_canon(twin(sig), rid),
 {
+    reveal(rec_core);
     let t = twin(sig);
     let rd = sig.ienv.recs[rid];
     let ind = rec_ind(sig, rid);

@@ -32,15 +32,32 @@ verus! {
 pub proof fn jsig_fv_free(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>)
     requires
         crate::swap_typed::fv_free(dty, denv),
+        crate::kclaims::twin_ok(dty, denv),
     ensures
         sig_fv_free(jsig(dty, denv, d)),
 {
     let s = jsig(dty, denv, d);
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    crate::jkernel::jsig_locals(dty, denv, d);
     assert forall|c: u64| #[trigger] s.consts.contains_key(c) implies !crate::expr_model::has_fv(s.consts[c].ty)
         && (s.consts[c].val is Some ==> !crate::expr_model::has_fv(s.consts[c].val->Some_0)) by {
         assert(dty.contains_key(c));
+        if denv.recs.contains_key(c) && crate::twin::rec_core(raw, c) {
+            assert(s.consts[c].ty == crate::twin::canon_ty(raw, c));
+        }
         if s.consts[c].val is Some {
             assert(denv.defs.contains_key(c));
+        }
+    }
+    // the twin's rules: the exported ones, or canonical ones, closed
+    assert forall|id: u64, i: int| #![trigger s.ienv.recs[id].rules[i]] s.ienv.recs.contains_key(id) && 0 <= i < s.ienv.recs[id].rules.len()
+        implies !crate::expr_model::has_fv(s.ienv.recs[id].rules[i].rhs) by {
+        assert(s.ienv == crate::twin::twin(raw).ienv);
+        if crate::twin::rec_core(raw, id) {
+            assert(s.ienv.recs[id].rules == crate::twin::canon_rules(raw, id));
+            crate::twin::rec_core_rule_shape(raw, id, i);
+        } else {
+            assert(s.ienv.recs[id] == denv.recs[id]);
         }
     }
 }
@@ -49,15 +66,20 @@ pub proof fn jsig_swap(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
     ensures
         sig_swap(jsig(dty, denv, d), x, y) == jsig(dty, denv, cswap(d, x, y)),
 {
+    crate::jkernel::jsig_locals(dty, denv, d);
+    crate::jkernel::jsig_locals(dty, denv, cswap(d, x, y));
 }
 
 pub proof fn jsig_with(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, k: nat, a: ExprSpec)
     ensures
         sig_with(jsig(dty, denv, d), k, a) == jsig(dty, denv, d.insert(k, a)),
 {
+    crate::jkernel::jsig_locals(dty, denv, d);
+    crate::jkernel::jsig_locals(dty, denv, d.insert(k, a));
 }
 
 /// A signature with more locals extends one with fewer.
+#[verifier::spinoff_prover]
 pub proof fn jsig_sub_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, d2: Map<nat, ExprSpec>)
     requires
         crate::kclaims::kh(dty, denv),
@@ -68,6 +90,13 @@ pub proof fn jsig_sub_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d:
     assert(crate::kclaims::frag_env(dty, denv));
     assert(crate::kclaims::ind_ok(jsig(dty, denv, d2)));
     crate::jkernel::jsig_ext(dty, denv, d2);
+    crate::jkernel::jsig_locals(dty, denv, d);
+    crate::jkernel::jsig_locals(dty, denv, d2);
+    let (s1, s2) = (jsig(dty, denv, d), jsig(dty, denv, d2));
+    assert(s1.consts == s2.consts && s1.ienv == s2.ienv);
+    assert forall|k: nat| #[trigger] s1.locals.contains_key(k) implies s2.locals.contains_key(k) && s2.locals[k] == s1.locals[k] by {
+        assert(d.contains_key(k));
+    }
 }
 
 /// A well-formed context's last entry is a type.

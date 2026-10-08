@@ -1672,6 +1672,32 @@ and eta step is vacuous (about thirty sites use that). Stages:
     Trade-off: closest to nanoda's relation (def_eq, incl. eta and proof
     irrelevance) at the cost of a judgment-transfer layer; the untyped
     alternative would have been smaller but narrower than nanoda.
+    T2 as built: the claims are stated in the twin
+    (`jsig := twin(jsig_raw)`), rather than transferred back. The twin's
+    obligations are named assumptions, to be certified in T3:
+    - `kclaims::twin_ok` (part of `frag_env`, per cutoff): the
+      environment's rules are closed lambdas (`rule_rhs_ok`); and for each
+      twinned recursor, the canonical type is closed, its canonical type
+      and rules use only the recursor's level parameters, and at every
+      level instance the declared type converts to the canonical one in
+      the twin (nanoda's `def_eq`, B4d); and each exported rule converts
+      to its canonical rule at any type the canonical rule has
+      (`rule_conv`, nanoda's per-rule `def_eq` in `rec_conv`). The twin
+      fires the canonical rule; `jkernel::sr_iota_at` returns to nanoda's
+      rule instance through `spine_conv` (converting heads convert their
+      spines).
+    - `export_sound::twins_stable`: along the export, a later cutoff's
+      twin decides an earlier cutoff's recursors the same way, with the
+      same canonical type and rules (`env_weaken::twin_le`, now required
+      by every weakening lemma).
+    - `export_sound::twin_types`: a twinned recursor's canonical type is
+      a type in the environment of its certificate (nanoda types the
+      generated recursor before the recursor itself is added).
+    Trade-off as built: a constant's typing in the twin is at the
+    canonical type, and `typed_const` recovers the declared type through
+    `twin_ok`'s conversion. So the claims follow nanoda's `def_eq`. The
+    rules' shape (string-free lambdas) stays an assumption. `rec_ind` is
+    still read syntactically, as nanoda's `get_major_induct` does.
   - **B4** the comparison: a verified structural (model) equality check
     of the exported recursor against the generated one (a tested-input
     check, registered), with the tables' data fields.

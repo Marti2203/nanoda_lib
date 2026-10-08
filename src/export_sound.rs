@@ -123,6 +123,8 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         crate::ti_syntax::frag_of(s0, id);
         assert(crate::rec_canon::rec_canon(s0, id));
         assert(s0.consts.contains_key(id));
+        assert(crate::kclaims::twin_ok(dty, denv));
+        assert forall|i: int| 0 <= i < denv.recs[id].rules.len() implies crate::beta_model::rule_rhs_ok(denv, #[trigger] denv.recs[id].rules[i]) by {}
     }
     assert forall|id: u64| #[trigger] denv.defs.contains_key(id) implies !crate::confluence::redex_head(denv, id) by {
         assert(dty.contains_key(id));
@@ -140,8 +142,32 @@ pub open spec fn rmap<'p>(ef: crate::util::ExportFile<'p>, c: int) -> Map<u64, n
 }
 
 /// What every cutoff before `cc` has, and the hypotheses everywhere.
+/// THE TWIN IS STABLE ALONG THE EXPORT (docs/TYPED_TARGET.md, "B5
+/// design"; certified in T3): a later cutoff's twin decides the earlier
+/// cutoff's recursors as the earlier one does.
+pub open spec fn twins_stable<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    forall|c1: int, c2: int| 0 <= c1 <= c2 <= ef.declars_keys().len() ==>
+        #[trigger] crate::env_weaken::twin_le(m_dty(ef, c1), m_denv(ef, c1), m_dty(ef, c2), m_denv(ef, c2))
+}
+
+/// A TWINNED RECURSOR'S CANONICAL TYPE IS A TYPE in the environment of
+/// its certificate (docs/TYPED_TARGET.md, "B5 design"; certified in T3
+/// from nanoda's check of the generated recursor type).
+pub open spec fn twin_types<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    forall|cc: int, rid: u64, c: int|
+        #![trigger m_denv(ef, cc).recs.contains_key(rid), crate::tc::declar_cert_at(ef, decl_at(ef, pos_of(ef, rid)), c)]
+        0 <= cc <= ef.declars_keys().len()
+        && m_denv(ef, cc).recs.contains_key(rid)
+        && crate::twin::rec_core(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid)
+        && crate::tc::declar_cert_at(ef, decl_at(ef, pos_of(ef, rid)), c) ==>
+        crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(),
+            crate::twin::canon_ty(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid))
+}
+
 pub open spec fn below_ok<'p>(ef: crate::util::ExportFile<'p>, cc: int) -> bool {
     &&& crate::inductive::export_ok(ef)
+    &&& twins_stable(ef)
+    &&& twin_types(ef)
     &&& all_certified(ef)
     &&& forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c))
     &&& 0 <= cc <= ef.declars_keys().len()
@@ -157,6 +183,7 @@ proof fn decl_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64) -> (
         m_dty(ef, cc).contains_key(cid),
     ensures
         0 <= c <= pos_of(ef, cid) < cc,
+        crate::tc::declar_cert_at(ef, decl_at(ef, pos_of(ef, cid)), c),
         crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)),
         crate::env_weaken::env_le(m_dty(ef, c), m_denv(ef, c), m_dty(ef, cc), m_denv(ef, cc)),
         crate::env_weaken::defs_stable(m_dty(ef, c), m_denv(ef, c), m_denv(ef, cc)),
@@ -224,7 +251,16 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     assert(crate::metatheory::rank_ok(dty, denv, r));
     let jr = crate::metatheory::jrank(dty, denv);
     assert(crate::metatheory::rank_ok(dty, denv, jr));
-    assert(crate::metatheory::jsig(dty, denv, Map::empty()) == crate::metatheory::jsig_r(dty, denv, jr));
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    assert(raw == crate::metatheory::jsig_r(dty, denv, jr));
+    let s = crate::metatheory::jsig(dty, denv, Map::empty());
+    assert forall|cid: u64, ls: Seq<crate::level_model::LevelSpec>| #[trigger] crate::ti_syntax::is_def(s, cid, ls)
+        implies crate::ti_syntax::def_ok(s, cid, ls) by {
+        crate::twin::twin_keeps(raw, cid);
+        assert(crate::ti_syntax::is_def(raw, cid, ls));
+        assert(crate::ti_syntax::dval(s, cid, ls) == crate::ti_syntax::dval(raw, cid, ls));
+        crate::ti_locals::crank_same(raw, s, crate::ti_syntax::dval(raw, cid, ls));
+    }
 }
 
 /// A declaration's type and a definition's value, at a level instance,
@@ -254,14 +290,46 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
     let sc = crate::metatheory::jsig(dc, nc, Map::empty());
     let g0 = Seq::<ExprSpec>::empty();
-    let (lps, ty) = (dty[cid].0, dty[cid].1);
+    let em = Map::<nat, ExprSpec>::empty();
+    let raw = crate::metatheory::jsig_raw(dty, denv, em);
+    let tw = denv.recs.contains_key(cid) && crate::twin::rec_core(raw, cid);
+    let lps = dty[cid].0;
+    let ty = if tw { crate::twin::canon_ty(raw, cid) } else { dty[cid].1 };
+    crate::twin::twin_keeps(raw, cid);
+    assert(crate::metatheory::jsig(dty, denv, em).consts[cid].ty == ty);
+    assert(crate::metatheory::jsig(dty, denv, em).consts[cid].lps == lps);
+    assert(crate::metatheory::is_type(dc, nc, em, ty)) by {
+        if tw {
+            assert(m_denv(ef, cc).recs.contains_key(cid));
+        }
+    }
     // the signature before the declaration instantiates
     assert(crate::ti_level::sig_lp_ok(sc, lps, ls)) by {
+        let rc = crate::metatheory::jsig_raw(dc, nc, em);
+        assert(crate::kclaims::twin_ok(dc, nc));
+        assert forall|id: u64, j: int| #![trigger sc.ienv.recs[id].rules[j]] sc.ienv.recs.contains_key(id) && 0 <= j < sc.ienv.recs[id].rules.len()
+            implies crate::level_inst::elp_in(sc.ienv.recs[id].rules[j].rhs, sc.ienv.recs[id].uparams) by {
+            assert(sc == crate::twin::twin(rc));
+            if crate::twin::rec_core(rc, id) {
+                assert(nc.recs.contains_key(id));
+                assert(sc.ienv.recs[id].rules[j] == crate::twin::canon_rules(rc, id)[j]);
+            } else {
+                assert(sc.ienv.recs[id] == nc.recs[id]);
+            }
+        }
         assert forall|k: u64| #[trigger] sc.consts.contains_key(k) implies crate::level_inst::elp_in(sc.consts[k].ty, sc.consts[k].lps)
             && (sc.consts[k].val is Some ==> crate::level_inst::elp_in(sc.consts[k].val->Some_0, sc.consts[k].lps)) by {
+            crate::twin::twin_keeps(rc, k);
             assert(dc.contains_key(k));
             if nc.defs.contains_key(k) {
                 assert(crate::metatheory::env_wf(dc, nc));
+            }
+            assert(sc == crate::twin::twin(rc));
+            if nc.recs.contains_key(k) && crate::twin::rec_core(rc, k) {
+                assert(crate::level_inst::elp_in(crate::twin::canon_ty(rc, k), dc[k].0));
+                assert(sc.consts[k].ty == crate::twin::canon_ty(rc, k));
+            } else {
+                assert(sc.consts[k] == rc.consts[k]);
             }
         }
     }
@@ -271,6 +339,10 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     crate::ti_level::ls_nlbv(ty, lps, ls);
     if denv.defs.contains_key(cid) {
         let val = denv.defs[cid].1;
+        if tw {
+            crate::twin::rec_core_basic(raw, cid);
+        }
+        assert(!tw);
         let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dc, nc, Map::empty(), val, t2)
             && crate::metatheory::tconv(dc, nc, Map::empty(), t2, ty);
         crate::ti_level::derivable_ls(sc, crate::ti_syntax::eq(g0, val, val, t2), lps, ls);
@@ -341,7 +413,7 @@ proof fn levok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
         let sc = crate::metatheory::jsig(dc, nc, Map::empty());
         let g0 = Seq::<ExprSpec>::empty();
-        let (lps, ty) = (dty[cid].0, dty[cid].1);
+        let (lps, ty) = (s.consts[cid].lps, s.consts[cid].ty);
         crate::env_weaken::ew_sig_ext(dc, nc, dty, denv, Map::empty());
         let t1 = crate::ti_syntax::dty_at(s, cid, ls);
         let t2 = crate::ti_syntax::dty_at(s, cid, ls2);
@@ -352,7 +424,7 @@ proof fn levok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         if crate::ti_syntax::is_def(s, cid, ls) {
             let v1 = crate::ti_syntax::dval(s, cid, ls);
             let v2 = crate::ti_syntax::dval(s, cid, ls2);
-            crate::conv_cr::lveq_sel(denv.defs[cid].1, lps, ls, ls2);
+            crate::conv_cr::lveq_sel(s.consts[cid].val->Some_0, lps, ls, ls2);
             crate::jkernel::lveq_conv(sc, g0, v1, v2, t1);
             crate::ti_valid::derivable_ext(sc, s, crate::ti_syntax::eq(g0, v1, v2, t1));
         }
@@ -366,6 +438,8 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         crate::inductive::export_ok(ef),
         all_certified(ef),
         forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c)),
+        twins_stable(ef),
+        twin_types(ef),
         0 <= cc <= ef.declars_keys().len(),
     ensures
         crate::kclaims::kh(m_dty(ef, cc), m_denv(ef, cc)),
