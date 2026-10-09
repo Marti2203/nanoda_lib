@@ -612,6 +612,291 @@ pub proof fn canon_elp(sig: Sig, rid: u64)
     }
 }
 
+/// Lifting keeps a term closed.
+pub proof fn lift_nofv(n: nat, c: nat, e: ExprSpec)
+    ensures
+        crate::expr_model::has_fv(crate::subst_algebra::lift(n, c, e)) == crate::expr_model::has_fv(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { lift_nofv(n, c, *f); lift_nofv(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { lift_nofv(n, c, *t); lift_nofv(n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { lift_nofv(n, c, *t); lift_nofv(n, c, *v); lift_nofv(n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => { lift_nofv(n, c, *x); },
+        _ => {},
+    }
+}
+
+/// A closed telescope from closed parts.
+pub proof fn binds_nofv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> !crate::expr_model::has_fv(#[trigger] ds[i]),
+        !crate::expr_model::has_fv(b),
+    ensures
+        !crate::expr_model::has_fv(binds(bk, ds, b)),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        assert forall|i: int| 0 <= i < ds.drop_first().len() implies !crate::expr_model::has_fv(#[trigger] ds.drop_first()[i]) by {
+            assert(ds.drop_first()[i] == ds[i + 1]);
+        }
+        binds_nofv(bk, ds.drop_first(), b);
+    }
+}
+
+/// A closed telescope's domains and body are closed.
+pub proof fn binds_parts_nofv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(binds(bk, ds, b)),
+    ensures
+        forall|i: int| 0 <= i < ds.len() ==> !crate::expr_model::has_fv(#[trigger] ds[i]),
+        !crate::expr_model::has_fv(b),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        binds_parts_nofv(bk, ds.drop_first(), b);
+        assert forall|i: int| 0 <= i < ds.len() implies !crate::expr_model::has_fv(#[trigger] ds[i]) by {
+            if i > 0 {
+                assert(ds[i] == ds.drop_first()[i - 1]);
+            }
+        }
+    }
+}
+
+/// A closed spine from a closed head and arguments.
+pub proof fn spine_nofv(h: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        !crate::expr_model::has_fv(h),
+        forall|i: int| 0 <= i < args.len() ==> !crate::expr_model::has_fv(#[trigger] args[i]),
+    ensures
+        !crate::expr_model::has_fv(spine_app(h, args)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let n = args.len() - 1;
+        let pre = args.subrange(0, n);
+        assert forall|i: int| 0 <= i < pre.len() implies !crate::expr_model::has_fv(#[trigger] pre[i]) by {
+            assert(pre[i] == args[i]);
+        }
+        spine_nofv(h, pre);
+        assert(spine_app(h, args) == ExprSpec::App(Box::new(spine_app(h, pre)), Box::new(args[n])));
+    }
+}
+
+/// A closed spine's arguments are closed.
+pub proof fn spine_args_nofv(e: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(e),
+    ensures
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> !crate::expr_model::has_fv(#[trigger] crate::beta_model::spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        spine_args_nofv(*f);
+        assert forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() implies !crate::expr_model::has_fv(#[trigger] crate::beta_model::spine_args(e)[i]) by {
+            if i < crate::beta_model::spine_args(*f).len() {
+                assert(crate::beta_model::spine_args(e)[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// The shape's pieces are closed.
+pub open spec fn shape_nofv(sh: IndShape) -> bool {
+    &&& forall|q: int| 0 <= q < sh.pdoms.len() ==> !crate::expr_model::has_fv(#[trigger] sh.pdoms[q])
+    &&& forall|q: int| 0 <= q < sh.idoms.len() ==> !crate::expr_model::has_fv(#[trigger] sh.idoms[q])
+    &&& forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() ==> !crate::expr_model::has_fv(#[trigger] sh.fields[j][k])
+    &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() ==> !crate::expr_model::has_fv(#[trigger] sh.tss[j][q])
+}
+
+/// A recursive field's index arguments are closed.
+pub proof fn occ_nofv(sh: IndShape, j: int, r: int)
+    requires
+        shape_nofv(sh),
+        0 <= j < sh.nmin(),
+        0 <= r < sh.rposj(j).len(),
+    ensures
+        sh.rposj(j)[r] < sh.fields[j].len(),
+        forall|q: int| 0 <= q < sh.ni ==> !crate::expr_model::has_fv(#[trigger] occ_idx(sh.fields[j][sh.rposj(j)[r] as int], sh.np, sh.ni)[q]),
+{
+    let fs = sh.fields[j];
+    crate::dom_rec_ty::rec_pos_facts(fs, sh.ind, sh.us(), sh.np, sh.ni, fs.len());
+    let k = sh.rposj(j)[r];
+    spine_args_nofv(fs[k as int]);
+    assert forall|q: int| 0 <= q < sh.ni implies !crate::expr_model::has_fv(#[trigger] occ_idx(fs[k as int], sh.np, sh.ni)[q]) by {
+        assert(occ_idx(fs[k as int], sh.np, sh.ni)[q] == crate::beta_model::spine_args(fs[k as int])[sh.np + q]);
+    }
+}
+
+/// A minor premise's type is closed.
+#[verifier::spinoff_prover]
+pub proof fn minor_nofv(sh: IndShape, j: int)
+    requires
+        shape_nofv(sh),
+        0 <= j < sh.nmin(),
+        sh.tss[j].len() == sh.ni,
+    ensures
+        !crate::expr_model::has_fv(sh.minor_ty(j)),
+{
+    let nf = sh.fields[j].len();
+    let nr = sh.rposj(j).len();
+    let s = (1 + j) as nat;
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, s));
+    let ihs = Seq::new(nr, |r: int| sh.ih_ty(j, r));
+    let ts = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q])));
+    let value = spine_app(ExprSpec::Const(sh.ctors[j], sh.us()), vars(s + nf + nr, sh.np) + vars(nr, nf));
+    assert forall|i: int| 0 <= i < fds.len() implies !crate::expr_model::has_fv(#[trigger] fds[i]) by {
+        lift_nofv(s, i as nat, sh.fields[j][i]);
+    }
+    assert forall|r: int| 0 <= r < ihs.len() implies !crate::expr_model::has_fv(#[trigger] ihs[r]) by {
+        occ_nofv(sh, j, r);
+        let k = sh.rposj(j)[r];
+        let idx = occ_idx(sh.fields[j][k as int], sh.np, sh.ni);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q])));
+        let args = idx2.push(ExprSpec::Var((nf - 1 - k + r) as nat));
+        assert forall|q: int| 0 <= q < args.len() implies !crate::expr_model::has_fv(#[trigger] args[q]) by {
+            if q < sh.ni {
+                lift_nofv(s, k, idx[q]);
+                lift_nofv((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q]));
+            }
+        }
+        spine_nofv(ExprSpec::Var((j + nf + r) as nat), args);
+    }
+    assert forall|q: int| 0 <= q < ts.len() implies !crate::expr_model::has_fv(#[trigger] ts[q]) by {
+        lift_nofv(s, nf, sh.tss[j][q]);
+        lift_nofv(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q]));
+    }
+    let vs = vars(s + nf + nr, sh.np) + vars(nr, nf);
+    assert forall|i: int| 0 <= i < vs.len() implies !crate::expr_model::has_fv(#[trigger] vs[i]) by {
+        if i < sh.np { assert(vs[i] == vars(s + nf + nr, sh.np)[i]); } else { assert(vs[i] == vars(nr, nf)[i - sh.np]); }
+    }
+    spine_nofv(ExprSpec::Const(sh.ctors[j], sh.us()), vs);
+    let args = ts.push(value);
+    assert forall|q: int| 0 <= q < args.len() implies !crate::expr_model::has_fv(#[trigger] args[q]) by {
+        if q < ts.len() { assert(args[q] == ts[q]); }
+    }
+    spine_nofv(ExprSpec::Var((j + nf + nr) as nat), args);
+    binds_nofv(BinderKind::Pi, ihs, spine_app(ExprSpec::Var((j + nf + nr) as nat), args));
+    binds_nofv(BinderKind::Pi, fds, binds(BinderKind::Pi, ihs, spine_app(ExprSpec::Var((j + nf + nr) as nat), args)));
+}
+
+/// The binders the type and the rules share are closed.
+#[verifier::spinoff_prover]
+pub proof fn head_nofv(sh: IndShape, lm: LevelSpec)
+    requires
+        shape_nofv(sh),
+        forall|j: int| 0 <= j < sh.nmin() ==> (#[trigger] sh.tss[j]).len() == sh.ni,
+    ensures
+        forall|i: int| 0 <= i < sh.head_doms(lm).len() ==> !crate::expr_model::has_fv(#[trigger] sh.head_doms(lm)[i]),
+{
+    let vs = vars(sh.ni, sh.np) + vars(0, sh.ni);
+    assert forall|i: int| 0 <= i < vs.len() implies !crate::expr_model::has_fv(#[trigger] vs[i]) by {
+        if i < sh.np { assert(vs[i] == vars(sh.ni, sh.np)[i]); } else { assert(vs[i] == vars(0, sh.ni)[i - sh.np]); }
+    }
+    spine_nofv(ExprSpec::Const(sh.ind, sh.us()), vs);
+    assert(!crate::expr_model::has_fv(ind_app(sh.ind, sh.us(), vs)));
+    assert(!crate::expr_model::has_fv(ExprSpec::Sort(lm)));
+    assert(!crate::expr_model::has_fv(ExprSpec::Bind(BinderKind::Pi, Box::new(ind_app(sh.ind, sh.us(), vs)), Box::new(ExprSpec::Sort(lm)))));
+    binds_nofv(BinderKind::Pi, sh.idoms, ExprSpec::Bind(BinderKind::Pi, Box::new(ind_app(sh.ind, sh.us(), vs)), Box::new(ExprSpec::Sort(lm))));
+    let hd = sh.head_doms(lm);
+    let mins = Seq::new(sh.nmin(), |j: int| sh.minor_ty(j));
+    assert forall|i: int| 0 <= i < hd.len() implies !crate::expr_model::has_fv(#[trigger] hd[i]) by {
+        if i < sh.pdoms.len() {
+            assert(hd[i] == sh.pdoms[i]);
+        } else if i == sh.pdoms.len() {
+            assert(hd[i] == sh.motive_ty(lm));
+        } else {
+            let j = i - sh.pdoms.len() - 1;
+            assert(hd[i] == mins[j]);
+            minor_nofv(sh, j);
+        }
+    }
+}
+
+/// THE CANONICAL SHAPE'S PIECES are closed when the inductive's and the
+/// constructors' types are.
+#[verifier::spinoff_prover]
+pub proof fn canon_parts_fv(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> !crate::expr_model::has_fv(sig.consts[k].ty),
+    ensures
+        shape_nofv(shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid))),
+{
+    reveal(rec_core);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let ti = sig.consts[ind].ty;
+    assert(sig.consts.contains_key(ind));
+    binds_parts_nofv(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(ti, sh.np + sh.ni));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies !crate::expr_model::has_fv(#[trigger] sh.pdoms[q]) by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+    }
+    assert forall|q: int| 0 <= q < sh.idoms.len() implies !crate::expr_model::has_fv(#[trigger] sh.idoms[q]) by {
+        assert((sh.pdoms + sh.idoms)[sh.pdoms.len() + q] == sh.idoms[q]);
+    }
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies !crate::expr_model::has_fv(#[trigger] sh.fields[j][k]) by {
+        let c = sh.ctors[j];
+        assert(sig.consts.contains_key(c));
+        let t = sig.consts[c].ty;
+        let nf = rd.rules[j].nfields;
+        binds_parts_nofv(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf));
+        assert((sh.pdoms + sh.fields[j])[sh.pdoms.len() + k] == sh.fields[j][k]);
+    }
+    assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies !crate::expr_model::has_fv(#[trigger] sh.tss[j][q]) by {
+        let c = sh.ctors[j];
+        assert(sig.consts.contains_key(c));
+        let t = sig.consts[c].ty;
+        let nf = rd.rules[j].nfields;
+        binds_parts_nofv(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf));
+        let args = vars(nf, sh.np) + sh.tss[j];
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, sh.us()), args);
+        spine_args_nofv(tbody(t, sh.np + nf));
+        assert(args[sh.np + q] == sh.tss[j][q]);
+    }
+}
+
+/// THE CANONICAL TYPE IS CLOSED when every constant's type is.
+#[verifier::spinoff_prover]
+pub proof fn canon_nofv(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> !crate::expr_model::has_fv(sig.consts[k].ty),
+    ensures
+        !crate::expr_model::has_fv(canon_ty(sig, rid)),
+{
+    canon_parts_fv(sig, rid);
+    canon_tss_len(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let lm = elim_level(sig, rid, ind);
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    head_nofv(sh, lm);
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    assert forall|k: int| 0 <= k < idx.len() implies !crate::expr_model::has_fv(#[trigger] idx[k]) by {
+        lift_nofv(1 + nmin, k as nat, sh.idoms[k]);
+    }
+    let mvs = vars(1 + nmin + ni, np) + vars(0, ni);
+    assert forall|i: int| 0 <= i < mvs.len() implies !crate::expr_model::has_fv(#[trigger] mvs[i]) by {
+        if i < np { assert(mvs[i] == vars(1 + nmin + ni, np)[i]); } else { assert(mvs[i] == vars(0, ni)[i - np]); }
+    }
+    spine_nofv(ExprSpec::Const(sh.ind, sh.us()), mvs);
+    let major = ind_app(sh.ind, sh.us(), mvs);
+    let body = spine_app(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)));
+    spine_nofv(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)));
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert forall|i: int| 0 <= i < ds.len() implies !crate::expr_model::has_fv(#[trigger] ds[i]) by {
+        if i < sh.head_doms(lm).len() {
+            assert(ds[i] == sh.head_doms(lm)[i]);
+        } else if i < sh.head_doms(lm).len() + ni {
+            assert(ds[i] == idx[i - sh.head_doms(lm).len()]);
+        }
+    }
+    binds_nofv(BinderKind::Pi, ds, body);
+}
+
 /// The canonical recursor's levels, from every constant's type mentioning
 /// only its own level parameters.
 pub proof fn canon_elp_sig(sig: Sig, rid: u64)

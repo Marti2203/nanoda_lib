@@ -44,6 +44,10 @@ pub proof fn jsig_fv_free(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d:
         assert(dty.contains_key(c));
         if denv.recs.contains_key(c) && crate::twin::rec_core(raw, c) {
             assert(s.consts[c].ty == crate::twin::canon_ty(raw, c));
+            assert forall|k: u64| #[trigger] raw.consts.contains_key(k) implies !crate::expr_model::has_fv(raw.consts[k].ty) by {
+                assert(dty.contains_key(k));
+            }
+            crate::twin::canon_nofv(raw, c);
         }
         if s.consts[c].val is Some {
             assert(denv.defs.contains_key(c));

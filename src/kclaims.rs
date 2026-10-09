@@ -69,14 +69,13 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
 /// certified from nanoda's checks, T3): the environment's own rule values
 /// are closed lambdas, and each recursor the twin replaces has a declared
 /// type converting -- at every level instance, in the twin -- to its
-/// canonical one, which mentions no local.
+/// canonical one, and rules converting to the canonical rules.
 pub open spec fn twin_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     let s0 = jsig(dty, denv, Map::empty());
     &&& forall|rid: u64, i: int| denv.recs.contains_key(rid) && 0 <= i < denv.recs[rid].rules.len()
         ==> #[trigger] crate::beta_model::rule_rhs_ok(denv, denv.recs[rid].rules[i])
     &&& forall|rid: u64| #[trigger] denv.recs.contains_key(rid) && crate::twin::rec_core(raw, rid) ==> {
-        &&& !crate::expr_model::has_fv(crate::twin::canon_ty(raw, rid))
         &&& forall|j: int, ls: Seq<LevelSpec>| 0 <= j < denv.recs[rid].rules.len() && ls.len() == denv.recs[rid].uparams.len() ==>
             #[trigger] rule_conv(dty, denv, rid, j, ls)
         &&& forall|ls: Seq<LevelSpec>| #[trigger] ls.len() == dty[rid].0.len() ==> exists|l: LevelSpec|

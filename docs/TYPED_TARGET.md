@@ -1677,8 +1677,7 @@ and eta step is vacuous (about thirty sites use that). Stages:
     obligations are named assumptions, to be certified in T3:
     - `kclaims::twin_ok` (part of `frag_env`, per cutoff): the
       environment's rules are closed lambdas (`rule_rhs_ok`); and for each
-      twinned recursor, the canonical type is closed, and at every
-      level instance the declared type converts to the canonical one in
+      twinned recursor, at every level instance the declared type converts to the canonical one in
       the twin (nanoda's `def_eq`, B4d); and each exported rule converts
       to its canonical rule at any type the canonical rule has
       (`rule_conv`, nanoda's per-rule `def_eq` in `rec_conv`). The twin
@@ -1735,6 +1734,13 @@ and eta step is vacuous (about thirty sites use that). Stages:
     takes those from the declarations' certificates (`dty_lp_ok`). What
     `twin_ok` still assumes: the rules' shape (`rule_rhs_ok`), the
     canonical type closed, and the two conversions; plus `twin_types`.
+    T3e: the canonical type closed is no longer assumed
+    (`twin::canon_nofv`, the same assembly as `canon_elp`, from every
+    declared type closed, `fv_free`). Left in `rule_rhs_ok`, of what
+    nanoda does not establish: no loose bound variable (`check_rec_rules`
+    states only closedness and levels), no string literal, a lambda; its
+    constructor is a declared constructor (T3a's lookup), certifiable
+    once the first is.
     Trade-off as built: a constant's typing in the twin is at the
     canonical type, and `typed_const` recovers the declared type through
     `twin_ok`'s conversion. So the claims follow nanoda's `def_eq`. The
