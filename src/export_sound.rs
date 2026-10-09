@@ -113,6 +113,8 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         crate::subst_algebra::env_bv_free(denv),
         crate::swap_model::env_fv_free(denv),
         forall|id: u64| #[trigger] denv.defs.contains_key(id) ==> dty.contains_key(id),
+        forall|id: u64, j: int| #![trigger denv.recs[id].rules[j]] denv.recs.contains_key(id) && 0 <= j < denv.recs[id].rules.len() ==>
+            crate::expr_model::nlbv(denv.recs[id].rules[j].rhs) == 0 && denv.ctor_np.contains_key(denv.recs[id].rules[j].ctor_id),
     ensures
         crate::conv_frag::cr_env(denv),
 {
@@ -124,7 +126,10 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         assert(crate::rec_canon::rec_canon(s0, id));
         assert(s0.consts.contains_key(id));
         assert(crate::kclaims::twin_ok(dty, denv));
-        assert forall|i: int| 0 <= i < denv.recs[id].rules.len() implies crate::beta_model::rule_rhs_ok(denv, #[trigger] denv.recs[id].rules[i]) by {}
+        // closed (certified), a string-free lambda (`twin_ok`), at a constructor (T3a)
+        assert forall|i: int| 0 <= i < denv.recs[id].rules.len() implies crate::beta_model::rule_rhs_ok(denv, #[trigger] denv.recs[id].rules[i]) by {
+            assert(crate::expr_model::nlbv(denv.recs[id].rules[i].rhs) == 0);
+        }
     }
     assert forall|id: u64| #[trigger] denv.defs.contains_key(id) implies !crate::confluence::redex_head(denv, id) by {
         assert(dty.contains_key(id));
@@ -596,12 +601,17 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     // the recursors' rules: closed, own levels
     assert forall|id: u64, j: int| #![trigger denv.recs[id].rules[j]] denv.recs.contains_key(id) && 0 <= j < denv.recs[id].rules.len() implies
         !crate::expr_model::has_fv(denv.recs[id].rules[j].rhs)
-        && crate::level_inst::elp_in(denv.recs[id].rules[j].rhs, denv.recs[id].uparams) by {
+        && crate::level_inst::elp_in(denv.recs[id].rules[j].rhs, denv.recs[id].uparams)
+        && crate::expr_model::nlbv(denv.recs[id].rules[j].rhs) == 0
+        && denv.ctor_np.contains_key(denv.recs[id].rules[j].ctor_id) by {
         let i = entry_of(ef, cc, id);
         let c = cert_of(ef, i);
         let d = decl_at(ef, i);
+        crate::env_model::env_le_at(a, view, keys, c, cc);
         if let crate::env::Declar::Recursor(r) = d {
             assert(r.rec_rules@[j].val == crate::tc_model::rec_rule_val_of(r.rec_rules@[j]));
+            assert(denv.recs[id].rules[j].ctor_id == crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name));
+            assert(m_denv(ef, c).ctor_np.contains_key(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name)));
         }
     }
     assert(crate::metatheory::env_wf(dty, denv));

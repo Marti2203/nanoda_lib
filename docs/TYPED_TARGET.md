@@ -1676,7 +1676,7 @@ and eta step is vacuous (about thirty sites use that). Stages:
     (`jsig := twin(jsig_raw)`), rather than transferred back. The twin's
     obligations are named assumptions, to be certified in T3:
     - `kclaims::twin_ok` (part of `frag_env`, per cutoff): the
-      environment's rules are closed lambdas (`rule_rhs_ok`); and for each
+      environment's rules are string-free lambdas; and for each
       twinned recursor, at every level instance the declared type converts to the canonical one in
       the twin (nanoda's `def_eq`, B4d); and each exported rule converts
       to its canonical rule at any type the canonical rule has
@@ -1741,6 +1741,12 @@ and eta step is vacuous (about thirty sites use that). Stages:
     states only closedness and levels), no string literal, a lambda; its
     constructor is a declared constructor (T3a's lookup), certifiable
     once the first is.
+    T3f: done. nanoda's own `assert_closed` already rejects loose bound
+    variables; its contract now says so (`nlbv == 0`), `check_rec_rules`
+    carries it, and the recursor's certificate records it with T3a's
+    constructor lookup (`ctor_np`). `export_kh` derives both;
+    `twin_ok`'s rule conjunct is now exactly what nanoda never checks: a
+    rule value has no string literal and is a lambda.
     Trade-off as built: a constant's typing in the twin is at the
     canonical type, and `typed_const` recovers the declared type through
     `twin_ok`'s conversion. So the claims follow nanoda's `def_eq`. The

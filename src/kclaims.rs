@@ -66,15 +66,15 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
 }
 
 /// THE CANONICAL TWIN'S OBLIGATIONS (docs/TYPED_TARGET.md, "B5 design";
-/// certified from nanoda's checks, T3): the environment's own rule values
-/// are closed lambdas, and each recursor the twin replaces has a declared
+/// what nanoda's checks do not certify, T3): the environment's own rule
+/// values are string-free lambdas, and each recursor the twin replaces has a declared
 /// type converting -- at every level instance, in the twin -- to its
 /// canonical one, and rules converting to the canonical rules.
 pub open spec fn twin_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     let s0 = jsig(dty, denv, Map::empty());
     &&& forall|rid: u64, i: int| denv.recs.contains_key(rid) && 0 <= i < denv.recs[rid].rules.len()
-        ==> #[trigger] crate::beta_model::rule_rhs_ok(denv, denv.recs[rid].rules[i])
+        ==> #[trigger] crate::beta_model::string_free(denv.recs[rid].rules[i].rhs) && denv.recs[rid].rules[i].rhs is Bind
     &&& forall|rid: u64| #[trigger] denv.recs.contains_key(rid) && crate::twin::rec_core(raw, rid) ==> {
         &&& forall|j: int, ls: Seq<LevelSpec>| 0 <= j < denv.recs[rid].rules.len() && ls.len() == denv.recs[rid].uparams.len() ==>
             #[trigger] rule_conv(dty, denv, rid, j, ls)

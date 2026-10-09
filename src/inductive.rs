@@ -6319,6 +6319,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         ensures
             tc_level_free(*self, e),
             !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(e)),
+            crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(e)) == 0,
     {
         assert!(!self.ctx.has_fvars(e) && self.ctx.num_loose_bvars(e) == 0, "inductive: a type is not closed");
         proof {

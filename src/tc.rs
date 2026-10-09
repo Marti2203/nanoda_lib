@@ -629,6 +629,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             forall|j: int| 0 <= j < rules@.len() ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] rules@[j].val))
+                && crate::expr_model::nlbv(to_model_expr(rules@[j].val)) == 0
                 && klp(*old(self), to_model_expr(rules@[j].val)),
     {
         let mut k: usize = 0;
@@ -644,6 +645,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 k <= rules@.len(),
                 forall|j: int| 0 <= j < rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] rules@[j].val),
                 forall|j: int| 0 <= j < k ==> !crate::expr_model::has_fv(to_model_expr(#[trigger] rules@[j].val))
+                    && crate::expr_model::nlbv(to_model_expr(rules@[j].val)) == 0
                     && klp(*old(self), to_model_expr(rules@[j].val)),
             decreases rules@.len() - k,
         {
@@ -6132,7 +6134,9 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
             && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))))
     &&& (d matches crate::env::Declar::Constructor(c) ==> ctor_e2_cert(dty, denv, c))
     &&& (d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
-        ==> dty.contains_key(crate::level_arena_bridge::name_id(#[trigger] r.rec_rules@[j].ctor_name)))
+        ==> dty.contains_key(crate::level_arena_bridge::name_id(#[trigger] r.rec_rules@[j].ctor_name))
+            && denv.ctor_np.contains_key(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name))
+            && crate::expr_model::nlbv(to_model_expr(r.rec_rules@[j].val)) == 0)
 }
 
 /// A CONSTRUCTOR'S PARAMETER CERTIFICATE: its inductive is declared before
@@ -6203,7 +6207,9 @@ pub proof fn declar_cert_intro<'x, 't, 'p>(ef: crate::util::ExportFile<'p>, env:
                 && crate::level_inst::elp_in(to_model_expr(r.rec_rules@[j].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))),
         d matches crate::env::Declar::Constructor(c) ==> ctor_e2_cert(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), c),
         d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
-            ==> crate::env_model::to_model_of_declar_ty(env).contains_key(crate::level_arena_bridge::name_id(#[trigger] r.rec_rules@[j].ctor_name)),
+            ==> crate::env_model::to_model_of_declar_ty(env).contains_key(crate::level_arena_bridge::name_id(#[trigger] r.rec_rules@[j].ctor_name))
+                && crate::env_model::to_model_of_env(env).ctor_np.contains_key(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name))
+                && crate::expr_model::nlbv(to_model_expr(r.rec_rules@[j].val)) == 0,
     ensures
         declar_cert_at(ef, d, env.visible()),
 {
@@ -6235,14 +6241,16 @@ fn assert_rule_ctors_declared<'x, 't>(env: &Env<'x, 't>, rules: &std::sync::Arc<
         forall|k: int| 0 <= k < rules@.len() ==> crate::util_model::export_tagged(env.arena_ids().1, #[trigger] rules@[k].ctor_name),
     ensures
         forall|k: int| 0 <= k < rules@.len()
-            ==> crate::env_model::to_model_of_declar_ty(*env).contains_key(crate::level_arena_bridge::name_id(#[trigger] rules@[k].ctor_name)),
+            ==> crate::env_model::to_model_of_declar_ty(*env).contains_key(crate::level_arena_bridge::name_id(#[trigger] rules@[k].ctor_name))
+                && crate::env_model::to_model_of_env(*env).ctor_np.contains_key(crate::level_arena_bridge::name_id(rules@[k].ctor_name)),
 {
     let mut j: usize = 0;
     while j < rules.len()
         invariant
             forall|k: int| 0 <= k < rules@.len() ==> crate::util_model::export_tagged(env.arena_ids().1, #[trigger] rules@[k].ctor_name),
             forall|k: int| 0 <= k < j && j <= rules@.len()
-                ==> crate::env_model::to_model_of_declar_ty(*env).contains_key(crate::level_arena_bridge::name_id(#[trigger] rules@[k].ctor_name)),
+                ==> crate::env_model::to_model_of_declar_ty(*env).contains_key(crate::level_arena_bridge::name_id(#[trigger] rules@[k].ctor_name))
+                    && crate::env_model::to_model_of_env(*env).ctor_np.contains_key(crate::level_arena_bridge::name_id(rules@[k].ctor_name)),
             j <= rules@.len(),
         decreases rules@.len() - j,
     {
@@ -6250,6 +6258,7 @@ fn assert_rule_ctors_declared<'x, 't>(env: &Env<'x, 't>, rules: &std::sync::Arc<
         assert!(env.get_constructor(&cn).is_some(), "recursor: a rule's constructor is not declared before it");
         proof {
             crate::env_model::to_model_of_declar_ty_at(*env, crate::level_arena_bridge::name_id(cn));
+            crate::env_model::to_model_of_ctor_num_params_at(*env, crate::level_arena_bridge::name_id(cn));
         }
         j += 1;
     }
