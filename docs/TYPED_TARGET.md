@@ -1769,6 +1769,27 @@ and eta step is vacuous (about thirty sites use that). Stages:
     entry is a constructor declaration's. `ind_ok_hyp` is `ind_ok`
     without those. Later B6 steps move more of `ind_ok_hyp` into
     certified facts the same way.
+    B6a design: what remains of `ind_ok_hyp` turns on `has_canon` -- an
+    inductive's recursor being twinned (`twin::rec_core`). nanoda's
+    generator proofs already show the generated recursor is canonical
+    for any shape `sh` with `gen_shape_ok(st, sh, lm)` (the declared
+    inductive and constructor types in canonical form, admitted field
+    kinds), but only conditionally: nothing yet shows nanoda's checks
+    establish such a shape. Measured on Init (808 constructors of single
+    non-nested inductives): every constructor restates its inductive's
+    parameters syntactically (nanoda checks them only by `def_eq`) and
+    ends in the inductive at the parameters (nanoda checks this
+    syntactically, `is_valid_ind_app`); 422 fields have a function type,
+    which `fkind_ok` does not admit -- the fragment's boundary, as before.
+    Steps: B6a-1 a tested-input check that each parameter's type is the
+    inductive's (`model_eq`, before nanoda's `assert_def_eq`; Init and
+    Init.Core clean; stricter than nanoda's `def_eq`, recorded in
+    VERUS_REWRITES.md), carried by `ctor_cert_ok`; B6a-2 the existence
+    of `gen_shape_ok` from the checker's walks, given admitted field
+    kinds; B6a-3 the inductive's certificate records it, with nanoda's
+    recursor data comparison (`aux_data_ck`); B6a-4 `rec_core` at the
+    export from the certificate, so `has_canon` and the tables follow
+    and `kh_hyp` keeps only the fragment's boundary.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.
