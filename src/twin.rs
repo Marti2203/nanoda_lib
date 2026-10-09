@@ -33,6 +33,9 @@ pub open spec fn rec_core(sig: Sig, rid: u64) -> bool {
     let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
     &&& sig.ienv.recs.contains_key(rid)
     &&& sig.consts.contains_key(rid) && sig.consts[rid].val is None && sig.consts[rid].lps == rd.uparams
+    // the major premise, whose head names the inductive
+    &&& tdoms(sig.consts[rid].ty, rd.major_idx + 1).len() == rd.major_idx + 1
+    &&& spine_head(tdoms(sig.consts[rid].ty, rd.major_idx + 1)[rd.major_idx as int]) is Const
     &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
     &&& !sig.ienv.recs.contains_key(ind)
     &&& rd.num_motives == 1
@@ -63,6 +66,174 @@ pub open spec fn rec_core(sig: Sig, rid: u64) -> bool {
         &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
         &&& forall|k: int| 0 <= k < nf ==> field_kind(sig, ind, sh.pdoms, sh.us(), np, ni, k as nat, #[trigger] sh.fields[j][k])
         &&& rule_shape(sh.rule_rhs(lm, rid, plevels(rd.uparams), j))
+    }
+}
+
+/// THE SIGNATURE GROWS: the second keeps the first's constants and tables,
+/// and adds no recursor or constructor among the first's constants.
+pub open spec fn grows(s1: Sig, s2: Sig) -> bool {
+    &&& forall|k: u64| #[trigger] s1.consts.contains_key(k) ==> s2.consts.contains_key(k) && s2.consts[k] == s1.consts[k]
+    &&& forall|k: u64| #[trigger] s1.ienv.recs.contains_key(k) ==> s2.ienv.recs.contains_key(k) && s2.ienv.recs[k] == s1.ienv.recs[k]
+    &&& forall|k: u64| #[trigger] s1.ienv.ctor_ind.contains_key(k) ==> s2.ienv.ctor_ind.contains_key(k) && s2.ienv.ctor_ind[k] == s1.ienv.ctor_ind[k]
+    &&& forall|k: u64| #[trigger] s1.ienv.ctor_np.contains_key(k) ==> s2.ienv.ctor_np.contains_key(k) && s2.ienv.ctor_np[k] == s1.ienv.ctor_np[k]
+    &&& forall|k: u64| #[trigger] s1.consts.contains_key(k) ==>
+        (s2.ienv.recs.contains_key(k) ==> s1.ienv.recs.contains_key(k))
+        && (s2.ienv.ctor_ind.contains_key(k) ==> s1.ienv.ctor_ind.contains_key(k))
+        && (s2.ienv.ctor_np.contains_key(k) ==> s1.ienv.ctor_np.contains_key(k))
+}
+
+/// Constants in a smaller set are in a larger one.
+pub proof fn all_consts_mono(e: ExprSpec, a: Set<u64>, b: Set<u64>)
+    requires
+        crate::ti_level::all_consts(e, a),
+        a.subset_of(b),
+    ensures
+        crate::ti_level::all_consts(e, b),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { all_consts_mono(*f, a, b); all_consts_mono(*x, a, b); },
+        ExprSpec::Bind(_, t, bd) => { all_consts_mono(*t, a, b); all_consts_mono(*bd, a, b); },
+        ExprSpec::Let(t, v, bd) => { all_consts_mono(*t, a, b); all_consts_mono(*v, a, b); all_consts_mono(*bd, a, b); },
+        ExprSpec::Proj(_, x) => { all_consts_mono(*x, a, b); },
+        _ => {},
+    }
+}
+
+/// A spine's head constant is one of its constants.
+pub proof fn all_consts_head(e: ExprSpec, ids: Set<u64>)
+    requires
+        crate::ti_level::all_consts(e, ids),
+        spine_head(e) is Const,
+    ensures
+        ids.contains(spine_head(e)->Const_0),
+    decreases e,
+{
+    if let ExprSpec::App(f, _) = e {
+        all_consts_head(*f, ids);
+    }
+}
+
+/// A telescope's domains and body have its constants.
+pub proof fn all_consts_tel(t: ExprSpec, n: nat, ids: Set<u64>)
+    requires
+        crate::ti_level::all_consts(t, ids),
+    ensures
+        forall|i: int| 0 <= i < tdoms(t, n).len() ==> crate::ti_level::all_consts(#[trigger] tdoms(t, n)[i], ids),
+        crate::ti_level::all_consts(tbody(t, n), ids),
+    decreases n,
+{
+    if n > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, a, b) = t {
+            all_consts_tel(*b, (n - 1) as nat, ids);
+            assert forall|i: int| 0 <= i < tdoms(t, n).len() implies crate::ti_level::all_consts(#[trigger] tdoms(t, n)[i], ids) by {
+                if i > 0 {
+                    assert(tdoms(t, n)[i] == tdoms(*b, (n - 1) as nat)[i - 1]);
+                }
+            }
+        }
+    }
+}
+
+/// Field kinds read only the constants a field mentions.
+pub proof fn psimple_grow(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        grows(s1, s2),
+        crate::ti_level::all_consts(e, s1.consts.dom()),
+    ensures
+        psimple(s1, ind, pdoms, np, k, e) == psimple(s2, ind, pdoms, np, k, e),
+        psapp(s1, ind, pdoms, np, k, e) == psapp(s2, ind, pdoms, np, k, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        psimple_grow(s1, s2, ind, pdoms, np, k, *f);
+        psimple_grow(s1, s2, ind, pdoms, np, k, *x);
+    }
+    if let ExprSpec::Const(j, _) = e {
+        assert(s1.consts.contains_key(j));
+    }
+    if spine_head(e) is Const {
+        all_consts_head(e, s1.consts.dom());
+        assert(s1.consts.contains_key(spine_head(e)->Const_0));
+    }
+}
+
+/// The inductive's shape reads only the inductive and its constructors.
+pub proof fn shape_grow(s1: Sig, s2: Sig, rd: RecDataSpec, ind: u64)
+    requires
+        grows(s1, s2),
+        s1.consts.contains_key(ind),
+        rd.num_minors <= rd.rules.len(),
+        forall|j: int| 0 <= j < rd.num_minors ==> s1.consts.contains_key(#[trigger] rd.rules[j].ctor_id),
+    ensures
+        shape_of(s1, rd, ind) == shape_of(s2, rd, ind),
+{
+    let (a, b) = (shape_of(s1, rd, ind), shape_of(s2, rd, ind));
+    assert(a.ctors =~= b.ctors);
+    assert forall|j: int| 0 <= j < rd.num_minors implies s2.consts[#[trigger] a.ctors[j]] == s1.consts[a.ctors[j]] by {
+        assert(s1.consts.contains_key(rd.rules[j].ctor_id));
+    }
+    assert(a.fields =~= b.fields);
+    assert(a.tss =~= b.tss);
+}
+
+/// THE TWIN'S DECISION IS STABLE as the signature grows, when what it
+/// reads -- the recursor's type, its constructors and theirs -- mentions
+/// only the smaller signature's constants.
+#[verifier::spinoff_prover]
+pub proof fn rec_core_grow(s1: Sig, s2: Sig, rid: u64)
+    requires
+        grows(s1, s2),
+        s1.ienv.recs.contains_key(rid),
+        s1.consts.contains_key(rid),
+        crate::ti_level::all_consts(s1.consts[rid].ty, s1.consts.dom()),
+        forall|j: int| 0 <= j < s1.ienv.recs[rid].rules.len() ==> s1.consts.contains_key(#[trigger] s1.ienv.recs[rid].rules[j].ctor_id)
+            && crate::ti_level::all_consts(s1.consts[s1.ienv.recs[rid].rules[j].ctor_id].ty, s1.consts.dom()),
+    ensures
+        rec_core(s1, rid) == rec_core(s2, rid),
+        rec_core(s1, rid) ==> canon_ty(s1, rid) == canon_ty(s2, rid) && canon_rules(s1, rid) == canon_rules(s2, rid),
+{
+    reveal(rec_core);
+    let d1 = s1.consts.dom();
+    let rd = s1.ienv.recs[rid];
+    assert(s2.ienv.recs[rid] == rd);
+    assert(s2.consts[rid] == s1.consts[rid]);
+    let ty = s1.consts[rid].ty;
+    let ind = rec_ind(s1, rid);
+    assert(rec_ind(s2, rid) == ind);
+    all_consts_tel(ty, rd.major_idx + 1, d1);
+    if tdoms(ty, rd.major_idx + 1).len() == rd.major_idx + 1 && spine_head(tdoms(ty, rd.major_idx + 1)[rd.major_idx as int]) is Const {
+        all_consts_head(tdoms(ty, rd.major_idx + 1)[rd.major_idx as int], d1);
+    }
+    if s1.consts.contains_key(ind) && rd.num_minors == rd.rules.len() {
+        shape_grow(s1, s2, rd, ind);
+        let sh = shape_of(s1, rd, ind);
+        assert(elim_level(s1, rid, ind) == elim_level(s2, rid, ind));
+        assert(s2.consts[ind] == s1.consts[ind]);
+        assert(s1.ienv.recs.contains_key(ind) == s2.ienv.recs.contains_key(ind));
+        assert forall|j: int| 0 <= j < sh.nmin() implies {
+            let c = #[trigger] sh.ctors[j];
+            &&& s2.consts[c] == s1.consts[c]
+            &&& s1.ienv.ctor_ind.contains_key(c) == s2.ienv.ctor_ind.contains_key(c)
+            &&& (s1.ienv.ctor_ind.contains_key(c) ==> s2.ienv.ctor_ind[c] == s1.ienv.ctor_ind[c])
+            &&& s1.ienv.ctor_np.contains_key(c) == s2.ienv.ctor_np.contains_key(c)
+            &&& (s1.ienv.ctor_np.contains_key(c) ==> s2.ienv.ctor_np[c] == s1.ienv.ctor_np[c])
+            &&& s1.ienv.recs.contains_key(c) == s2.ienv.recs.contains_key(c)
+            &&& forall|k: nat| (k as int) < sh.fields[j].len() ==> #[trigger] field_kind(s1, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, sh.fields[j][k as int])
+                == field_kind(s2, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, sh.fields[j][k as int])
+        } by {
+            let c = sh.ctors[j];
+            assert(c == rd.rules[j].ctor_id);
+            assert(s1.consts.contains_key(c));
+            let t = s1.consts[c].ty;
+            all_consts_tel(t, sh.np, d1);
+            all_consts_tel(tbody(t, sh.np), rd.rules[j].nfields, d1);
+            assert forall|k: nat| (k as int) < sh.fields[j].len() implies #[trigger] field_kind(s1, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, sh.fields[j][k as int])
+                == field_kind(s2, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, sh.fields[j][k as int]) by {
+                reveal(field_kind);
+                psimple_grow(s1, s2, ind, sh.pdoms, sh.np, k, sh.fields[j][k as int]);
+            }
+        }
     }
 }
 

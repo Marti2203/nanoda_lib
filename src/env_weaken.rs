@@ -28,6 +28,32 @@ pub open spec fn defs_stable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
     forall|k: u64| #[trigger] dty.contains_key(k) && denv2.defs.contains_key(k) ==> denv.defs.contains_key(k)
 }
 
+/// The second environment's recursors and constructors among the first's
+/// declarations are the first's.
+pub open spec fn tables_stable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, denv2: EnvSpec) -> bool {
+    &&& forall|k: u64| #[trigger] dty.contains_key(k) && denv2.recs.contains_key(k) ==> denv.recs.contains_key(k)
+    &&& forall|k: u64| #[trigger] dty.contains_key(k) && denv2.ctor_ind.contains_key(k) ==> denv.ctor_ind.contains_key(k)
+    &&& forall|k: u64| #[trigger] dty.contains_key(k) && denv2.ctor_np.contains_key(k) ==> denv.ctor_np.contains_key(k)
+}
+
+/// A growing environment's declared signature grows.
+pub proof fn grows_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec)
+    requires
+        env_le(dty, denv, dty2, denv2),
+        defs_stable(dty, denv, denv2),
+        tables_stable(dty, denv, denv2),
+    ensures
+        crate::twin::grows(crate::metatheory::jsig_raw(dty, denv, Map::empty()), crate::metatheory::jsig_raw(dty2, denv2, Map::empty())),
+{
+    let (r1, r2) = (crate::metatheory::jsig_raw(dty, denv, Map::empty()), crate::metatheory::jsig_raw(dty2, denv2, Map::empty()));
+    assert forall|k: u64| #[trigger] r1.consts.contains_key(k) implies r2.consts.contains_key(k) && r2.consts[k] == r1.consts[k] by {
+        assert(dty.contains_key(k));
+        if denv2.defs.contains_key(k) {
+            assert(denv.defs.contains_key(k));
+        }
+    }
+}
+
 /// Every definition is well ranked, at every level instance.
 pub open spec fn defs_ranked(sig: crate::ti_syntax::Sig) -> bool {
     forall|c: u64, ls: Seq<LevelSpec>| #[trigger] crate::ti_syntax::is_def(sig, c, ls) ==> crate::ti_syntax::def_ok(sig, c, ls)

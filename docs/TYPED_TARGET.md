@@ -1717,6 +1717,17 @@ and eta step is vacuous (about thirty sites use that). Stages:
     inductive (in the recursor's checked type) and the constructors'
     field types (in their checked types) also earlier, everything the
     twin's decision reads is fixed when the recursor is declared.
+    T3b-c: `twins_stable` is no longer assumed. `twin::rec_core_grow`:
+    in a growing signature (`grows`: constants and tables kept, no
+    earlier constant becomes a recursor or constructor --
+    `env_model::tables_stable_at`), the twin decides a recursor, and
+    builds its canonical type and rules, as before, when its type, its
+    constructors and theirs mention only earlier constants.
+    `export_sound::twin_le_at` supplies that inside the `export_kh`
+    induction, from the certificates (types are types at their cutoffs,
+    `ti_level::d_consts`; the constructors from T3a). `rec_core` now also
+    asks the major premise to exist with a constant head, so the
+    inductive it reads is a real one.
     Trade-off as built: a constant's typing in the twin is at the
     canonical type, and `typed_const` recovers the declared type through
     `twin_ok`'s conversion. So the claims follow nanoda's `def_eq`. The

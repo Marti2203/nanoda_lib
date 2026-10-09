@@ -142,14 +142,6 @@ pub open spec fn rmap<'p>(ef: crate::util::ExportFile<'p>, c: int) -> Map<u64, n
 }
 
 /// What every cutoff before `cc` has, and the hypotheses everywhere.
-/// THE TWIN IS STABLE ALONG THE EXPORT (docs/TYPED_TARGET.md, "B5
-/// design"; certified in T3): a later cutoff's twin decides the earlier
-/// cutoff's recursors as the earlier one does.
-pub open spec fn twins_stable<'p>(ef: crate::util::ExportFile<'p>) -> bool {
-    forall|c1: int, c2: int| 0 <= c1 <= c2 <= ef.declars_keys().len() ==>
-        #[trigger] crate::env_weaken::twin_le(m_dty(ef, c1), m_denv(ef, c1), m_dty(ef, c2), m_denv(ef, c2))
-}
-
 /// A TWINNED RECURSOR'S CANONICAL TYPE IS A TYPE in the environment of
 /// its certificate (docs/TYPED_TARGET.md, "B5 design"; certified in T3
 /// from nanoda's check of the generated recursor type).
@@ -166,7 +158,6 @@ pub open spec fn twin_types<'p>(ef: crate::util::ExportFile<'p>) -> bool {
 
 pub open spec fn below_ok<'p>(ef: crate::util::ExportFile<'p>, cc: int) -> bool {
     &&& crate::inductive::export_ok(ef)
-    &&& twins_stable(ef)
     &&& twin_types(ef)
     &&& all_certified(ef)
     &&& forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c))
@@ -353,6 +344,101 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     (c, crate::ti_level::ll_(l, lps, ls))
 }
 
+/// A declaration's type mentions only the declarations before it.
+proof fn ty_consts<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_dty(ef, cc).contains_key(cid),
+    ensures
+        crate::ti_level::all_consts(m_dty(ef, cc)[cid].1, m_dty(ef, cc).dom()),
+{
+    let c = decl_facts(ef, cc, cid);
+    let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+    let em = Map::<nat, ExprSpec>::empty();
+    let ty = m_dty(ef, cc)[cid].1;
+    let l = crate::jkernel::is_type_sort(dc, nc, em, ty);
+    let sc = crate::metatheory::jsig(dc, nc, em);
+    let dv = crate::ti_sub::get(sc, crate::ti_syntax::eq(Seq::empty(), ty, ty, crate::ti_syntax::sort(l)));
+    crate::ti_level::d_consts(sc, dv);
+    assert(sc.consts.dom() =~= dc.dom());
+    assert(dc.dom().subset_of(m_dty(ef, cc).dom()));
+    crate::twin::all_consts_mono(ty, dc.dom(), m_dty(ef, cc).dom());
+}
+
+/// A recursor's rule constructors are declared before it (its
+/// certificate, `assert_rule_ctors_declared`).
+proof fn rec_ctors<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
+    requires
+        below_ok(ef, cc),
+        m_denv(ef, cc).recs.contains_key(rid),
+    ensures
+        m_dty(ef, cc).contains_key(rid),
+        forall|j: int| 0 <= j < m_denv(ef, cc).recs[rid].rules.len()
+            ==> m_dty(ef, cc).contains_key(#[trigger] m_denv(ef, cc).recs[rid].rules[j].ctor_id),
+{
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    let i = entry_of(ef, cc, rid);
+    assert(pos_of(ef, rid) == i);
+    let d = decl_at(ef, i);
+    assert(m_dty(ef, cc).contains_key(rid));
+    let c = decl_facts(ef, cc, rid);
+    assert(m_denv(ef, cc).recs[rid] == crate::env_model::rec_entry(d)->0);
+    if let crate::env::Declar::Recursor(r) = d {
+        assert forall|j: int| 0 <= j < m_denv(ef, cc).recs[rid].rules.len()
+            implies m_dty(ef, cc).contains_key(#[trigger] m_denv(ef, cc).recs[rid].rules[j].ctor_id) by {
+            assert(m_denv(ef, cc).recs[rid].rules[j].ctor_id == crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name));
+            assert(m_dty(ef, c).contains_key(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name)));
+        }
+    }
+}
+
+/// THE TWIN IS STABLE ALONG THE EXPORT: everything a recursor's twin
+/// decision reads is declared before it (`twin::rec_core_grow`).
+#[verifier::spinoff_prover]
+proof fn twin_le_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, c1: int, c2: int)
+    requires
+        below_ok(ef, cc),
+        0 <= c1 <= cc,
+        c1 <= c2 <= ef.declars_keys().len(),
+    ensures
+        crate::env_weaken::twin_le(m_dty(ef, c1), m_denv(ef, c1), m_dty(ef, c2), m_denv(ef, c2)),
+{
+    let keys = ef.declars_keys();
+    let view = ef.declars_view();
+    let a = ef.arena();
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    assert(below_ok(ef, c1));
+    let (d1, n1, d2, n2) = (m_dty(ef, c1), m_denv(ef, c1), m_dty(ef, c2), m_denv(ef, c2));
+    crate::env_model::env_le_at(a, view, keys, c1, c2);
+    crate::env_model::defs_stable_at(a, view, keys, c1, c2);
+    crate::env_model::tables_stable_at(a, view, keys, c1, c2);
+    crate::env_weaken::grows_of(d1, n1, d2, n2);
+    let (r1, r2) = (crate::metatheory::jsig_raw(d1, n1, Map::empty()), crate::metatheory::jsig_raw(d2, n2, Map::empty()));
+    assert forall|c: u64| d1.contains_key(c) || #[trigger] n1.recs.contains_key(c) implies {
+        &&& (n1.recs.contains_key(c) && crate::twin::rec_core(r1, c)) == (n2.recs.contains_key(c) && crate::twin::rec_core(r2, c))
+        &&& n1.recs.contains_key(c) && crate::twin::rec_core(r1, c) ==> crate::twin::canon_ty(r1, c) == crate::twin::canon_ty(r2, c)
+            && crate::twin::canon_rules(r1, c) == crate::twin::canon_rules(r2, c)
+    } by {
+        if n1.recs.contains_key(c) {
+            rec_ctors(ef, c1, c);
+            ty_consts(ef, c1, c);
+            assert forall|j: int| 0 <= j < r1.ienv.recs[c].rules.len() implies r1.consts.contains_key(#[trigger] r1.ienv.recs[c].rules[j].ctor_id)
+                && crate::ti_level::all_consts(r1.consts[r1.ienv.recs[c].rules[j].ctor_id].ty, r1.consts.dom()) by {
+                let k = n1.recs[c].rules[j].ctor_id;
+                assert(d1.contains_key(k));
+                ty_consts(ef, c1, k);
+                assert(r1.consts.dom() =~= d1.dom());
+            }
+            assert(r1.consts.dom() =~= d1.dom());
+            crate::twin::rec_core_grow(r1, r2, c);
+        } else {
+            assert(d1.contains_key(c));
+        }
+    }
+}
+
 /// Every cutoff's recursors are in the model's fragment.
 proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     requires
@@ -385,6 +471,7 @@ proof fn wf_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         && crate::ti_syntax::derivable(s, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dval(s, cid, ls), crate::ti_syntax::dval(s, cid, ls), crate::ti_syntax::dty_at(s, cid, ls))) by {
         let (c, l) = inst_decl(ef, cc, cid, ls);
         let sc = crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty());
+        twin_le_at(ef, cc, c, cc);
         crate::env_weaken::ew_sig_ext(m_dty(ef, c), m_denv(ef, c), dty, denv, Map::empty());
         crate::ti_valid::derivable_ext(sc, s, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dty_at(s, cid, ls), crate::ti_syntax::dty_at(s, cid, ls), ExprSpec::Sort(l)));
         crate::ti_valid::derivable_ext(sc, s, crate::ti_syntax::eq(Seq::empty(), crate::ti_syntax::dval(s, cid, ls), crate::ti_syntax::dval(s, cid, ls), crate::ti_syntax::dty_at(s, cid, ls)));
@@ -414,6 +501,7 @@ proof fn levok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         let sc = crate::metatheory::jsig(dc, nc, Map::empty());
         let g0 = Seq::<ExprSpec>::empty();
         let (lps, ty) = (s.consts[cid].lps, s.consts[cid].ty);
+        twin_le_at(ef, cc, c, cc);
         crate::env_weaken::ew_sig_ext(dc, nc, dty, denv, Map::empty());
         let t1 = crate::ti_syntax::dty_at(s, cid, ls);
         let t2 = crate::ti_syntax::dty_at(s, cid, ls2);
@@ -438,7 +526,6 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         crate::inductive::export_ok(ef),
         all_certified(ef),
         forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c)),
-        twins_stable(ef),
         twin_types(ef),
         0 <= cc <= ef.declars_keys().len(),
     ensures
@@ -472,6 +559,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         export_kh(ef, c);
         crate::env_model::env_le_at(a, view, keys, c, cc);
         crate::env_model::defs_stable_at(a, view, keys, c, cc);
+        twin_le_at(ef, cc, c, cc);
         crate::env_weaken::ew_is_type(m_dty(ef, c), m_denv(ef, c), dty, denv, em, dty[cid].1);
     }
     // the definitions' values: closed, own levels, typed at their types
@@ -492,6 +580,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
         let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dc, nc, em, denv.defs[cid].1, t2)
             && crate::metatheory::tconv(dc, nc, em, t2, dty[cid].1);
+        twin_le_at(ef, cc, c, cc);
         crate::env_weaken::ew_typed(dc, nc, dty, denv, em, denv.defs[cid].1, t2);
         crate::env_weaken::ew_tconv(dc, nc, dty, denv, em, t2, dty[cid].1);
         crate::ti_scope::closed_of_empty(crate::metatheory::jsig(dty, denv, em), denv.defs[cid].1, denv.defs[cid].1, t2);

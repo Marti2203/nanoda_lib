@@ -937,6 +937,25 @@ pub proof fn defs_stable_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>,
     }
 }
 
+pub proof fn tables_stable_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
+    requires
+        c1 <= c2,
+        keys_ids_inj(keys),
+    ensures
+        crate::env_weaken::tables_stable(dty_at(view, keys, c1), denv_at(export, view, keys, c1), denv_at(export, view, keys, c2)),
+{
+    let (d1, n1, n2) = (dty_at(view, keys, c1), denv_at(export, view, keys, c1), denv_at(export, view, keys, c2));
+    assert forall|k: u64| #[trigger] d1.contains_key(k) && n2.recs.contains_key(k) implies n1.recs.contains_key(k) by {
+        find_at_mono(view, keys, c1, c2, k);
+    }
+    assert forall|k: u64| #[trigger] d1.contains_key(k) && n2.ctor_ind.contains_key(k) implies n1.ctor_ind.contains_key(k) by {
+        find_at_mono(view, keys, c1, c2, k);
+    }
+    assert forall|k: u64| #[trigger] d1.contains_key(k) && n2.ctor_np.contains_key(k) implies n1.ctor_np.contains_key(k) by {
+        find_at_mono(view, keys, c1, c2, k);
+    }
+}
+
 pub proof fn env_le_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
     requires
         c1 <= c2,
