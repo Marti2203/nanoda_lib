@@ -237,6 +237,419 @@ pub proof fn rec_core_grow(s1: Sig, s2: Sig, rid: u64)
     }
 }
 
+/// Lifting keeps the level parameters.
+pub proof fn elp_lift(n: nat, c: nat, e: ExprSpec, us: Seq<u64>)
+    ensures
+        crate::level_inst::elp_in(crate::subst_algebra::lift(n, c, e), us) == crate::level_inst::elp_in(e, us),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { elp_lift(n, c, *f, us); elp_lift(n, c, *x, us); },
+        ExprSpec::Bind(_, t, b) => { elp_lift(n, c, *t, us); elp_lift(n, c + 1, *b, us); },
+        ExprSpec::Let(t, v, b) => { elp_lift(n, c, *t, us); elp_lift(n, c, *v, us); elp_lift(n, c + 1, *b, us); },
+        ExprSpec::Proj(_, x) => { elp_lift(n, c, *x, us); },
+        _ => {},
+    }
+}
+
+/// A telescope from its parts.
+pub proof fn binds_elp(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, us: Seq<u64>)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> crate::level_inst::elp_in(#[trigger] ds[i], us),
+        crate::level_inst::elp_in(b, us),
+    ensures
+        crate::level_inst::elp_in(binds(bk, ds, b), us),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        assert forall|i: int| 0 <= i < ds.drop_first().len() implies crate::level_inst::elp_in(#[trigger] ds.drop_first()[i], us) by {
+            assert(ds.drop_first()[i] == ds[i + 1]);
+        }
+        binds_elp(bk, ds.drop_first(), b, us);
+    }
+}
+
+/// A spine's arguments from the spine.
+pub proof fn spine_args_elp(e: ExprSpec, us: Seq<u64>)
+    requires
+        crate::level_inst::elp_in(e, us),
+    ensures
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> crate::level_inst::elp_in(#[trigger] crate::beta_model::spine_args(e)[i], us),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        spine_args_elp(*f, us);
+        assert forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() implies crate::level_inst::elp_in(#[trigger] crate::beta_model::spine_args(e)[i], us) by {
+            if i < crate::beta_model::spine_args(*f).len() {
+                assert(crate::beta_model::spine_args(e)[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// Variables mention no level.
+pub proof fn vars_elp(from: nat, n: nat, us: Seq<u64>)
+    ensures
+        forall|i: int| 0 <= i < vars(from, n).len() ==> crate::level_inst::elp_in(#[trigger] vars(from, n)[i], us),
+{
+}
+
+/// The shape's pieces, its levels and the motive's level are over `up`.
+pub open spec fn shape_elp(sh: IndShape, lm: LevelSpec, up: Seq<u64>) -> bool {
+    &&& forall|q: int| 0 <= q < sh.pdoms.len() ==> crate::level_inst::elp_in(#[trigger] sh.pdoms[q], up)
+    &&& forall|q: int| 0 <= q < sh.idoms.len() ==> crate::level_inst::elp_in(#[trigger] sh.idoms[q], up)
+    &&& forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() ==> crate::level_inst::elp_in(#[trigger] sh.fields[j][k], up)
+    &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() ==> crate::level_inst::elp_in(#[trigger] sh.tss[j][q], up)
+    &&& forall|i: int| 0 <= i < sh.us().len() ==> crate::level_inst::lp_in(#[trigger] sh.us()[i], up)
+    &&& crate::level_inst::lp_in(lm, up)
+}
+
+/// A constant applied, from its levels and arguments.
+pub proof fn const_app_elp(c: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, up: Seq<u64>)
+    requires
+        forall|i: int| 0 <= i < ls.len() ==> crate::level_inst::lp_in(#[trigger] ls[i], up),
+        forall|i: int| 0 <= i < args.len() ==> crate::level_inst::elp_in(#[trigger] args[i], up),
+    ensures
+        crate::level_inst::elp_in(spine_app(ExprSpec::Const(c, ls), args), up),
+{
+    crate::level_inst::elp_in_spine(ExprSpec::Const(c, ls), args, up);
+}
+
+/// A recursive field's index arguments.
+pub proof fn occ_elp(sh: IndShape, lm: LevelSpec, up: Seq<u64>, j: int, r: int)
+    requires
+        shape_elp(sh, lm, up),
+        0 <= j < sh.nmin(),
+        0 <= r < sh.rposj(j).len(),
+    ensures
+        sh.rposj(j)[r] < sh.fields[j].len(),
+        forall|q: int| 0 <= q < sh.ni ==> crate::level_inst::elp_in(#[trigger] occ_idx(sh.fields[j][sh.rposj(j)[r] as int], sh.np, sh.ni)[q], up),
+{
+    let fs = sh.fields[j];
+    crate::dom_rec_ty::rec_pos_facts(fs, sh.ind, sh.us(), sh.np, sh.ni, fs.len());
+    let k = sh.rposj(j)[r];
+    spine_args_elp(fs[k as int], up);
+    assert forall|q: int| 0 <= q < sh.ni implies crate::level_inst::elp_in(#[trigger] occ_idx(fs[k as int], sh.np, sh.ni)[q], up) by {
+        assert(occ_idx(fs[k as int], sh.np, sh.ni)[q] == crate::beta_model::spine_args(fs[k as int])[sh.np + q]);
+    }
+}
+
+/// A minor premise's type.
+#[verifier::spinoff_prover]
+pub proof fn minor_elp(sh: IndShape, lm: LevelSpec, up: Seq<u64>, j: int)
+    requires
+        shape_elp(sh, lm, up),
+        0 <= j < sh.nmin(),
+        sh.tss[j].len() == sh.ni,
+    ensures
+        crate::level_inst::elp_in(sh.minor_ty(j), up),
+{
+    let nf = sh.fields[j].len();
+    let nr = sh.rposj(j).len();
+    let s = (1 + j) as nat;
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, s));
+    let ihs = Seq::new(nr, |r: int| sh.ih_ty(j, r));
+    let ts = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q])));
+    let value = spine_app(ExprSpec::Const(sh.ctors[j], sh.us()), vars(s + nf + nr, sh.np) + vars(nr, nf));
+    assert forall|i: int| 0 <= i < fds.len() implies crate::level_inst::elp_in(#[trigger] fds[i], up) by {
+        elp_lift(s, i as nat, sh.fields[j][i], up);
+    }
+    assert forall|r: int| 0 <= r < ihs.len() implies crate::level_inst::elp_in(#[trigger] ihs[r], up) by {
+        occ_elp(sh, lm, up, j, r);
+        let k = sh.rposj(j)[r];
+        let idx = occ_idx(sh.fields[j][k as int], sh.np, sh.ni);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q])));
+        let args = idx2.push(ExprSpec::Var((nf - 1 - k + r) as nat));
+        assert forall|q: int| 0 <= q < args.len() implies crate::level_inst::elp_in(#[trigger] args[q], up) by {
+            if q < sh.ni {
+                elp_lift(s, k, idx[q], up);
+                elp_lift((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q]), up);
+            }
+        }
+        crate::level_inst::elp_in_spine(ExprSpec::Var((j + nf + r) as nat), args, up);
+    }
+    assert forall|q: int| 0 <= q < ts.len() implies crate::level_inst::elp_in(#[trigger] ts[q], up) by {
+        elp_lift(s, nf, sh.tss[j][q], up);
+        elp_lift(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q]), up);
+    }
+    let vs = vars(s + nf + nr, sh.np) + vars(nr, nf);
+    assert forall|i: int| 0 <= i < vs.len() implies crate::level_inst::elp_in(#[trigger] vs[i], up) by {
+        if i < sh.np { assert(vs[i] == vars(s + nf + nr, sh.np)[i]); } else { assert(vs[i] == vars(nr, nf)[i - sh.np]); }
+    }
+    const_app_elp(sh.ctors[j], sh.us(), vs, up);
+    let args = ts.push(value);
+    assert forall|q: int| 0 <= q < args.len() implies crate::level_inst::elp_in(#[trigger] args[q], up) by {
+        if q < ts.len() { assert(args[q] == ts[q]); }
+    }
+    crate::level_inst::elp_in_spine(ExprSpec::Var((j + nf + nr) as nat), args, up);
+    binds_elp(BinderKind::Pi, ihs, spine_app(ExprSpec::Var((j + nf + nr) as nat), args), up);
+    binds_elp(BinderKind::Pi, fds, binds(BinderKind::Pi, ihs, spine_app(ExprSpec::Var((j + nf + nr) as nat), args)), up);
+}
+
+/// The binders the type and the rules share.
+#[verifier::spinoff_prover]
+pub proof fn head_elp(sh: IndShape, lm: LevelSpec, up: Seq<u64>)
+    requires
+        shape_elp(sh, lm, up),
+        forall|j: int| 0 <= j < sh.nmin() ==> (#[trigger] sh.tss[j]).len() == sh.ni,
+    ensures
+        forall|i: int| 0 <= i < sh.head_doms(lm).len() ==> crate::level_inst::elp_in(#[trigger] sh.head_doms(lm)[i], up),
+{
+    let vs = vars(sh.ni, sh.np) + vars(0, sh.ni);
+    assert forall|i: int| 0 <= i < vs.len() implies crate::level_inst::elp_in(#[trigger] vs[i], up) by {
+        if i < sh.np { assert(vs[i] == vars(sh.ni, sh.np)[i]); } else { assert(vs[i] == vars(0, sh.ni)[i - sh.np]); }
+    }
+    const_app_elp(sh.ind, sh.us(), vs, up);
+    assert(crate::level_inst::elp_in(ind_app(sh.ind, sh.us(), vs), up));
+    assert(crate::level_inst::elp_in(ExprSpec::Sort(lm), up));
+    assert(crate::level_inst::elp_in(ExprSpec::Bind(BinderKind::Pi, Box::new(ind_app(sh.ind, sh.us(), vs)), Box::new(ExprSpec::Sort(lm))), up));
+    binds_elp(BinderKind::Pi, sh.idoms, ExprSpec::Bind(BinderKind::Pi, Box::new(ind_app(sh.ind, sh.us(), vs)), Box::new(ExprSpec::Sort(lm))), up);
+    let hd = sh.head_doms(lm);
+    let mins = Seq::new(sh.nmin(), |j: int| sh.minor_ty(j));
+    assert forall|i: int| 0 <= i < hd.len() implies crate::level_inst::elp_in(#[trigger] hd[i], up) by {
+        if i < sh.pdoms.len() {
+            assert(hd[i] == sh.pdoms[i]);
+        } else if i == sh.pdoms.len() {
+            assert(hd[i] == sh.motive_ty(lm));
+        } else {
+            let j = i - sh.pdoms.len() - 1;
+            assert(hd[i] == mins[j]);
+            minor_elp(sh, lm, up, j);
+        }
+    }
+}
+
+/// A rule's canonical right-hand side, with the recursor at `plevels(up)`.
+#[verifier::spinoff_prover]
+pub proof fn rule_elp(sh: IndShape, lm: LevelSpec, rid: u64, j: int, up: Seq<u64>)
+    requires
+        shape_elp(sh, lm, up),
+        forall|j2: int| 0 <= j2 < sh.nmin() ==> (#[trigger] sh.tss[j2]).len() == sh.ni,
+        0 <= j < sh.nmin(),
+    ensures
+        crate::level_inst::elp_in(sh.rule_rhs(lm, rid, plevels(up), j), up),
+{
+    let (np, nmin) = (sh.np, sh.nmin());
+    let nf = sh.fields[j].len();
+    let rp = sh.rposj(j);
+    let rls = plevels(up);
+    head_elp(sh, lm, up);
+    assert forall|i: int| 0 <= i < rls.len() implies crate::level_inst::lp_in(#[trigger] rls[i], up) by {
+        assert(up.contains(up[i]));
+        crate::level_inst::find_level_idx_contains(up, up[i]);
+    }
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, 1 + nmin));
+    assert forall|i: int| 0 <= i < fds.len() implies crate::level_inst::elp_in(#[trigger] fds[i], up) by {
+        elp_lift(1 + nmin, i as nat, sh.fields[j][i], up);
+    }
+    let ih = |r: int| {
+        let k = rp[r];
+        let idx = occ_idx(sh.fields[j][k as int], np, sh.ni);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q])));
+        spine_app(ExprSpec::Const(rid, rls),
+            vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + vars(nf, nmin) + idx2.push(ExprSpec::Var((nf - 1 - k) as nat)))
+    };
+    let ihs = Seq::new(rp.len(), ih);
+    assert forall|r: int| 0 <= r < ihs.len() implies crate::level_inst::elp_in(#[trigger] ihs[r], up) by {
+        occ_elp(sh, lm, up, j, r);
+        let k = rp[r];
+        let idx = occ_idx(sh.fields[j][k as int], np, sh.ni);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q])));
+        let args = vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + vars(nf, nmin) + idx2.push(ExprSpec::Var((nf - 1 - k) as nat));
+        let pre = vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + vars(nf, nmin);
+        assert forall|q: int| 0 <= q < args.len() implies crate::level_inst::elp_in(#[trigger] args[q], up) by {
+            if q < pre.len() {
+                assert(args[q] == pre[q]);
+                if q < np { assert(pre[q] == vars(1 + nmin + nf, np)[q]); }
+                else if q > np { assert(pre[q] == vars(nf, nmin)[q - np - 1]); }
+            } else if q < pre.len() + sh.ni {
+                let q2 = q - pre.len();
+                assert(args[q] == idx2[q2]);
+                elp_lift(1 + nmin, k, idx[q2], up);
+                elp_lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q2]), up);
+            }
+        }
+        const_app_elp(rid, rls, args, up);
+    }
+    let bargs = vars(0, nf) + ihs;
+    assert forall|q: int| 0 <= q < bargs.len() implies crate::level_inst::elp_in(#[trigger] bargs[q], up) by {
+        if q >= nf { assert(bargs[q] == ihs[q - nf]); }
+    }
+    crate::level_inst::elp_in_spine(ExprSpec::Var((nmin - 1 - j + nf) as nat), bargs, up);
+    let hd = sh.head_doms(lm) + fds;
+    assert forall|i: int| 0 <= i < hd.len() implies crate::level_inst::elp_in(#[trigger] hd[i], up) by {
+        if i < sh.head_doms(lm).len() { assert(hd[i] == sh.head_doms(lm)[i]); } else { assert(hd[i] == fds[i - sh.head_doms(lm).len()]); }
+    }
+    binds_elp(BinderKind::Lam, hd, spine_app(ExprSpec::Var((nmin - 1 - j + nf) as nat), bargs), up);
+}
+
+/// THE CANONICAL SHAPE'S PIECES mention only the recursor's level
+/// parameters, when the inductive's and constructors' types mention only
+/// the inductive's.
+#[verifier::spinoff_prover]
+pub proof fn canon_parts(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        crate::level_inst::elp_in(sig.consts[rec_ind(sig, rid)].ty, sig.consts[rec_ind(sig, rid)].lps),
+        forall|j: int| 0 <= j < sig.ienv.recs[rid].rules.len() ==>
+            crate::level_inst::elp_in(sig.consts[#[trigger] sig.ienv.recs[rid].rules[j].ctor_id].ty, sig.consts[rec_ind(sig, rid)].lps),
+    ensures
+        shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).nmin() == sig.ienv.recs[rid].rules.len(),
+        shape_elp(shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)), elim_level(sig, rid, rec_ind(sig, rid)), sig.ienv.recs[rid].uparams),
+{
+    reveal(rec_core);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let up = rd.uparams;
+    let il = sig.consts[ind].lps;
+    // the inductive's levels are the recursor's
+    assert(crate::dom_levels::lps_sub(il, up)) by {
+        if up != il {
+            assert forall|i: int| 0 <= i < il.len() implies up.contains(#[trigger] il[i]) by {
+                assert(up.drop_first()[i] == il[i]);
+                assert(up[i + 1] == il[i]);
+            }
+        } else {
+            assert forall|i: int| 0 <= i < il.len() implies up.contains(#[trigger] il[i]) by {
+                assert(up[i] == il[i]);
+            }
+        }
+    }
+    // the inductive's domains
+    let ti = sig.consts[ind].ty;
+    crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(ti, sh.np + sh.ni), il);
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies crate::level_inst::elp_in(#[trigger] sh.pdoms[q], up) by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+        crate::dom_levels::elp_mono(sh.pdoms[q], il, up);
+    }
+    assert forall|q: int| 0 <= q < sh.idoms.len() implies crate::level_inst::elp_in(#[trigger] sh.idoms[q], up) by {
+        assert((sh.pdoms + sh.idoms)[sh.pdoms.len() + q] == sh.idoms[q]);
+        crate::dom_levels::elp_mono(sh.idoms[q], il, up);
+    }
+    // the constructors' fields and indices
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies crate::level_inst::elp_in(#[trigger] sh.fields[j][k], up) by {
+        let c = sh.ctors[j];
+        assert(c == rd.rules[j].ctor_id);
+        let t = sig.consts[c].ty;
+        let nf = rd.rules[j].nfields;
+        crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf), il);
+        assert((sh.pdoms + sh.fields[j])[sh.pdoms.len() + k] == sh.fields[j][k]);
+        crate::dom_levels::elp_mono(sh.fields[j][k], il, up);
+    }
+    assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies crate::level_inst::elp_in(#[trigger] sh.tss[j][q], up) by {
+        let c = sh.ctors[j];
+        assert(c == rd.rules[j].ctor_id);
+        let t = sig.consts[c].ty;
+        let nf = rd.rules[j].nfields;
+        crate::ti_proj::elp_binds_body(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf), il);
+        let args = vars(nf, sh.np) + sh.tss[j];
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, sh.us()), args);
+        spine_args_elp(tbody(t, sh.np + nf), il);
+        assert(args[sh.np + q] == sh.tss[j][q]);
+        crate::dom_levels::elp_mono(sh.tss[j][q], il, up);
+    }
+    // the inductive's levels and the motive's
+    assert forall|i: int| 0 <= i < sh.us().len() implies crate::level_inst::lp_in(#[trigger] sh.us()[i], up) by {
+        assert(up.contains(il[i]));
+        crate::level_inst::find_level_idx_contains(up, il[i]);
+    }
+    if up.len() == il.len() + 1 {
+        assert(up.contains(up[0]));
+        crate::level_inst::find_level_idx_contains(up, up[0]);
+    }
+}
+
+/// THE CANONICAL RECURSOR'S LEVELS: its canonical type and rules mention
+/// only the recursor's level parameters, when the inductive's and the
+/// constructors' types mention only the inductive's.
+#[verifier::spinoff_prover]
+pub proof fn canon_elp(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        crate::level_inst::elp_in(sig.consts[rec_ind(sig, rid)].ty, sig.consts[rec_ind(sig, rid)].lps),
+        forall|j: int| 0 <= j < sig.ienv.recs[rid].rules.len() ==>
+            crate::level_inst::elp_in(sig.consts[#[trigger] sig.ienv.recs[rid].rules[j].ctor_id].ty, sig.consts[rec_ind(sig, rid)].lps),
+    ensures
+        crate::level_inst::elp_in(canon_ty(sig, rid), sig.ienv.recs[rid].uparams),
+        forall|j: int| 0 <= j < sig.ienv.recs[rid].rules.len() ==>
+            crate::level_inst::elp_in(#[trigger] canon_rules(sig, rid)[j].rhs, sig.ienv.recs[rid].uparams),
+{
+    canon_parts(sig, rid);
+    canon_tss_len(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let lm = elim_level(sig, rid, ind);
+    let up = rd.uparams;
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    head_elp(sh, lm, up);
+    // the type
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    assert forall|k: int| 0 <= k < idx.len() implies crate::level_inst::elp_in(#[trigger] idx[k], up) by {
+        elp_lift(1 + nmin, k as nat, sh.idoms[k], up);
+    }
+    let major = ind_app(sh.ind, sh.us(), vars(1 + nmin + ni, np) + vars(0, ni));
+    let mvs = vars(1 + nmin + ni, np) + vars(0, ni);
+    assert forall|i: int| 0 <= i < mvs.len() implies crate::level_inst::elp_in(#[trigger] mvs[i], up) by {
+        if i < np { assert(mvs[i] == vars(1 + nmin + ni, np)[i]); } else { assert(mvs[i] == vars(0, ni)[i - np]); }
+    }
+    const_app_elp(sh.ind, sh.us(), mvs, up);
+    let body = spine_app(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)));
+    crate::level_inst::elp_in_spine(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)), up);
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert forall|i: int| 0 <= i < ds.len() implies crate::level_inst::elp_in(#[trigger] ds[i], up) by {
+        if i < sh.head_doms(lm).len() {
+            assert(ds[i] == sh.head_doms(lm)[i]);
+        } else if i < sh.head_doms(lm).len() + ni {
+            assert(ds[i] == idx[i - sh.head_doms(lm).len()]);
+        }
+    }
+    binds_elp(BinderKind::Pi, ds, body, up);
+    // the rules
+    assert forall|j: int| 0 <= j < rd.rules.len() implies crate::level_inst::elp_in(#[trigger] canon_rules(sig, rid)[j].rhs, up) by {
+        rule_elp(sh, lm, rid, j, up);
+    }
+}
+
+/// The canonical recursor's levels, from every constant's type mentioning
+/// only its own level parameters.
+pub proof fn canon_elp_sig(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> crate::level_inst::elp_in(sig.consts[k].ty, sig.consts[k].lps),
+    ensures
+        crate::level_inst::elp_in(canon_ty(sig, rid), sig.ienv.recs[rid].uparams),
+        forall|j: int| 0 <= j < sig.ienv.recs[rid].rules.len() ==>
+            crate::level_inst::elp_in(#[trigger] canon_rules(sig, rid)[j].rhs, sig.ienv.recs[rid].uparams),
+{
+    reveal(rec_core);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    assert(sig.consts.contains_key(ind));
+    assert forall|j: int| 0 <= j < rd.rules.len() implies
+        crate::level_inst::elp_in(sig.consts[#[trigger] rd.rules[j].ctor_id].ty, sig.consts[ind].lps) by {
+        assert(sh.ctors[j] == rd.rules[j].ctor_id);
+        assert(sig.consts.contains_key(sh.ctors[j]));
+    }
+    canon_elp(sig, rid);
+}
+
+/// The constructors' index arguments number the inductive's indices.
+pub proof fn canon_tss_len(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+    ensures
+        forall|j: int| 0 <= j < shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).nmin()
+            ==> (#[trigger] shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).tss[j]).len()
+                == shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).ni,
+        shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).idoms.len() == shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).ni,
+        shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).pdoms.len() == shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)).np,
+{
+    reveal(rec_core);
+}
+
 /// The canonical rules are well shaped.
 pub proof fn rec_core_rule_shape(sig: Sig, rid: u64, j: int)
     requires

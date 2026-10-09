@@ -1677,8 +1677,7 @@ and eta step is vacuous (about thirty sites use that). Stages:
     obligations are named assumptions, to be certified in T3:
     - `kclaims::twin_ok` (part of `frag_env`, per cutoff): the
       environment's rules are closed lambdas (`rule_rhs_ok`); and for each
-      twinned recursor, the canonical type is closed, its canonical type
-      and rules use only the recursor's level parameters, and at every
+      twinned recursor, the canonical type is closed, and at every
       level instance the declared type converts to the canonical one in
       the twin (nanoda's `def_eq`, B4d); and each exported rule converts
       to its canonical rule at any type the canonical rule has
@@ -1728,6 +1727,14 @@ and eta step is vacuous (about thirty sites use that). Stages:
     `ti_level::d_consts`; the constructors from T3a). `rec_core` now also
     asks the major premise to exist with a constant head, so the
     inductive it reads is a real one.
+    T3d: the level facts are no longer assumed. `twin::canon_elp`: the
+    canonical type and rules mention only the recursor's level
+    parameters when the inductive's and constructors' types mention only
+    the inductive's (piece by piece: telescope parts, `lift`, motive,
+    minor premises, major premise, rule bodies). `export_sound::inst_decl`
+    takes those from the declarations' certificates (`dty_lp_ok`). What
+    `twin_ok` still assumes: the rules' shape (`rule_rhs_ok`), the
+    canonical type closed, and the two conversions; plus `twin_types`.
     Trade-off as built: a constant's typing in the twin is at the
     canonical type, and `typed_const` recovers the declared type through
     `twin_ok`'s conversion. So the claims follow nanoda's `def_eq`. The

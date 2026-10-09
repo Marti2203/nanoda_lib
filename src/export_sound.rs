@@ -298,11 +298,17 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     assert(crate::ti_level::sig_lp_ok(sc, lps, ls)) by {
         let rc = crate::metatheory::jsig_raw(dc, nc, em);
         assert(crate::kclaims::twin_ok(dc, nc));
+        // the canonical recursors' levels (`twin::canon_elp_sig`)
+        assert(crate::level_typed::dty_lp_ok(dc));
+        assert forall|k: u64| #[trigger] rc.consts.contains_key(k) implies crate::level_inst::elp_in(rc.consts[k].ty, rc.consts[k].lps) by {
+            assert(dc.contains_key(k));
+        }
         assert forall|id: u64, j: int| #![trigger sc.ienv.recs[id].rules[j]] sc.ienv.recs.contains_key(id) && 0 <= j < sc.ienv.recs[id].rules.len()
             implies crate::level_inst::elp_in(sc.ienv.recs[id].rules[j].rhs, sc.ienv.recs[id].uparams) by {
             assert(sc == crate::twin::twin(rc));
             if crate::twin::rec_core(rc, id) {
                 assert(nc.recs.contains_key(id));
+                crate::twin::canon_elp_sig(rc, id);
                 assert(sc.ienv.recs[id].rules[j] == crate::twin::canon_rules(rc, id)[j]);
             } else {
                 assert(sc.ienv.recs[id] == nc.recs[id]);
@@ -317,6 +323,8 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
             }
             assert(sc == crate::twin::twin(rc));
             if nc.recs.contains_key(k) && crate::twin::rec_core(rc, k) {
+                crate::twin::canon_elp_sig(rc, k);
+                crate::twin::rec_core_basic(rc, k);
                 assert(crate::level_inst::elp_in(crate::twin::canon_ty(rc, k), dc[k].0));
                 assert(sc.consts[k].ty == crate::twin::canon_ty(rc, k));
             } else {

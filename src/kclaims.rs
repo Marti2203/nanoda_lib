@@ -77,9 +77,6 @@ pub open spec fn twin_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
         ==> #[trigger] crate::beta_model::rule_rhs_ok(denv, denv.recs[rid].rules[i])
     &&& forall|rid: u64| #[trigger] denv.recs.contains_key(rid) && crate::twin::rec_core(raw, rid) ==> {
         &&& !crate::expr_model::has_fv(crate::twin::canon_ty(raw, rid))
-        &&& crate::level_inst::elp_in(crate::twin::canon_ty(raw, rid), dty[rid].0)
-        &&& forall|j: int| 0 <= j < denv.recs[rid].rules.len() ==>
-            crate::level_inst::elp_in(#[trigger] crate::twin::canon_rules(raw, rid)[j].rhs, denv.recs[rid].uparams)
         &&& forall|j: int, ls: Seq<LevelSpec>| 0 <= j < denv.recs[rid].rules.len() && ls.len() == denv.recs[rid].uparams.len() ==>
             #[trigger] rule_conv(dty, denv, rid, j, ls)
         &&& forall|ls: Seq<LevelSpec>| #[trigger] ls.len() == dty[rid].0.len() ==> exists|l: LevelSpec|
