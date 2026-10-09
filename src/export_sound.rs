@@ -64,7 +64,7 @@ pub open spec fn names_ok(export: nat) -> bool {
 /// tables, the built-in heads undeclared, declarations literal- and
 /// projection-free) and the distinctness of the export's built-in names.
 pub open spec fn kh_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    &&& crate::kclaims::frag_env(dty, denv)
+    &&& crate::kclaims::frag_hyp(dty, denv)
     &&& names_ok(denv.export)
     &&& forall|cid: u64| #[trigger] dty.contains_key(cid) ==> crate::kclaims::frag_term(dty[cid].1)
     &&& forall|cid: u64| #[trigger] denv.defs.contains_key(cid) ==> crate::kclaims::frag_term(denv.defs[cid].1)
@@ -452,6 +452,17 @@ proof fn twin_le_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, c1: int, c2: i
     }
 }
 
+/// The fragment at a cutoff: its hypotheses and the certified tables.
+proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
+    requires
+        kh_hyp(m_dty(ef, c), m_denv(ef, c)),
+    ensures
+        crate::kclaims::frag_env(m_dty(ef, c), m_denv(ef, c)),
+{
+    crate::env_model::tables_ok_at(ef.arena(), ef.declars_view(), ef.declars_keys(), c);
+    crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
+}
+
 /// Every cutoff's recursors are in the model's fragment.
 proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     requires
@@ -462,6 +473,7 @@ proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
         crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
 {
     assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
+    frag_at(ef, c);
     assert(crate::kclaims::ind_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())));
 }
 
@@ -554,6 +566,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     crate::inductive::export_keys_ids_inj(ef);
     ef.declars_views();
     assert(kh_hyp(dty, denv));
+    frag_at(ef, cc);
     assert forall|c: int| 0 <= c < cc implies #[trigger] crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)) by {
         export_kh(ef, c);
     }

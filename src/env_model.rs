@@ -937,6 +937,23 @@ pub proof fn defs_stable_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>,
     }
 }
 
+/// THE CONSTRUCTOR TABLES at a cutoff: each entry is a constructor
+/// declaration's, so it is declared, no definition or recursor, with an
+/// inductive.
+pub proof fn tables_ok_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c: int)
+    ensures
+        crate::kclaims::tables_ok(dty_at(view, keys, c), denv_at(export, view, keys, c)),
+{
+    let (d, n) = (dty_at(view, keys, c), denv_at(export, view, keys, c));
+    assert forall|id: u64| #[trigger] n.ctor_np.contains_key(id) implies d.contains_key(id) && !n.defs.contains_key(id) && !n.recs.contains_key(id)
+        && n.ctor_ind.contains_key(id) by {
+        assert(crate::env::find_at(view, keys, c, id)->0 is Constructor);
+    }
+    assert forall|id: u64| #[trigger] n.ctor_nf.contains_key(id) implies n.ctor_ind.contains_key(id) by {
+        assert(crate::env::find_at(view, keys, c, id)->0 is Constructor);
+    }
+}
+
 pub proof fn tables_stable_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
     requires
         c1 <= c2,

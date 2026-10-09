@@ -1760,6 +1760,15 @@ and eta step is vacuous (about thirty sites use that). Stages:
   - **B6** the rest of `rec_canon` and `ind_ok`'s tables (the inductive's
     and constructors' type forms, field kinds, constructor tables,
     uniqueness), from the constructor and positivity certificates.
+    B6-0: the hypothesis/claim split. `kclaims::frag_env` (what `kh`
+    claims) is `frag_hyp` (what `kh_hyp` assumes) plus `tables_ok`, the
+    constructor tables, plus `ind_ok` derived (`frag_env_of`). `tables_ok`
+    -- a constructor is declared, no definition or recursor, and has an
+    inductive (also a constructor with a field count) -- is certified at
+    every cutoff by the export model (`env_model::tables_ok_at`): each
+    entry is a constructor declaration's. `ind_ok_hyp` is `ind_ok`
+    without those. Later B6 steps move more of `ind_ok_hyp` into
+    certified facts the same way.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

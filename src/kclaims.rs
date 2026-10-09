@@ -56,13 +56,44 @@ pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool 
 /// quotient eliminators undeclared (so no literal folding, literal
 /// unfolding or quotient steps on typed terms).
 pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    &&& frag_hyp(dty, denv)
+    &&& tables_ok(dty, denv)
+    &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok(jsig(dty, denv, d))
+}
+
+/// What the fragment assumes: `frag_env` without the constructor tables,
+/// which the export certifies (`env_model::tables_ok_at`).
+pub open spec fn frag_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_zero_id(denv.export))
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export))
-    &&& forall|id: u64| #[trigger] denv.ctor_np.contains_key(id) ==> dty.contains_key(id) && !denv.defs.contains_key(id) && !denv.recs.contains_key(id)
-    &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok(jsig(dty, denv, d))
+    &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok_hyp(jsig(dty, denv, d))
     &&& twin_ok(dty, denv)
+}
+
+/// THE CONSTRUCTOR TABLES: a constructor is a declared constant, no
+/// definition or recursor, with an inductive.
+pub open spec fn tables_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    &&& forall|id: u64| #[trigger] denv.ctor_np.contains_key(id) ==> dty.contains_key(id) && !denv.defs.contains_key(id) && !denv.recs.contains_key(id)
+        && denv.ctor_ind.contains_key(id)
+    &&& forall|id: u64| #[trigger] denv.ctor_nf.contains_key(id) ==> denv.ctor_ind.contains_key(id)
+}
+
+/// The fragment, from its hypotheses and the certified tables.
+pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
+    requires
+        frag_hyp(dty, denv),
+        tables_ok(dty, denv),
+    ensures
+        frag_env(dty, denv),
+{
+    assert forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok(jsig(dty, denv, d)) by {
+        reveal(ind_ok_hyp);
+        let s = jsig(dty, denv, d);
+        assert(ind_ok_hyp(s));
+        assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
+    }
 }
 
 /// THE CANONICAL TWIN'S OBLIGATIONS (docs/TYPED_TARGET.md, "B5 design";
@@ -118,6 +149,22 @@ pub proof fn recs_declared(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, i
 /// (docs/TYPED_TARGET.md, "S6.6 plan"): its recursors in the model's
 /// fragment and interpreted, the model's hypothesis, no structures yet,
 /// and each constructor one of its inductive's canonical recursor.
+/// `ind_ok` without what the constructor tables give (`tables_ok`).
+#[verifier::opaque]
+pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
+    &&& crate::ti_syntax::iota_ok(sig)
+    &&& crate::dom_rec_end::sig_sr(sig)
+    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
+        && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
+    &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
+        && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) ==>
+        forall|j: int| 0 <= j < crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).nmin()
+            && #[trigger] crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors[j] == cid
+            ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat
+}
+
 pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
     &&& crate::ti_syntax::iota_ok(sig)
     &&& crate::dom_rec_end::sig_sr(sig)
