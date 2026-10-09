@@ -380,6 +380,29 @@ pub proof fn tdoms_fv_absent(t: ExprSpec, m: nat, z: nat)
     }
 }
 
+/// A telescope opened short of its binders is still a Pi.
+pub proof fn lit_open_pi(t: ExprSpec, ids: Seq<nat>, n: nat, k: int)
+    requires
+        crate::rec_canon::tdoms(t, n).len() == n,
+        0 <= k < n,
+        k <= ids.len(),
+    ensures
+        lit_open(t, ids.subrange(0, k)) is Bind,
+        lit_open(t, ids.subrange(0, k))->Bind_0 == BinderKind::Pi,
+    decreases k,
+{
+    if k == 0 {
+        assert(ids.subrange(0, 0) =~= Seq::<nat>::empty());
+    } else {
+        let b = *t->Bind_2;
+        let b2 = subst_full(b, seq![ExprSpec::Free(ids[0])], 0);
+        tdoms_open(b, ids[0], 0, (n - 1) as nat);
+        let rest = ids.drop_first();
+        lit_open_pi(b2, rest, (n - 1) as nat, k - 1);
+        assert(ids.subrange(0, k).drop_first() =~= rest.subrange(0, k - 1));
+    }
+}
+
 /// TELESCOPES WHOSE OPENED DOMAINS AGREE have the same domains, opened at
 /// fresh, distinct locals.
 pub proof fn tel_eq(a: ExprSpec, b: ExprSpec, ids: Seq<nat>, n: nat)

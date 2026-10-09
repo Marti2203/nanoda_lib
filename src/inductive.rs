@@ -4013,6 +4013,11 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     st.ind_consts@.len() <= st.local_indices@.len(),
                     st.is_zero is Some,
                     st.block_codom is Some,
+                    x <= st.all_inductives_incl_specialized@.len(),
+                    forall|i: int, j: int| #![trigger st.all_inductives_incl_specialized@[i].ctors@[j]]
+                        0 <= i < x && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+                        ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[i].name),
+                            crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty)),
             {
                 let ind = &st.all_inductives_incl_specialized[x];
                 let mut y: usize = 0;
@@ -4030,12 +4035,23 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         st.block_codom is Some,
                         x < st.all_inductives_incl_specialized@.len(),
                         *ind == st.all_inductives_incl_specialized@[x as int],
+                        y <= ind.ctors@.len(),
+                        forall|i: int, j: int| #![trigger st.all_inductives_incl_specialized@[i].ctors@[j]]
+                            0 <= i < x && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+                            ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[i].name),
+                                crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty)),
+                        forall|j: int| #![trigger st.all_inductives_incl_specialized@[x as int].ctors@[j]]
+                            0 <= j < y ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[x as int].name),
+                                crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[x as int].ctors@[j].ty)),
                 {
                     let ctor = &ind.ctors[y];
                     proof {
                         assert(level_free(*tc.ctx, st.all_inductives_incl_specialized@[x as int].ctors@[y as int].ty));
                     }
                     tc.check_ctor(&st, ind.name, ctor.ty);
+                    proof {
+                        ctor_syn_of(*tc.env, st, crate::level_arena_bridge::name_id(ind.name), crate::expr_arena_bridge::to_model(ctor.ty));
+                    }
                     y += 1;
                 }
                 x += 1;
@@ -4047,6 +4063,12 @@ impl<'t, 'p: 't> ExportFile<'p> {
 
         // The constructed recursors and rec rules
         let ghost st_rec = st;
+        proof {
+            assert(forall|i: int, j: int| #![trigger st_rec.all_inductives_incl_specialized@[i].ctors@[j]]
+                0 <= i < st_rec.all_inductives_incl_specialized@.len() && 0 <= j < st_rec.all_inductives_incl_specialized@[i].ctors@.len()
+                ==> ctor_syn(st_rec, crate::level_arena_bridge::name_id(st_rec.all_inductives_incl_specialized@[i].name),
+                    crate::expr_arena_bridge::to_model(st_rec.all_inductives_incl_specialized@[i].ctors@[j].ty)));
+        }
         let recursors = {
             let env = crate::env_model::ctx_env_ext(&ctx, &ctor_extension, env_limit);
             let mut tc = TypeChecker::new(&mut ctx, &env, None);
@@ -4360,6 +4382,79 @@ pub(crate) open spec fn ctor_cert_ok<'x, 't>(
 
 pub(crate) open spec fn ctor_ok<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, pid: u64, ty: ExprSpec) -> bool {
     exists|c: CtorCert| #[trigger] ctor_cert_ok(env, st, pid, ty, c)
+}
+
+/// A CONSTRUCTOR'S SYNTACTIC CERTIFICATE: `ctor_cert_ok` without what it
+/// says through the environment -- the walk, the parameters' types (the
+/// inductive's), and the result (the inductive at the parameters).
+pub(crate) open spec fn ctor_syn_cert<'t>(st: InductiveCheckState<'t>, pid: u64, ty: ExprSpec, c: CtorCert) -> bool {
+    let np = st.local_params@.len();
+    &&& c.cursors.len() == c.locals.len() + 1
+    &&& c.bts.len() == c.locals.len()
+    &&& c.bodies.len() == c.locals.len()
+    &&& np <= c.locals.len()
+    &&& c.cursors[0] == ty
+    &&& forall|k: int| 0 <= k < c.locals.len() ==> c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(#[trigger] c.bodies[k]))
+        && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
+    &&& forall|k: int| 0 <= k < np ==> #[trigger] c.locals[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
+        && c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))
+    &&& ind_app_ok(st, pid, c.cursors.last())
+}
+
+pub(crate) open spec fn ctor_syn<'t>(st: InductiveCheckState<'t>, pid: u64, ty: ExprSpec) -> bool {
+    exists|c: CtorCert| #[trigger] ctor_syn_cert(st, pid, ty, c)
+}
+
+/// A CONSTRUCTOR'S PARAMETER DOMAINS ARE ITS INDUCTIVE'S, syntactically:
+/// both open to the parameters' types at the parameters' locals.
+pub(crate) proof fn ctor_pdoms<'t>(st: InductiveCheckState<'t>, pid: u64, ti: ExprSpec, cty: ExprSpec)
+    requires
+        ctor_syn(st, pid, cty),
+        local_ids(st.local_params@).no_duplicates(),
+        forall|i: int| 0 <= i < st.local_params@.len() ==> crate::expr_model::fv_absent(ti, #[trigger] local_ids(st.local_params@)[i])
+            && crate::expr_model::fv_absent(cty, local_ids(st.local_params@)[i]),
+        crate::rec_canon::tdoms(ti, st.local_params@.len() as nat).len() == st.local_params@.len(),
+        forall|k: int| 0 <= k < st.local_params@.len() && (#[trigger] crate::kgen::lit_open(ti, local_ids(st.local_params@).subrange(0, k))) is Bind
+            ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.local_params@[k])), Box::new(
+                *crate::kgen::lit_open(ti, local_ids(st.local_params@).subrange(0, k))->Bind_2))
+                == crate::kgen::lit_open(ti, local_ids(st.local_params@).subrange(0, k)),
+    ensures
+        crate::rec_canon::tdoms(cty, st.local_params@.len() as nat) == crate::rec_canon::tdoms(ti, st.local_params@.len() as nat),
+{
+    let np = st.local_params@.len();
+    let pids = local_ids(st.local_params@);
+    let c = choose|c: CtorCert| #[trigger] ctor_syn_cert(st, pid, cty, c);
+    assert forall|k: int| 0 <= k < np implies #[trigger] crate::kgen::lit_open(cty, pids.subrange(0, k)) == c.cursors[k] by {
+        crate::kgen::chain_lit_open(cty, c.cursors, c.bts, c.bodies, c.locals, k);
+        assert(c.locals.subrange(0, k) =~= pids.subrange(0, k)) by {
+            assert forall|i: int| 0 <= i < k implies c.locals.subrange(0, k)[i] == pids.subrange(0, k)[i] by {
+                assert(c.locals[i] == crate::expr_arena_bridge::expr_id(st.local_params@[i]));
+            }
+        }
+    }
+    assert forall|k: int| 0 <= k < np implies (#[trigger] crate::kgen::lit_open(cty, pids.subrange(0, k))) is Bind
+        && crate::kgen::lit_open(cty, pids.subrange(0, k))->Bind_0 == BinderKind::Pi
+        && *crate::kgen::lit_open(cty, pids.subrange(0, k))->Bind_1 == c.bts[k] by {
+        assert(c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(c.bodies[k])));
+    }
+    crate::kgen::lit_open_pis(cty, pids, np as nat);
+    assert forall|k: int| 0 <= k < np implies #[trigger] crate::kgen::lit_open(cty, pids.subrange(0, k))->Bind_1
+        == crate::kgen::lit_open(ti, pids.subrange(0, k))->Bind_1 by {
+        crate::kgen::lit_open_pi(ti, pids, np as nat, k);
+        assert(c.locals[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k]));
+        assert(c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])));
+    }
+    crate::kgen::tel_eq(cty, ti, pids, np as nat);
+}
+
+pub(crate) proof fn ctor_syn_of<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, pid: u64, ty: ExprSpec)
+    requires
+        ctor_ok(env, st, pid, ty),
+    ensures
+        ctor_syn(st, pid, ty),
+{
+    let c = choose|c: CtorCert| #[trigger] ctor_cert_ok(env, st, pid, ty, c);
+    assert(ctor_syn_cert(st, pid, ty, c));
 }
 
 impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
