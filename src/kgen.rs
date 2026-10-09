@@ -327,6 +327,123 @@ pub proof fn lit_open_binds(ds: Seq<ExprSpec>, b: ExprSpec, xs: Seq<nat>, k: nat
     assert(((k - 1) as nat + rest.len()) as nat == n1);
 }
 
+/// Opening a telescope opens each domain at its depth.
+pub proof fn tdoms_open(t: ExprSpec, x: nat, c: nat, m: nat)
+    ensures
+        crate::rec_canon::tdoms(subst_full(t, seq![ExprSpec::Free(x)], c), m).len() == crate::rec_canon::tdoms(t, m).len(),
+        forall|i: int| 0 <= i < crate::rec_canon::tdoms(t, m).len() ==>
+            #[trigger] crate::rec_canon::tdoms(subst_full(t, seq![ExprSpec::Free(x)], c), m)[i]
+                == subst_full(crate::rec_canon::tdoms(t, m)[i], seq![ExprSpec::Free(x)], c + i as nat),
+    decreases m,
+{
+    if m > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, a, b) = t {
+            tdoms_open(*b, x, c + 1, (m - 1) as nat);
+            let st = subst_full(t, seq![ExprSpec::Free(x)], c);
+            assert(st == ExprSpec::Bind(BinderKind::Pi, Box::new(subst_full(*a, seq![ExprSpec::Free(x)], c)),
+                Box::new(subst_full(*b, seq![ExprSpec::Free(x)], c + 1))));
+            assert forall|i: int| 0 <= i < crate::rec_canon::tdoms(t, m).len() implies
+                #[trigger] crate::rec_canon::tdoms(st, m)[i] == subst_full(crate::rec_canon::tdoms(t, m)[i], seq![ExprSpec::Free(x)], c + i as nat) by {
+                if i > 0 {
+                    assert(crate::rec_canon::tdoms(st, m)[i] == crate::rec_canon::tdoms(subst_full(*b, seq![ExprSpec::Free(x)], c + 1), (m - 1) as nat)[i - 1]);
+                    assert(crate::rec_canon::tdoms(t, m)[i] == crate::rec_canon::tdoms(*b, (m - 1) as nat)[i - 1]);
+                    assert((c + 1 + (i - 1)) as nat == c + i as nat);
+                }
+            }
+        } else {
+            match t {
+                ExprSpec::Var(_) => {},
+                ExprSpec::Bind(_, _, _) => {},
+                _ => {},
+            }
+        }
+    }
+}
+
+/// A telescope's domains miss what it misses.
+pub proof fn tdoms_fv_absent(t: ExprSpec, m: nat, z: nat)
+    requires
+        fv_absent(t, z),
+    ensures
+        forall|i: int| 0 <= i < crate::rec_canon::tdoms(t, m).len() ==> fv_absent(#[trigger] crate::rec_canon::tdoms(t, m)[i], z),
+    decreases m,
+{
+    if m > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, a, b) = t {
+            tdoms_fv_absent(*b, (m - 1) as nat, z);
+            assert forall|i: int| 0 <= i < crate::rec_canon::tdoms(t, m).len() implies fv_absent(#[trigger] crate::rec_canon::tdoms(t, m)[i], z) by {
+                if i > 0 {
+                    assert(crate::rec_canon::tdoms(t, m)[i] == crate::rec_canon::tdoms(*b, (m - 1) as nat)[i - 1]);
+                }
+            }
+        }
+    }
+}
+
+/// TELESCOPES WHOSE OPENED DOMAINS AGREE have the same domains, opened at
+/// fresh, distinct locals.
+pub proof fn tel_eq(a: ExprSpec, b: ExprSpec, ids: Seq<nat>, n: nat)
+    requires
+        n <= ids.len(),
+        ids.no_duplicates(),
+        forall|i: int| 0 <= i < ids.len() ==> fv_absent(a, #[trigger] ids[i]) && fv_absent(b, ids[i]),
+        crate::rec_canon::tdoms(a, n).len() == n,
+        crate::rec_canon::tdoms(b, n).len() == n,
+        forall|k: int| 0 <= k < n ==> #[trigger] lit_open(a, ids.subrange(0, k))->Bind_1 == lit_open(b, ids.subrange(0, k))->Bind_1,
+    ensures
+        crate::rec_canon::tdoms(a, n) == crate::rec_canon::tdoms(b, n),
+    decreases n,
+{
+    if n > 0 {
+        let (a0, a1) = (*a->Bind_1, *a->Bind_2);
+        let (b0, b1) = (*b->Bind_1, *b->Bind_2);
+        assert(ids.subrange(0, 0) =~= Seq::<nat>::empty());
+        assert(lit_open(a, ids.subrange(0, 0))->Bind_1 == lit_open(b, ids.subrange(0, 0))->Bind_1);
+        let x = ids[0];
+        let fx = seq![ExprSpec::Free(x)];
+        let a2 = subst_full(a1, fx, 0);
+        let b2 = subst_full(b1, fx, 0);
+        let rest = ids.drop_first();
+        assert forall|i: int| 0 <= i < rest.len() implies fv_absent(a2, #[trigger] rest[i]) && fv_absent(b2, rest[i]) by {
+            assert(rest[i] == ids[i + 1]);
+            assert(fv_absent(a, ids[i + 1]) && fv_absent(b, ids[i + 1]));
+            assert(ids[i + 1] != ids[0]);
+            if !fv_absent(a2, rest[i]) { crate::rctx::subst_free_fv(a1, ExprSpec::Free(x), 0, rest[i]); }
+            if !fv_absent(b2, rest[i]) { crate::rctx::subst_free_fv(b1, ExprSpec::Free(x), 0, rest[i]); }
+        }
+        tdoms_open(a1, x, 0, (n - 1) as nat);
+        tdoms_open(b1, x, 0, (n - 1) as nat);
+        assert forall|k: int| 0 <= k < n - 1 implies #[trigger] lit_open(a2, rest.subrange(0, k))->Bind_1 == lit_open(b2, rest.subrange(0, k))->Bind_1 by {
+            let ik = ids.subrange(0, k + 1);
+            assert(ik.drop_first() =~= rest.subrange(0, k));
+            assert(ik[0] == x);
+            assert(lit_open(a, ik) == lit_open(a2, rest.subrange(0, k)));
+            assert(lit_open(b, ik) == lit_open(b2, rest.subrange(0, k)));
+        }
+        assert(rest.no_duplicates());
+        tel_eq(a2, b2, rest, (n - 1) as nat);
+        assert(fv_absent(a, ids[0]) && fv_absent(b, ids[0]));
+        assert(fv_absent(a1, x) && fv_absent(b1, x));
+        tdoms_fv_absent(a1, (n - 1) as nat, x);
+        tdoms_fv_absent(b1, (n - 1) as nat, x);
+        assert forall|i: int| 0 <= i < n - 1 implies #[trigger] crate::rec_canon::tdoms(a1, (n - 1) as nat)[i] == crate::rec_canon::tdoms(b1, (n - 1) as nat)[i] by {
+            assert(crate::rec_canon::tdoms(a2, (n - 1) as nat)[i] == crate::rec_canon::tdoms(b2, (n - 1) as nat)[i]);
+            assert(subst_full(crate::rec_canon::tdoms(a1, (n - 1) as nat)[i], fx, 0 + i as nat) == crate::rec_canon::tdoms(a2, (n - 1) as nat)[i]);
+            assert(subst_full(crate::rec_canon::tdoms(b1, (n - 1) as nat)[i], fx, 0 + i as nat) == crate::rec_canon::tdoms(b2, (n - 1) as nat)[i]);
+            assert((0 + i as nat) as nat == i as nat);
+            crate::fclose::open_inj(x, i as nat, crate::rec_canon::tdoms(a1, (n - 1) as nat)[i], crate::rec_canon::tdoms(b1, (n - 1) as nat)[i]);
+        }
+        assert(crate::rec_canon::tdoms(a, n) =~= crate::rec_canon::tdoms(b, n)) by {
+            assert forall|i: int| 0 <= i < n implies #[trigger] crate::rec_canon::tdoms(a, n)[i] == crate::rec_canon::tdoms(b, n)[i] by {
+                if i > 0 {
+                    assert(crate::rec_canon::tdoms(a, n)[i] == crate::rec_canon::tdoms(a1, (n - 1) as nat)[i - 1]);
+                    assert(crate::rec_canon::tdoms(b, n)[i] == crate::rec_canon::tdoms(b1, (n - 1) as nat)[i - 1]);
+                }
+            }
+        }
+    }
+}
+
 /// Opening one more binder.
 pub proof fn lit_open_push(t: ExprSpec, ids: Seq<nat>, x: nat)
     ensures

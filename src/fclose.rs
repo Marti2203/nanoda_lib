@@ -184,6 +184,57 @@ pub proof fn fclose_open(k: nat, c: nat, b: ExprSpec)
     }
 }
 
+/// Lifting is injective.
+pub proof fn lift_inj(n: nat, c: nat, a: ExprSpec, b: ExprSpec)
+    requires
+        crate::subst_algebra::lift(n, c, a) == crate::subst_algebra::lift(n, c, b),
+    ensures
+        a == b,
+    decreases a,
+{
+    match a {
+        ExprSpec::App(f1, x1) => {
+            if let ExprSpec::App(f2, x2) = b {
+                lift_inj(n, c, *f1, *f2);
+                lift_inj(n, c, *x1, *x2);
+            }
+        },
+        ExprSpec::Bind(k1, t1, b1) => {
+            if let ExprSpec::Bind(k2, t2, b2) = b {
+                lift_inj(n, c, *t1, *t2);
+                lift_inj(n, c + 1, *b1, *b2);
+            }
+        },
+        ExprSpec::Let(t1, v1, b1) => {
+            if let ExprSpec::Let(t2, v2, b2) = b {
+                lift_inj(n, c, *t1, *t2);
+                lift_inj(n, c, *v1, *v2);
+                lift_inj(n, c + 1, *b1, *b2);
+            }
+        },
+        ExprSpec::Proj(i1, s1) => {
+            if let ExprSpec::Proj(i2, s2) = b {
+                lift_inj(n, c, *s1, *s2);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// Opening at a fresh local is injective.
+pub proof fn open_inj(k: nat, c: nat, a: ExprSpec, b: ExprSpec)
+    requires
+        crate::expr_model::fv_absent(a, k),
+        crate::expr_model::fv_absent(b, k),
+        crate::expr_model::subst_full(a, seq![ExprSpec::Free(k)], c) == crate::expr_model::subst_full(b, seq![ExprSpec::Free(k)], c),
+    ensures
+        a == b,
+{
+    crate::fclose::fclose_open(k, c, a);
+    crate::fclose::fclose_open(k, c, b);
+    lift_inj(1, c + 1, a, b);
+}
+
 pub open spec fn sclose(k: nat, c: nat, s: Seq<ExprSpec>) -> Seq<ExprSpec> {
     Seq::new(s.len(), |i: int| fclose(k, c, s[i]))
 }
