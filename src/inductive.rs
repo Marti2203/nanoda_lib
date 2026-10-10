@@ -876,6 +876,43 @@ pub(crate) proof fn recs_syn_minors<'t>(st: InductiveCheckState<'t>, st2: Induct
 }
 
 /// The block's recorded inductives are constants at parameter levels.
+/// One spec checked: the constants so far, and the first walk's length.
+pub(crate) proof fn specs_consts_step<'t>(st0: InductiveCheckState<'t>, st: InductiveCheckState<'t>, i: int, base: nat)
+    requires
+        0 <= i < st.all_inductives_incl_specialized@.len(),
+        st.all_inductives_incl_specialized@ == st0.all_inductives_incl_specialized@,
+        st.uparams == st0.uparams,
+        st.local_params@ == st0.local_params@,
+        st0.ind_consts@.len() == base + i,
+        st.ind_consts@.len() == st0.ind_consts@.len() + 1,
+        st.ind_consts@.subrange(0, st0.ind_consts@.len() as int) == st0.ind_consts@,
+        crate::expr_arena_bridge::is_const_shape(st.ind_consts@.last()),
+        crate::expr_arena_bridge::const_name_of(st.ind_consts@.last()) == st.all_inductives_incl_specialized@[i].name,
+        crate::expr_arena_bridge::const_levels_of(st.ind_consts@.last()) == st.uparams,
+        base == 0 ==> forall|k: int| 0 <= k < i ==> #[trigger] ind_const_at(st0, k),
+        st0.tele@.len() == i,
+        st.tele@.len() == i + 1,
+        i > 0 ==> st.tele@[0] == st0.tele@[0] && st0.tele@[0].locals.len() >= st0.local_params@.len(),
+        i == 0 ==> st.tele@.last().locals.len() >= st.local_params@.len(),
+    ensures
+        base == 0 ==> forall|k: int| 0 <= k < i + 1 ==> #[trigger] ind_const_at(st, k),
+        st.tele@[0].locals.len() >= st.local_params@.len(),
+{
+    if base == 0 {
+        assert forall|k: int| 0 <= k < i + 1 implies #[trigger] ind_const_at(st, k) by {
+            if k < i {
+                assert(st.ind_consts@[k] == st.ind_consts@.subrange(0, st0.ind_consts@.len() as int)[k]);
+                assert(ind_const_at(st0, k));
+            } else {
+                assert(st.ind_consts@[k] == st.ind_consts@.last());
+            }
+        }
+    }
+    if i == 0 {
+        assert(st.tele@.last() == st.tele@[0]);
+    }
+}
+
 /// The block's `i`-th inductive constant: its name, at the block's
 /// universe parameters (`mk_const`).
 pub(crate) open spec fn ind_const_at<'t>(st: InductiveCheckState<'t>, i: int) -> bool {
@@ -10613,6 +10650,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }),
             final(st).ind_consts@.len() == old(st).ind_consts@.len() + final(st).all_inductives_incl_specialized@.len(),
             old(st).ind_consts@.len() == 0 ==> forall|k: int| 0 <= k < final(st).ind_consts@.len() ==> #[trigger] ind_const_at(*final(st), k),
+            final(st).tele@.len() > 0 ==> final(st).tele@[0].locals.len() >= final(st).local_params@.len(),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -10661,6 +10699,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }),
                 st.ind_consts@.len() == old(st).ind_consts@.len() + i,
                 old(st).ind_consts@.len() == 0 ==> forall|k: int| 0 <= k < i ==> #[trigger] ind_const_at(*st, k),
+                i > 0 ==> st.tele@[0].locals.len() >= st.local_params@.len(),
                 st.local_indices@.len() == i,
                 st.tele@.len() == i,
                 i > 0 ==> st.block_codom is Some,
@@ -10688,16 +10727,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.check_inductive_specs_mutual1(st, st.all_inductives_incl_specialized[i].clone());
             }
             proof {
-                if old(st).ind_consts@.len() == 0 {
-                    assert forall|k: int| 0 <= k < i + 1 implies #[trigger] ind_const_at(*st, k) by {
-                        if k < i {
-                            assert(st.ind_consts@[k] == st.ind_consts@.subrange(0, st0.ind_consts@.len() as int)[k]);
-                            assert(ind_const_at(st0, k));
-                        } else {
-                            assert(st.ind_consts@[k] == st.ind_consts@.last());
-                        }
-                    }
-                }
+                specs_consts_step(st0, *st, i as int, old(st).ind_consts@.len());
                 assert(st.tele@.last() == st.tele@[i as int]);
                 assert(st.local_indices@.last() == st.local_indices@[i as int]);
                 assert(walk_k_ok(*old(self).env, *st, i as int)) by { reveal(walk_k_ok); }
@@ -10746,6 +10776,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ..*old(st)
             }),
             final(st).ind_consts@.len() == old(st).ind_consts@.len() + 1,
+            final(st).tele@.last().locals.len() >= final(st).local_params@.len(),
             final(st).ind_consts@.subrange(0, old(st).ind_consts@.len() as int) == old(st).ind_consts@,
             crate::expr_arena_bridge::is_const_shape(final(st).ind_consts@.last()),
             crate::expr_arena_bridge::const_name_of(final(st).ind_consts@.last()) == old(st).all_inductives_incl_specialized@[0].name,
@@ -10959,6 +10990,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // the walk reads the declared type itself. Never fails on a type Lean
         // exports.
         assert!(matches!(self.ctx.read_expr(ind_ty_cursor), Sort { .. }), "an inductive's type does not end in a sort");
+        // VERUS-REWRITE(tested-input): the literal walk covers the
+        // parameters (`get_local_params` reads them through `whnf`, the walk
+        // literally) -- what the canonical shape reads (`shape_exists`). Never
+        // fails on a type Lean exports: its parameters are binders.
+        assert!(i >= st.local_params.len(), "an inductive's type has fewer binders than parameters");
         proof {
             level_free_in_scope(*self, ind_ty_cursor);
         }
