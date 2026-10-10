@@ -1902,6 +1902,16 @@ and eta step is vacuous (about thirty sites use that). Stages:
     the pieces from `kh_hyp`'s `frag_term`). `field_kind` stays a boundary
     hypothesis: it is the model's simple-field predicate, which nanoda's
     positivity check approximates but does not state.
+    B6a-4 (3) groundwork: two tested checks for `rec_scope_g`'s
+    uniqueness parts. A single-motive recursor's major premise is headed
+    by one of its own inductives (`rec_arm_ok`; a nested block's auxiliary
+    recursors eliminate e.g. `List T` with more motives, and are exempt).
+    The exported constructor's index is its position (`ctor_idx_old`),
+    so `block_ok` has distinct constructors. OBSERVED DIFFERENCE: nanoda
+    alone accepts a block whose header lists one constructor twice
+    (`aux_data_ck` compares against the temporary map's last entry);
+    Lean's kernel rejects it. The check aligns nanoda with Lean; no Lean
+    export is affected (Init: 57424 declarations).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

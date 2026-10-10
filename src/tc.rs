@@ -272,6 +272,37 @@ impl<'p> ExportFile<'p> {
                     }
                     let mut tc = TypeChecker::new(&mut ctx, &env, Some(*d.info()));
                     tc.check_declar_info_unwrap(d);
+                    // VERUS-REWRITE(tested-input): a single-motive recursor's major
+                    // premise is headed by one of its own inductives, read
+                    // syntactically (`rec_major_head`) -- what ties it to that
+                    // inductive's entry in the parser's recursor table. (A nested
+                    // block's auxiliary recursors eliminate types like `List T` and
+                    // have more motives.) Never fails on a recursor Lean exports.
+                    let mk = recursor_data.major_idx();
+                    let mh = crate::inductive::major_head_name(tc.ctx, recursor_data.info.ty, mk);
+                    let mut found = false;
+                    if let Some(h) = mh {
+                        let mut q: usize = 0;
+                        while q < recursor_data.all_inductives.len()
+                            invariant
+                                q <= recursor_data.all_inductives@.len(),
+                                crate::inductive::rec_major_head(to_model_expr(recursor_data.info.ty), mk as nat) == Some(crate::level_arena_bridge::name_id(h)),
+                                found ==> exists|k: int| 0 <= k < recursor_data.all_inductives@.len()
+                                    && crate::inductive::rec_major_head(to_model_expr(recursor_data.info.ty), mk as nat)
+                                        == Some(crate::level_arena_bridge::name_id(#[trigger] recursor_data.all_inductives@[k])),
+                            decreases recursor_data.all_inductives@.len() - q,
+                        {
+                            proof {
+                                broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                            }
+                            let ind_name = recursor_data.all_inductives[q];
+                            if crate::level_arena_bridge::name_ptr_eq(h, ind_name) {
+                                found = true;
+                            }
+                            q += 1;
+                        }
+                    }
+                    assert!(recursor_data.num_motives != 1 || found, "recursor: its major premise is not one of its inductives'");
                     // VERUS-REWRITE(tested-input): the recursor's rules are checked
                     // too -- each value closed, and inferred in `Check` mode, so its
                     // universe levels are the recursor's. The block's checker only

@@ -2238,6 +2238,8 @@ pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crat
     &&& forall|n: NamePtr<'p>| #[trigger] rec_names_of(ef, i.info.name).contains(n) ==> n == crate::env::declar_info(od_r).name
     &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len()
         ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![sh.ind])
+    &&& forall|j1: int, j2: int| #![trigger sh.ctors[j1], sh.ctors[j2]]
+        0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] ==> j1 == j2
 }
 
 /// THE BLOCK CERTIFICATE (B6a-3): an exported single, non-nested inductive
@@ -2271,6 +2273,49 @@ pub(crate) open spec fn ctor_old<'x, 't>(env: crate::env::Env<'x, 't>, c: CtorHe
         && crate::expr_arena_bridge::to_model(crate::env::declar_info(od).ty) == crate::expr_arena_bridge::to_model(c.ty)
         && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(c.ty)) == 0
         && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(c.ty))
+}
+
+/// THE CHECKED CONSTRUCTOR'S INDEX: the exported constructor of its name
+/// records position `y` in its block.
+pub(crate) open spec fn ctor_idx_old<'x, 't>(env: crate::env::Env<'x, 't>, c: CtorHeader<'t>, y: int) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od)
+        && (match od {
+            Declar::Constructor(cd) => cd.ctor_idx as int == y,
+            _ => false,
+        })
+        && crate::env::declar_info(od).name == c.name
+}
+
+/// Constructors at different positions have different names.
+pub(crate) proof fn ctors_distinct<'x, 't>(ef: ExportFile<'t>, env: crate::env::Env<'x, 't>, cs: Seq<CtorHeader<'t>>)
+    requires
+        export_ok(ef),
+        env.old_keys() == ef.declars_keys(),
+        forall|y: int| 0 <= y < cs.len() ==> #[trigger] ctor_idx_old(env, cs[y], y),
+    ensures
+        forall|y1: int, y2: int| #![trigger cs[y1], cs[y2]] 0 <= y1 < cs.len() && 0 <= y2 < cs.len()
+            && crate::level_arena_bridge::name_id(cs[y1].name) == crate::level_arena_bridge::name_id(cs[y2].name) ==> y1 == y2,
+{
+    export_keys_ids_inj(ef);
+    ef.declars_views();
+    let keys = env.old_keys();
+    assert forall|y1: int, y2: int| #![trigger cs[y1], cs[y2]] 0 <= y1 < cs.len() && 0 <= y2 < cs.len()
+        && crate::level_arena_bridge::name_id(cs[y1].name) == crate::level_arena_bridge::name_id(cs[y2].name) implies y1 == y2 by {
+        assert(ctor_idx_old(env, cs[y1], y1));
+        assert(ctor_idx_old(env, cs[y2], y2));
+        let od1 = choose|od: Declar<'t>| #[trigger] env_old(env, od)
+            && (match od { Declar::Constructor(cd) => cd.ctor_idx as int == y1, _ => false })
+            && crate::env::declar_info(od).name == cs[y1].name;
+        let od2 = choose|od: Declar<'t>| #[trigger] env_old(env, od)
+            && (match od { Declar::Constructor(cd) => cd.ctor_idx as int == y2, _ => false })
+            && crate::env::declar_info(od).name == cs[y2].name;
+        let i1 = choose|i: int| 0 <= i < keys.len() && i < env.visible() && #[trigger] keys[i] == crate::env::declar_info(od1).name
+            && env.old_view()[keys[i]] == od1;
+        let i2 = choose|i: int| 0 <= i < keys.len() && i < env.visible() && #[trigger] keys[i] == crate::env::declar_info(od2).name
+            && env.old_view()[keys[i]] == od2;
+        assert(crate::level_arena_bridge::name_id(keys[i1]) == crate::level_arena_bridge::name_id(keys[i2]));
+        assert(i1 == i2);
+    }
 }
 
 /// Some exported declaration is the generated recursor `nd`.
@@ -2341,7 +2386,7 @@ pub open spec fn rec_major_head(ty: ExprSpec, k: nat) -> Option<u64> {
 }
 
 /// The head constant of a telescope's `k`-th domain, read literally.
-fn major_head_name<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (result: Option<NamePtr<'t>>)
+pub(crate) fn major_head_name<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (result: Option<NamePtr<'t>>)
     requires
         crate::util_model::owns(*ctx, ty),
     ensures
@@ -3673,7 +3718,8 @@ pub(crate) proof fn export_ok_facts<'p>(ef: ExportFile<'p>)
 }
 
 /// WHAT THE RECURSOR ARM OF `check_declar` CHECKS: the recursor names an
-/// inductive, its first is an exported inductive, and each comes before it.
+/// inductive, its first is an exported inductive, each comes before it, and
+/// a single-motive one's major premise is headed by one of them.
 pub open spec fn rec_arm_ok<'p>(ef: ExportFile<'p>, r: RecursorData<'p>) -> bool {
     let keys = ef.declars_keys();
     &&& r.all_inductives@.len() > 0
@@ -3682,6 +3728,9 @@ pub open spec fn rec_arm_ok<'p>(ef: ExportFile<'p>, r: RecursorData<'p>) -> bool
     &&& forall|k: int| 0 <= k < r.all_inductives@.len() ==> exists|qi: int, qr: int|
         #![trigger keys[qi], keys[qr]]
         0 <= qi < qr < keys.len() && keys[qi] == #[trigger] r.all_inductives@[k] && keys[qr] == r.info.name
+    &&& r.num_motives == 1 ==> exists|k: int| 0 <= k < r.all_inductives@.len()
+        && rec_major_head(crate::expr_arena_bridge::to_model(r.info.ty), r.major_idx_spec())
+            == Some(crate::level_arena_bridge::name_id(#[trigger] r.all_inductives@[k]))
 }
 
 /// A recursor listed under each of its inductives in the parser's table.
@@ -5464,6 +5513,8 @@ pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         ind_old(env, st.all_inductives_incl_specialized@[0]),
         forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
             ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y], st.all_inductives_incl_specialized@[0].name, st.local_params@.len() as nat),
+        forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
+            ==> #[trigger] ctor_idx_old(env, st.all_inductives_incl_specialized@[0].ctors@[y], y),
         rec_conv_old(env, nd, ru, st.uparams, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].name)),
         st.motives@.len() == 1,
         st.minors@.len() == 1,
@@ -5488,6 +5539,14 @@ pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::
     assert(ms.drop_last() =~= Seq::<Vec<ExprPtr<'t>>>::empty());
     assert(flat_ptrs(ms) == flat_ptrs(ms.drop_last()) + ms.last()@);
     let od_r = block_rec_part(ef, env, st, nd, ru, lm);
+    let cs = st.all_inductives_incl_specialized@[0].ctors@;
+    ctors_distinct(ef, env, cs);
+    let sh = decl_shape(st);
+    assert forall|j1: int, j2: int| #![trigger sh.ctors[j1], sh.ctors[j2]]
+        0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] implies j1 == j2 by {
+        assert(sh.ctors[j1] == crate::level_arena_bridge::name_id(cs[j1].name));
+        assert(sh.ctors[j2] == crate::level_arena_bridge::name_id(cs[j2].name));
+    }
     assert(block_ok(ef, i, decl_shape(st), od_r));
 }
 
@@ -9031,7 +9090,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             forall|x: int, y: int| #![trigger st.all_inductives_incl_specialized@[x].ctors@[y]]
                 0 <= x < st.all_inductives_incl_specialized@.len() && 0 <= y < st.all_inductives_incl_specialized@[x].ctors@.len()
-                ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y], st.all_inductives_incl_specialized@[x].name, st.local_params@.len() as nat),
+                ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y], st.all_inductives_incl_specialized@[x].name, st.local_params@.len() as nat)
+                    && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y], y),
     {
         assert!(!st.is_nested());
         let mut x: usize = 0;
@@ -9047,7 +9107,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 x <= st.all_inductives_incl_specialized@.len(),
                 forall|x2: int, y: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y]]
                     0 <= x2 < x && 0 <= y < st.all_inductives_incl_specialized@[x2].ctors@.len()
-                    ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat),
+                    ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat)
+                        && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y], y),
             decreases st.all_inductives_incl_specialized@.len() - x,
         {
             let inductive = &st.all_inductives_incl_specialized[x];
@@ -9066,9 +9127,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     y <= inductive.ctors@.len(),
                     forall|x2: int, y2: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y2]]
                         0 <= x2 < x && 0 <= y2 < st.all_inductives_incl_specialized@[x2].ctors@.len()
-                        ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat),
+                        ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat)
+                            && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2], y2),
                     forall|y2: int| #![trigger st.all_inductives_incl_specialized@[x as int].ctors@[y2]]
-                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2], st.all_inductives_incl_specialized@[x as int].name, st.local_params@.len() as nat),
+                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2], st.all_inductives_incl_specialized@[x as int].name, st.local_params@.len() as nat)
+                            && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2], y2),
                 decreases inductive.ctors@.len() - y,
             {
                 let ctor = &inductive.ctors[y];
@@ -9087,11 +9150,18 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             "constructor: the checked constructor is not the exported one");
                         assert!(old_c.inductive_name == inductive.name && old_c.num_params as usize == st.local_params.len(),
                             "constructor: its inductive or parameter count is not the block's");
+                        // VERUS-REWRITE(tested-input): the exported constructor's
+                        // index is its position in the block -- what `aux_data_ck`
+                        // compares against the generated one's, except where two
+                        // of the block's constructors share a name. Never fails on
+                        // a block Lean exports.
+                        assert!(old_c.ctor_idx as usize == y, "constructor: its index is not its position in the block");
                         proof {
                             level_free_in_scope(*self, old_c.info.ty);
                             level_free_in_scope(*self, new.info.ty);
                             assert(env_old(*old(self).env, Declar::Constructor(*old_c)));
                             assert(ctor_old(*old(self).env, *ctor, inductive.name, st.local_params@.len() as nat));
+                            assert(ctor_idx_old(*old(self).env, *ctor, y as int));
                         }
                         self.assert_def_eq(old_c.info.ty, new.info.ty);
                     }
