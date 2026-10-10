@@ -2129,7 +2129,16 @@ R2 base: below a rank the recursor conditions hold
 `canon_below`, fewer recursors leave its fields' kinds, `psimple_shrink`
 -- and unique, any other kept one being the signature's); so a
 derivation below a rank is one below any higher rank
-(`derivable_below_mono`) and of the signature (`derivable_below`).
+(`derivable_below_mono`) and of the signature (`derivable_below`)
+(3541958).
+R2b-1: a rule's body is typed below its recursor's rank
+(`dom_rec_end::rule_typed` in `strip_below(sig, rk(c))`): it may use
+every lower-ranked recursor and structure, as nanoda's check of the
+recursor has them. Soundness's Iota case hands the oracle of that level
+(`strip_below_valid`: those derivations measure at most `rk + 1`, the
+redex `rk + 2`); `dom_iota_sound::sound_iota` and the telescope lemmas
+take it; the field facts still at rank 0 reach it by
+`dom_sound::oracle_down`.
 
 The plan:
 

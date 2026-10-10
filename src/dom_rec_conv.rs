@@ -132,11 +132,12 @@ pub proof fn rule_beta(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, j: int, hea
     // the rule's typing, in the full signature
     reveal(crate::dom_rec_end::sig_rec);
     assert(rule_typed(sig, c, lv, j));
-    let ss = crate::ti_strip::strip(sig);
+    let rr = crate::dom_code::rk(sig, c);
+    let ss = crate::ti_strip::strip_below(sig, rr);
     let lb = choose|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, sort(lb)));
-    crate::ti_strip::strip_derivable(sig, Jd::Wf(ctx));
-    crate::ti_strip::strip_derivable(sig, eq(ctx, b, b, bt));
-    crate::ti_strip::strip_derivable(sig, eq(ctx, bt, bt, sort(lb)));
+    crate::ti_strip::derivable_below(sig, rr, Jd::Wf(ctx));
+    crate::ti_strip::derivable_below(sig, rr, eq(ctx, b, b, bt));
+    crate::ti_strip::derivable_below(sig, rr, eq(ctx, bt, bt, sort(lb)));
     crate::dom_iota::rule_split(sig, c, lv, j);
     crate::dom_rec_shape::nlbv_sl(rd.rules[j].rhs, rd.uparams, lv);
     crate::dom_iota::major_form(sig, c, lv);
@@ -343,14 +344,15 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, rid));
     assert(rule_typed(sig, rid, lv, p));
-    let ss = crate::ti_strip::strip(sig);
+    let rr = crate::dom_code::rk(sig, rid);
+    let ss = crate::ti_strip::strip_below(sig, rr);
     let ctx = rule_ctx(sig, rid, lv, p);
     let (b, bt) = (crate::dom_iota::rule_body(sig, rid, lv, p), rule_bty(sig, rid, lv, p));
     let lb = choose|lb: LevelSpec| #[trigger] derivable(ss, eq(ctx, bt, bt, sort(lb)));
     assert(Seq::<ExprSpec>::empty() + ctx =~= ctx);
     crate::ti_beta::lam_tele(ss, Seq::empty(), ctx, b, bt, lb);
     let (lt, pt) = (crate::rec_canon::binds(BinderKind::Lam, ctx, b), crate::rec_canon::binds(BinderKind::Pi, ctx, bt));
-    crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), lt, lt, pt));
+    crate::ti_strip::derivable_below(sig, rr, eq(Seq::empty(), lt, lt, pt));
     crate::dom_iota::rule_split(sig, rid, lv, p);
     crate::iota_sr::rule_ty_split(sig, rid, lv, p);
     crate::dom_rec_ty::rec_lps_sub(sig, rid);

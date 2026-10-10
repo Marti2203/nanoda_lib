@@ -84,7 +84,7 @@ pub proof fn spine_sem_eq(sig: Sig, f1: ExprSpec, f2: ExprSpec, xs: Seq<ExprSpec
 pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::dom_sound::sound_oracle(crate::ti_strip::strip(sig), sig),
+        crate::dom_sound::sound_oracle(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, spine_head(m)->Const_0)), sig),
         crate::ti_syntax::iota_ok(sig),
         crate::ti_hred::rec_fits(sig, m),
         crate::ti_syntax::iota_lv(sig, m),
@@ -158,7 +158,9 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     let n = crate::beta_model::rec_result(sig.ienv, m);
     assert(n == spine_app(core, extra));
     crate::dom_iota::spine_concat(body, heads, fargs);
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid));
+    let s0 = crate::ti_strip::strip(sig);
+    crate::ti_strip::strip_below_zero(sig);
     assert(crate::dom_rec_end::rule_typed(sig, rid, lv, p));
     let ctx = crate::dom_rec_end::rule_ctx(sig, rid, lv, p);
     let bt = crate::dom_rec_end::rule_bty(sig, rid, lv, p);
@@ -168,16 +170,21 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     crate::dom_iota::rule_split(sig, rid, lv, p);
     let tb = crate::rec_canon::binds(BinderKind::Pi, ctx, bt);
     // the model's facts at the instance
-    assert(crate::dom_model::sem_const(sig, rid, lv) && crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, rid, lv)));
-    let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+    assert(crate::dom_model::sem_const(sig, rid, lv) && crate::dom_rec_end::ty_closed(s0, crate::ti_syntax::dty_at(sig, rid, lv)));
+    let rr = crate::dom_code::rk(sig, rid);
+    assert(rr >= 0);
+    let l = choose|l: LevelSpec| #[trigger] derivable(s0, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
+        crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l)));
+    crate::ti_strip::derivable_below_mono(sig, 0, rr, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, rid, lv),
         crate::ti_syntax::dty_at(sig, rid, lv), crate::ti_syntax::sort(l)));
     assert(crate::dom_model::sem_const(sig, sh.ctors[p], clv));
     // the constructor's type at its instance is closed, from its own
-    assert(crate::dom_rec_end::ty_closed(ss, crate::ti_syntax::dty_at(sig, cid, Seq::empty())));
+    assert(crate::dom_rec_end::ty_closed(s0, crate::ti_syntax::dty_at(sig, cid, Seq::empty())));
     let r0 = sig.consts[cid].ty;
     crate::dom_levels::sl_nil(r0, sig.consts[cid].lps);
-    let l0 = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), r0, r0, crate::ti_syntax::sort(l)));
-    crate::dom_levels::sig_lps_at(sig, sig.consts[cid].lps, clv);
+    let l0 = choose|l: LevelSpec| #[trigger] derivable(s0, eq(Seq::empty(), r0, r0, crate::ti_syntax::sort(l)));
+    crate::ti_strip::derivable_below_mono(sig, 0, rr, eq(Seq::empty(), r0, r0, crate::ti_syntax::sort(l0)));
+    crate::dom_levels::sig_lps_below(sig, rr, sig.consts[cid].lps, clv);
     crate::ti_level::derivable_ls(ss, eq(Seq::empty(), r0, r0, crate::ti_syntax::sort(l0)), sig.consts[cid].lps, clv);
     assert(crate::ti_level::gls(Seq::<ExprSpec>::empty(), sig.consts[cid].lps, clv) =~= Seq::<ExprSpec>::empty());
     assert(derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, clv), crate::ti_syntax::dty_at(sig, cid, clv),

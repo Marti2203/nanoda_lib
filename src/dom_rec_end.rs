@@ -258,10 +258,12 @@ pub open spec fn rule_bty(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> ExprS
             crate::rec_canon::vars(1 + nmin + nf, np) + crate::rec_canon::vars(0, nf))))
 }
 
-/// Rule `p`'s body at a level instance is typed in its binders, without
-/// recursors, and its type telescope is closed.
+/// Rule `p`'s body at a level instance is typed in its binders, with the
+/// recursors and structures ranked below the recursor (as nanoda checks
+/// it; docs/TYPED_TARGET.md, "Rank-stratified strip"), and its type
+/// telescope is closed.
 pub open spec fn rule_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> bool {
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c));
     let (ctx, b, bt) = (rule_ctx(sig, c, lv, p), crate::dom_iota::rule_body(sig, c, lv, p), rule_bty(sig, c, lv, p));
     &&& derivable(ss, crate::ti_syntax::Jd::Wf(ctx))
     &&& derivable(ss, eq(ctx, b, b, bt))

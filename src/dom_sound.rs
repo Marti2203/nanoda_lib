@@ -1948,6 +1948,28 @@ pub proof fn oracle_use(ss: Sig, sig: Sig, d: Deriv, rho: Env)
     assert(sound_at(ss, sig, d, rho));
 }
 
+/// An oracle below a rank is one below any lower rank: those
+/// derivations are derivations below it (`ti_strip::iota_ok_below`).
+pub proof fn oracle_down(sig: Sig, r1: int, r2: int)
+    requires
+        sound_oracle(crate::ti_strip::strip_below(sig, r2), sig),
+        r1 <= r2 || r1 <= 0,
+        crate::ti_syntax::iota_ok(sig),
+    ensures
+        sound_oracle(crate::ti_strip::strip_below(sig, r1), sig),
+{
+    let (s1, s2) = (crate::ti_strip::strip_below(sig, r1), crate::ti_strip::strip_below(sig, r2));
+    reveal(sound_oracle);
+    crate::ti_strip::iota_ok_below(sig, r2);
+    assert(crate::ti_valid::sig_ext(s1, s2));
+    assert forall|d: Deriv, rho: Env| #[trigger] sound_at(s1, sig, d, rho) by {
+        if valid(s1, d) && concl(d) is Eq && fits_env(sig, concl(d)->Eq_0, rho) {
+            crate::ti_valid::d_ext(s1, s2, d);
+            assert(sound_at(s2, sig, d, rho));
+        }
+    }
+}
+
 /// The soundness theorem, as an oracle.
 pub proof fn sound_all(sig: Sig)
     requires
@@ -2051,13 +2073,18 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             sound_irr(sig, m, n, a, l, rho);
         } else {
             sound(sig, ps[0], rho);
-            // the recursor-stripped signature's derivations have no Iota node
-            let ss = crate::ti_strip::strip(sig);
+            // the derivations below the recursor's rank fire only lower
+            // recursors
+            let rr = crate::dom_code::rk(sig, crate::beta_model::spine_head(m)->Const_0);
+            let ss = crate::ti_strip::strip_below(sig, rr);
+            assert(crate::beta_model::spine_head(m) is Const) by {
+                assert(crate::beta_model::rec_ready(sig.ienv, m));
+            }
+            crate::ti_strip::irank_prems(sig, d);
             reveal(sound_oracle);
             assert forall|d2: Deriv, rho2: Env| #[trigger] sound_at(ss, sig, d2, rho2) by {
                 if valid(ss, d2) && concl(d2) is Eq && fits_env(sig, concl(d2)->Eq_0, rho2) {
-                    crate::ti_strip::strip_valid(sig, d2);
-                    crate::ti_strip::irank_free(sig, d2);
+                    crate::ti_strip::strip_below_valid(sig, rr, d2);
                     sound(sig, d2, rho2);
                 }
             }
@@ -2111,14 +2138,16 @@ proof fn sound_reta_d(sig: Sig, d: Deriv, rho: Env)
         crate::ti_syntax::prop_zero(sig, m, l);
         sound_irr(sig, m, n, a, l, rho);
     } else {
-        // the recursor-stripped signature's derivations have no recursor
-        // node
-        let ss = crate::ti_strip::strip(sig);
+        // the derivations below the recursor's rank fire only lower
+        // recursors
+        let rr = crate::dom_code::rk(sig, crate::beta_model::spine_head(m)->Const_0);
+        let ss = crate::ti_strip::strip_below(sig, rr);
+        assert(crate::ti_hred::rec_major(sig, m));
+        crate::ti_strip::irank_prems(sig, d);
         reveal(sound_oracle);
         assert forall|d2: Deriv, rho2: Env| #[trigger] sound_at(ss, sig, d2, rho2) by {
             if valid(ss, d2) && concl(d2) is Eq && fits_env(sig, concl(d2)->Eq_0, rho2) {
-                crate::ti_strip::strip_valid(sig, d2);
-                crate::ti_strip::irank_free(sig, d2);
+                crate::ti_strip::strip_below_valid(sig, rr, d2);
                 sound(sig, d2, rho2);
             }
         }
@@ -2503,7 +2532,7 @@ proof fn sound_reta(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, rho: Env)
     requires
         crate::dom_rec_end::sig_sr(sig),
         crate::ti_syntax::iota_ok(sig),
-        sound_oracle(crate::ti_strip::strip(sig), sig),
+        sound_oracle(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, crate::beta_model::spine_head(m)->Const_0)), sig),
         crate::ti_hred::rec_smashed(sig, m),
         !crate::ti_syntax::iota_prop(sig, m),
         fits_env(sig, g, rho),

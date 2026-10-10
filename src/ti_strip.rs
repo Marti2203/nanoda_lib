@@ -168,7 +168,7 @@ pub proof fn strip_below_valid(sig: Sig, r: int, d: Deriv)
     requires
         valid(strip_below(sig, r), d),
         crate::ti_syntax::iota_ok(sig),
-        r >= 0,
+        r >= -1,
     ensures
         valid(sig, d),
         irank(sig, d) <= r + 1,

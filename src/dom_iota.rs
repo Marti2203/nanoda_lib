@@ -2361,7 +2361,7 @@ pub proof fn r2l_pv(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<Lev
 pub proof fn r2l_closed_field(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
         crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
@@ -2406,19 +2406,23 @@ pub proof fn r2l_closed_field(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p
     // the two instances of the closed type convert, so have the same members
     crate::dom_rec_end::rec_canon_ok(sig, rid);
     crate::dom_lift::field_facts(sig, sh.ind, p, k);
-    let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), f, f, crate::ti_syntax::sort(l)));
+    // the field's typing is the rank-0 signature's, below the recursor's
+    let s0 = crate::ti_strip::strip(sig);
+    crate::ti_strip::strip_below_zero(sig);
+    crate::dom_sound::oracle_down(sig, 0, crate::dom_code::rk(sig, rid));
+    let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, crate::ti_syntax::eq(Seq::empty(), f, f, crate::ti_syntax::sort(l)));
     crate::dom_levels::sig_lps_at(sig, sh.lps, us);
     crate::dom_levels::sig_lps_at(sig, sh.lps, clv);
-    crate::ti_ls2::ls_pair_nil(ss, f, f, crate::ti_syntax::sort(l), sh.lps, us, clv);
+    crate::ti_ls2::ls_pair_nil(s0, f, f, crate::ti_syntax::sort(l), sh.lps, us, clv);
     let te = crate::expr_model::subst_expr_levels(crate::ti_syntax::sort(l), sh.lps, us);
-    let d = crate::ti_sub::get(ss, crate::ti_syntax::eq(Seq::empty(), fu, fu2, te));
+    let d = crate::ti_sub::get(s0, crate::ti_syntax::eq(Seq::empty(), fu, fu2, te));
     assert(crate::dom_sound::fits_env(sig, Seq::empty(), bot_env())) by {
         assert forall|j: nat| #[trigger] wf(bot_env()(j)) by {
             crate::dom_sound::typed_basic();
             typed_wf(Cpt::Bot, Cpt::U);
         }
     }
-    crate::dom_sound::oracle_use(ss, sig, d, bot_env());
+    crate::dom_sound::oracle_use(s0, sig, d, bot_env());
     assert(crate::dom_sound::sem_eq(sig, fu, fu2, bot_env()));
     assert(mem(sig, fu2, bot_env(), ds[i]));
 }
@@ -2571,7 +2575,7 @@ pub proof fn r2l_ps_field(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: S
 pub proof fn r2l_fields(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
         crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
@@ -2625,7 +2629,7 @@ pub proof fn r2l_fields(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int,
 proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
         crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
@@ -2675,7 +2679,7 @@ proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, c
 proof fn r2l_ps_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>, k: int)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
         crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
@@ -2727,9 +2731,12 @@ proof fn r2l_ps_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv
         }
         crate::dom_psimple::ps_mem_plow(sig, sh.ind, sh.pdoms, np, k as nat, fu, env, env2, ak[k]);
         crate::dom_psimple::ps_mem_plow(sig, sh.ind, sh.pdoms, np, k as nat, fu2, env, env2, ak[k]);
-        let l0 = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
+        let s0 = crate::ti_strip::strip(sig);
+        crate::ti_strip::strip_below_zero(sig);
+        crate::dom_sound::oracle_down(sig, 0, crate::dom_code::rk(sig, rid));
+        let l0 = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, crate::ti_syntax::eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
         assert(crate::ti_level::gls(sh.pdoms, sig.consts[sh.ind].lps, us) =~= pdoms_at(sig, rid, us));
-        crate::dom_psimple::ps_mem_lv(ss, sig, sh.ind, us, clv, e, l0, ds.subrange(0, np as int), pv, ak[k]);
+        crate::dom_psimple::ps_mem_lv(s0, sig, sh.ind, us, clv, e, l0, ds.subrange(0, np as int), pv, ak[k]);
 }
 
 /// A CONSTRUCTOR NODE over field values typed as the constructor step
@@ -2811,7 +2818,7 @@ pub proof fn r2l_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<
 pub proof fn r2l_fit(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
         crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
         crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
@@ -2882,7 +2889,7 @@ pub proof fn iota_core_r2l(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, l: L
     g: crate::ti_syntax::Ctx, tb: ExprSpec, a0: Seq<ExprSpec>, cargs: Seq<ExprSpec>, rho: Env, r: Cpt)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
         rec_wired(sig),
         crate::dom_rec_end::rec_hyps(sig, rid),
         r2l_ok(sig, rid, lv, p, clv),
