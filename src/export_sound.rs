@@ -492,6 +492,7 @@ proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
     crate::env_model::tables_ok_at(ef.arena(), ef.declars_view(), ef.declars_keys(), c);
     iota_syn_at(ef, c);
+    ctor_forms_at(ef, c);
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
@@ -1316,6 +1317,75 @@ proof fn iota_syn_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             assert(crate::kclaims::rec_syn(s0, rid));
             crate::dom_rec_end::scope_dir(s0, sd, rid);
             assert(crate::dom_rec_ty::rshape(s0, rid) == crate::dom_rec_ty::rshape(sd, rid));
+        }
+    }
+}
+
+
+/// A CONSTRUCTOR'S DECLARED FORM at a cutoff, from its certificate
+/// (`tc::ctor_e2_cert`: the constructor arm's check) and the tables there:
+/// its inductive is the same declaration, neither a definition, a
+/// constructor nor a recursor.
+#[verifier::spinoff_prover]
+proof fn ctor_form_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_denv(ef, cc).ctor_ind.contains_key(cid),
+    ensures
+        crate::kclaims::ctor_form(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), cid),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let i = entry_of(ef, cc, cid);
+    assert(pos_of(ef, cid) == i);
+    let d = decl_at(ef, i);
+    assert(keys.to_set().contains(keys[i]));
+    assert(view.contains_key(keys[i]));
+    assert(denv.ctor_ind[cid] == crate::env_model::ctor_ind_entry(d)->0);
+    if let crate::env::Declar::Constructor(c) = d {
+        let c0 = cert_of(ef, i);
+        let (d0, n0) = (m_dty(ef, c0), m_denv(ef, c0));
+        assert(crate::tc::ctor_e2_cert(d0, n0, c));
+        let ind = crate::level_arena_bridge::name_id(c.inductive_name);
+        crate::env_model::env_le_at(ef.arena(), view, keys, c0, cc);
+        assert(d0.contains_key(ind));
+        crate::env_model::find_at_mono(view, keys, c0, cc, ind);
+        crate::env_model::tables_ok_at(ef.arena(), view, keys, cc);
+        assert(denv.ctor_np.contains_key(cid));
+        let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+        crate::twin::twin_keeps(raw, cid);
+        crate::twin::twin_keeps(raw, ind);
+        assert(dty[cid] == crate::env_model::ty_entry(d)->0);
+        assert(crate::env_model::declar_params_ok(d));
+        crate::kgen::plevels_names(crate::level_arena_bridge::to_model_of_levels(c.info.uparams));
+        assert(dty[ind] == d0[ind]);
+    } else {
+        assert(crate::env_model::ctor_ind_entry(d) is Some);
+    }
+}
+
+/// EVERY CONSTRUCTOR IN ITS DECLARED FORM, certified at every cutoff and
+/// any locals (`kclaims::ctor_forms`).
+proof fn ctor_forms_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::kclaims::ctor_forms(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    assert forall|cid: u64| #[trigger] s0.ienv.ctor_ind.contains_key(cid) implies crate::kclaims::ctor_form(s0, cid) by {
+        ctor_form_at(ef, cc, cid);
+    }
+    assert forall|d: Map<nat, ExprSpec>| #[trigger] crate::kclaims::ctor_forms(crate::metatheory::jsig(dty, denv, d)) by {
+        crate::jkernel::jsig_locals(dty, denv, d);
+        let sd = crate::metatheory::jsig(dty, denv, d);
+        assert forall|cid: u64| #[trigger] sd.ienv.ctor_ind.contains_key(cid) implies crate::kclaims::ctor_form(sd, cid) by {
+            assert(crate::kclaims::ctor_form(s0, cid));
         }
     }
 }

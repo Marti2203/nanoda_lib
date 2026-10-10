@@ -238,6 +238,16 @@ impl<'p> ExportFile<'p> {
                         None => { assert!(false, "constructor: its inductive is not declared before it"); return; },
                     };
                     assert!(ind.info.uparams == ctor_data.info.uparams, "constructor: universe parameters differ from its inductive's");
+                    // VERUS-REWRITE(tested-input): the constructor's declared type is a
+                    // telescope over its inductive at its own universe parameters,
+                    // fully applied, and the inductive's type ends in a sort -- what
+                    // the judgment reads of every constructor (`kclaims::ctor_form`),
+                    // with or without its inductive's recursor. nanoda's block check
+                    // establishes it for the block's constructors; this checks the
+                    // constructor declaration itself. Never fails on a constructor
+                    // Lean exports.
+                    assert!(crate::inductive::ctor_form_ok(tc.ctx, ctor_data.info.ty, ctor_data.inductive_name, ind.info.ty, ctor_data.info.uparams),
+                        "constructor: its type is not over its inductive");
                     assert!(ctor_data.num_params < u16::MAX, "constructor: too many parameters");
                     let l = match tc.ctx.ctor_param_term(ind.info.ty, ctor_data.info.ty, ctor_data.info.name, ctor_data.num_params) {
                         Some(l) => l,
@@ -6257,6 +6267,8 @@ pub open spec fn ctor_e2_cert<'p>(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: cra
     let ind = crate::level_arena_bridge::name_id(c.inductive_name);
     &&& dty.contains_key(ind)
     &&& dty[ind].0 == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
+    &&& crate::inductive::ctor_form_m(to_model_expr(c.info.ty), ind, dty[ind].1, crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
+    &&& !denv.defs.contains_key(ind) && !denv.ctor_ind.contains_key(ind) && !denv.recs.contains_key(ind)
     &&& (crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
         ==> crate::kclaims::rtyped(dty, denv, Map::empty(), crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
 }
@@ -6382,12 +6394,17 @@ pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::Constru
         l == crate::e2_lift::lmk(to_model_expr(i.info.ty), to_model_expr(c.info.ty), c.num_params as nat),
         !crate::expr_model::has_fv(l),
         kcc(env, l, inf),
+        crate::inductive::ctor_form_m(to_model_expr(c.info.ty), crate::level_arena_bridge::name_id(c.inductive_name), to_model_expr(i.info.ty),
+            crate::level_arena_bridge::to_model_of_levels(c.info.uparams)),
     ensures
         ctor_e2_cert(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), c),
 {
     let (dty, denv) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env));
     let ind = crate::level_arena_bridge::name_id(c.inductive_name);
     crate::env_model::to_model_of_declar_ty_at(env, ind);
+    crate::env_model::to_model_of_defs_at(env, ind);
+    crate::env_model::to_model_of_ctor_ind_at(env, ind);
+    crate::env_model::to_model_of_recursors_at(env, ind);
     if crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(l) {
         crate::kclaims::cc_closed_typed(dty, denv, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), l, inf);
         let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), l, t2)

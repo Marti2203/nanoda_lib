@@ -2385,6 +2385,88 @@ pub open spec fn rec_major_head(ty: ExprSpec, k: nat) -> Option<u64> {
     }
 }
 
+/// A CONSTRUCTOR'S DECLARED FORM over its inductive's type `ti` at levels
+/// `ls`: its type a telescope whose body is the inductive at `ls`, fully
+/// applied; the inductive's type a telescope ending in a sort.
+pub open spec fn ctor_form_m(t: ExprSpec, ind: u64, ti: ExprSpec, ls: Seq<crate::level_model::LevelSpec>) -> bool {
+    let n = crate::rec_canon::tarity(t);
+    let ni = crate::rec_canon::tarity(ti);
+    let r = crate::rec_canon::tbody(t, n);
+    &&& crate::rec_canon::tdoms(t, n).len() == n
+    &&& crate::rec_canon::tdoms(ti, ni).len() == ni
+    &&& crate::rec_canon::tbody(ti, ni) is Sort
+    &&& crate::beta_model::spine_head(r) == ExprSpec::Const(ind, ls)
+    &&& crate::beta_model::spine_args(r).len() == ni
+}
+
+/// The body past a type's first `k` Pi binders, read literally.
+fn pi_body<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (result: Option<ExprPtr<'t>>)
+    requires
+        crate::util_model::owns(*ctx, ty),
+    ensures
+        result matches Some(b) ==> crate::util_model::owns(*ctx, b)
+            && crate::expr_arena_bridge::to_model(b) == crate::rec_canon::tbody(crate::expr_arena_bridge::to_model(ty), k as nat)
+            && crate::rec_canon::tdoms(crate::expr_arena_bridge::to_model(ty), k as nat).len() == k,
+{
+    let ghost t = crate::expr_arena_bridge::to_model(ty);
+    let mut cur = ty;
+    let mut i: usize = 0;
+    proof {
+        assert(crate::rec_canon::tdoms(t, 0) =~= Seq::<ExprSpec>::empty());
+    }
+    while i < k
+        invariant
+            crate::util_model::owns(*ctx, cur),
+            i <= k,
+            crate::expr_arena_bridge::to_model(cur) == crate::rec_canon::tbody(t, i as nat),
+            crate::rec_canon::tdoms(t, i as nat).len() == i,
+        decreases k - i,
+    {
+        match ctx.read_expr(cur) {
+            Pi { body, .. } => {
+                proof {
+                    crate::kgen::tdoms_step(t, i as nat);
+                }
+                cur = body;
+            },
+            _ => return None,
+        }
+        i += 1;
+    }
+    Some(cur)
+}
+
+/// A constructor's declared form, tested (`ctor_form_m`).
+pub(crate) fn ctor_form_ok<'t, 'p>(ctx: &TcCtx<'t, 'p>, cty: ExprPtr<'t>, ind_name: NamePtr<'t>, ity: ExprPtr<'t>, ups: LevelsPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, cty),
+        crate::util_model::owns(*ctx, ind_name),
+        crate::util_model::owns(*ctx, ity),
+        crate::util_model::owns(*ctx, ups),
+    ensures
+        result ==> ctor_form_m(crate::expr_arena_bridge::to_model(cty), crate::level_arena_bridge::name_id(ind_name),
+            crate::expr_arena_bridge::to_model(ity), crate::level_arena_bridge::to_model_of_levels(ups)),
+{
+    let n = ctx.pi_telescope_size(cty) as usize;
+    let ni = ctx.pi_telescope_size(ity) as usize;
+    let cb = match pi_body(ctx, cty, n) { Some(b) => b, None => return false };
+    let ib = match pi_body(ctx, ity, ni) { Some(b) => b, None => return false };
+    match ctx.read_expr(ib) {
+        Sort { .. } => {},
+        _ => return false,
+    }
+    let (h, args) = ctx.unfold_apps(cb);
+    match ctx.read_expr(h) {
+        Const { name, levels, .. } => {
+            proof {
+                crate::beta_model::spine_destruct_app(crate::expr_arena_bridge::to_model(h), crate::expr_arena_bridge::ptr_models(args@));
+            }
+            crate::level_arena_bridge::name_ptr_eq(name, ind_name) && args.len() == ni && levels_ptr_eq(ctx, levels, ups)
+        },
+        _ => false,
+    }
+}
+
 /// The head constant of a telescope's `k`-th domain, read literally.
 pub(crate) fn major_head_name<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (result: Option<NamePtr<'t>>)
     requires

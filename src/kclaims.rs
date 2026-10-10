@@ -93,6 +93,12 @@ pub open spec fn iota_syn(sig: crate::ti_syntax::Sig) -> bool {
     forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_syn(sig, c)
 }
 
+/// Every constructor of the signature in its declared form (`ctor_form`),
+/// which the export certifies (`export_sound::ctor_forms_at`).
+pub open spec fn ctor_forms(sig: crate::ti_syntax::Sig) -> bool {
+    forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_form(sig, cid)
+}
+
 /// THE FRAGMENT'S SHAPE of an interpreted recursor: no indices, the
 /// parameters sorts (`rec_frag_l` beyond its scope).
 pub open spec fn rec_small(sig: crate::ti_syntax::Sig, c: u64) -> bool {
@@ -108,6 +114,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         frag_hyp(dty, denv),
         tables_ok(dty, denv),
         forall|d: Map<nat, ExprSpec>| #[trigger] iota_syn(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| #[trigger] ctor_forms(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -116,6 +123,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         let s = jsig(dty, denv, d);
         assert(ind_ok_hyp(s));
         assert(iota_syn(s));
+        assert(ctor_forms(s));
         assert(crate::ti_syntax::iota_ok(s)) by {
             reveal(crate::ti_syntax::iota_ok);
             assert forall|c: u64| #[trigger] s.ienv.recs.contains_key(c) implies crate::dom_rec_end::rec_frag(s, c) by {
@@ -190,7 +198,7 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
         ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_form(sig, cid) && ctor_sem(sig, cid)
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_sem(sig, cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
         ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid]) ==>

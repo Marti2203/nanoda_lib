@@ -2023,6 +2023,19 @@ and eta step is vacuous (about thirty sites use that). Stages:
     `ctor_sem` (its inductive a semantic constant: the rank bound
     `rec_model` states for an inductive with a recursor; a model
     hypothesis, B7).
+    `ctor_form` CERTIFIED: a tested-input check in the constructor arm
+    (`inductive::ctor_form_ok`: the declared type, read literally, is a
+    telescope over its inductive at the constructor's universe parameters,
+    fully applied; the inductive's type ends in a sort), recorded in
+    `ctor_e2_cert` with the inductive's tables there; the export lifts it
+    to every cutoff (`export_sound::ctor_forms_at`), and `frag_env_of`
+    takes it as it takes `iota_syn`. `ind_ok_hyp` keeps `ctor_sem` only.
+    OBSERVED DIFFERENCE: nanoda's constructor arm checks a constructor's
+    inductive exists and its parameters, not that its type ends in that
+    inductive; a constructor declaration outside its inductive's block
+    (not among the block's constructors, which the block check rebuilds)
+    would otherwise go unchecked in form. Lean exports never have one
+    (Init: 57424 declarations).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.
