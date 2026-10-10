@@ -338,6 +338,7 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
     crate::ti_syntax::frag_of(sig, rid);
+    crate::dom_rec_ty::scope_canon(sig, rid);
     assert(!crate::ti_syntax::no_recs(sig));
     reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, rid));

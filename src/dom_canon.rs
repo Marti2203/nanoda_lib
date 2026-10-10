@@ -281,7 +281,7 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
 /// The codes of `ind`'s type parameters among `args` are types.
 pub open spec fn sparams_typed(sig: Sig, ind: u64, args: Seq<Cpt>) -> bool {
     let sh = canon_shape(sig, ind);
-    has_rec(sig, ind) ==> forall|q: int| 0 <= q < sh.np && q < args.len() && sh.pdoms[q] is Sort ==> #[trigger] typed(args[q], Cpt::U)
+    has_canon(sig, ind) ==> forall|q: int| 0 <= q < sh.np && q < args.len() && sh.pdoms[q] is Sort ==> #[trigger] typed(args[q], Cpt::U)
 }
 
 /// Bottom parameters' codes are types.
@@ -349,7 +349,7 @@ pub proof fn chain_sparams(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSp
     ensures
         sparams_typed(sig, c, xs),
 {
-    if has_rec(sig, c) {
+    if has_canon(sig, c) {
         let sh = canon_shape(sig, c);
         crate::dom_ctor_bound::ctor_shape_ind(sig, c);
         let ty = sig.consts[c].ty;
@@ -667,7 +667,7 @@ pub proof fn sl_none(e: ExprSpec, vs: Seq<LevelSpec>)
 /// type parameters, or simple types over the parameters.
 pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
     requires
-        has_rec(sig, ind),
+        has_canon(sig, ind),
         0 <= j < canon_shape(sig, ind).nmin(),
         0 <= k < canon_shape(sig, ind).fields[j].len(),
     ensures ({
@@ -678,12 +678,16 @@ pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
             || crate::rec_canon::psimple(sig, ind, sh.pdoms, sh.np, k as nat, sh.fields[j][k])
     }),
 {
-    let rid = canon_rec(sig, ind);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
+    canon_side(sig, ind);
+    reveal(crate::dom_code::ind_side);
     let sh = canon_shape(sig, ind);
     assert(sh.ctors[j] == sh.ctors[j]);
-    reveal(crate::rec_canon::field_kind);
+    assert(crate::dom_code::ind_side(sig, ind, sh));
+    assert(sig.ienv.ctor_ind.contains_key(sh.ctors[j]));
+    assert(sh.tss[j].len() == sh.ni);
+    assert(forall|k2: int| 0 <= k2 < sh.fields[j].len() ==> crate::rec_canon::field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k2 as nat, #[trigger] sh.fields[j][k2]));
     assert(crate::rec_canon::field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[j][k]));
+    reveal(crate::rec_canon::field_kind);
 }
 
 } // verus!

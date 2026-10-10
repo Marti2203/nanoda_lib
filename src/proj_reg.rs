@@ -248,7 +248,7 @@ proof fn walk_facts(
     ws: Seq<ExprSpec>,
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
-) -> (r: (u64, LevelSpec))
+) -> (lt: LevelSpec)
     requires
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
     ensures ({
@@ -256,8 +256,8 @@ proof fn walk_facts(
         let sh = crate::dom_code::canon_shape(sig, ind);
         let np = denv.ctor_np[cid] as nat;
         let ety = spine_app(ExprSpec::Const(ind, ls), am);
-        let tds = crate::dom_iota::ctds(sig, r.0, 0, ls);
-        let cb = crate::dom_iota::cbody(sig, r.0, 0, ls);
+        let tds = crate::dom_iota::ctds_s(sig, sh, 0, ls);
+        let cb = crate::dom_iota::cbody_s(sig, sh, 0, ls);
         &&& crate::kclaims::ind_ok(sig)
         &&& crate::jkernel::frag_ok(dty, denv, d)
         &&& crate::jkernel::lev_ok(sig)
@@ -270,7 +270,7 @@ proof fn walk_facts(
         &&& tds.len() == np + sh.fields[0].len()
         &&& forall|q: int| 0 <= q < np ==> #[trigger] tds[q] == crate::dom_rel::ptype(sig, ind, ls, q)
         &&& forall|k: int| 0 <= k < sh.fields[0].len() ==> #[trigger] tds[np + k] == crate::ti_proj::sfield(sig, ind, k as nat, ls)
-        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), ety, ety, crate::ti_syntax::sort(r.1)))
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), ety, ety, crate::ti_syntax::sort(lt)))
         &&& crate::beta_model::spine_head(ety) == ExprSpec::Const(ind, ls)
         &&& crate::beta_model::spine_args(ety) == am
         &&& forall|q: int| 0 <= q < np ==> #[trigger] crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), am[q], am[q],
@@ -285,11 +285,9 @@ proof fn walk_facts(
     crate::jkernel::kh_at(dty, denv, d);
     assert(crate::kclaims::ind_ok(sig));
     assert(sig.ienv.struct_ctor.contains_key(ind));
-    let r = crate::kstruct::struct_rec(sig, ind);
+    crate::kstruct::struct_facts(sig, ind);
     let sh = crate::dom_code::canon_shape(sig, ind);
-    assert(sh.nmin() == 1) by {
-        reveal(crate::ti_syntax::struct_of);
-    }
+    crate::dom_ctor_bound::ctor_shape(sig, ind, 0);
     assert(sh.ctors[0] == cid);
     assert(sig.ienv.ctor_ind[cid] == ind);
     assert(sig.ienv.ctor_np[cid] as nat == sh.np);
@@ -298,16 +296,13 @@ proof fn walk_facts(
     let lt = crate::kclaims::type_sort(dty, denv, d, ety);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), am);
     crate::kstruct::struct_type_arity(sig, g0, ety, lt);
-    crate::dom_rec_end::rec_canon_ok(sig, r);
-    crate::dom_rec_ty::rec_lps_sub(sig, r);
-    crate::dom_rec_ty::rec_lps_distinct(sig, r);
-    crate::iota_sr::ctor_at(sig, r, 0, ls);
-    assert forall|k: int| 0 <= k < sh.fields[0].len() implies #[trigger] crate::dom_iota::ctds(sig, r, 0, ls)[sh.np + k]
+    crate::iota_sr::ctor_at_s(sig, sh, 0, ls);
+    assert forall|k: int| 0 <= k < sh.fields[0].len() implies #[trigger] crate::dom_iota::ctds_s(sig, sh, 0, ls)[sh.np + k]
         == crate::ti_proj::sfield(sig, ind, k as nat, ls) by {
-        assert(crate::iota_sr::cfu(sig, r, 0, k, ls) == crate::ti_proj::sfield(sig, ind, k as nat, ls));
+        assert(crate::iota_sr::cfu_s(sh, 0, k, ls) == crate::ti_proj::sfield(sig, ind, k as nat, ls));
     }
     assert(dty.contains_key(cid));
-    (r, lt)
+    lt
 }
 
 /// The walk's arguments are typed at the constructor's telescope's
@@ -346,13 +341,14 @@ proof fn walk_arg(
 {
     let sig = crate::metatheory::jsig(dty, denv, d);
     let g0 = Seq::<ExprSpec>::empty();
-    let (r, lt) = walk_facts(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let lt = walk_facts(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let sh = crate::dom_code::canon_shape(sig, ind);
     let np = denv.ctor_np[cid] as nat;
     let m = np + idx as nat;
     let sq = psq(am, np, s, idx as nat);
     let ety = spine_app(ExprSpec::Const(ind, ls), am);
-    let tds = crate::dom_iota::ctds(sig, r, 0, ls);
-    let cb = crate::dom_iota::cbody(sig, r, 0, ls);
+    let tds = crate::dom_iota::ctds_s(sig, sh, 0, ls);
+    let cb = crate::dom_iota::cbody_s(sig, sh, 0, ls);
     let tyc = crate::ti_syntax::dty_at(sig, cid, ls);
     assert(sq.len() == np + idx as nat);
     crate::ti_spine::tel_next(tds, cb, sq, j);

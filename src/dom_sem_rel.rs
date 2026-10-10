@@ -207,7 +207,7 @@ pub open spec fn tf_pconv(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, m: ExprS
 pub open spec fn tf_shape(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec,
     t: ExprSpec, t0: ExprSpec, tt: Seq<ExprSpec>) -> bool {
     let sh = crate::dom_code::canon_shape(sig, c);
-    crate::dom_code::has_rec(sig, c) ==> {
+    crate::dom_code::has_canon(sig, c) ==> {
         &&& t0 == crate::ti_syntax::dty_at(sig, c, ls)
         &&& ls.len() == sig.consts[c].lps.len()
         &&& t == crate::dom_con_rel::trest(t0, tt)
@@ -232,13 +232,13 @@ pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Ex
     ensures ({
         let tt2 = tt.push(x);
         let (tel2, t2) = (*tel->Bind_2, crate::subst_algebra::inst(0, x, rp(sig, t).1));
-        &&& crate::dom_code::has_rec(sig, c) ==> t == pi(rp(sig, t).0, rp(sig, t).1)
+        &&& crate::dom_code::has_canon(sig, c) ==> t == pi(rp(sig, t).0, rp(sig, t).1)
         &&& tf_shape(sig, g, c, ls, tel2, p.push(w), sapp(m, x), sapp(m2, x2), t2, t0, tt2)
         &&& tf_shape(sig, g, c, ls, tel2, p.push(w), sapp(m, x), sapp(m, x2), t2, t0, tt2)
         &&& tf_shape(sig, g, c, ls, tel2, p.push(w), sapp(m2, x), sapp(m2, x2), t2, t0, tt2)
     }),
 {
-    if crate::dom_code::has_rec(sig, c) {
+    if crate::dom_code::has_canon(sig, c) {
         let sh = crate::dom_code::canon_shape(sig, c);
         crate::dom_ctor_bound::ctor_shape_ind(sig, c);
         let lps = sig.consts[c].lps;
@@ -531,7 +531,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
             crate::dom_lift::canon_bnd(sig, c, ls, p, cs, u);
             crate::dom_lift::iapp_self(sig, m);
             crate::dom_lift::iapp_self(sig, m2);
-            if crate::dom_code::has_rec(sig, c) {
+            if crate::dom_code::has_canon(sig, c) {
                 // all arguments given: the type parameters convert
                 crate::dom_ctor_bound::ctor_shape_ind(sig, c);
                 let lps = sig.consts[c].lps;

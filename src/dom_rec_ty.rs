@@ -272,9 +272,97 @@ pub open spec fn rec_scope(sig: Sig, rid: u64) -> bool {
     rec_scope_g(sig, rid) && rshape(sig, rid).ni == 0
 }
 
+/// AN INDUCTIVE IN SCOPE at shape `sh`: what the constructor machinery
+/// reads of it -- its side of `rec_canon` (`ind_side`), no indices,
+/// distinct constructors that are no recursors, distinct level parameters
+/// its and its constructors' types are over, and `sh` its known shape. A
+/// recursor in scope gives it (`rec_scope_ind`); so does a structure's
+/// declaration, before its recursor (`struct_scope`).
+pub open spec fn ind_scope(sig: Sig, sh: crate::rec_canon::IndShape) -> bool {
+    let lps = sig.consts[sh.ind].lps;
+    &&& crate::dom_code::ind_side(sig, sh.ind, sh)
+    &&& sh.ni == 0
+    &&& forall|j1: int, j2: int| #![trigger sh.ctors[j1], sh.ctors[j2]]
+        0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] ==> j1 == j2
+    &&& !sig.ienv.ctor_ind.contains_key(sh.ind) && !sig.ienv.recs.contains_key(sh.ind)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
+    &&& crate::dom_levels::lps_distinct(lps)
+    &&& crate::level_inst::elp_in(sig.consts[sh.ind].ty, lps)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::level_inst::elp_in(sig.consts[#[trigger] sh.ctors[p]].ty, lps)
+    &&& crate::dom_code::has_canon(sig, sh.ind) && crate::dom_code::canon_shape(sig, sh.ind) == sh
+}
+
+/// A recursor in scope gives its inductive's scope.
+pub proof fn rec_scope_ind(sig: Sig, rid: u64)
+    requires
+        rec_scope(sig, rid),
+    ensures
+        ind_scope(sig, rshape(sig, rid)),
+{
+    let sh = rshape(sig, rid);
+    crate::dom_code::rec_ind_side(sig, rid);
+    rec_lps_distinct(sig, rid);
+    scope_canon(sig, rid);
+    scope_ctor_ind(sig, rid);
+    reveal(rec_elp);
+    assert forall|p: int| 0 <= p < sh.nmin() implies !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {
+        assert(sh.ctors[p] == sh.ctors[p]);
+    }
+}
+
+/// A structure's declaration gives its scope before its recursor, with
+/// what its declarations' certificates state: its and its constructor's
+/// types over its distinct level parameters, neither a recursor.
+pub proof fn struct_scope(sig: Sig, s: u64)
+    requires
+        crate::dom_code::struct_decl(sig, s),
+        !crate::dom_code::has_rec(sig, s),
+        !sig.ienv.recs.contains_key(s) && !sig.ienv.recs.contains_key(sig.ienv.struct_ctor[s]),
+        !sig.ienv.ctor_ind.contains_key(s),
+        crate::dom_levels::lps_distinct(sig.consts[s].lps),
+        crate::level_inst::elp_in(sig.consts[s].ty, sig.consts[s].lps),
+        crate::level_inst::elp_in(sig.consts[sig.ienv.struct_ctor[s]].ty, sig.consts[s].lps),
+    ensures
+        ind_scope(sig, crate::dom_code::canon_shape(sig, s)),
+{
+    let sh = crate::dom_code::canon_shape(sig, s);
+    crate::dom_code::canon_shape_struct(sig, s);
+    crate::dom_code::struct_decl_shape(sig, s);
+    crate::dom_code::canon_side(sig, s);
+    reveal(crate::dom_code::struct_decl);
+    assert forall|p: int| 0 <= p < sh.nmin() implies !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
+        && crate::level_inst::elp_in(sig.consts[sh.ctors[p]].ty, sig.consts[s].lps) by {
+        assert(p == 0);
+    }
+}
+
+/// `scope_ctor` over an inductive in scope.
+pub proof fn scope_ctor_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int)
+    requires
+        ind_scope(sig, sh),
+        0 <= p < sh.nmin(),
+    ensures ({
+        let c = sh.ctors[p];
+        &&& crate::dom_code::canon_shape(sig, sh.ind) == sh
+        &&& sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_ind[c] == sh.ind
+        &&& ctor_of(sig, sh.ind, c)
+        &&& ctor_pos(sig, sh.ind, c) == p
+        &&& sig.consts.contains_key(c) && sig.consts[c].val is None
+    }),
+{
+    reveal(crate::dom_code::ind_side);
+    let c = sh.ctors[p];
+    assert(c == sh.ctors[p]);
+    assert(0 <= p < crate::dom_code::canon_shape(sig, sh.ind).nmin() && crate::dom_code::canon_shape(sig, sh.ind).ctors[p] == c);
+    assert(ctor_of(sig, sh.ind, c));
+    let p2 = ctor_pos(sig, sh.ind, c);
+    assert(0 <= p2 < sh.nmin() && sh.ctors[p2] == c);
+}
+
 /// A RECURSOR IN SCOPE: canonical, with distinct constructors, the only
 /// canonical recursor of its inductive, with distinct level parameters,
-/// and its inductive's and constructors' types over the inductive's.
+/// and its inductive's and constructors' types over the inductive's; of a
+/// structure, of the shape its declaration gives (`struct_decl`).
 pub open spec fn rec_scope_g(sig: Sig, rid: u64) -> bool {
     let sh = crate::rec_canon::shape_of(sig, sig.ienv.recs[rid], crate::rec_canon::rec_ind(sig, rid));
     &&& crate::rec_canon::rec_canon(sig, rid)
@@ -287,6 +375,7 @@ pub open spec fn rec_scope_g(sig: Sig, rid: u64) -> bool {
         0 <= i < sig.ienv.recs[rid].uparams.len() && 0 <= j < sig.ienv.recs[rid].uparams.len()
         && sig.ienv.recs[rid].uparams[i] == sig.ienv.recs[rid].uparams[j] ==> i == j
     &&& rec_elp(sig, rid)
+    &&& crate::dom_code::struct_decl(sig, sh.ind) ==> crate::rec_canon::shape_of(sig, crate::dom_code::struct_rd(sig, sh.ind), sh.ind) == sh
 }
 
 /// The inductive's and its constructors' types mention only the
@@ -441,12 +530,13 @@ pub proof fn scope_canon(sig: Sig, rid: u64)
     requires
         rec_scope_g(sig, rid),
     ensures
-        crate::dom_code::has_rec(sig, rshape(sig, rid).ind),
+        crate::dom_code::has_canon(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
 {
     let ind = crate::rec_canon::rec_ind(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
     assert(crate::dom_code::has_rec(sig, ind));
+    crate::dom_code::canon_shape_rec(sig, ind);
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == rid);
@@ -524,6 +614,7 @@ pub proof fn scope_ctor(sig: Sig, rid: u64, p: int)
     let c = sh.ctors[p];
     assert(sh.ind == ind);
     assert(crate::dom_code::has_rec(sig, ind));
+    crate::dom_code::canon_shape_rec(sig, ind);
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == rid);
@@ -541,7 +632,7 @@ pub proof fn scope_ctor_ind(sig: Sig, rid: u64)
         rec_scope_g(sig, rid),
     ensures ({
         let sh = rshape(sig, rid);
-        &&& crate::dom_code::has_rec(sig, sh.ind)
+        &&& crate::dom_code::has_canon(sig, sh.ind)
         &&& crate::dom_code::canon_shape(sig, sh.ind) == sh
         &&& sig.consts.contains_key(sh.ind) && sig.consts[sh.ind].val is None
         &&& !sig.ienv.ctor_ind.contains_key(sh.ind) && !sig.ienv.recs.contains_key(sh.ind)
@@ -551,6 +642,7 @@ pub proof fn scope_ctor_ind(sig: Sig, rid: u64)
     let ind = crate::rec_canon::rec_ind(sig, rid);
     assert(sh.ind == ind);
     assert(crate::dom_code::has_rec(sig, ind));
+    crate::dom_code::canon_shape_rec(sig, ind);
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == rid);

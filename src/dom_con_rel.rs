@@ -466,9 +466,11 @@ pub proof fn ctor_of_facts(sig: Sig, ind: u64, c: u64)
     ensures
         ctor_at(sig, c, ind, crate::dom_model::ctor_pos(sig, ind, c) as nat, crate::dom_code::canon_shape(sig, ind).np),
         sig.ienv.ctor_np.contains_key(c),
+        sig.ienv.ctor_np[c] as nat == crate::dom_code::canon_shape(sig, ind).np,
+        sig.consts.contains_key(c) && sig.consts[c].lps == sig.consts[ind].lps,
 {
-    let rid = crate::dom_code::canon_rec(sig, ind);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
+    crate::dom_code::canon_side(sig, ind);
+    reveal(crate::dom_code::ind_side);
     let p = crate::dom_model::ctor_pos(sig, ind, c);
     let sh = crate::dom_code::canon_shape(sig, ind);
     assert(0 <= p < sh.nmin() && sh.ctors[p] == c);
@@ -571,7 +573,7 @@ pub proof fn sort_code(sig: Sig, n: nat, g: Ctx, l: LevelSpec, t2: ExprSpec, d: 
 pub proof fn ctor_inst(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np: nat)
     requires
         ctor_at(sig, c, ind, pc, np),
-        crate::dom_code::has_rec(sig, ind),
+        crate::dom_code::has_canon(sig, ind),
         0 <= pc < crate::dom_code::canon_shape(sig, ind).nmin(),
     ensures ({
         let sh = crate::dom_code::canon_shape(sig, ind);
@@ -952,7 +954,7 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
     crate::dom_rel::ty_ind(sig, n, g, t, t, a);
     crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
-    if crate::dom_code::has_rec(sig, ind) {
+    if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, ty), q, spine_args(ty)[q], spine_args(t)[q]) by {
             assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
@@ -992,7 +994,7 @@ pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: 
     crate::dom_rel::ty_ind(sig, n, g, t, t2, a);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls2), xs2);
-    if crate::dom_code::has_rec(sig, ind) {
+    if crate::dom_code::has_canon(sig, ind) {
         // the levels: the type's instance is the constructor's own
         let n = sig.consts[ind].lps.len();
         let (it, it2) = (crate::dom_rel::iinst(sig, ind, t), crate::dom_rel::iinst(sig, ind, t2));
@@ -1185,6 +1187,7 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
             cf_end_pfield(sig, nn, n, g, c, ls, ind, pc, np, xs, xs2, t, y, y2, w, us[i], d, ec, pv, i);
         } else {
             // a closed field: below its type's canonical code, as the entry is
+            crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
             crate::dom_lift::fq_closed(sig, ind, t, p, i);
             crate::dom_lift::field_facts(sig, ind, p, i);
             assert(crate::dom_lift::cf(sig, ind, pv, p, i) == crate::dom_lift::cf(sig, ind, Seq::empty(), p, i));
@@ -1243,10 +1246,7 @@ pub proof fn cf_end_pfield(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Le
     let f = sh.fields[p][i];
     let e = crate::rec_canon::plow(f, i as nat);
     crate::dom_lift::pfield_facts(sig, ind, p, i);
-    assert(np == sh.np) by {
-        assert(sig.ienv.ctor_np[c] as nat == np);
-        crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
-    }
+    crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
     ctor_pfield_ty(sig, c, ls, ind, pc, np, xs, i);
     let a = xs.subrange(0, np as int);
     assert(spine_args(crate::dom_rel::ir(sig, t, ind)).subrange(0, np as int) =~= a);

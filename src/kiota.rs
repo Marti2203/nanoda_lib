@@ -64,7 +64,7 @@ pub proof fn stuck_hred(sig: Sig, t: ExprSpec, y: ExprSpec)
 pub proof fn pi_not_ind(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, a: ExprSpec, b: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::dom_code::has_rec(sig, ind),
+        crate::dom_code::has_canon(sig, ind),
         crate::dom_model::sem_const(sig, ind, ls),
         !sig.ienv.ctor_ind.contains_key(ind),
         !sig.ienv.recs.contains_key(ind),
@@ -458,6 +458,84 @@ pub proof fn ctor_params_typed(sig: Sig, r: u64, j: int, ls: Seq<LevelSpec>, par
     crate::ti_spine::spine_build(sig, g, hc, tyc, params);
 }
 
+/// `ctor_params_typed` for an inductive of known shape, with or without
+/// its recursor.
+#[verifier::spinoff_prover]
+pub proof fn ctor_params_typed_s(sig: Sig, ind: u64, j: int, ls: Seq<LevelSpec>, params: Seq<ExprSpec>, rest: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        crate::jkernel::lev_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        crate::dom_code::has_canon(sig, ind),
+        0 <= j < crate::dom_code::canon_shape(sig, ind).nmin(),
+        params.len() == crate::dom_code::canon_shape(sig, ind).np,
+        derivable(sig, eq(Seq::empty(), spine_app(ExprSpec::Const(ind, ls), params + rest),
+            spine_app(ExprSpec::Const(ind, ls), params + rest), t)),
+    ensures ({
+        let cid = crate::dom_code::canon_shape(sig, ind).ctors[j];
+        let nc = spine_app(ExprSpec::Const(cid, ls), params);
+        derivable(sig, eq(Seq::empty(), nc, nc, crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), params)))
+    }),
+{
+    let g = Seq::<ExprSpec>::empty();
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    crate::dom_code::canon_side(sig, ind);
+    reveal(crate::dom_code::ind_side);
+    let np = sh.np;
+    let cid = sh.ctors[j];
+    let lps = sig.consts[ind].lps;
+    let hi = ExprSpec::Const(ind, ls);
+    let hc = ExprSpec::Const(cid, ls);
+    let xs = params + rest;
+    let mty = spine_app(hi, xs);
+    // the instance has the inductive's arity
+    crate::beta_model::spine_destruct_app(hi, xs);
+    let t2 = crate::jkernel::head_typed(sig, g, mty, t);
+    let dh = crate::ti_sub::get(sig, eq(g, hi, hi, t2));
+    crate::ti_gen::gen(sig, dh);
+    assert(ls.len() == lps.len());
+    assert(sig.consts[cid].lps == lps);
+    // both types are telescopes over the parameters
+    let ti = sig.consts[ind].ty;
+    let tc = sig.consts[cid].ty;
+    let nf = sh.fields[j].len();
+    assert(cid == sh.ctors[j]);
+    let bi = crate::rec_canon::tbody(ti, np + sh.ni);
+    let bc = crate::rec_canon::tbody(tc, np + nf);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, bi, lps, ls);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.fields[j], bc, lps, ls);
+    let di = crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, ls);
+    let dc = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[j], lps, ls);
+    let tyi = crate::ti_syntax::dty_at(sig, ind, ls);
+    let tyc = crate::ti_syntax::dty_at(sig, cid, ls);
+    assert(tyi == crate::rec_canon::binds(BinderKind::Pi, di, crate::expr_model::subst_expr_levels(bi, lps, ls)));
+    assert(tyc == crate::rec_canon::binds(BinderKind::Pi, dc, crate::expr_model::subst_expr_levels(bc, lps, ls)));
+    assert forall|i: int| 0 <= i < params.len() implies
+        #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyi, params.subrange(0, i)))
+        && crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyc, params.subrange(0, i)))
+        && crate::ti_spine::sdom(tyi, params, i) == crate::ti_spine::sdom(tyc, params, i) by {
+        tel_pre(di, crate::expr_model::subst_expr_levels(bi, lps, ls), params, i);
+        tel_pre(dc, crate::expr_model::subst_expr_levels(bc, lps, ls), params, i);
+        assert(di[i] == dc[i]);
+    }
+    // the parameters are typed at the inductive's domains
+    let tp = prefix_typed(sig, g, hi, xs, np as int, t);
+    assert(xs.subrange(0, np as int) =~= params);
+    crate::jkernel::wf_nil(sig);
+    assert(crate::conv_cr::levs_eq(ls, ls));
+    crate::jkernel::const_d(sig, g, ind, ls, ls);
+    crate::ti_spine::spine_ty(sig, g, hi, tyi, params, tp);
+    // so the constructor takes them
+    crate::jkernel::const_d(sig, g, cid, ls, ls);
+    assert forall|i: int| 0 <= i < params.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyc, params.subrange(0, i))) by {
+        assert(crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyi, params.subrange(0, i))));
+    }
+    assert forall|i: int| 0 <= i < params.len() implies derivable(sig, eq(g, #[trigger] params[i], params[i], crate::ti_spine::sdom(tyc, params, i))) by {
+        assert(crate::ti_spine::is_pi(crate::dom_con_rel::trest(tyi, params.subrange(0, i))));
+    }
+    crate::ti_spine::spine_build(sig, g, hc, tyc, params);
+}
+
 /// A CONSTRUCTOR APPLICATION TYPED AT A CANONICAL INDUCTIVE'S APPLICATION
 /// is one of that inductive's, applied to exactly its constructor's
 /// arguments, at as many levels as it declares: fewer arguments leave a
@@ -471,7 +549,7 @@ pub proof fn ctor_arity_at(sig: Sig, g: Ctx, r2: u64, p: int, x: ExprSpec, s: u6
         0 <= p < rshape(sig, r2).nmin(),
         spine_head(x) is Const,
         spine_head(x)->Const_0 == rshape(sig, r2).ctors[p],
-        crate::dom_code::has_rec(sig, s),
+        crate::dom_code::has_canon(sig, s),
         crate::dom_model::sem_const(sig, s, us),
         !sig.ienv.ctor_ind.contains_key(s),
         !sig.ienv.recs.contains_key(s),
@@ -563,6 +641,98 @@ pub proof fn ctor_arity_at(sig: Sig, g: Ctx, r2: u64, p: int, x: ExprSpec, s: u6
     crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, clv), cps);
 }
 
+/// `ctor_arity_at` for a constructor of an inductive of known shape,
+/// with or without its recursor.
+#[verifier::spinoff_prover]
+pub proof fn ctor_arity_at_s(sig: Sig, g: Ctx, ind2: u64, p: int, x: ExprSpec, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>)
+    requires
+        crate::kclaims::ind_ok(sig),
+        crate::dom_code::has_canon(sig, ind2),
+        0 <= p < crate::dom_code::canon_shape(sig, ind2).nmin(),
+        spine_head(x) is Const,
+        spine_head(x)->Const_0 == crate::dom_code::canon_shape(sig, ind2).ctors[p],
+        crate::dom_code::has_canon(sig, s),
+        crate::dom_model::sem_const(sig, s, us),
+        !sig.ienv.ctor_ind.contains_key(s),
+        !sig.ienv.recs.contains_key(s),
+        ps.len() == crate::dom_code::canon_shape(sig, s).np + crate::dom_code::canon_shape(sig, s).ni,
+        derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, us), ps))),
+    ensures
+        ind2 == s,
+        spine_args(x).len() == crate::dom_code::canon_shape(sig, ind2).np + crate::dom_code::canon_shape(sig, ind2).fields[p].len(),
+        spine_head(x)->Const_1.len() == sig.consts[s].lps.len(),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind2);
+    crate::kstruct::canon_scope(sig, ind2);
+    let (np, nmin, ind) = (sh.np, sh.nmin(), sh.ind);
+    let tt = spine_app(ExprSpec::Const(s, us), ps);
+    let (cid, clv) = (spine_head(x)->Const_0, spine_head(x)->Const_1);
+    crate::beta_model::spine_recompose(x);
+    let cargs = spine_args(x);
+    let hc = ExprSpec::Const(cid, clv);
+    let thc = crate::dom_iota::spine_gen(sig, g, hc, cargs, tt);
+    crate::ti_spine::const_typed(sig, g, cid, clv, thc);
+    crate::dom_ctor_bound::ctor_shape(sig, ind, p);
+    crate::dom_levels::sig_lps_at(sig, sig.consts[ind].lps, clv);
+    crate::iota_sr::ctor_at_s(sig, sh, p, clv);
+    let tds = crate::dom_iota::ctds_s(sig, sh, p, clv);
+    let cb = crate::dom_iota::cbody_s(sig, sh, p, clv);
+    let t0 = crate::ti_syntax::dty_at(sig, cid, clv);
+    let ll = tds.len();
+    assert(t0 == crate::rec_canon::binds(BinderKind::Pi, tds, cb));
+    let nf = sh.fields[p].len();
+    if cargs.len() > ll {
+        // over-applied: the constructor's full application is applied
+        let pf = cargs.subrange(0, ll as int);
+        let tq = prefix_typed(sig, g, hc, cargs, (ll + 1) as int, tt);
+        let e1 = spine_app(hc, cargs.subrange(0, (ll + 1) as int));
+        crate::dom_bound::spine_push(hc, cargs.subrange(0, (ll + 1) as int));
+        assert(cargs.subrange(0, (ll + 1) as int).subrange(0, ll as int) =~= pf);
+        let de = crate::ti_sub::get(sig, eq(g, e1, e1, tq));
+        crate::ti_gen::gen(sig, de);
+        let (pa, pb, l2) = choose|pa: ExprSpec, pb: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(pa, pb, l2, l2)
+            && derivable(sig, eq(g, spine_app(hc, pf), spine_app(hc, pf), pi(pa, pb)));
+        assert forall|i: int| 0 <= i < pf.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(t0, pf.subrange(0, i))) by {
+            crate::ti_spine::tel_next(tds, cb, pf, i);
+        }
+        crate::ti_spine::spine_ty(sig, g, hc, t0, pf, pi(pa, pb));
+        crate::ti_spine::trest_binds(tds, cb, pf);
+        crate::dom_iota::vars_vidx(nf, np);
+        crate::ti_spine::vsub_spine_vars(ExprSpec::Const(ind, clv), crate::dom_iota::vidx(nf, np), pf);
+        let pps = Seq::new(np, |q: int| pf[pf.len() - 1 - crate::dom_iota::vidx(nf, np)[q]]);
+        crate::ti_chain::tchain_sym(sig, g, pi(pa, pb), crate::dom_con_rel::trest(t0, pf));
+        pi_not_ind(sig, g, ind, clv, pps, pa, pb);
+    }
+    if cargs.len() < ll {
+        // under-applied: its type is still a Pi
+        assert forall|i: int| 0 <= i < cargs.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(t0, cargs.subrange(0, i))) by {
+            crate::ti_spine::tel_next(tds, cb, cargs, i);
+        }
+        crate::ti_spine::spine_ty(sig, g, hc, t0, cargs, tt);
+        crate::ti_spine::tel_next(tds, cb, cargs, cargs.len() as int);
+        assert(cargs.subrange(0, cargs.len() as int) =~= cargs);
+        let tr = crate::dom_con_rel::trest(t0, cargs);
+        assert(tr == pi(*tr->Bind_1, *tr->Bind_2));
+        pi_not_ind(sig, g, s, us, ps, *tr->Bind_1, *tr->Bind_2);
+    }
+    // exact: the full application's inductive is the target's
+    assert forall|i: int| 0 <= i < cargs.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(t0, cargs.subrange(0, i))) by {
+        crate::ti_spine::tel_next(tds, cb, cargs, i);
+    }
+    crate::ti_spine::spine_ty(sig, g, hc, t0, cargs, tt);
+    crate::ti_spine::trest_binds(tds, cb, cargs);
+    crate::dom_iota::vars_vidx(nf, np);
+    crate::ti_spine::vsub_spine_vars(ExprSpec::Const(ind, clv), crate::dom_iota::vidx(nf, np), cargs);
+    let cps = Seq::new(np, |q: int| cargs[cargs.len() - 1 - crate::dom_iota::vidx(nf, np)[q]]);
+    let ty = spine_app(ExprSpec::Const(ind, clv), cps);
+    assert(crate::dom_con_rel::trest(t0, cargs) == ty);
+    crate::dom_fund::ind_head_chain(sig, g, s, us, ps, ty);
+    crate::dom_con_rel::stuck_spine(sig, ind, clv, cps);
+    let y = crate::dom_rel::ir(sig, ty, s);
+    crate::ti_hred::hred_stuck_self(sig, ty, y);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, clv), cps);
+}
+
 /// THE KERNEL'S PROJECTION STEP ON TYPED TERMS: a typed projection of a
 /// constructor application with the field's argument fires, to that
 /// argument (the kernel checks neither the structure nor the arity).
@@ -598,19 +768,15 @@ pub proof fn kproj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec)
     assert(crate::dom_proj_sound::struct_sem(sig, s));
     assert(crate::dom_model::sem_const(sig, s, us));
     crate::beta_model::spine_recompose(st);
-    // the constructor's inductive and canonical recursor
+    // the constructor's inductive, of known shape
     let ind2 = sig.ienv.ctor_ind[cid];
-    let r2 = crate::dom_code::canon_rec(sig, ind2);
-    assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind2);
-    let sh2 = rshape(sig, r2);
+    let sh2 = crate::dom_code::canon_shape(sig, ind2);
     let j = choose|j: int| 0 <= j < sh2.ctors.len() && sh2.ctors[j] == cid;
-    ctor_arity_at(sig, g, r2, j, x, s, us, spine_args(st));
+    ctor_arity_at_s(sig, g, ind2, j, x, s, us, spine_args(st));
     // the structure's single constructor
-    assert(crate::rec_canon::rec_canon(sig, crate::dom_code::canon_rec(sig, s)));
-    assert(crate::dom_code::canon_rec(sig, s) == r2) by {
-        crate::ti_syntax::frag_of(sig, r2);
-    }
+    crate::ti_syntax::struct_of_basic(sig, s);
     assert(j == 0);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
     assert(sig.ienv.ctor_np[cid] as nat == ssh.np);
 }
 

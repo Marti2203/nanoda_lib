@@ -566,7 +566,11 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
     let aa = spine_args(x);
     assert(crate::dom_proj_sound::struct_sem(sig, s));
     assert(crate::dom_model::sem_const(sig, s, cl));
-    reveal(crate::ti_syntax::struct_of);
+    crate::ti_syntax::struct_of_basic(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    assert(crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, sh.fields[0][i as int])) by {
+        reveal(crate::ti_syntax::struct_of);
+    }
     // the constructor application's type: the structure at the parameters
     let lps = sig.consts[s].lps;
     crate::dom_con_rel::ctor_inst(sig, c, cl, s, 0, np);

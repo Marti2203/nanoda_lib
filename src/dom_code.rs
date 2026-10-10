@@ -29,6 +29,231 @@ pub open spec fn has_rec(sig: Sig, ind: u64) -> bool {
     exists|rid: u64| rec_canon(sig, rid) && rec_ind(sig, rid) == ind
 }
 
+/// `ind`'s shape is known: from its canonical recursor, or -- a structure,
+/// as nanoda's `get_structure` sees one -- from its declaration
+/// (`struct_decl`), before its recursor is declared.
+pub open spec fn has_canon(sig: Sig, ind: u64) -> bool {
+    struct_decl(sig, ind) || has_rec(sig, ind)
+}
+
+/// A structure's recursor data as its declaration tables give it: one
+/// constructor, no indices, the constructor's parameter and field counts
+/// (what `shape_of` reads).
+pub open spec fn struct_rd(sig: Sig, s: u64) -> crate::expr_arena_bridge::RecDataSpec {
+    let c = sig.ienv.struct_ctor[s];
+    let np = sig.ienv.ctor_np[c] as nat;
+    crate::expr_arena_bridge::RecDataSpec {
+        num_params: np,
+        num_motives: 1,
+        num_minors: 1,
+        major_idx: np + 2,
+        uparams: sig.consts[s].lps,
+        rules: seq![crate::expr_arena_bridge::RecRuleSpec { ctor_id: c, nfields: sig.ienv.ctor_nf[c] as nat, rhs: ExprSpec::Sort(LevelSpec::Zero) }],
+    }
+}
+
+/// AN INDUCTIVE'S SIDE OF `rec_canon` at shape `sh`: its type and its
+/// constructors' types in canonical form over `sh`, with the constructor
+/// tables -- what a canonical recursor and a structure's declaration
+/// (`struct_decl`) both give. It reads no recursor table.
+pub open spec fn ind_core(sig: Sig, ind: u64, sh: IndShape) -> bool {
+    &&& sh.ind == ind && sh.lps == sig.consts[ind].lps
+    &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
+    &&& sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni
+    &&& tbody(sig.consts[ind].ty, sh.np + sh.ni) is Sort
+    &&& sig.consts[ind].ty == binds(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(sig.consts[ind].ty, sh.np + sh.ni))
+    &&& !crate::inductive_model::contains_const_named(sig.consts[ind].ty, seq![ind])
+    &&& forall|j: int| 0 <= j < sh.nmin() ==> {
+        let c = #[trigger] sh.ctors[j];
+        let nf = sh.fields[j].len();
+        let t = sig.consts[c].ty;
+        &&& sig.consts.contains_key(c) && sig.consts[c].val is None && sig.consts[c].lps == sig.consts[ind].lps
+        &&& sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_ind[c] == ind
+        &&& sig.ienv.ctor_np.contains_key(c) && sig.ienv.ctor_np[c] as nat == sh.np
+        &&& t == binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf))
+        &&& tbody(t, sh.np + nf) == ind_app(ind, sh.us(), vars(nf, sh.np) + sh.tss[j])
+        &&& sh.tss[j].len() == sh.ni
+        &&& forall|q: int| 0 <= q < sh.ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
+    }
+}
+
+/// ... with each field of an admitted kind.
+#[verifier::opaque]
+pub open spec fn ind_side(sig: Sig, ind: u64, sh: IndShape) -> bool {
+    &&& ind_core(sig, ind, sh)
+    &&& forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len()
+        ==> field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, #[trigger] sh.fields[j][k])
+}
+
+/// A STRUCTURE FROM ITS DECLARATION, as nanoda's `get_structure` sees
+/// one: an entry in the structure table whose one constructor is declared
+/// with its tables, the shape they give in canonical form (`ind_core`),
+/// its fields typed by parameters (the model's structures, `struct_of`).
+/// It reads no recursor table: a structure is one with or without its
+/// recursor, and in the recursor-stripped signature (`ti_strip`).
+#[verifier::opaque]
+pub open spec fn struct_decl(sig: Sig, s: u64) -> bool {
+    let c = sig.ienv.struct_ctor[s];
+    let sh = shape_of(sig, struct_rd(sig, s), s);
+    &&& sig.ienv.struct_ctor.contains_key(s)
+    &&& sig.ienv.ctor_np.contains_key(c) && sig.ienv.ctor_nf.contains_key(c)
+    &&& sh.fields[0].len() == sig.ienv.ctor_nf[c] as nat
+    &&& ind_core(sig, s, sh)
+    &&& forall|k: int| 0 <= k < sh.fields[0].len() ==> crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, #[trigger] sh.fields[0][k])
+}
+
+/// A canonical recursor gives its inductive's side.
+pub proof fn rec_ind_side(sig: Sig, rid: u64)
+    requires
+        rec_canon(sig, rid),
+    ensures
+        ind_side(sig, rec_ind(sig, rid), shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid))),
+{
+    reveal(ind_side);
+    let ind = rec_ind(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let sh = shape_of(sig, rd, ind);
+    assert forall|j: int| 0 <= j < sh.nmin() implies {
+        let c = #[trigger] sh.ctors[j];
+        let nf = sh.fields[j].len();
+        let t = sig.consts[c].ty;
+        &&& sig.consts.contains_key(c) && sig.consts[c].val is None && sig.consts[c].lps == sig.consts[ind].lps
+        &&& sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_ind[c] == ind
+        &&& sig.ienv.ctor_np.contains_key(c) && sig.ienv.ctor_np[c] as nat == sh.np
+        &&& !sig.ienv.recs.contains_key(c)
+        &&& t == binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf))
+        &&& tbody(t, sh.np + nf) == ind_app(ind, sh.us(), vars(nf, sh.np) + sh.tss[j])
+        &&& sh.tss[j].len() == sh.ni
+        &&& forall|q: int| 0 <= q < sh.ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
+    } by {
+        assert(sh.fields[j].len() == rd.rules[j].nfields);
+    }
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+        field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, #[trigger] sh.fields[j][k]) by {
+        assert(sh.ctors[j] == sh.ctors[j]);
+        assert(sh.fields[j].len() == rd.rules[j].nfields);
+    }
+}
+
+/// A known shape gives its inductive's side.
+pub proof fn canon_side(sig: Sig, ind: u64)
+    requires
+        has_canon(sig, ind),
+    ensures
+        ind_side(sig, ind, canon_shape(sig, ind)),
+{
+    reveal(struct_decl);
+    reveal(canon_shape);
+    if has_rec(sig, ind) {
+        let rid = canon_rec(sig, ind);
+        assert(rec_canon(sig, rid) && rec_ind(sig, rid) == ind);
+        rec_ind_side(sig, rid);
+    } else {
+        let sh = shape_of(sig, struct_rd(sig, ind), ind);
+        reveal(ind_side);
+        reveal(field_kind);
+        assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+            field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, #[trigger] sh.fields[j][k]) by {
+            assert(j == 0);
+            assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        }
+    }
+}
+
+/// `canon_shape` where a canonical recursor exists: its shape.
+pub proof fn canon_shape_rec(sig: Sig, ind: u64)
+    requires
+        has_rec(sig, ind),
+    ensures
+        canon_shape(sig, ind) == shape_of(sig, sig.ienv.recs[canon_rec(sig, ind)], ind),
+        rec_canon(sig, canon_rec(sig, ind)) && rec_ind(sig, canon_rec(sig, ind)) == ind,
+{
+    reveal(canon_shape);
+}
+
+/// `canon_shape` of a structure before its recursor: its tables' shape.
+pub proof fn canon_shape_struct(sig: Sig, ind: u64)
+    requires
+        !has_rec(sig, ind),
+    ensures
+        canon_shape(sig, ind) == shape_of(sig, struct_rd(sig, ind), ind),
+{
+    reveal(canon_shape);
+}
+
+/// A structure's declaration reads only the constants and the tables.
+pub proof fn struct_decl_congr(s1: Sig, s2: Sig, s: u64)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        struct_decl(s1, s) == struct_decl(s2, s),
+        shape_of(s1, struct_rd(s1, s), s) == shape_of(s2, struct_rd(s2, s), s),
+{
+    reveal(struct_decl);
+    let sh = shape_of(s1, struct_rd(s1, s), s);
+    assert(sh == shape_of(s2, struct_rd(s2, s), s));
+    if struct_decl(s1, s) {
+        assert(ind_core(s2, s, sh));
+    }
+    if struct_decl(s2, s) {
+        assert(ind_core(s1, s, sh));
+    }
+}
+
+/// A structure's declaration survives an extension that keeps the
+/// constants and the constructor and structure tables.
+pub proof fn struct_decl_grow(s1: Sig, s2: Sig, s: u64)
+    requires
+        struct_decl(s1, s),
+        forall|c: u64| #[trigger] s1.consts.contains_key(c) ==> s2.consts.contains_key(c) && s2.consts[c] == s1.consts[c],
+        forall|k: u64| #[trigger] s1.ienv.ctor_ind.contains_key(k) ==> s2.ienv.ctor_ind.contains_key(k) && s2.ienv.ctor_ind[k] == s1.ienv.ctor_ind[k],
+        forall|k: u64| #[trigger] s1.ienv.ctor_np.contains_key(k) ==> s2.ienv.ctor_np.contains_key(k) && s2.ienv.ctor_np[k] == s1.ienv.ctor_np[k],
+        forall|k: u64| #[trigger] s1.ienv.ctor_nf.contains_key(k) ==> s2.ienv.ctor_nf.contains_key(k) && s2.ienv.ctor_nf[k] == s1.ienv.ctor_nf[k],
+        forall|k: u64| #[trigger] s1.ienv.struct_ctor.contains_key(k) ==> s2.ienv.struct_ctor.contains_key(k) && s2.ienv.struct_ctor[k] == s1.ienv.struct_ctor[k],
+    ensures
+        struct_decl(s2, s),
+        shape_of(s2, struct_rd(s2, s), s) == shape_of(s1, struct_rd(s1, s), s),
+{
+    reveal(struct_decl);
+    let c = s1.ienv.struct_ctor[s];
+    assert(s1.consts.contains_key(s));
+    assert(s1.consts.contains_key(c)) by {
+        let sh = shape_of(s1, struct_rd(s1, s), s);
+        assert(sh.ctors[0] == c);
+    }
+    let sh = shape_of(s1, struct_rd(s1, s), s);
+    let rd = struct_rd(s1, s);
+    assert(s1.ienv.ctor_np.contains_key(c) && s1.ienv.ctor_nf.contains_key(c));
+    assert(struct_rd(s2, s) == rd);
+    let sh2 = shape_of(s2, rd, s);
+    assert(sh2.ctors =~= sh.ctors);
+    assert(s2.consts[sh.ctors[0]] == s1.consts[sh.ctors[0]]);
+    assert(sh2.fields =~= sh.fields);
+    assert(sh2.tss =~= sh.tss);
+    assert(sh2 == sh);
+    assert(ind_core(s2, s, sh)) by {
+        assert forall|j: int| 0 <= j < sh.nmin() implies s2.consts[#[trigger] sh.ctors[j]] == s1.consts[sh.ctors[j]] by {
+            assert(j == 0);
+        }
+    }
+}
+
+/// A structure's declared shape: one constructor, the table's, no indices.
+pub proof fn struct_decl_shape(sig: Sig, s: u64)
+    requires
+        struct_decl(sig, s),
+    ensures ({
+        let sh = shape_of(sig, struct_rd(sig, s), s);
+        &&& sh.nmin() == 1 && sh.ni == 0
+        &&& sh.ctors[0] == sig.ienv.struct_ctor[s]
+        &&& sh.np == sig.ienv.ctor_np[sig.ienv.struct_ctor[s]] as nat
+        &&& sh.fields[0].len() == sig.ienv.ctor_nf[sig.ienv.struct_ctor[s]] as nat
+    }),
+{
+    reveal(struct_decl);
+}
+
 pub open spec fn canon_rec(sig: Sig, ind: u64) -> u64 {
     choose|rid: u64| rec_canon(sig, rid) && rec_ind(sig, rid) == ind
 }
@@ -119,9 +344,11 @@ pub proof fn node_le_cval(ind: u64, pc: nat, sm: bool, fs: Seq<Cpt>, u: Cpt)
     }
 }
 
-/// The shape of `ind`'s canonical recursor.
+/// `ind`'s shape: its canonical recursor's, or a structure's from its
+/// declaration before its recursor (the two agree, `struct_agree`).
+#[verifier::opaque]
 pub open spec fn canon_shape(sig: Sig, ind: u64) -> IndShape {
-    shape_of(sig, sig.ienv.recs[canon_rec(sig, ind)], ind)
+    if has_rec(sig, ind) { shape_of(sig, sig.ienv.recs[canon_rec(sig, ind)], ind) } else { shape_of(sig, struct_rd(sig, ind), ind) }
 }
 
 /// Level arguments written over `ind`'s level parameters, at its instance
@@ -159,7 +386,7 @@ pub open spec fn styped(sig: Sig, e: ExprSpec) -> bool
 pub open spec fn sdoms_typed(sig: Sig, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = canon_shape(sig, h->Const_0);
-    h is Const && has_rec(sig, h->Const_0) ==>
+    h is Const && has_canon(sig, h->Const_0) ==>
         forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
             ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
@@ -205,7 +432,7 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_rec(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -213,7 +440,7 @@ pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
 /// What subject reduction needs of `ind`: its canonical tables' syntactic
 /// half, at any sort.
 pub open spec fn canon_sr(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_rec(sig, ind) && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && fields_typed(sig, ind)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -234,7 +461,7 @@ pub open spec fn tabled(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>) 
 /// The arguments a code keeps: a canonical inductive's parameters (its
 /// indices never reach typing), any other type former's all.
 pub open spec fn code_args(sig: Sig, ind: u64, args: Seq<Cpt>) -> Seq<Cpt> {
-    if rk(sig, ind) >= 0 && has_rec(sig, ind) && canon_shape(sig, ind).np <= args.len() {
+    if rk(sig, ind) >= 0 && has_canon(sig, ind) && canon_shape(sig, ind).np <= args.len() {
         args.subrange(0, canon_shape(sig, ind).np as int)
     } else {
         args

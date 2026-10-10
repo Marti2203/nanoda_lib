@@ -188,7 +188,7 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_rec(sig, sig.ienv.ctor_ind[cid])
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
         && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
         && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
@@ -198,12 +198,62 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
             ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat
 }
 
+/// A STRUCTURE'S CANONICAL RECURSOR IS OF ITS DECLARED SHAPE: the
+/// structure and field-count clauses of `ind_ok_hyp` (its one constructor
+/// is the table's, with the table's field count).
+pub proof fn struct_agree(sig: crate::ti_syntax::Sig, rid: u64)
+    requires
+        ind_ok_hyp(sig),
+        crate::rec_canon::rec_canon(sig, rid),
+        forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == crate::rec_canon::rec_ind(sig, rid)
+            ==> r2 == rid,
+        crate::dom_code::struct_decl(sig, crate::dom_rec_ty::rshape(sig, rid).ind),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        crate::rec_canon::shape_of(sig, crate::dom_code::struct_rd(sig, sh.ind), sh.ind) == sh
+    }),
+{
+    reveal(ind_ok_hyp);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let ind = sh.ind;
+    assert(crate::dom_code::has_rec(sig, ind));
+    crate::dom_code::canon_shape_rec(sig, ind);
+    let r2 = crate::dom_code::canon_rec(sig, ind);
+    assert(r2 == rid);
+    assert(crate::dom_code::canon_shape(sig, ind) == sh);
+    reveal(crate::dom_code::struct_decl);
+    let c = sig.ienv.struct_ctor[ind];
+    assert(sig.ienv.struct_ctor.contains_key(ind));
+    assert(crate::dom_code::smash(sig, ind));
+    crate::ti_syntax::struct_of_basic(sig, ind);
+    assert(sh.ctors[0] == c);
+    assert(sig.ienv.ctor_nf.contains_key(c));
+    assert(sig.ienv.ctor_ind[c] == ind) by {
+        reveal(crate::dom_code::ind_side);
+        crate::dom_code::rec_ind_side(sig, rid);
+        assert(sh.ctors[0] == sh.ctors[0]);
+    }
+    assert(sh.fields[0].len() == sig.ienv.ctor_nf[c] as nat);
+    assert(sig.ienv.ctor_np[c] as nat == sh.np) by {
+        assert(sh.ctors[0] == sh.ctors[0]);
+    }
+    let rd = sig.ienv.recs[rid];
+    let srd = crate::dom_code::struct_rd(sig, ind);
+    let sh2 = crate::rec_canon::shape_of(sig, srd, ind);
+    assert(rd.rules[0].ctor_id == c);
+    assert(rd.rules[0].nfields == sh.fields[0].len());
+    assert(sh2.ctors =~= sh.ctors);
+    assert(sh2.fields =~= sh.fields);
+    assert(sh2.tss =~= sh.tss);
+    assert(sh2 == sh);
+}
+
 pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
     &&& crate::ti_syntax::iota_ok(sig)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_np.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_rec(sig, sig.ienv.ctor_ind[cid])
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
         && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
         && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
@@ -1057,7 +1107,8 @@ pub proof fn cw_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
             // the unit structure, smashed, with no fields
             assert(sig.ienv.struct_ctor.contains_key(ind));
             assert(crate::dom_code::smash(sig, ind));
-            let r = crate::kstruct::struct_rec(sig, ind);
+            crate::kstruct::struct_facts(sig, ind);
+            crate::dom_ctor_bound::ctor_shape(sig, ind, 0);
             let sh = crate::dom_code::canon_shape(sig, ind);
             assert(sh.nmin() == 1) by {
                 reveal(crate::ti_syntax::struct_of);
@@ -1167,7 +1218,8 @@ pub proof fn cw_eta(
             assert(ind_ok(sig));
             // the structure: smashed, its constructor's arities the kernel's
             assert(sig.ienv.struct_ctor.contains_key(ind));
-            let r = crate::kstruct::struct_rec(sig, ind);
+            crate::kstruct::struct_facts(sig, ind);
+            crate::dom_ctor_bound::ctor_shape(sig, ind, 0);
             let sh = crate::dom_code::canon_shape(sig, ind);
             assert(sh.nmin() == 1) by {
                 reveal(crate::ti_syntax::struct_of);
@@ -1431,12 +1483,10 @@ pub proof fn cwh_k(
             let sm = choose|s: ExprSpec| #[trigger] typed(dty, denv, d, mty, s);
             assert(ind_ok(sig));
             assert(sig.ienv.ctor_ind.contains_key(cid));
-            let rr = crate::dom_code::canon_rec(sig, ind);
-            assert(crate::rec_canon::rec_canon(sig, rr) && crate::rec_canon::rec_ind(sig, rr) == ind);
-            let sh = crate::rec_canon::shape_of(sig, sig.ienv.recs[rr], ind);
+            let sh = crate::dom_code::canon_shape(sig, ind);
             let j = choose|j: int| 0 <= j < sh.ctors.len() && sh.ctors[j] == cid;
-            assert(sig.ienv.ctor_np[cid] as nat == sh.np);
-            crate::kiota::ctor_params_typed(sig, rr, j, ls, params, rest, sm);
+            crate::dom_ctor_bound::ctor_shape(sig, ind, j);
+            crate::kiota::ctor_params_typed_s(sig, ind, j, ls, params, rest, sm);
             assert(typed(dty, denv, d, nc, crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), params)));
             assert(rtyped(dty, denv, d, nc));
             assert(jconv(dty, denv, d, major, nc));
@@ -1545,7 +1595,8 @@ pub proof fn cwh_eta_exp(
             let lt = type_sort(dty, denv, d, ety);
             crate::ti_sr::uniq(sig, g0, e, ety, t);
             assert(sig.ienv.struct_ctor.contains_key(ind));
-            let rr = crate::kstruct::struct_rec(sig, ind);
+            crate::kstruct::struct_facts(sig, ind);
+            crate::dom_ctor_bound::ctor_shape(sig, ind, 0);
             let sh = crate::dom_code::canon_shape(sig, ind);
             assert(sh.nmin() == 1) by {
                 reveal(crate::ti_syntax::struct_of);

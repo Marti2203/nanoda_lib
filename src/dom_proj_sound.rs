@@ -462,12 +462,18 @@ pub proof fn proj_one_ctor(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpe
 }
 
 /// The signature's facts about its structures the model needs: the
-/// structure and its constructor are interpreted at every instance.
+/// structure in scope, never a proposition, its and its constructor's
+/// types closed types, both interpreted at every instance. Stated of the
+/// structure, not its recursor: nanoda sees a structure from its
+/// declaration, before its recursor (docs/TYPED_TARGET.md, B8).
 pub open spec fn struct_sem(sig: Sig, s: u64) -> bool {
     let sh = canon_shape(sig, s);
     &&& !sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s)
     &&& crate::dom_code::canon_sr(sig, s)
-    &&& crate::dom_rec_ty::rec_scope(sig, crate::dom_code::canon_rec(sig, s))
+    &&& crate::dom_rec_ty::ind_scope(sig, sh)
+    &&& crate::dom_code::never_prop(sig, s)
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
         #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls)
 }
@@ -583,10 +589,6 @@ pub proof fn proj_iota_sup(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
     assert(crate::ti_proj::sfield(sig, s, i as nat, us) == f);
     crate::ti_spine::vsub_var(vv, xs);
     assert(mem(sig, args[q], rho, a));
-    // the canonical recursor's shape is the structure's
-    let rid = crate::dom_code::canon_rec(sig, s);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s);
-    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
     let pv = Seq::new(np, |k: int| if k == q { a } else { Cpt::Bot });
     assert(sh.pdoms[q] is Sort);
     let dps = proj_chain(sig, s, us, q, a, pv);
@@ -605,7 +607,7 @@ pub proof fn proj_iota_sup(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
             crate::dom_model::mem_bot(sig, args[np + k], rho);
         }
     }
-    crate::dom_iota::con_major(sig, rid, 0, us, dps, pv, xf, ak, args, rho, xf);
+    crate::dom_iota::con_major_s(sig, sh, 0, us, dps, pv, xf, ak, args, rho, xf);
     crate::beta_model::spine_recompose(x);
     let node = Cpt::Nd(NdKey::Con(s, 0, crate::dom_code::smash(sig, s)), xf);
     // the projected field is not bottom, so the value is the node
@@ -640,17 +642,14 @@ proof fn proj_chain(sig: Sig, s: u64, us: Seq<LevelSpec>, q: int, a: Cpt, pv: Se
         typed(a, Cpt::U),
         pv == Seq::new(canon_shape(sig, s).np, |k: int| if k == q { a } else { Cpt::Bot }),
     ensures
-        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at(sig, crate::dom_code::canon_rec(sig, s), us),
+        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at_s(sig, canon_shape(sig, s), us),
             crate::dom_model::bot_env(), dps, pv),
 {
     reveal(crate::ti_syntax::struct_of);
     let sh = canon_shape(sig, s);
     let np = sh.np;
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
-    let rid = crate::dom_code::canon_rec(sig, s);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s);
-    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
-    let pd = crate::dom_iota::pdoms_at(sig, rid, us);
+    let pd = crate::dom_iota::pdoms_at_s(sig, sh, us);
     let dps = Seq::new(np, |k: int| if k == q { Cpt::U } else { Cpt::Bot });
     crate::dom_sound::typed_basic();
     assert forall|k: int| 0 <= k < np implies #[trigger] crate::dom_sound::dfit(sig, pd[k],
@@ -690,36 +689,33 @@ proof fn proj_fields_ok(sig: Sig, s: u64, us: Seq<LevelSpec>, q: int, a: Cpt, v2
         q == canon_shape(sig, s).np + i - 1 - canon_shape(sig, s).fields[0][i]->Var_0,
         typed(a, Cpt::U),
         typed(v2, a),
-        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at(sig, crate::dom_code::canon_rec(sig, s), us),
+        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at_s(sig, canon_shape(sig, s), us),
             crate::dom_model::bot_env(), dps, pv),
         pv == Seq::new(canon_shape(sig, s).np, |k: int| if k == q { a } else { Cpt::Bot }),
         xf == Seq::new(canon_shape(sig, s).fields[0].len(), |k: int| if k == i { v2 } else { Cpt::Bot }),
         ak == Seq::new(canon_shape(sig, s).fields[0].len(), |k: int| if k == i { a } else { Cpt::Bot }),
     ensures
-        crate::dom_iota::cf_fields_ok(sig, crate::dom_code::canon_rec(sig, s), 0, us, dps, pv, xf, ak),
+        crate::dom_iota::cf_fields_ok_s(sig, canon_shape(sig, s), 0, us, dps, pv, xf, ak),
 {
     reveal(crate::ti_syntax::struct_of);
     let sh = canon_shape(sig, s);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
-    let rid = crate::dom_code::canon_rec(sig, s);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == s);
-    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
     assert(crate::dom_model::sem_const(sig, s, us));
     crate::dom_sound::typed_basic();
     crate::dom_model::typed_wf(v2, a);
     crate::dom_model::typed_wf(Cpt::Bot, Cpt::U);
     crate::dom_compact::le_refl(a);
     assert(pv[q] == a);
-    assert forall|k: int| 0 <= k < xf.len() implies crate::dom_iota::ispvar(sig, rid, 0, k)
-        && !crate::dom_iota::isrec(sig, rid, 0, k) by {
+    assert forall|k: int| 0 <= k < xf.len() implies crate::dom_iota::ispvar_s(sig, sh, 0, k)
+        && !crate::dom_iota::isrec_s(sh, 0, k) by {
         assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
     }
-    assert forall|k: int| 0 <= k < xf.len() && crate::dom_iota::ispvar(sig, rid, 0, k) implies
-        wf(#[trigger] ak[k]) && le(ak[k], pv[crate::dom_iota::pvq(sig, rid, 0, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+    assert forall|k: int| 0 <= k < xf.len() && crate::dom_iota::ispvar_s(sig, sh, 0, k) implies
+        wf(#[trigger] ak[k]) && le(ak[k], pv[crate::dom_iota::pvq_s(sig, sh, 0, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
         if k == i {
-            assert(crate::dom_iota::pvq(sig, rid, 0, k) == q);
+            assert(crate::dom_iota::pvq_s(sig, sh, 0, k) == q);
         } else {
-            assert(pv[crate::dom_iota::pvq(sig, rid, 0, k)] == pv[crate::dom_iota::pvq(sig, rid, 0, k)]);
+            assert(pv[crate::dom_iota::pvq_s(sig, sh, 0, k)] == pv[crate::dom_iota::pvq_s(sig, sh, 0, k)]);
         }
     }
     assert(crate::dom_code::aw(xf));

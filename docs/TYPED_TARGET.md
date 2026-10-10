@@ -1968,6 +1968,38 @@ and eta step is vacuous (about thirty sites use that). Stages:
     between a structure and its constructor, nanoda's structure steps
     read the constructor's tables (`ctor_num_fields`), which are absent,
     so no structure fact is needed there.
+    S2/S3 DONE (structures rebased). `dom_code::struct_decl(sig, s)`: an
+    entry in the structure table whose constructor is declared with its
+    parameter and field counts, the structure's and constructor's types in
+    canonical form over the shape the tables give (`struct_rd`,
+    `ind_core`), fields typed by parameters -- read off the declaration,
+    no recursor. `has_canon := struct_decl || has_rec`; `canon_shape` is
+    the canonical recursor's shape where there is one, else the tables'
+    (opaque, with `canon_shape_rec` / `canon_shape_struct`). Where both
+    exist they agree: `rec_scope_g` states it, certified at the export
+    from `ind_ok_hyp`'s structure and field-count clauses
+    (`kclaims::struct_agree`, `twin_scope_at`). The constructor machinery
+    is indexed by a shape in scope, not a recursor
+    (`dom_rec_ty::ind_scope`; `dom_iota::*_s`, `iota_sr::*_s`,
+    `kiota::ctor_params_typed_s`/`ctor_arity_at_s`; the recursor versions
+    wrap them), and the kernel's structure steps read the structure's
+    facts from `dom_proj_sound::struct_sem` (`kstruct::struct_facts`,
+    `canon_scope`), which now states them of the structure: in scope,
+    never a proposition, its and its constructor's types closed types. The
+    recursor-stripped signature (`ti_strip::strip`) also hides the
+    structure table, so its derivations still have no structure rule.
+    Model hypothesis change: `struct_sem` (part of `sig_sr`) gains
+    `never_prop` and the two closed-type facts, which the recursor's
+    interpretation (`rec_model`) used to supply.
+    S4 (remaining): weaken `ind_ok`'s constructor/structure/field-count
+    clauses to hold once the shape is known. A probe leaves the kernel's
+    K step and projection step, which reach a constructor's inductive by
+    typing: K through nanoda's own check that the major premise's head is
+    the recursor's inductive (to thread into `cwh_k`); the projection
+    through a head-injectivity argument for an inductive of unknown shape
+    (nanoda's `reduce_proj` checks only that the head is a constructor);
+    and the structure steps through a clause that a structure with a
+    declared constructor has a known shape.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

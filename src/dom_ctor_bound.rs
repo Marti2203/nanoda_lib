@@ -315,7 +315,7 @@ pub proof fn tb_cod(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv
 pub proof fn canon_prefix(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ws: Seq<Cpt>)
     requires
         rk(sig, ind) >= 0,
-        has_rec(sig, ind),
+        has_canon(sig, ind),
         canon_shape(sig, ind).np <= ws.len(),
     ensures
         canon_code(sig, ind, ls, ws) == canon_code(sig, ind, ls, ws.subrange(0, canon_shape(sig, ind).np as int)),
@@ -346,7 +346,7 @@ pub proof fn canon_prefix(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ws: Seq<Cpt>)
 /// The shape of a canonical inductive and of its constructor `pc`'s type.
 pub proof fn ctor_shape(sig: Sig, ind: u64, pc: int)
     requires
-        has_rec(sig, ind),
+        has_canon(sig, ind),
         0 <= pc < canon_shape(sig, ind).nmin(),
     ensures ({
         let sh = canon_shape(sig, ind);
@@ -363,10 +363,14 @@ pub proof fn ctor_shape(sig: Sig, ind: u64, pc: int)
         &&& sh.tss[pc].len() == sh.ni
         &&& sig.consts[sh.ctors[pc]].lps == sig.consts[ind].lps
         &&& sh.lps == sig.consts[ind].lps
+        &&& sig.consts.contains_key(sh.ctors[pc]) && sig.consts[sh.ctors[pc]].val is None
+        &&& sig.ienv.ctor_ind.contains_key(sh.ctors[pc]) && sig.ienv.ctor_ind[sh.ctors[pc]] == ind
+        &&& sig.ienv.ctor_np.contains_key(sh.ctors[pc]) && sig.ienv.ctor_np[sh.ctors[pc]] as nat == sh.np
+        &&& sh.ind == ind
     }),
 {
-    let rid = canon_rec(sig, ind);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
+    canon_side(sig, ind);
+    reveal(crate::dom_code::ind_side);
     let sh = canon_shape(sig, ind);
     assert(sh.ctors[pc] == sh.ctors[pc]);
 }
@@ -406,7 +410,7 @@ pub proof fn ind_bound(sig: Sig, ind: u64, us: Seq<LevelSpec>, args: Seq<ExprSpe
 /// The inductive's shape facts alone.
 pub proof fn ctor_shape_ind(sig: Sig, ind: u64)
     requires
-        has_rec(sig, ind),
+        has_canon(sig, ind),
     ensures ({
         let sh = canon_shape(sig, ind);
         &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
@@ -416,8 +420,8 @@ pub proof fn ctor_shape_ind(sig: Sig, ind: u64)
             crate::rec_canon::tbody(sig.consts[ind].ty, sh.np + sh.ni))
     }),
 {
-    let rid = canon_rec(sig, ind);
-    assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
+    canon_side(sig, ind);
+    reveal(crate::dom_code::ind_side);
 }
 
 /// A telescope past `k` binders.

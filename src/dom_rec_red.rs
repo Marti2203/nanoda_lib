@@ -256,6 +256,7 @@ pub proof fn rec_red_eta(sig: Sig, rid: u64, lv: Seq<LevelSpec>, heads: Seq<Expr
     let h = ExprSpec::Const(rid, lv);
     let m = spine_app(h, heads.push(x));
     reveal(crate::ti_syntax::struct_of);
+    crate::dom_rec_ty::scope_canon(sig, rid);
     crate::dom_rec_ty::scope_ctor(sig, rid, 0);
     crate::dom_rec_ty::scope_ctor_ind(sig, rid);
     assert(rd.major_idx == heads.len());

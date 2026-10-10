@@ -191,7 +191,7 @@ pub open spec fn pargs_typed(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -
 pub open spec fn pdoms_typed(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = crate::dom_code::canon_shape(sig, h->Const_0);
-    h is Const && crate::dom_code::has_rec(sig, h->Const_0) ==>
+    h is Const && crate::dom_code::has_canon(sig, h->Const_0) ==>
         forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
             ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
@@ -281,7 +281,7 @@ pub proof fn ps_inst2(sig: Sig, g: crate::ti_syntax::Ctx, pdoms: Seq<ExprSpec>, 
 pub proof fn ps_pair(sig: Sig, g: crate::ti_syntax::Ctx, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>, x: ExprSpec, t: ExprSpec,
     a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
     requires
-        crate::dom_code::has_rec(sig, j),
+        crate::dom_code::has_canon(sig, j),
         crate::dom_levels::sig_lps(sig),
         crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, t)),
         t is Sort,
@@ -357,7 +357,7 @@ pub proof fn ps_mem_lv(ss: Sig, sig: Sig, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<
     requires
         crate::dom_sound::sound_oracle(ss, sig),
         ss == crate::ti_strip::strip(sig),
-        crate::dom_code::has_rec(sig, j),
+        crate::dom_code::has_canon(sig, j),
         crate::dom_levels::sig_lps(sig),
         crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, crate::ti_syntax::sort(l))),
         forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, j).pdoms.len() ==> (#[trigger] crate::dom_code::canon_shape(sig, j).pdoms[q]) is Sort,

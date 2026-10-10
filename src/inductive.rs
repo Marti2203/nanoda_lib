@@ -10610,6 +10610,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         proof {
             reveal(params_conv);
+            assert(locs.len() == st.local_params@.len());
+            assert(params_conv(env, *st, locs, bts, locs.len() as int));
+            assert forall|k: int| 0 <= k < st.local_params@.len() implies #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
+                && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])))
+                && bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])) by {
+                assert(params_conv(env, *st, locs, bts, locs.len() as int));
+            }
         }
         let ghost aids0 = crate::util_model::arena_ids(*self.ctx);
         let ghost c0 = crate::util::unique_count(*self.ctx) as nat;

@@ -422,7 +422,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 /// propositions.
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
-    &&& crate::dom_code::has_rec(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
+    &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
     &&& forall|k: int| 0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() ==>
         crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             #[trigger] crate::dom_code::canon_shape(sig, s).fields[0][k])
@@ -432,6 +432,18 @@ pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
     &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]
         crate::rec_canon::rec_canon(sig, r1) && crate::rec_canon::rec_ind(sig, r1) == s
         && crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s ==> r1 == r2
+}
+
+/// A structure's shape is known, with one constructor and no indices.
+pub proof fn struct_of_basic(sig: Sig, s: u64)
+    requires
+        struct_of(sig, s),
+    ensures
+        crate::dom_code::has_canon(sig, s),
+        crate::dom_code::canon_shape(sig, s).nmin() == 1,
+        crate::dom_code::canon_shape(sig, s).ni == 0,
+{
+    reveal(struct_of);
 }
 
 /// The inductive is a proposition at every instance.

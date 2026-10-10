@@ -343,7 +343,7 @@ pub proof fn pconv_symm(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec)
     let sh = crate::dom_code::canon_shape(sig, ind);
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     let (i1, i2) = (crate::dom_rel::iinst(sig, ind, ir(sig, t, ind)), crate::dom_rel::iinst(sig, ind, ir(sig, t2, ind)));
-    if crate::dom_code::has_rec(sig, ind) {
+    if crate::dom_code::has_canon(sig, ind) {
         crate::ti_ls2::levs_eq_sym(i1, i2);
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
             implies #[trigger] peq(sig, g, ind, i2, q, a2[q], a[q]) by {
@@ -369,7 +369,7 @@ pub proof fn pconv_trans(sig: Sig, g: Ctx, ind: u64, t1: ExprSpec, t2: ExprSpec,
         crate::beta_model::spine_args(ir(sig, t3, ind)));
     let (i1, i2, i3) = (crate::dom_rel::iinst(sig, ind, ir(sig, t1, ind)), crate::dom_rel::iinst(sig, ind, ir(sig, t2, ind)),
         crate::dom_rel::iinst(sig, ind, ir(sig, t3, ind)));
-    if crate::dom_code::has_rec(sig, ind) {
+    if crate::dom_code::has_canon(sig, ind) {
         crate::ti_ls2::levs_eq_sym(i1, i2);
         crate::ti_ls2::levs_eq_trans(i1, i2, i3);
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
@@ -480,7 +480,7 @@ pub proof fn cpar_conv(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec, s: 
     let (a, b, c) = (crate::beta_model::spine_args(x), crate::beta_model::spine_args(ir(sig, t, ind)),
         crate::beta_model::spine_args(ir(sig, s, ind)));
     let (it, is) = (crate::dom_rel::iinst(sig, ind, ir(sig, t, ind)), crate::dom_rel::iinst(sig, ind, ir(sig, s, ind)));
-    if crate::dom_code::has_rec(sig, ind) {
+    if crate::dom_code::has_canon(sig, ind) {
         let xl = crate::beta_model::spine_head(x)->Const_1;
         if xl.len() == sig.consts[ind].lps.len() {
             crate::ti_ls2::levs_eq_trans(xl, it, is);

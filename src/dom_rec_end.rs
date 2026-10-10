@@ -372,6 +372,7 @@ pub proof fn rec_canon_ok(sig: Sig, c: u64)
     let ind = crate::rec_canon::rec_ind(sig, c);
     assert(crate::dom_model::sem_const(sig, sh.ind, crate::dom_rel::lpad(Seq::empty(), sig.consts[sh.ind].lps.len())));
     assert(crate::dom_code::has_rec(sig, ind));
+    crate::dom_code::canon_shape_rec(sig, ind);
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == c);
@@ -627,6 +628,7 @@ pub proof fn scope_dir(s1: Sig, s2: Sig, c: u64)
     canon_congr(s1, s2, c);
     assert(crate::rec_canon::rec_ind(s1, c) == crate::rec_canon::rec_ind(s2, c));
     assert(crate::dom_rec_ty::rshape(s1, c) == crate::dom_rec_ty::rshape(s2, c));
+    crate::dom_code::struct_decl_congr(s1, s2, crate::dom_rec_ty::rshape(s1, c).ind);
     assert forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(s2, r2)
         && crate::rec_canon::rec_ind(s2, r2) == crate::rec_canon::rec_ind(s2, c) implies r2 == c by {
         canon_congr(s1, s2, r2);
@@ -891,6 +893,7 @@ pub proof fn rc_smash_norec(sig: Sig, rc: Rc)
 {
     let sh = crate::dom_rec_ty::rshape(sig, rc.c);
     reveal(crate::ti_syntax::struct_of);
+    crate::dom_rec_ty::scope_canon(sig, rc.c);
     assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
     assert(rc.j == 0);
     assert forall|k: int| 0 <= k < rc.nf(sig) implies !#[trigger] crate::dom_iota::isrec(sig, rc.c, rc.j, k) by {

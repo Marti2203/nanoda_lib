@@ -1209,6 +1209,7 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
         m_denv(ef, cc).recs.contains_key(rid),
         rec_simple(ef, rid),
         rec_fields_ok(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+        crate::kclaims::ind_ok_hyp(crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()))),
     ensures ({
         let t = crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()));
         let sh = crate::dom_rec_ty::rshape(t, rid);
@@ -1260,6 +1261,10 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
     assert(crate::dom_rec_ty::rec_elp(t, rid)) by {
         reveal(crate::dom_rec_ty::rec_elp);
     }
+    // a structure's: of its declared shape
+    if crate::dom_code::struct_decl(t, ind) {
+        crate::kclaims::struct_agree(t, rid);
+    }
     // the rules
     assert forall|q: int| 0 <= q < nmin implies crate::beta_model::rule_rhs_ok(t.ienv, #[trigger] t.ienv.recs[rid].rules[q]) by {
         crate::twin::rec_core_rule_shape(raw, rid, q);
@@ -1287,6 +1292,7 @@ proof fn iota_syn_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     crate::inductive::export_keys_ids_inj(ef);
     ef.declars_views();
     assert(kh_hyp(dty, denv));
+    assert(crate::kclaims::ind_ok_hyp(s0));
     assert forall|rid: u64| #[trigger] s0.ienv.recs.contains_key(rid) implies crate::kclaims::rec_syn(s0, rid) by {
         crate::twin::twin_keeps(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid);
         assert(denv.recs.contains_key(rid));

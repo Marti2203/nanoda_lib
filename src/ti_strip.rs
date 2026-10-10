@@ -11,9 +11,10 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The signature without recursors.
+/// The signature without recursors or structures (a structure's rules
+/// read its declaration, `dom_code::struct_decl`, which this hides).
 pub open spec fn strip(sig: Sig) -> Sig {
-    Sig { ienv: crate::expr_arena_bridge::EnvSpec { recs: Map::empty(), ..sig.ienv }, ..sig }
+    Sig { ienv: crate::expr_arena_bridge::EnvSpec { recs: Map::empty(), struct_ctor: Map::empty(), ..sig.ienv }, ..sig }
 }
 
 /// No Iota node.
@@ -62,7 +63,8 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
         reveal(crate::ti_syntax::proj_ty);
         reveal(crate::ti_syntax::proj_fire);
         reveal(crate::ti_syntax::struct_of);
-        assert forall|s: u64| !crate::dom_code::has_rec(strip(sig), s) by {
+        reveal(crate::dom_code::struct_decl);
+        assert forall|s: u64| !crate::dom_code::has_canon(strip(sig), s) by {
             if crate::dom_code::has_rec(strip(sig), s) {
                 let rid = choose|rid: u64| crate::rec_canon::rec_canon(strip(sig), rid) && crate::rec_canon::rec_ind(strip(sig), rid) == s;
                 assert(strip(sig).ienv.recs.contains_key(rid));

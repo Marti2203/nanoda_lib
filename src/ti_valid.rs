@@ -135,6 +135,8 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& sig.ienv.sub(sig2.ienv)
     &&& iota_ok(sig2)
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_ind.contains_key(k) ==> sig2.ienv.ctor_ind.contains_key(k) && sig2.ienv.ctor_ind[k] == sig.ienv.ctor_ind[k]
+    &&& forall|k: u64| #[trigger] sig.ienv.struct_ctor.contains_key(k) ==> sig2.ienv.struct_ctor.contains_key(k) && sig2.ienv.struct_ctor[k] == sig.ienv.struct_ctor[k]
+    &&& forall|k: u64| #[trigger] sig.ienv.ctor_nf.contains_key(k) ==> sig2.ienv.ctor_nf.contains_key(k) && sig2.ienv.ctor_nf[k] == sig.ienv.ctor_nf[k]
 }
 
 /// A canonical recursor stays one in an extension, with the same
@@ -197,6 +199,8 @@ pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
     }
     assert(crate::dom_code::has_rec(sig, s));
     assert(crate::dom_code::has_rec(sig2, s));
+    crate::dom_code::canon_shape_rec(sig, s);
+    crate::dom_code::canon_shape_rec(sig2, s);
     let c1 = crate::dom_code::canon_rec(sig, s);
     let c2 = crate::dom_code::canon_rec(sig2, s);
     assert(c1 == r);
@@ -217,8 +221,33 @@ pub proof fn struct_grow(sig: Sig, sig2: Sig, s: u64)
         sig2.consts[s] == sig.consts[s],
 {
     reveal(crate::ti_syntax::struct_of);
-    let r = crate::dom_code::canon_rec(sig, s);
-    struct_iff(sig, sig2, s, r);
+    if crate::dom_code::has_rec(sig, s) {
+        crate::dom_code::canon_shape_rec(sig, s);
+        let r = crate::dom_code::canon_rec(sig, s);
+        struct_iff(sig, sig2, s, r);
+    } else {
+        // a structure from its declaration, kept; a recursor of it in the
+        // extension is of the same shape and the only one (`rec_scope_g`)
+        crate::dom_code::canon_shape_struct(sig, s);
+        crate::dom_code::struct_decl_grow(sig, sig2, s);
+        assert(sig.consts.contains_key(s)) by {
+            reveal(crate::dom_code::struct_decl);
+        }
+        if crate::dom_code::has_rec(sig2, s) {
+            crate::dom_code::canon_shape_rec(sig2, s);
+            let r2 = crate::dom_code::canon_rec(sig2, s);
+            crate::ti_syntax::frag_of(sig2, r2);
+            assert(crate::dom_rec_ty::rec_scope_g(sig2, r2));
+            assert forall|a1: u64, a2: u64| #![trigger crate::rec_canon::rec_canon(sig2, a1), crate::rec_canon::rec_canon(sig2, a2)]
+                crate::rec_canon::rec_canon(sig2, a1) && crate::rec_canon::rec_ind(sig2, a1) == s
+                && crate::rec_canon::rec_canon(sig2, a2) && crate::rec_canon::rec_ind(sig2, a2) == s implies a1 == a2 by {
+                assert(a1 == r2);
+                assert(a2 == r2);
+            }
+        } else {
+            crate::dom_code::canon_shape_struct(sig2, s);
+        }
+    }
 }
 
 /// The projection rules' side conditions survive an extension.

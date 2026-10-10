@@ -508,7 +508,7 @@ pub proof fn sort_inj_chain(sig: Sig, g: Ctx, l1: LevelSpec, l2: LevelSpec)
 /// arguments as a member, a universe element.
 proof fn ind_code_mem(sig: Sig, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>) -> (c: Cpt)
     requires
-        crate::dom_code::has_rec(sig, ind),
+        crate::dom_code::has_canon(sig, ind),
         crate::dom_model::sem_const(sig, ind, ls),
         !sig.ienv.ctor_ind.contains_key(ind),
         !sig.ienv.recs.contains_key(ind),
@@ -554,7 +554,7 @@ proof fn ind_code_mem(sig: Sig, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>)
 pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, t2: ExprSpec, th: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::dom_code::has_rec(sig, ind),
+        crate::dom_code::has_canon(sig, ind),
         crate::dom_model::sem_const(sig, ind, ls),
         !sig.ienv.ctor_ind.contains_key(ind),
         !sig.ienv.recs.contains_key(ind),
@@ -600,7 +600,7 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
 pub proof fn ind_head_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, t2: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::dom_code::has_rec(sig, ind),
+        crate::dom_code::has_canon(sig, ind),
         crate::dom_model::sem_const(sig, ind, ls),
         !sig.ienv.ctor_ind.contains_key(ind),
         !sig.ienv.recs.contains_key(ind),
@@ -644,7 +644,7 @@ pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: S
     th: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::dom_code::has_rec(sig, ind),
+        crate::dom_code::has_canon(sig, ind),
         crate::dom_model::sem_const(sig, ind, ls),
         !sig.ienv.ctor_ind.contains_key(ind),
         !sig.ienv.recs.contains_key(ind),

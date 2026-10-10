@@ -94,7 +94,7 @@ pub open spec fn sfield(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>) -> ExprSpe
 /// earlier fields.
 pub proof fn sfield_vsub(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
     requires
-        crate::dom_code::has_rec(sig, s),
+        crate::dom_code::has_canon(sig, s),
         crate::dom_code::canon_shape(sig, s).nmin() == 1,
         crate::dom_code::canon_shape(sig, s).ni == 0,
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
@@ -320,7 +320,7 @@ pub proof fn binds_fv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, j: int)
 /// A structure's field has no local when its constructor's type has none.
 pub proof fn sfield_fv(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>)
     requires
-        crate::dom_code::has_rec(sig, s),
+        crate::dom_code::has_canon(sig, s),
         crate::dom_code::canon_shape(sig, s).nmin() == 1,
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
         !crate::expr_model::has_fv(sig.consts[crate::dom_code::canon_shape(sig, s).ctors[0]].ty),
@@ -336,8 +336,9 @@ pub proof fn sfield_fv(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>)
     crate::expr_model::subst_expr_levels_has_fv(sh.fields[0][i as int], sig.consts[s].lps, us);
 }
 
-/// A structure's canonical recursor is the same in a signature with the
-/// same constants and inductive tables (it is unique there).
+/// A structure is one, of the same shape, in a signature with the same
+/// constants and inductive tables (its canonical recursor, where it has
+/// one, is unique there).
 pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
     requires
         s1.consts == s2.consts,
@@ -345,7 +346,7 @@ pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
         crate::ti_syntax::struct_of(s1, s),
     ensures
         crate::ti_syntax::struct_of(s2, s),
-        crate::dom_code::canon_rec(s1, s) == crate::dom_code::canon_rec(s2, s),
+        crate::dom_code::has_rec(s1, s) ==> crate::dom_code::canon_rec(s1, s) == crate::dom_code::canon_rec(s2, s),
         crate::dom_code::canon_shape(s1, s) == crate::dom_code::canon_shape(s2, s),
 {
     reveal(crate::ti_syntax::struct_of);
@@ -353,14 +354,26 @@ pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
         && crate::rec_canon::rec_ind(s1, rid) == crate::rec_canon::rec_ind(s2, rid) by {
         crate::dom_rec_end::canon_congr(s1, s2, rid);
     }
-    let r1 = crate::dom_code::canon_rec(s1, s);
-    assert(crate::rec_canon::rec_canon(s1, r1) && crate::rec_canon::rec_ind(s1, r1) == s);
-    assert(crate::rec_canon::rec_canon(s2, r1) && crate::rec_canon::rec_ind(s2, r1) == s);
-    assert(crate::dom_code::has_rec(s2, s));
-    let r2 = crate::dom_code::canon_rec(s2, s);
-    assert(crate::rec_canon::rec_canon(s2, r2) && crate::rec_canon::rec_ind(s2, r2) == s);
-    assert(crate::rec_canon::rec_canon(s1, r2) && crate::rec_canon::rec_ind(s1, r2) == s);
-    assert(r1 == r2);
+    crate::dom_code::struct_decl_congr(s1, s2, s);
+    if crate::dom_code::has_rec(s1, s) {
+        let r1 = crate::dom_code::canon_rec(s1, s);
+        crate::dom_code::canon_shape_rec(s1, s);
+        assert(crate::rec_canon::rec_canon(s2, r1) && crate::rec_canon::rec_ind(s2, r1) == s);
+        assert(crate::dom_code::has_rec(s2, s));
+        crate::dom_code::canon_shape_rec(s2, s);
+        let r2 = crate::dom_code::canon_rec(s2, s);
+        assert(crate::rec_canon::rec_canon(s1, r2) && crate::rec_canon::rec_ind(s1, r2) == s);
+        assert(r1 == r2);
+    } else {
+        assert(!crate::dom_code::has_rec(s2, s)) by {
+            if crate::dom_code::has_rec(s2, s) {
+                let r2 = choose|rid: u64| crate::rec_canon::rec_canon(s2, rid) && crate::rec_canon::rec_ind(s2, rid) == s;
+                assert(crate::rec_canon::rec_canon(s1, r2) && crate::rec_canon::rec_ind(s1, r2) == s);
+            }
+        }
+        crate::dom_code::canon_shape_struct(s1, s);
+        crate::dom_code::canon_shape_struct(s2, s);
+    }
     assert(crate::dom_code::canon_shape(s1, s) == crate::dom_code::canon_shape(s2, s));
     assert forall|a1: u64, a2: u64| #![trigger crate::rec_canon::rec_canon(s2, a1), crate::rec_canon::rec_canon(s2, a2)]
         crate::rec_canon::rec_canon(s2, a1) && crate::rec_canon::rec_ind(s2, a1) == s
@@ -405,6 +418,7 @@ pub proof fn proj_sig_congr(s1: Sig, s2: Sig, st: ExprSpec, i: nat, x: ExprSpec,
 }
 
 /// A projection's type, swapped.
+#[verifier::spinoff_prover]
 pub proof fn proj_ty_fswap(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, xx: nat, yy: nat)
     requires
         spine_head(st) is Const,
@@ -424,7 +438,7 @@ pub proof fn proj_ty_fswap(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, xx: nat,
     proj_ty_unfold(sig, crate::swap_model::fswap(st, xx, yy), i, crate::swap_model::fswap(x, xx, yy));
     reveal(crate::ti_syntax::proj_prop);
     if crate::ti_syntax::proj_ty(sig, st, i, x) is Some {
-        reveal(crate::ti_syntax::struct_of);
+        crate::ti_syntax::struct_of_basic(sig, h->Const_0);
         let sh = crate::dom_code::canon_shape(sig, h->Const_0);
         let f = sfield(sig, h->Const_0, i, h->Const_1);
         let xs = ps + crate::ti_syntax::projs(x, i);
@@ -439,6 +453,7 @@ pub proof fn proj_ty_fswap(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, xx: nat,
 }
 
 /// A projection's type, closed.
+#[verifier::spinoff_prover]
 pub proof fn proj_ty_fclose(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, k: nat, c: nat)
     requires
         spine_head(st) is Const,

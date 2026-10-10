@@ -16,34 +16,88 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The canonical recursor of a structure is in scope, and its shape is
-/// the structure's; the structure is never a proposition.
-pub proof fn struct_rec(sig: Sig, s: u64) -> (r: u64)
+/// A STRUCTURE'S FACTS, as nanoda sees one -- from its declaration, with
+/// or without its recursor -- with the model's facts about it
+/// (`dom_proj_sound::struct_sem`): its shape in scope, one constructor, no
+/// indices, never a proposition, interpreted, its and its constructor's
+/// types closed types.
+pub proof fn struct_facts(sig: Sig, s: u64)
     requires
         crate::kclaims::ind_ok(sig),
         crate::ti_syntax::struct_of(sig, s),
-    ensures
-        sig.ienv.recs.contains_key(r),
-        crate::rec_canon::rec_canon(sig, r),
-        crate::rec_canon::rec_ind(sig, r) == s,
-        crate::dom_code::canon_rec(sig, s) == r,
-        crate::dom_rec_ty::rshape(sig, r) == crate::dom_code::canon_shape(sig, s),
-        crate::dom_rec_ty::rec_scope(sig, r),
-        crate::dom_code::never_prop(sig, s),
-        crate::dom_rec_end::rec_hyps(sig, r),
+    ensures ({
+        let sh = crate::dom_code::canon_shape(sig, s);
+        &&& crate::dom_rec_ty::ind_scope(sig, sh)
+        &&& sh.ind == s && sh.lps == sig.consts[s].lps
+        &&& sh.nmin() == 1 && sh.ni == 0
+        &&& crate::dom_code::never_prop(sig, s)
+        &&& crate::dom_code::canon_ok(sig, s)
+        &&& crate::dom_levels::sig_lps(sig)
+        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
+        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
+        &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
+            #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls)
+    }),
 {
-    reveal(crate::ti_syntax::struct_of);
-    let r = crate::dom_code::canon_rec(sig, s);
-    assert(crate::rec_canon::rec_canon(sig, r) && crate::rec_canon::rec_ind(sig, r) == s);
-    assert(sig.ienv.recs.contains_key(r));
-    assert(!crate::ti_syntax::no_recs(sig));
-    assert(crate::dom_rec_end::rec_interp(sig, r));
-    crate::ti_syntax::frag_of(sig, r);
-    assert(crate::dom_rec_end::rec_frag_l(sig, r)) by {
-        reveal(crate::dom_rec_end::rec_interp);
+    crate::ti_syntax::struct_of_basic(sig, s);
+    assert(crate::dom_rec_end::sig_sr(sig));
+    assert(crate::dom_proj_sound::struct_sem(sig, s));
+    crate::dom_code::canon_side(sig, s);
+    reveal(crate::dom_code::ind_side);
+}
+
+/// AN INDUCTIVE OF KNOWN SHAPE IS IN SCOPE, with the model's facts about
+/// it: from its canonical recursor's interpretation, or -- a structure
+/// before its recursor -- from the structure's (`struct_facts`).
+pub proof fn canon_scope(sig: Sig, ind: u64)
+    requires
+        crate::kclaims::ind_ok(sig),
+        crate::dom_code::has_canon(sig, ind),
+    ensures ({
+        let sh = crate::dom_code::canon_shape(sig, ind);
+        &&& crate::dom_rec_ty::ind_scope(sig, sh)
+        &&& sh.ind == ind && sh.lps == sig.consts[ind].lps
+        &&& crate::dom_levels::sig_lps(sig)
+        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, ind, Seq::empty()))
+        &&& forall|p: int| 0 <= p < sh.nmin() ==>
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+        &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, ind, ls)
+    }),
+{
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    crate::dom_code::canon_side(sig, ind);
+    reveal(crate::dom_code::ind_side);
+    if crate::dom_code::has_rec(sig, ind) {
+        crate::dom_code::canon_shape_rec(sig, ind);
+        let rid = crate::dom_code::canon_rec(sig, ind);
+        assert(sig.ienv.recs.contains_key(rid));
+        assert(!crate::ti_syntax::no_recs(sig));
+        assert(crate::dom_rec_end::rec_interp(sig, rid));
+        crate::ti_syntax::frag_of(sig, rid);
+        assert(crate::dom_rec_end::rec_frag_l(sig, rid)) by {
+            reveal(crate::dom_rec_end::rec_interp);
+        }
+        crate::dom_rec_ty::rec_scope_ind(sig, rid);
+        assert(crate::dom_rec_end::sig_rec(sig));
+        assert(crate::dom_rec_end::rec_model(sig, rid)) by {
+            reveal(crate::dom_rec_end::sig_rec);
+        }
+        assert forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[ind].lps.len() implies #[trigger] crate::dom_model::sem_const(sig, ind, ls) by {
+            crate::dom_rec_end::rec_model_at(sig, rid, ls);
+        }
+        crate::dom_rec_end::rec_model_at(sig, rid, sig.consts[ind].lps.map_values(|n: u64| LevelSpec::Param(n)));
+    } else {
+        reveal(crate::dom_code::struct_decl);
+        assert(sig.ienv.struct_ctor.contains_key(ind));
+        assert(crate::dom_code::smash(sig, ind));
+        struct_facts(sig, ind);
+        crate::dom_code::struct_decl_shape(sig, ind);
+        crate::dom_code::canon_shape_struct(sig, ind);
+        assert forall|p: int| 0 <= p < sh.nmin() implies
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty())) by {
+            assert(p == 0);
+        }
     }
-    reveal(crate::dom_rec_end::rec_interp);
-    r
 }
 
 /// A STRUCTURE APPLICATION USED AS A TYPE has exactly the structure's
@@ -66,11 +120,11 @@ pub proof fn struct_type_arity(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec)
     let ps = spine_args(t);
     let h = ExprSpec::Const(s, us);
     crate::beta_model::spine_recompose(t);
-    let r = struct_rec(sig, s);
+    struct_facts(sig, s);
     let sh = crate::dom_code::canon_shape(sig, s);
     let np = sh.np;
     let lps = sig.consts[s].lps;
-    assert(crate::dom_code::has_rec(sig, s) && sh.nmin() == 1 && sh.ni == 0) by {
+    assert(crate::dom_code::has_canon(sig, s) && sh.nmin() == 1 && sh.ni == 0) by {
         reveal(crate::ti_syntax::struct_of);
     }
     let th = crate::dom_iota::spine_gen(sig, g, h, ps, sort(l));
@@ -154,13 +208,13 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
     let (s, us) = (spine_head(t)->Const_0, spine_head(t)->Const_1);
     let ps = spine_args(t);
     struct_type_arity(sig, g, t, l);
-    let r = struct_rec(sig, s);
+    struct_facts(sig, s);
     let sh = crate::dom_code::canon_shape(sig, s);
     let np = sh.np;
     crate::dom_adeq_proj::pfield(sig, s, k as nat, us);
     let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
     // the parameter is a type
-    crate::iota_sr::ptype_at(sig, r, us, q);
+    crate::iota_sr::ptype_at_s(sig, sh, us, q);
     let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[s].lps, us);
     crate::ti_spine::vsub_closed(sort(lq), ps.subrange(0, q));
     assert(derivable(sig, eq(g, ps[q], ps[q], sort(lq))));
@@ -208,26 +262,20 @@ pub proof fn struct_ctor_typed(sig: Sig, g: Ctx, s: u64, y: ExprSpec, b: ExprSpe
             crate::ti_spine::sdom(crate::ti_syntax::dty_at(sig, spine_head(y)->Const_0, spine_head(y)->Const_1), spine_args(y), k)))
     }),
 {
-    let r = struct_rec(sig, s);
+    struct_facts(sig, s);
     let sh = crate::dom_code::canon_shape(sig, s);
-    assert(sh.nmin() == 1) by {
-        reveal(crate::ti_syntax::struct_of);
-    }
     let (np, nf) = (sh.np, sh.fields[0].len());
     let (c, ylv) = (spine_head(y)->Const_0, spine_head(y)->Const_1);
     let am = spine_args(y);
     let hc = ExprSpec::Const(c, ylv);
     crate::beta_model::spine_recompose(y);
-    crate::dom_rec_end::rec_canon_ok(sig, r);
-    crate::dom_rec_ty::rec_lps_sub(sig, r);
     let thc = crate::dom_iota::spine_gen(sig, g, hc, am, b);
     crate::ti_spine::const_typed(sig, g, c, ylv, thc);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
     crate::dom_levels::sig_lps_at(sig, sig.consts[s].lps, ylv);
-    crate::dom_rec_ty::rec_lps_distinct(sig, r);
-    crate::iota_sr::ctor_at(sig, r, 0, ylv);
-    let tds = crate::dom_iota::ctds(sig, r, 0, ylv);
-    let cb = crate::dom_iota::cbody(sig, r, 0, ylv);
+    crate::iota_sr::ctor_at_s(sig, sh, 0, ylv);
+    let tds = crate::dom_iota::ctds_s(sig, sh, 0, ylv);
+    let cb = crate::dom_iota::cbody_s(sig, sh, 0, ylv);
     let t0 = crate::ti_syntax::dty_at(sig, c, ylv);
     assert(t0 == crate::rec_canon::binds(BinderKind::Pi, tds, cb));
     assert forall|i: int| 0 <= i < am.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(t0, am.subrange(0, i))) by {
@@ -310,28 +358,19 @@ pub proof fn struct_cx_typed(sig: Sig, g: Ctx, st: ExprSpec, lt: LevelSpec, x: E
     let a0 = spine_args(st);
     crate::beta_model::spine_recompose(st);
     struct_type_arity(sig, g, st, lt);
-    let r = struct_rec(sig, s);
+    struct_facts(sig, s);
     let sh = crate::dom_code::canon_shape(sig, s);
-    assert(sh.nmin() == 1) by {
-        reveal(crate::ti_syntax::struct_of);
-    }
     let (np, nf) = (sh.np, sh.fields[0].len());
     let c = sh.ctors[0];
     let cargs = a0 + crate::ti_syntax::projs(x, nf);
-    crate::dom_rec_end::rec_canon_ok(sig, r);
-    crate::dom_rec_ty::rec_lps_sub(sig, r);
     crate::dom_lift::eq_ctx_wf(sig, g, x, x, st);
     crate::ti_ls2::levs_eq_refl(us);
     crate::dom_levels::sig_lps_at(sig, sig.consts[s].lps, us);
-    crate::dom_rec_ty::rec_lps_distinct(sig, r);
-    crate::iota_sr::ctor_at(sig, r, 0, us);
-    crate::dom_rec_end::rec_model_at(sig, r, us);
-    assert(crate::dom_rec_end::rec_model(sig, r)) by {
-        reveal(crate::dom_rec_end::sig_rec);
-    }
-    crate::iota_sr::ctor_lv(sig, g, r, 0, us, us);
-    let tds = crate::dom_iota::ctds(sig, r, 0, us);
-    let cb = crate::dom_iota::cbody(sig, r, 0, us);
+    crate::iota_sr::ctor_at_s(sig, sh, 0, us);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    crate::iota_sr::const_lv(sig, g, c, us, us);
+    let tds = crate::dom_iota::ctds_s(sig, sh, 0, us);
+    let cb = crate::dom_iota::cbody_s(sig, sh, 0, us);
     let tc = crate::rec_canon::binds(BinderKind::Pi, tds, cb);
     assert(crate::ti_syntax::dty_at(sig, c, us) == tc);
     assert forall|i: int| 0 <= i < cargs.len() implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(tc, cargs.subrange(0, i))) by {
@@ -346,8 +385,8 @@ pub proof fn struct_cx_typed(sig: Sig, g: Ctx, st: ExprSpec, lt: LevelSpec, x: E
         } else {
             let k = i - np;
             let q = struct_proj_typed(sig, g, st, lt, x, k);
-            assert(tds[np + k] == crate::iota_sr::cfu(sig, r, 0, k, us));
-            assert(crate::iota_sr::cfu(sig, r, 0, k, us) == crate::ti_proj::sfield(sig, s, k as nat, us));
+            assert(tds[np + k] == crate::iota_sr::cfu_s(sh, 0, k, us));
+            assert(crate::iota_sr::cfu_s(sh, 0, k, us) == crate::ti_proj::sfield(sig, s, k as nat, us));
             crate::dom_adeq_proj::pfield(sig, s, k as nat, us);
             crate::dom_adeq_proj::pfield_vsub(sig, s, k as nat, us, cargs.subrange(0, i));
             assert(cargs.subrange(0, i)[q] == a0[q]);
