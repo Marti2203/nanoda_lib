@@ -813,6 +813,120 @@ pub proof fn head_nofv(sh: IndShape, lm: LevelSpec)
     }
 }
 
+/// A spine within a scope, from its head and arguments.
+pub proof fn spine_nlbv(h: ExprSpec, args: Seq<ExprSpec>, d: nat)
+    requires
+        crate::expr_model::nlbv(h) <= d,
+        forall|i: int| 0 <= i < args.len() ==> crate::expr_model::nlbv(#[trigger] args[i]) <= d,
+    ensures
+        crate::expr_model::nlbv(spine_app(h, args)) <= d,
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let n = args.len() - 1;
+        let pre = args.subrange(0, n);
+        assert forall|i: int| 0 <= i < pre.len() implies crate::expr_model::nlbv(#[trigger] pre[i]) <= d by {
+            assert(pre[i] == args[i]);
+        }
+        spine_nlbv(h, pre, d);
+        assert(spine_app(h, args) == ExprSpec::App(Box::new(spine_app(h, pre)), Box::new(args[n])));
+    }
+}
+
+/// The shape's pieces within their contexts: each domain under the
+/// binders before it, each constructor's index arguments under its
+/// parameters and fields.
+pub open spec fn shape_nlbv(sh: IndShape) -> bool {
+    &&& forall|q: int| 0 <= q < sh.pdoms.len() ==> crate::expr_model::nlbv(#[trigger] sh.pdoms[q]) <= q
+    &&& forall|q: int| 0 <= q < sh.idoms.len() ==> crate::expr_model::nlbv(#[trigger] sh.idoms[q]) <= sh.np + q
+    &&& forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() ==> crate::expr_model::nlbv(#[trigger] sh.fields[j][k]) <= sh.np + k
+    &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() ==> crate::expr_model::nlbv(#[trigger] sh.tss[j][q]) <= sh.np + sh.fields[j].len()
+    &&& sh.pdoms.len() == sh.np
+    &&& sh.idoms.len() == sh.ni
+    &&& forall|j: int| 0 <= j < sh.nmin() ==> (#[trigger] sh.tss[j]).len() == sh.ni
+}
+
+/// The motive's type is within the parameters.
+pub proof fn motive_nlbv(sh: IndShape, lm: LevelSpec)
+    requires
+        shape_nlbv(sh),
+    ensures
+        crate::expr_model::nlbv(sh.motive_ty(lm)) <= sh.np,
+{
+    let (np, ni) = (sh.np, sh.ni);
+    let vs = vars(ni, np) + vars(0, ni);
+    assert forall|i: int| 0 <= i < vs.len() implies crate::expr_model::nlbv(#[trigger] vs[i]) <= np + ni by {
+        if i < np { assert(vs[i] == vars(ni, np)[i]); } else { assert(vs[i] == vars(0, ni)[i - np]); }
+    }
+    spine_nlbv(ExprSpec::Const(sh.ind, sh.us()), vs, np + ni);
+    let a = ind_app(sh.ind, sh.us(), vs);
+    assert(a == spine_app(ExprSpec::Const(sh.ind, sh.us()), vs));
+    assert(crate::expr_model::nlbv(a) <= np + ni);
+    assert(crate::expr_model::nlbv(ExprSpec::Sort(lm)) == 0);
+    let body = ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(ExprSpec::Sort(lm)));
+    assert(crate::expr_model::nlbv(body) <= np + ni);
+    crate::kgen::binds_nlbv(sh.idoms, body, np);
+}
+
+/// A minor premise's type is within the parameters, the motive and the
+/// minor premises before it.
+#[verifier::spinoff_prover]
+pub proof fn minor_nlbv(sh: IndShape, j: int)
+    requires
+        shape_nlbv(sh),
+        0 <= j < sh.nmin(),
+    ensures
+        crate::expr_model::nlbv(sh.minor_ty(j)) <= sh.np + 1 + j,
+{
+    let np = sh.np;
+    let b = (np + 1 + j) as nat;
+    let nf = sh.fields[j].len();
+    let nr = sh.rposj(j).len();
+    let s = (1 + j) as nat;
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, s));
+    let ihs = Seq::new(nr, |r: int| sh.ih_ty(j, r));
+    let ts = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q])));
+    let vs = vars(s + nf + nr, np) + vars(nr, nf);
+    let value = spine_app(ExprSpec::Const(sh.ctors[j], sh.us()), vs);
+    assert forall|i: int| 0 <= i < fds.len() implies crate::expr_model::nlbv(#[trigger] fds[i]) <= b + i by {
+        crate::ti_scope::lift_scope(s, i as nat, sh.fields[j][i], np + i as nat);
+    }
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[j], sh.ind, sh.us(), np, sh.ni, nf);
+    assert forall|r: int| 0 <= r < ihs.len() implies crate::expr_model::nlbv(#[trigger] ihs[r]) <= b + nf + r by {
+        let k = sh.rposj(j)[r];
+        let f = sh.fields[j][k as int];
+        let idx = occ_idx(f, np, sh.ni);
+        crate::kgen::spine_args_nlbv(f, np + k);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q])));
+        let args = idx2.push(ExprSpec::Var((nf - 1 - k + r) as nat));
+        assert forall|q: int| 0 <= q < args.len() implies crate::expr_model::nlbv(#[trigger] args[q]) <= b + nf + r by {
+            if q < sh.ni {
+                assert(idx[q] == crate::beta_model::spine_args(f)[np + q]);
+                crate::ti_scope::lift_scope(s, k, idx[q], np + k);
+                crate::ti_scope::lift_scope((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q]), np + k + s);
+            }
+        }
+        spine_nlbv(ExprSpec::Var((j + nf + r) as nat), args, b + nf + r as nat);
+    }
+    let d = b + nf + nr;
+    assert forall|q: int| 0 <= q < ts.len() implies crate::expr_model::nlbv(#[trigger] ts[q]) <= d by {
+        crate::ti_scope::lift_scope(s, nf, sh.tss[j][q], np + nf);
+        crate::ti_scope::lift_scope(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q]), np + nf + s);
+    }
+    assert forall|i: int| 0 <= i < vs.len() implies crate::expr_model::nlbv(#[trigger] vs[i]) <= d by {
+        if i < np { assert(vs[i] == vars(s + nf + nr, np)[i]); } else { assert(vs[i] == vars(nr, nf)[i - np]); }
+    }
+    spine_nlbv(ExprSpec::Const(sh.ctors[j], sh.us()), vs, d);
+    let args = ts.push(value);
+    assert forall|q: int| 0 <= q < args.len() implies crate::expr_model::nlbv(#[trigger] args[q]) <= d by {
+        if q < ts.len() { assert(args[q] == ts[q]); }
+    }
+    spine_nlbv(ExprSpec::Var((j + nf + nr) as nat), args, d);
+    let body = spine_app(ExprSpec::Var((j + nf + nr) as nat), args);
+    crate::kgen::binds_nlbv(ihs, body, b + nf);
+    crate::kgen::binds_nlbv(fds, binds(BinderKind::Pi, ihs, body), b);
+}
+
 /// THE CANONICAL SHAPE'S PIECES are closed when the inductive's and the
 /// constructors' types are.
 #[verifier::spinoff_prover]
