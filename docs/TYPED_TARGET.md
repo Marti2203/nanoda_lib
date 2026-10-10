@@ -2036,6 +2036,21 @@ and eta step is vacuous (about thirty sites use that). Stages:
     (not among the block's constructors, which the block check rebuilds)
     would otherwise go unchecked in form. Lean exports never have one
     (Init: 57424 declarations).
+    CONSTRUCTOR CLAUSES CERTIFIED (`kclaims::ctor_clause`: a constructor
+    of an inductive of known shape is among its constructors, with its
+    field count). Two tested-input checks (a53cfde): the constructor arm
+    checks its inductive lists it at its index (`ctor_listed`, collected as
+    `all_ctors_listed` in `ex_bound`); a single-motive recursor's rules are
+    its major premise's inductive's constructors in order, with their field
+    counts (`rules_listed`, in `rec_arm_ok`). The export certifies the
+    clause at every cutoff and locals (`export_sound::ctor_clauses_at`: with
+    a canonical recursor, `ctor_clause_rec` -- the twin keeps the rules'
+    constructors and counts; a structure known from its declaration,
+    `ctor_clause_struct`), and `frag_env_of` takes it as an input.
+    `ind_ok_hyp` is now: `rec_small`, `sig_sr`, every recursor interpreted,
+    `ctor_sem`, and the structure clause (a structure with a declared
+    constructor is a smashed structure of the model: field kinds and the
+    proposition conditions of the `struct_of` slice -- the boundary).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

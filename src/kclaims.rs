@@ -93,6 +93,23 @@ pub open spec fn iota_syn(sig: crate::ti_syntax::Sig) -> bool {
     forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_syn(sig, c)
 }
 
+/// The model's constructor clauses (`ind_ok`): a constructor of an
+/// inductive of known shape is among its constructors, with its field
+/// count.
+pub open spec fn ctor_clause(sig: crate::ti_syntax::Sig, cid: u64) -> bool {
+    let ind = sig.ienv.ctor_ind[cid];
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    crate::dom_code::has_canon(sig, ind) ==> sh.ctors.contains(cid)
+        && (sig.ienv.ctor_nf.contains_key(cid) ==> forall|j: int| 0 <= j < sh.nmin() && #[trigger] sh.ctors[j] == cid
+            ==> sh.fields[j].len() == sig.ienv.ctor_nf[cid] as nat)
+}
+
+/// Every constructor's clause (`ctor_clause`), which the export certifies
+/// (`export_sound::ctor_clauses_at`).
+pub open spec fn ctor_clauses(sig: crate::ti_syntax::Sig) -> bool {
+    forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_clause(sig, cid)
+}
+
 /// Every constructor of the signature in its declared form (`ctor_form`),
 /// which the export certifies (`export_sound::ctor_forms_at`).
 pub open spec fn ctor_forms(sig: crate::ti_syntax::Sig) -> bool {
@@ -115,6 +132,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         tables_ok(dty, denv),
         forall|d: Map<nat, ExprSpec>| #[trigger] iota_syn(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] ctor_forms(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| #[trigger] ctor_clauses(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -124,6 +142,8 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         assert(ind_ok_hyp(s));
         assert(iota_syn(s));
         assert(ctor_forms(s));
+        assert(ctor_clauses(s));
+        assert forall|cid: u64| #[trigger] s.ienv.ctor_ind.contains_key(cid) implies ctor_clause(s, cid) by {}
         assert(crate::ti_syntax::iota_ok(s)) by {
             reveal(crate::ti_syntax::iota_ok);
             assert forall|c: u64| #[trigger] s.ienv.recs.contains_key(c) implies crate::dom_rec_end::rec_frag(s, c) by {
@@ -196,15 +216,9 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
-        ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_sem(sig, cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
         ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid]) ==>
-        forall|j: int| 0 <= j < crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).nmin()
-            && #[trigger] crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors[j] == cid
-            ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat
 }
 
 /// A CONSTRUCTOR'S DECLARED FORM, as nanoda's block check leaves it --
@@ -237,8 +251,8 @@ pub open spec fn ctor_sem(sig: crate::ti_syntax::Sig, cid: u64) -> bool {
 }
 
 /// A STRUCTURE'S CANONICAL RECURSOR IS OF ITS DECLARED SHAPE: the
-/// structure and field-count clauses of `ind_ok_hyp` (its one constructor
-/// is the table's, with the table's field count).
+/// structure clause of `ind_ok_hyp` (its one constructor is the table's)
+/// and its constructor's clause (with the table's field count).
 pub proof fn struct_agree(sig: crate::ti_syntax::Sig, rid: u64)
     requires
         ind_ok_hyp(sig),
@@ -246,6 +260,7 @@ pub proof fn struct_agree(sig: crate::ti_syntax::Sig, rid: u64)
         forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == crate::rec_canon::rec_ind(sig, rid)
             ==> r2 == rid,
         crate::dom_code::struct_decl(sig, crate::dom_rec_ty::rshape(sig, rid).ind),
+        ctor_clause(sig, sig.ienv.struct_ctor[crate::dom_rec_ty::rshape(sig, rid).ind]),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         crate::rec_canon::shape_of(sig, crate::dom_code::struct_rd(sig, sh.ind), sh.ind) == sh

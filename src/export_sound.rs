@@ -500,6 +500,7 @@ proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     crate::env_model::tables_ok_at(ef.arena(), ef.declars_view(), ef.declars_keys(), c);
     iota_syn_at(ef, c);
     ctor_forms_at(ef, c);
+    ctor_clauses_at(ef, c);
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
@@ -583,6 +584,7 @@ proof fn levok_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
 
 /// THE CHECKER'S GUARANTEE: every declaration certified, and the named
 /// hypotheses at every cutoff, give `kh` at every cutoff.
+#[verifier::spinoff_prover]
 pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     requires
         crate::inductive::export_ok(ef),
@@ -1276,6 +1278,13 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
     }
     // a structure's: of its declared shape
     if crate::dom_code::struct_decl(t, ind) {
+        let c = t.ienv.struct_ctor[ind];
+        assert(t.ienv.ctor_ind.contains_key(c) && t.ienv.ctor_ind[c] == ind) by {
+            reveal(crate::dom_code::struct_decl);
+            crate::dom_code::struct_decl_shape(t, ind);
+            assert(crate::rec_canon::shape_of(t, crate::dom_code::struct_rd(t, ind), ind).ctors[0] == c);
+        }
+        ctor_clause_rec(ef, cc, c);
         crate::kclaims::struct_agree(t, rid);
     }
     // the rules
@@ -1393,6 +1402,248 @@ proof fn ctor_forms_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         let sd = crate::metatheory::jsig(dty, denv, d);
         assert forall|cid: u64| #[trigger] sd.ienv.ctor_ind.contains_key(cid) implies crate::kclaims::ctor_form(sd, cid) by {
             assert(crate::kclaims::ctor_form(s0, cid));
+        }
+    }
+}
+
+
+/// Two keys of the export with the same id are the same key.
+proof fn key_eq<'p>(ef: crate::util::ExportFile<'p>, a: crate::util::NamePtr<'p>, b: crate::util::NamePtr<'p>)
+    requires
+        crate::inductive::export_ok(ef),
+        ef.declars_view().contains_key(a),
+        ef.declars_view().contains_key(b),
+        crate::level_arena_bridge::name_id(a) == crate::level_arena_bridge::name_id(b),
+    ensures
+        a == b,
+{
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let keys = ef.declars_keys();
+    assert(keys.to_set().contains(a));
+    assert(keys.to_set().contains(b));
+    let ia = choose|i: int| 0 <= i < keys.len() && keys[i] == a;
+    let ib = choose|i: int| 0 <= i < keys.len() && keys[i] == b;
+    assert(ia == ib);
+}
+
+/// ... of an inductive with a canonical recursor: its rules are the
+/// inductive's constructors with their field counts (the recursor arm's
+/// check, `rules_listed`), and the constructor is listed (`ctor_listed`).
+#[verifier::spinoff_prover]
+proof fn ctor_clause_rec<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_denv(ef, cc).ctor_ind.contains_key(cid),
+        crate::dom_code::has_rec(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), m_denv(ef, cc).ctor_ind[cid]),
+    ensures
+        crate::kclaims::ctor_clause(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), cid),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let sig = crate::twin::twin(raw);
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let ind = denv.ctor_ind[cid];
+    // the constructor, listed by its inductive
+    let i0 = entry_of(ef, cc, cid);
+    let d = decl_at(ef, i0);
+    assert(keys.to_set().contains(keys[i0]));
+    assert(view.contains_key(keys[i0]));
+    assert(denv.ctor_ind[cid] == crate::env_model::ctor_ind_entry(d)->0);
+    if let crate::env::Declar::Constructor(c) = d {
+        assert(crate::inductive::ctor_listed(ef, c));
+        assert(c.info.name == keys[i0]);
+        if let crate::env::Declar::Inductive(ii) = view[c.inductive_name] {
+            // the canonical recursor: an exported single-motive recursor
+            crate::dom_code::canon_shape_rec(sig, ind);
+            let rid = crate::dom_code::canon_rec(sig, ind);
+            crate::twin::twin_keeps(raw, rid);
+            assert(denv.recs.contains_key(rid));
+            rec_ctors(ef, cc, rid);
+            rec_ind_twin(raw, rid);
+            let ir = entry_of(ef, cc, rid);
+            let dr = decl_at(ef, ir);
+            assert(keys.to_set().contains(keys[ir]));
+            assert(view.contains_key(keys[ir]));
+            assert(denv.recs[rid] == crate::env_model::rec_entry(dr)->0);
+            assert(dty[rid] == crate::env_model::ty_entry(dr)->0);
+            if let crate::env::Declar::Recursor(r) = dr {
+                assert(crate::inductive::rec_arm_ok(ef, r));
+                assert(r.num_motives == 1);
+                let k = choose|k: int| 0 <= k < r.all_inductives@.len()
+                    && crate::inductive::rec_major_head(crate::expr_arena_bridge::to_model(r.info.ty), r.major_idx_spec())
+                        == Some(crate::level_arena_bridge::name_id(#[trigger] r.all_inductives@[k]))
+                    && crate::inductive::rules_listed(ef, r, r.all_inductives@[k]);
+                assert(raw.consts[rid].ty == crate::expr_arena_bridge::to_model(r.info.ty));
+                assert(crate::rec_canon::rec_ind(raw, rid) == crate::level_arena_bridge::name_id(r.all_inductives@[k]));
+                key_eq(ef, r.all_inductives@[k], c.inductive_name);
+                let rd = sig.ienv.recs[rid];
+                let rd0 = raw.ienv.recs[rid];
+                let sh = crate::dom_code::canon_shape(sig, ind);
+                assert(rd.rules.len() == rd0.rules.len());
+                assert forall|j: int| 0 <= j < rd0.rules.len() implies #[trigger] rd.rules[j].ctor_id == rd0.rules[j].ctor_id
+                    && rd.rules[j].nfields == rd0.rules[j].nfields by {
+                    if crate::twin::rec_core(raw, rid) {
+                        assert(rd.rules[j] == crate::twin::canon_rules(raw, rid)[j]);
+                    }
+                }
+                assert(sh.nmin() == rd.rules.len());
+                // listed: the constructor at its index
+                let p = c.ctor_idx as int;
+                assert(sh.ctors[p] == rd.rules[p].ctor_id);
+                assert(sh.ctors[p] == cid);
+                assert(sh.ctors.contains(cid));
+                // its field count
+                assert forall|j: int| 0 <= j < sh.nmin() && #[trigger] sh.ctors[j] == cid
+                    implies sh.fields[j].len() == denv.ctor_nf[cid] as nat by {
+                    let rn = r.rec_rules@[j].ctor_name;
+                    assert(crate::inductive::ctor_nf_is(ef, rn, r.rec_rules@[j].ctor_telescope_size_wo_params));
+                    key_eq(ef, rn, c.info.name);
+                    assert(sh.fields[j].len() == rd.rules[j].nfields);
+                }
+            } else {
+                assert(crate::env_model::rec_entry(dr) is Some);
+            }
+        }
+    } else {
+        assert(crate::env_model::ctor_ind_entry(d) is Some);
+    }
+}
+
+
+/// ... of a structure known from its declaration: its one constructor is
+/// the declaration's first, and the constructor's index is 0
+/// (`ctor_listed`).
+#[verifier::spinoff_prover]
+proof fn ctor_clause_struct<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_denv(ef, cc).ctor_ind.contains_key(cid),
+        !crate::dom_code::has_rec(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), m_denv(ef, cc).ctor_ind[cid]),
+        crate::dom_code::struct_decl(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), m_denv(ef, cc).ctor_ind[cid]),
+    ensures
+        crate::kclaims::ctor_clause(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), cid),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let sig = crate::twin::twin(raw);
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let ind = denv.ctor_ind[cid];
+    crate::dom_code::canon_shape_struct(sig, ind);
+    crate::dom_code::struct_decl_shape(sig, ind);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    assert(sig.ienv.struct_ctor.contains_key(ind)) by {
+        reveal(crate::dom_code::struct_decl);
+    }
+    // the structure's declaration
+    let is = entry_of(ef, cc, ind);
+    let di = decl_at(ef, is);
+    assert(keys.to_set().contains(keys[is]));
+    assert(view.contains_key(keys[is]));
+    assert(denv.struct_ctor[ind] == crate::env_model::struct_ctor_entry(di)->0);
+    // the constructor, listed at index 0
+    let i0 = entry_of(ef, cc, cid);
+    let d = decl_at(ef, i0);
+    assert(keys.to_set().contains(keys[i0]));
+    assert(view.contains_key(keys[i0]));
+    assert(denv.ctor_ind[cid] == crate::env_model::ctor_ind_entry(d)->0);
+    if let crate::env::Declar::Constructor(c) = d {
+        assert(crate::inductive::ctor_listed(ef, c));
+        assert(c.info.name == keys[i0]);
+        key_eq(ef, keys[is], c.inductive_name);
+        if let crate::env::Declar::Inductive(ii) = di {
+            assert(ii.all_ctor_names@.len() == 1);
+            assert(c.ctor_idx == 0);
+            assert(sh.ctors[0] == cid);
+            assert(sh.ctors.contains(cid));
+            assert forall|j: int| 0 <= j < sh.nmin() && #[trigger] sh.ctors[j] == cid
+                implies sh.fields[j].len() == denv.ctor_nf[cid] as nat by {
+                assert(j == 0);
+            }
+        } else {
+            assert(crate::env_model::struct_ctor_entry(di) is Some);
+        }
+    } else {
+        assert(crate::env_model::ctor_ind_entry(d) is Some);
+    }
+}
+
+
+/// Whether an inductive's shape is known, and the shape, do not depend
+/// on the locals: the canonical recursor, where there is one, is unique
+/// (`rec_scope_g`).
+proof fn canon_locals(s0: crate::ti_syntax::Sig, s1: crate::ti_syntax::Sig, ind: u64)
+    requires
+        s0.consts == s1.consts,
+        s0.ienv == s1.ienv,
+        crate::kclaims::iota_syn(s0),
+    ensures
+        crate::dom_code::has_canon(s0, ind) == crate::dom_code::has_canon(s1, ind),
+        crate::dom_code::has_canon(s0, ind) ==> crate::dom_code::canon_shape(s0, ind) == crate::dom_code::canon_shape(s1, ind),
+{
+    assert forall|rid: u64| #[trigger] crate::rec_canon::rec_canon(s0, rid) == crate::rec_canon::rec_canon(s1, rid)
+        && crate::rec_canon::rec_ind(s0, rid) == crate::rec_canon::rec_ind(s1, rid) by {
+        crate::dom_rec_end::canon_congr(s0, s1, rid);
+    }
+    crate::dom_code::struct_decl_congr(s0, s1, ind);
+    if crate::dom_code::has_rec(s0, ind) {
+        crate::dom_code::canon_shape_rec(s0, ind);
+        let r0 = crate::dom_code::canon_rec(s0, ind);
+        assert(crate::rec_canon::rec_canon(s1, r0) && crate::rec_canon::rec_ind(s1, r0) == ind);
+        assert(crate::dom_code::has_rec(s1, ind));
+        crate::dom_code::canon_shape_rec(s1, ind);
+        let r1 = crate::dom_code::canon_rec(s1, ind);
+        assert(crate::rec_canon::rec_canon(s0, r1) && crate::rec_canon::rec_ind(s0, r1) == ind);
+        assert(s0.ienv.recs.contains_key(r0));
+        assert(crate::kclaims::rec_syn(s0, r0));
+        assert(r1 == r0);
+    } else {
+        assert(!crate::dom_code::has_rec(s1, ind)) by {
+            if crate::dom_code::has_rec(s1, ind) {
+                let r1 = choose|rid: u64| crate::rec_canon::rec_canon(s1, rid) && crate::rec_canon::rec_ind(s1, rid) == ind;
+                assert(crate::rec_canon::rec_canon(s0, r1) && crate::rec_canon::rec_ind(s0, r1) == ind);
+            }
+        }
+        crate::dom_code::canon_shape_struct(s0, ind);
+        crate::dom_code::canon_shape_struct(s1, ind);
+    }
+}
+
+/// THE CONSTRUCTOR CLAUSES, certified at every cutoff and any locals
+/// (`kclaims::ctor_clauses`).
+proof fn ctor_clauses_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::kclaims::ctor_clauses(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    iota_syn_at(ef, cc);
+    assert(crate::kclaims::iota_syn(s0));
+    assert forall|cid: u64| #[trigger] s0.ienv.ctor_ind.contains_key(cid) implies crate::kclaims::ctor_clause(s0, cid) by {
+        let ind = s0.ienv.ctor_ind[cid];
+        if crate::dom_code::has_rec(s0, ind) {
+            ctor_clause_rec(ef, cc, cid);
+        } else if crate::dom_code::struct_decl(s0, ind) {
+            ctor_clause_struct(ef, cc, cid);
+        }
+    }
+    assert forall|d: Map<nat, ExprSpec>| #[trigger] crate::kclaims::ctor_clauses(crate::metatheory::jsig(dty, denv, d)) by {
+        crate::jkernel::jsig_locals(dty, denv, d);
+        let sd = crate::metatheory::jsig(dty, denv, d);
+        assert forall|cid: u64| #[trigger] sd.ienv.ctor_ind.contains_key(cid) implies crate::kclaims::ctor_clause(sd, cid) by {
+            assert(crate::kclaims::ctor_clause(s0, cid));
+            canon_locals(s0, sd, sd.ienv.ctor_ind[cid]);
         }
     }
 }
