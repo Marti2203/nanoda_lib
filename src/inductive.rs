@@ -2242,6 +2242,17 @@ pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crat
         0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] ==> j1 == j2
 }
 
+/// A BLOCK'S CONSTRUCTORS MENTION ONLY EARLIER CONSTANTS (R3b's
+/// tested-input check): every exported constructor of the block mentions
+/// only constants declared before its inductive, or the block's
+/// inductives.
+pub open spec fn ctors_known<'p>(ef: ExportFile<'p>, i: InductiveData<'p>) -> bool {
+    exists|cc: int| #[trigger] crate::env::limit_cutoff_ok_vk(ef.declars_view(), ef.declars_keys(), crate::env::EnvLimit::ByName(i.info.name), cc)
+        && forall|c: ConstructorData<'p>| #[trigger] ex_decl(ef, Declar::Constructor(c)) && i.all_ctor_names@.contains(c.info.name)
+            ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c.info.ty),
+                crate::env_model::dty_at(ef.declars_view(), ef.declars_keys(), cc).dom().union(crate::expr::name_ids(i.all_ind_names@).to_set()))
+}
+
 /// THE BLOCK CERTIFICATE (B6a-3): an exported single, non-nested inductive
 /// whose check returned has its canonical shape and recursor.
 pub open spec fn block_cert<'p>(ef: ExportFile<'p>, i: InductiveData<'p>) -> bool {
@@ -4251,6 +4262,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
         ensures
             exists|c: int| #[trigger] crate::tc::declar_cert_at(*self, *d, c),
             *d matches Declar::Inductive(i) ==> block_cert(*self, i),
+            *d matches Declar::Inductive(i) ==> ctors_known(*self, i),
     {
         let ghost a = self.arena();
         // VERUS-REWRITE(tested-input): the inductive type's declared type is
@@ -4301,6 +4313,77 @@ impl<'t, 'p: 't> ExportFile<'p> {
                                 "inductive: a structure's constructor does not have the structure shape");
                         },
                         _ => panic!("inductive: a structure's constructor is not declared"),
+                    }
+                }
+            }
+            // VERUS-REWRITE(tested-input): each of the block's constructors
+            // mentions only constants declared before the inductive, or the
+            // block's inductives -- the model evaluates a field's type at its
+            // inductive's rank (docs/TYPED_TARGET.md, R3b). Never fails on a
+            // block Lean exports: nanoda checks the constructors with only
+            // the block's inductives added.
+            if let Declar::Inductive(i0) = d {
+                let ghost known = crate::expr::known_ids(env0, crate::expr::name_ids(i0.all_ind_names@));
+                proof {
+                    broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                    assert(declar_export_tagged(a, Declar::Inductive(*i0)));
+                }
+                let mut j: usize = 0;
+                while j < i0.all_ctor_names.len()
+                    invariant
+                        export_ok(*self),
+                        a == self.arena(),
+                        crate::env_model::env_matches(env0, *tc0.ctx),
+                        crate::util_model::ctx_ok(*tc0.ctx),
+                        crate::util_model::arena_ids(*tc0.ctx).1 == a,
+                        known == crate::expr::known_ids(env0, crate::expr::name_ids(i0.all_ind_names@)),
+                        forall|x: int| 0 <= x < i0.all_ctor_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] i0.all_ctor_names@[x]),
+                        forall|c: ConstructorData<'t>, x: int| #![trigger ex_decl(*self, Declar::Constructor(c)), i0.all_ctor_names@[x]]
+                            0 <= x < j && ex_decl(*self, Declar::Constructor(c)) && c.info.name == i0.all_ctor_names@[x]
+                            ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c.info.ty), known),
+                    decreases i0.all_ctor_names@.len() - j,
+                {
+                    let cn = i0.all_ctor_names[j];
+                    proof {
+                        broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                        crate::util_model::build_hasher_default_valid_fx();
+                        assert(crate::util_model::export_tagged(a, i0.all_ctor_names@[j as int]));
+                        export_declars_get(*self, cn);
+                    }
+                    match self.declars.get(&cn) {
+                        Some(Declar::Constructor(c)) => {
+                            proof {
+                                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                assert(crate::indexmap_model::imap_view(&self.declars).contains_key(cn));
+                                assert(declar_export_tagged(a, Declar::Constructor(*c)));
+                                export_tagged_owned(*tc0.ctx, c.info.ty);
+                                self.declars_views();
+                            }
+                            assert!(tc0.ctx.consts_known(c.info.ty, &env0, &i0.all_ind_names),
+                                "inductive: a constructor mentions a constant declared after its inductive");
+                            proof {
+                                assert forall|c2: ConstructorData<'t>, x: int| #![trigger ex_decl(*self, Declar::Constructor(c2)), i0.all_ctor_names@[x]]
+                                    0 <= x < j + 1 && ex_decl(*self, Declar::Constructor(c2)) && c2.info.name == i0.all_ctor_names@[x]
+                                    implies crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c2.info.ty), known) by {
+                                    if x == j {
+                                        assert(Declar::Constructor(c2) == Declar::Constructor(*c));
+                                    }
+                                }
+                            }
+                        },
+                        _ => panic!("inductive: a constructor is not declared"),
+                    }
+                    j += 1;
+                }
+                proof {
+                    crate::env_model::env_model_at(env0);
+                    assert(ctors_known(*self, *i0)) by {
+                        assert forall|c2: ConstructorData<'t>| #[trigger] ex_decl(*self, Declar::Constructor(c2))
+                            && i0.all_ctor_names@.contains(c2.info.name) implies crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c2.info.ty),
+                                crate::env_model::dty_at(self.declars_view(), self.declars_keys(), env0.visible()).dom().union(crate::expr::name_ids(i0.all_ind_names@).to_set())) by {
+                            let x = choose|x: int| 0 <= x < i0.all_ctor_names@.len() && i0.all_ctor_names@[x] == c2.info.name;
+                            assert(ex_decl(*self, Declar::Constructor(c2)) && i0.all_ctor_names@[x] == c2.info.name);
+                        }
                     }
                 }
             }

@@ -652,6 +652,85 @@ pub open spec fn find_const_cache_ok<'t, 'p>(c: TcCtx<'t, 'p>, cache: Map<ExprPt
         && (cache[k] == false ==> !crate::inductive_model::contains_const_named(crate::expr_arena_bridge::to_model(k), ids))
 }
 
+/// The constants a term may mention: those declared in `env`, and `ids`.
+pub open spec fn known_ids<'x, 'a>(env: crate::env::Env<'x, 'a>, ids: Seq<u64>) -> Set<u64> {
+    crate::env_model::to_model_of_declar_ty(env).dom().union(ids.to_set())
+}
+
+/// Every memoised `true` is a term whose constants are all known.
+pub open spec fn consts_known_cache_ok<'t, 'p>(c: TcCtx<'t, 'p>, cache: Map<ExprPtr<'t>, bool>, known: Set<u64>) -> bool {
+    forall|k: ExprPtr<'t>| #[trigger] cache.contains_key(k) ==> crate::util_model::owns(c, k)
+        && (cache[k] ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(k), known))
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Whether every constant `e` mentions is declared in `env` or named in
+    /// `names` (the inductive checker's test that a constructor mentions
+    /// nothing declared after its block). Same traversal as `find_const`.
+    pub(crate) fn consts_known(&self, e: ExprPtr<'t>, env: &crate::env::Env<'t, 't>, names: &[NamePtr<'t>]) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, e),
+            crate::env_model::env_matches(*env, *self),
+        ensures
+            result ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(e), known_ids(*env, name_ids(names@))),
+    {
+        let mut cache = crate::util::new_fx_hash_map();
+        self.consts_known_aux(e, env, names, &mut cache)
+    }
+
+    #[verifier::exec_allows_no_decreases_clause]
+    fn consts_known_aux(&self, e: ExprPtr<'t>, env: &crate::env::Env<'t, 't>, names: &[NamePtr<'t>], cache: &mut FxHashMap<ExprPtr<'t>, bool>) -> (result: bool)
+        requires
+            crate::util_model::owns(*self, e),
+            crate::env_model::env_matches(*env, *self),
+            consts_known_cache_ok(*self, old(cache)@, known_ids(*env, name_ids(names@))),
+        ensures
+            consts_known_cache_ok(*self, final(cache)@, known_ids(*env, name_ids(names@))),
+            result ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(e), known_ids(*env, name_ids(names@))),
+    {
+        proof {
+            crate::util_model::ptr_map_keys(*self, cache@, e);
+            crate::util_model::build_hasher_default_valid_fx();
+        }
+        if let Some(cached) = cache.get(&e) {
+            *cached
+        } else {
+            let r = match self.read_expr(e) {
+                Var { .. } | Sort { .. } | NatLit { .. } | StringLit { .. } => true,
+                Const { name, .. } => {
+                    proof {
+                        crate::expr_arena_bridge::is_const_shape_model(e);
+                        assert(name_ids(names@) =~= Seq::new(names@.len(), |i: int| crate::level_arena_bridge::name_id(names@[i])));
+                    }
+                    if crate::inductive_model::name_in_slice(names, name) {
+                        true
+                    } else {
+                        let found = crate::env_model::get_declar_info_ty(env, &name);
+                        found.is_some()
+                    }
+                },
+                App { fun, arg, .. } => self.consts_known_aux(fun, env, names, cache) && self.consts_known_aux(arg, env, names, cache),
+                Pi { binder_type, body, .. } | Lambda { binder_type, body, .. } => {
+                    self.consts_known_aux(binder_type, env, names, cache) && self.consts_known_aux(body, env, names, cache)
+                }
+                Let { binder_type, val, body, .. } => {
+                    self.consts_known_aux(binder_type, env, names, cache)
+                        && self.consts_known_aux(val, env, names, cache)
+                        && self.consts_known_aux(body, env, names, cache)
+                }
+                Local { .. } => true,
+                Proj { structure, .. } => self.consts_known_aux(structure, env, names, cache),
+            };
+            proof {
+                crate::util_model::ptr_map_keys(*self, cache@, e);
+                crate::util_model::build_hasher_default_valid_fx();
+            }
+            cache.insert(e, r);
+            r
+        }
+    }
+}
+
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place: the same telescope `abstr_pi_telescope` builds, over
     /// the iterator's elements.
