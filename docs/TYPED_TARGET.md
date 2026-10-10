@@ -2120,7 +2120,10 @@ fires none. R1 DONE: soundness decreases on `irank` (1ef011d);
 `ti_strip::strip_below` with `strip_below_zero` (it is `strip` below rank
 0) and `strip_below_valid` (a derivation below rank `r` is one of the
 signature, `irank <= r + 1`, given `iota_ok`); `ti_valid::sig_ext` admits
-the same constants and ranks in place of `def_ok`.
+the same constants and ranks in place of `def_ok` (2dc5495).
+R2a: `dom_levels::sig_lps` holds below every rank (`sig_lps_below`) --
+the kept recursors' rules over their own parameters too -- certified as
+before (`export_sound::lps_at`, with `rules_at`).
 
 The plan:
 

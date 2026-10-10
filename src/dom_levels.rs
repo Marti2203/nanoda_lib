@@ -20,11 +20,13 @@ use vstd::prelude::*;
 
 verus! {
 
-/// What level instantiation needs of the signature, at every instance:
-/// constants mention only their own parameters, locals none.
+/// What level instantiation needs of the signature below every rank
+/// (`ti_strip::strip_below`), at every instance: constants and the
+/// recursors' rules mention only their own parameters, locals none.
 #[verifier::opaque]
 pub open spec fn sig_lps(sig: Sig) -> bool {
-    forall|ks: Seq<u64>, vs: Seq<LevelSpec>| ks.len() == vs.len() ==> #[trigger] crate::ti_level::sig_lp_ok(crate::ti_strip::strip(sig), ks, vs)
+    forall|r: int, ks: Seq<u64>, vs: Seq<LevelSpec>| ks.len() == vs.len()
+        ==> #[trigger] crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, r), ks, vs)
 }
 
 pub proof fn sig_lps_at(sig: Sig, ks: Seq<u64>, vs: Seq<LevelSpec>)
@@ -33,6 +35,18 @@ pub proof fn sig_lps_at(sig: Sig, ks: Seq<u64>, vs: Seq<LevelSpec>)
         ks.len() == vs.len(),
     ensures
         crate::ti_level::sig_lp_ok(crate::ti_strip::strip(sig), ks, vs),
+{
+    reveal(sig_lps);
+    crate::ti_strip::strip_below_zero(sig);
+    assert(crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, 0), ks, vs));
+}
+
+pub proof fn sig_lps_below(sig: Sig, r: int, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lps(sig),
+        ks.len() == vs.len(),
+    ensures
+        crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, r), ks, vs),
 {
     reveal(sig_lps);
 }

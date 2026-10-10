@@ -556,10 +556,10 @@ proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
-/// THE STRIPPED SIGNATURE'S LEVELS at every cutoff and any locals: each
-/// constant's type and value mention only its own universe parameters
-/// (its certificate; a twinned recursor's canonical type,
-/// `twin::canon_elp_sig`), and it has neither locals nor recursors.
+/// THE LEVELS BELOW EVERY RANK at every cutoff and any locals: each
+/// constant's type and value, and each recursor's rules, mention only
+/// their own universe parameters (the certificates; a twinned recursor's
+/// canonical type and rules, `twin::canon_elp_sig`); no locals.
 #[verifier::spinoff_prover]
 proof fn lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     requires
@@ -573,6 +573,7 @@ proof fn lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     let a = ef.arena();
     crate::inductive::export_keys_ids_inj(ef);
     ef.declars_views();
+    rules_at(ef, cc);
     assert forall|k: u64| #[trigger] dty.contains_key(k) implies crate::level_inst::elp_in(dty[k].1, dty[k].0) by {
         decl_lps_at(ef, cc, k);
     }
@@ -590,13 +591,12 @@ proof fn lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         reveal(crate::dom_levels::sig_lps);
         let raw = crate::metatheory::jsig_raw(dty, denv, d);
         let s = crate::metatheory::jsig(dty, denv, d);
-        let ss = crate::ti_strip::strip(s);
         assert(s == crate::twin::twin(raw));
         assert forall|k: u64| #[trigger] raw.consts.contains_key(k) implies crate::level_inst::elp_in(raw.consts[k].ty, raw.consts[k].lps) by {
             assert(dty.contains_key(k));
         }
-        assert forall|k: u64| #[trigger] ss.consts.contains_key(k) implies crate::level_inst::elp_in(ss.consts[k].ty, ss.consts[k].lps)
-            && (ss.consts[k].val is Some ==> crate::level_inst::elp_in(ss.consts[k].val->Some_0, ss.consts[k].lps)) by {
+        assert forall|k: u64| #[trigger] s.consts.contains_key(k) implies crate::level_inst::elp_in(s.consts[k].ty, s.consts[k].lps)
+            && (s.consts[k].val is Some ==> crate::level_inst::elp_in(s.consts[k].val->Some_0, s.consts[k].lps)) by {
             crate::twin::twin_keeps(raw, k);
             assert(dty.contains_key(k));
             if denv.recs.contains_key(k) && crate::twin::rec_core(raw, k) {
@@ -608,9 +608,23 @@ proof fn lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
                 assert(s.consts[k] == raw.consts[k]);
             }
         }
-        assert forall|ks: Seq<u64>, vs: Seq<crate::level_model::LevelSpec>| ks.len() == vs.len()
-            implies #[trigger] crate::ti_level::sig_lp_ok(ss, ks, vs) by {
-            assert(ss.ienv.defs == denv.defs);
+        assert forall|r: int, ks: Seq<u64>, vs: Seq<crate::level_model::LevelSpec>| ks.len() == vs.len()
+            implies #[trigger] crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(s, r), ks, vs) by {
+            let sb = crate::ti_strip::strip_below(s, r);
+            assert(sb.ienv.defs == denv.defs);
+            assert(sb.consts == s.consts);
+            assert forall|id: u64, j: int| #![trigger sb.ienv.recs[id].rules[j]] sb.ienv.recs.contains_key(id) && 0 <= j < sb.ienv.recs[id].rules.len()
+                implies crate::level_inst::elp_in(sb.ienv.recs[id].rules[j].rhs, sb.ienv.recs[id].uparams) by {
+                assert(sb.ienv.recs[id] == s.ienv.recs[id]);
+                crate::twin::twin_keeps(raw, id);
+                assert(denv.recs.contains_key(id));
+                if crate::twin::rec_core(raw, id) {
+                    crate::twin::canon_elp_sig(raw, id);
+                    assert(s.ienv.recs[id].rules[j] == crate::twin::canon_rules(raw, id)[j]);
+                } else {
+                    assert(s.ienv.recs[id] == denv.recs[id]);
+                }
+            }
         }
     }
 }
