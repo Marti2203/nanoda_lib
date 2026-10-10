@@ -482,6 +482,22 @@ pub open spec fn proj_sem(sig: Sig) -> bool {
     forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) ==> struct_sem(sig, s)
 }
 
+/// `struct_sem` without its semantic constants, which the ranks give
+/// (`kclaims::sig_sr_of`).
+pub open spec fn struct_sem_h(sig: Sig, s: u64) -> bool {
+    let sh = canon_shape(sig, s);
+    &&& !sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s)
+    &&& crate::dom_code::canon_sr(sig, s)
+    &&& crate::dom_rec_ty::ind_scope(sig, sh)
+    &&& crate::dom_code::never_prop(sig, s)
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
+}
+
+pub open spec fn proj_sem_h(sig: Sig) -> bool {
+    forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) ==> struct_sem_h(sig, s)
+}
+
 /// PROJECTION IOTA, LEFT IN RIGHT: a member of a constructor
 /// application's projection lies below the constructor's field there, so
 /// it is a member of the projected argument.

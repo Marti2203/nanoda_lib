@@ -326,6 +326,47 @@ pub open spec fn sig_sr(sig: Sig) -> bool {
     &&& crate::dom_proj_sound::proj_sem(sig)
 }
 
+/// `rec_model` without its semantic constants, which the ranks give
+/// (`kclaims::sig_sr_of`): what the model assumes of a recursor.
+pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let rd = sig.ienv.recs[c];
+    &&& forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() ==>
+        #[trigger] ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv))
+    &&& ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
+    &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
+    &&& crate::dom_code::fields_blind(sig, sh.ind)
+    &&& crate::dom_levels::sig_lps(sig)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
+    &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
+        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+    &&& crate::dom_code::fields_typed(sig, sh.ind)
+}
+
+/// `rec_model_p` without its semantic constant.
+pub open spec fn rec_model_p_h(sig: Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let rd = sig.ienv.recs[c];
+    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
+        ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& crate::dom_levels::sig_lps(sig)
+    &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
+}
+
+#[verifier::opaque]
+pub open spec fn sig_rec_h(sig: Sig) -> bool {
+    forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==>
+        (rec_interp(sig, c) ==> rec_model_h(sig, c)) && (!rec_interp(sig, c) ==> rec_model_p_h(sig, c))
+}
+
+/// `sig_sr` without the semantic constants: the model's hypothesis.
+pub open spec fn sig_sr_h(sig: Sig) -> bool {
+    &&& (crate::ti_syntax::iota_ok(sig) && !crate::ti_syntax::no_recs(sig) ==> sig_rec_h(sig))
+    &&& crate::dom_proj_sound::proj_sem_h(sig)
+}
+
 /// The minor's field binders are the field types at the recursor's
 /// instance of the inductive, lifted.
 pub proof fn msds_at(sig: Sig, c: u64, lv: Seq<LevelSpec>, j: int, k: int)

@@ -2061,9 +2061,18 @@ and eta step is vacuous (about thirty sites use that). Stages:
     `ctor_sem` left `ind_ok_hyp` (`frag_env_of` derives it). `ind_ok_hyp`
     is now `rec_small`, `sig_sr`, every recursor interpreted, and the
     structure clause.
-  - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
-    fields typed and blind, semantic constants, from the canonical form
-    and the certificates.
+    THE MODEL'S SEMANTIC CONSTANTS FROM THE RANKS: `sig_sr`'s semantic
+    constants -- each recursor, its inductive and constructors, each
+    structure and its constructor (`rec_model`, `rec_model_p`,
+    `struct_sem`) -- are declared constants, so the ranks give them
+    (`kclaims::sig_sr_of`, from `iota_syn`'s scope and the inductive's
+    side). `ind_ok_hyp` takes `sig_sr_h`: `sig_sr` without them
+    (`rec_model_h`, `rec_model_p_h`, `struct_sem_h`). One table fact joins
+    `tables_ok`, certified as the others (`env_model::tables_ok_at`): no
+    recursor is in the constructor tables (a declaration is one kind).
+  - **B7** the model's facts (`rec_model_h`, `struct_sem_h`): typed rules,
+    fields typed and blind, closed types, from the canonical form and the
+    certificates (the semantic constants are done, above).
   - **B8** `kh_hyp` loses `ind_ok`; what is left is the fragment's
     boundary (single-motive, field kinds, interpreted recursors,
     structures in the slice), to be widened after.

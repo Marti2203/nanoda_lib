@@ -73,11 +73,12 @@ pub open spec fn frag_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
 }
 
 /// THE CONSTRUCTOR TABLES: a constructor is a declared constant, no
-/// definition or recursor, with an inductive.
+/// definition or recursor, with an inductive; no recursor is in them.
 pub open spec fn tables_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& forall|id: u64| #[trigger] denv.ctor_np.contains_key(id) ==> dty.contains_key(id) && !denv.defs.contains_key(id) && !denv.recs.contains_key(id)
         && denv.ctor_ind.contains_key(id)
     &&& forall|id: u64| #[trigger] denv.ctor_nf.contains_key(id) ==> denv.ctor_ind.contains_key(id)
+    &&& forall|id: u64| #[trigger] denv.ctor_ind.contains_key(id) ==> !denv.recs.contains_key(id)
 }
 
 /// `iota_ok`'s syntactic part for one recursor: in scope, its
@@ -145,6 +146,11 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         assert(ctor_forms(s));
         assert(ctor_clauses(s));
         assert(crate::dom_model::consts_ranked(s));
+        assert forall|c: u64| #[trigger] s.ienv.recs.contains_key(c) implies !s.ienv.ctor_ind.contains_key(c) by {
+            assert(s.ienv.ctor_ind == denv.ctor_ind);
+            assert(denv.recs.contains_key(c));
+        }
+        sig_sr_of(s);
         assert forall|cid: u64| #[trigger] s.ienv.ctor_ind.contains_key(cid) implies ctor_sem(s, cid) by {
             assert(ctor_form(s, cid));
             assert forall|ls: Seq<LevelSpec>| ls.len() == s.consts[s.ienv.ctor_ind[cid]].lps.len()
@@ -160,6 +166,67 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
             }
         }
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
+    }
+}
+
+/// THE SEMANTIC CONSTANTS FROM THE RANKS: the model's hypothesis without
+/// them (`sig_sr_h`), the ranks and `iota_ok`'s certified syntactic part
+/// give `sig_sr` -- each recursor, its inductive and constructors, and
+/// each structure and its constructor, are declared constants ranked
+/// above their types.
+pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
+    requires
+        crate::dom_rec_end::sig_sr_h(sig),
+        crate::dom_model::consts_ranked(sig),
+        iota_syn(sig),
+        forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
+    ensures
+        crate::dom_rec_end::sig_sr(sig),
+{
+    if crate::ti_syntax::iota_ok(sig) && !crate::ti_syntax::no_recs(sig) {
+        reveal(crate::dom_rec_end::sig_rec_h);
+        reveal(crate::dom_rec_end::sig_rec);
+        assert forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) implies
+            (crate::dom_rec_end::rec_interp(sig, c) ==> crate::dom_rec_end::rec_model(sig, c))
+            && (!crate::dom_rec_end::rec_interp(sig, c) ==> crate::dom_rec_end::rec_model_p(sig, c)) by {
+            assert(rec_syn(sig, c));
+            let sh = crate::dom_rec_ty::rshape(sig, c);
+            let rd = sig.ienv.recs[c];
+            let ind = sh.ind;
+            assert(ind == crate::rec_canon::rec_ind(sig, c));
+            assert forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[ind].lps.len()
+                implies #[trigger] crate::dom_model::sem_const(sig, ind, ls) by {
+                crate::dom_model::sem_const_of(sig, ind, ls);
+            }
+            if crate::dom_rec_end::rec_interp(sig, c) {
+                assert forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() implies
+                    #[trigger] crate::dom_model::sem_const(sig, c, lv)
+                    && crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv)) by {
+                    crate::dom_model::sem_const_of(sig, c, lv);
+                }
+                assert forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[ind].lps.len() && 0 <= p < sh.nmin()
+                    implies #[trigger] crate::dom_model::sem_const(sig, sh.ctors[p], ls) by {
+                    assert(sh.ctors[p] == sh.ctors[p]);
+                    crate::dom_model::sem_const_of(sig, sh.ctors[p], ls);
+                }
+            }
+        }
+    }
+    assert forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) implies crate::dom_proj_sound::struct_sem(sig, s) by {
+        assert(crate::dom_proj_sound::struct_sem_h(sig, s));
+        let sh = crate::dom_code::canon_shape(sig, s);
+        crate::dom_code::canon_side(sig, s);
+        reveal(crate::dom_code::ind_side);
+        assert(sh.ind == s);
+        crate::ti_syntax::struct_of_basic(sig, s);
+        assert(crate::dom_code::ind_core(sig, s, sh));
+        assert(sig.consts.contains_key(sh.ctors[0]) && sig.consts[sh.ctors[0]].lps == sig.consts[s].lps);
+        assert(!sig.ienv.recs.contains_key(sh.ctors[0]));
+        assert forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() implies
+            #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls) by {
+            crate::dom_model::sem_const_of(sig, s, ls);
+            crate::dom_model::sem_const_of(sig, sh.ctors[0], ls);
+        }
     }
 }
 
@@ -223,7 +290,7 @@ pub proof fn recs_declared(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, i
 #[verifier::opaque]
 pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
-    &&& crate::dom_rec_end::sig_sr(sig)
+    &&& crate::dom_rec_end::sig_sr_h(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
         ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]

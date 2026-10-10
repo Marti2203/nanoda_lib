@@ -955,6 +955,9 @@ pub proof fn tables_ok_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, k
     assert forall|id: u64| #[trigger] n.ctor_nf.contains_key(id) implies n.ctor_ind.contains_key(id) by {
         assert(crate::env::find_at(view, keys, c, id)->0 is Constructor);
     }
+    assert forall|id: u64| #[trigger] n.ctor_ind.contains_key(id) implies !n.recs.contains_key(id) by {
+        assert(crate::env::find_at(view, keys, c, id)->0 is Constructor);
+    }
 }
 
 pub proof fn tables_stable_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys: Seq<NamePtr<'a>>, c1: int, c2: int)
