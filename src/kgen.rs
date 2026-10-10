@@ -605,6 +605,45 @@ pub proof fn tdoms_step(t: ExprSpec, i: nat)
     }
 }
 
+/// Substituting a local adds no constant.
+pub proof fn ccn_inst(k: nat, x: nat, e: ExprSpec, ids: Seq<u64>)
+    ensures
+        crate::inductive_model::contains_const_named(inst(k, ExprSpec::Free(x), e), ids)
+            == crate::inductive_model::contains_const_named(e, ids),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if i == k {
+                assert(crate::subst_algebra::lift(k, 0, ExprSpec::Free(x)) == ExprSpec::Free(x));
+            }
+        },
+        ExprSpec::App(f, a) => { ccn_inst(k, x, *f, ids); ccn_inst(k, x, *a, ids); },
+        ExprSpec::Bind(_, t, b) => { ccn_inst(k, x, *t, ids); ccn_inst(k + 1, x, *b, ids); },
+        ExprSpec::Let(t, v, b) => { ccn_inst(k, x, *t, ids); ccn_inst(k, x, *v, ids); ccn_inst(k + 1, x, *b, ids); },
+        ExprSpec::Proj(_, s) => { ccn_inst(k, x, *s, ids); },
+        _ => {},
+    }
+}
+
+/// Instantiating with locals adds no constant.
+pub proof fn ccn_vsub(e: ExprSpec, xs: Seq<nat>, ids: Seq<u64>)
+    ensures
+        crate::inductive_model::contains_const_named(vsub(e, frees(xs)), ids)
+            == crate::inductive_model::contains_const_named(e, ids),
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        let n = xs.len();
+        let fx = frees(xs);
+        let rest = xs.drop_first();
+        assert(fx.drop_first() =~= frees(rest));
+        assert(fx[0] == ExprSpec::Free(xs[0]));
+        ccn_inst((n - 1) as nat, xs[0], e, ids);
+        ccn_vsub(inst((n - 1) as nat, fx[0], e), rest, ids);
+    }
+}
+
 /// A telescope opened short of its binders is still a Pi.
 pub proof fn lit_open_pi(t: ExprSpec, ids: Seq<nat>, n: nat, k: int)
     requires

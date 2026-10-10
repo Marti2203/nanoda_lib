@@ -2235,6 +2235,8 @@ pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crat
     &&& crate::twin::shape_nlbv(sh)
     &&& crate::twin::shape_nofv(sh)
     &&& forall|n: NamePtr<'p>| #[trigger] rec_names_of(ef, i.info.name).contains(n) ==> n == crate::env::declar_info(od_r).name
+    &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len()
+        ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![sh.ind])
 }
 
 /// THE BLOCK CERTIFICATE (B6a-3): an exported single, non-nested inductive
@@ -4929,6 +4931,7 @@ pub(crate) proof fn shape_ctor<'t>(st: InductiveCheckState<'t>, j: int)
         st.ind_consts@.len() == 1,
         st.local_indices@.len() >= 1,
         0 <= j < st.all_inductives_incl_specialized@[0].ctors@.len(),
+        ind_const_at(st, 0),
         ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].name),
             crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty)),
         crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[j].ty)) == 0,
@@ -4957,6 +4960,7 @@ pub(crate) proof fn shape_ctor<'t>(st: InductiveCheckState<'t>, j: int)
         &&& forall|q: int| 0 <= q < sh.tss[j].len() ==> crate::expr_model::nlbv(#[trigger] sh.tss[j][q]) <= sh.np + sh.fields[j].len()
             && !crate::expr_model::has_fv(sh.tss[j][q])
         &&& sh.fields[j].len() + sh.np == crate::rec_canon::tarity(cty)
+        &&& forall|q: int| 0 <= q < sh.tss[j].len() ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![sh.ind])
     }),
 {
     let h = st.all_inductives_incl_specialized@[0];
@@ -5009,6 +5013,10 @@ pub(crate) proof fn shape_ctor<'t>(st: InductiveCheckState<'t>, j: int)
     }
     assert forall|q: int| 0 <= q < sh.tss[j].len() implies crate::expr_model::nlbv(#[trigger] sh.tss[j][q]) <= sh.np + sh.fields[j].len()
         && !crate::expr_model::has_fv(sh.tss[j][q]) by {
+        assert(sh.tss[j][q] == args[np + q]);
+    }
+    assert(const_ids(st.ind_consts@) =~= seq![sh.ind]);
+    assert forall|q: int| 0 <= q < sh.tss[j].len() implies !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![sh.ind]) by {
         assert(sh.tss[j][q] == args[np + q]);
     }
 }
@@ -5271,6 +5279,8 @@ pub(crate) proof fn block_ind_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         &&& crate::twin::shape_nofv(sh)
         &&& forall|k: int| 0 <= k < sh.nmin() ==> sh.fields[k].len() + sh.np
             == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[0].ctors@[k].ty))
+        &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len()
+            ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![sh.ind])
     }),
 {
     reveal(shape_pre);
@@ -5354,6 +5364,10 @@ pub(crate) proof fn block_ind_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
     }
     assert forall|k: int| 0 <= k < sh.nmin() implies #[trigger] ctor_ok_ex(ef, sh, k) by {
         assert(ctor_ok_ex(ef, sh, k) && sh.fields[k].len() + sh.np == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(h.ctors@[k].ty)));
+    }
+    assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len()
+        implies !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![sh.ind]) by {
+        shape_ctor(st, j);
     }
 }
 
@@ -5495,6 +5509,8 @@ pub(crate) proof fn ctor_result<'t>(st: InductiveCheckState<'t>, pid: u64, cty: 
             #[trigger] crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n))[i] == ExprSpec::Var((n - 1 - i) as nat),
         st.ind_consts@.len() == 1 && st.local_indices@.len() >= 1 ==>
             crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n)).len() == st.local_params@.len() + st.local_indices@[0]@.len(),
+        forall|i: int| st.local_params@.len() <= i < crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n)).len()
+            ==> !crate::inductive_model::contains_const_named(#[trigger] crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n))[i], const_ids(st.ind_consts@)),
 {
     let np = st.local_params@.len();
     let c = choose|c: CtorCert| #[trigger] ctor_syn_cert(st, pid, cty, c);
@@ -5523,6 +5539,10 @@ pub(crate) proof fn ctor_result<'t>(st: InductiveCheckState<'t>, pid: u64, cty: 
     crate::twin::spine_args_nofv(r);
     crate::kgen::spine_args_nlbv(r, n as nat);
     let args = crate::beta_model::spine_args(r);
+    assert forall|i: int| np <= i < args.len() implies !crate::inductive_model::contains_const_named(#[trigger] args[i], const_ids(st.ind_consts@)) by {
+        assert(crate::beta_model::spine_args(opened)[i] == crate::ti_spine::vsub(args[i], fx));
+        crate::kgen::ccn_vsub(args[i], ls, const_ids(st.ind_consts@));
+    }
     assert forall|i: int| 0 <= i < np implies #[trigger] args[i] == ExprSpec::Var((n - 1 - i) as nat) by {
         assert(c.locals[i] == crate::expr_arena_bridge::expr_id(st.local_params@[i]));
         assert(crate::beta_model::spine_args(opened)[i] == ExprSpec::Free(ls[i]));
