@@ -2156,7 +2156,14 @@ reaches them from its own rank: its inductive ranks below it
 bound of a semantic constant). Lifting a fact typed above rank 0 to the
 signature needs its recursor conditions, so `sig_sr`, `canon_ok` and
 `canon_sr` carry `iota_ok` -- not a new hypothesis: the kernel's
-signature has it, and `sig_sr_of` takes the one `frag_env_of` derives.
+signature has it, and `sig_sr_of` takes the one `frag_env_of` derives
+(6d203bf).
+R2b-2c: a structure's and its constructor's closed types are typed below
+the structure's rank (`dom_proj_sound::struct_sem`, `struct_sem_h`;
+`kstruct::struct_facts`, `canon_scope` -- now always at the inductive's
+or its recursor's rank). R2 DONE: no model fact asks typing without the
+lower-ranked recursors and structures; each is at the rank of the
+declaration nanoda checks it with.
 
 The plan:
 

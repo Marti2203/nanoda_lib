@@ -248,8 +248,8 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     assert(crate::dom_code::canon_sr(sig, s));
     assert(crate::dom_rec_ty::ind_scope(sig, sh));
     assert(crate::dom_code::never_prop(sig, s));
-    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty())));
-    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty())));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty())));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty())));
     assert(!sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s));
 }
 

@@ -472,8 +472,8 @@ pub open spec fn struct_sem(sig: Sig, s: u64) -> bool {
     &&& crate::dom_code::canon_sr(sig, s)
     &&& crate::dom_rec_ty::ind_scope(sig, sh)
     &&& crate::dom_code::never_prop(sig, s)
-    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
-    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
         #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls)
 }
@@ -490,8 +490,8 @@ pub open spec fn struct_sem_h(sig: Sig, s: u64) -> bool {
     &&& crate::dom_code::canon_sr(sig, s)
     &&& crate::dom_rec_ty::ind_scope(sig, sh)
     &&& crate::dom_code::never_prop(sig, s)
-    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
-    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
 }
 
 pub open spec fn proj_sem_h(sig: Sig) -> bool {
