@@ -2180,6 +2180,17 @@ The plan:
 - **R3** certified at the export: the declaration's typing at its
   certificate's cutoff extends to `strip_below(jsig, rank)` (`derivable_ext`;
   everything before it in position is below it in rank).
+  DESIGN POINT (found 2026-10-10, after R2): the judgment's ranks are
+  CHOSEN (`metatheory::jrank`: any ranks with `rank_ok` and
+  `types_ranked`), not the export's positions, so "before in position,
+  below in rank" does not hold of them. The way through is the one
+  `types_ranked` took: put the model's typing facts, stated of the
+  ranks, into `jrank`'s choice; the export proves the position ranks
+  meet them (`export_sound::ranked_at`), so the chosen ranks do too, and
+  the facts leave `ind_ok_hyp`. The work is that existence proof: each
+  declaration's certified typing at its cutoff (`types_at`, the twin's
+  canonical rules) lifted into `strip_below(jsig, position)`
+  (`ti_valid::derivable_ext`; `ti_strip::iota_ok_below`).
 
 ## The open fork before S4
 
