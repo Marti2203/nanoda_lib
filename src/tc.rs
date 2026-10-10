@@ -164,6 +164,7 @@ impl<'p> ExportFile<'p> {
             exists|c: int| #[trigger] declar_cert_at(*self, *d, c),
             *d matches Declar::Inductive(i) ==> crate::inductive::block_cert(*self, i),
             *d matches Declar::Recursor(r) ==> crate::inductive::rec_arm_ok(*self, r),
+            *d matches Declar::Constructor(c) ==> crate::inductive::ctor_listed(*self, c),
     {
         use Declar::*;
         let ghost a = self.arena();
@@ -263,9 +264,39 @@ impl<'p> ExportFile<'p> {
                         declar_cert_intro(*self, env, *d);
                     }
                 }
-                assert!(self.declars.get(&ctor_data.inductive_name).is_some());
+                // VERUS-REWRITE(tested-input): the constructor's inductive is an
+                // inductive (nanoda tested only that it exists) that lists the
+                // constructor at its index (`ctor_listed`). Never fails on a
+                // constructor Lean exports.
+                proof {
+                    crate::inductive::export_ok_facts(*self);
+                    self.declars_views();
+                    crate::util_model::build_hasher_default_valid_fx();
+                    assert(crate::inductive::declar_export_tagged(a, *d));
+                    crate::inductive::export_declars_get(*self, ctor_data.inductive_name);
+                }
+                match self.declars.get(&ctor_data.inductive_name) {
+                    Some(Inductive(i)) => {
+                        proof {
+                            broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                            assert(self.declars_view().contains_key(ctor_data.inductive_name));
+                            assert(self.declars_view()[ctor_data.inductive_name] == Declar::Inductive(*i));
+                            assert(crate::inductive::declar_export_tagged(a, Declar::Inductive(*i)));
+                        }
+                        let k = ctor_data.ctor_idx as usize;
+                        assert!(k < i.all_ctor_names.len(), "constructor: its index is past its inductive's constructors");
+                        proof {
+                            broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                        }
+                        assert!(crate::level_arena_bridge::name_ptr_eq(i.all_ctor_names[k], ctor_data.info.name),
+                            "constructor: its inductive does not list it at its index");
+                    }
+                    _ => panic!("constructor: its inductive is not an inductive"),
+                }
             }
             Recursor(recursor_data) => {
+                let mut found = false;
+                let mut fq: usize = 0;
                 {
                     let mut dag = crate::util::LeanDag::new(&self.config);
                     let mut ctx = TcCtx::new(self, &mut dag);
@@ -290,16 +321,15 @@ impl<'p> ExportFile<'p> {
                     // have more motives.) Never fails on a recursor Lean exports.
                     let mk = recursor_data.major_idx();
                     let mh = crate::inductive::major_head_name(tc.ctx, recursor_data.info.ty, mk);
-                    let mut found = false;
                     if let Some(h) = mh {
                         let mut q: usize = 0;
                         while q < recursor_data.all_inductives.len()
                             invariant
                                 q <= recursor_data.all_inductives@.len(),
                                 crate::inductive::rec_major_head(to_model_expr(recursor_data.info.ty), mk as nat) == Some(crate::level_arena_bridge::name_id(h)),
-                                found ==> exists|k: int| 0 <= k < recursor_data.all_inductives@.len()
+                                found ==> fq < recursor_data.all_inductives@.len()
                                     && crate::inductive::rec_major_head(to_model_expr(recursor_data.info.ty), mk as nat)
-                                        == Some(crate::level_arena_bridge::name_id(#[trigger] recursor_data.all_inductives@[k])),
+                                        == Some(crate::level_arena_bridge::name_id(recursor_data.all_inductives@[fq as int])),
                             decreases recursor_data.all_inductives@.len() - q,
                         {
                             proof {
@@ -308,6 +338,7 @@ impl<'p> ExportFile<'p> {
                             let ind_name = recursor_data.all_inductives[q];
                             if crate::level_arena_bridge::name_ptr_eq(h, ind_name) {
                                 found = true;
+                                fq = q;
                             }
                             q += 1;
                         }
@@ -343,6 +374,71 @@ impl<'p> ExportFile<'p> {
                     self.declars_views();
                     crate::util_model::build_hasher_default_valid_fx();
                     assert(crate::inductive::declar_export_tagged(a, *d));
+                }
+                // VERUS-REWRITE(tested-input): a single-motive recursor's rules are
+                // its major premise's inductive's constructors, in order, each
+                // with the constructor's field count (`rules_listed`) -- what the
+                // judgment reads of a recursor's rules (`ind_ok`'s constructor
+                // and field-count clauses). Never fails on a recursor Lean exports.
+                if recursor_data.num_motives == 1 {
+                    proof {
+                        broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                    }
+                    let ind_name = recursor_data.all_inductives[fq];
+                    proof {
+                        crate::inductive::export_declars_get(*self, ind_name);
+                    }
+                    match self.declars.get(&ind_name) {
+                        Some(Inductive(i)) => {
+                            proof {
+                                broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                                assert(self.declars_view().contains_key(ind_name));
+                                assert(self.declars_view()[ind_name] == Declar::Inductive(*i));
+                                assert(crate::inductive::declar_export_tagged(a, Declar::Inductive(*i)));
+                            }
+                            assert!(i.all_ctor_names.len() == recursor_data.rec_rules.len(), "recursor: its rules are not its inductive's constructors");
+                            let mut j: usize = 0;
+                            while j < recursor_data.rec_rules.len()
+                                invariant
+                                    crate::inductive::export_ok(*self),
+                                    a == self.arena(),
+                                    crate::indexmap_model::imap_wf(&self.declars),
+                                    self.declars_view() == crate::indexmap_model::imap_view(&self.declars),
+                                    i.all_ctor_names@.len() == recursor_data.rec_rules@.len(),
+                                    j <= recursor_data.rec_rules@.len(),
+                                    forall|q: int| 0 <= q < recursor_data.rec_rules@.len()
+                                        ==> crate::util_model::export_tagged(a, #[trigger] recursor_data.rec_rules@[q].ctor_name),
+                                    forall|q: int| 0 <= q < j ==> crate::level_arena_bridge::name_id(#[trigger] recursor_data.rec_rules@[q].ctor_name)
+                                        == crate::level_arena_bridge::name_id(i.all_ctor_names@[q])
+                                        && crate::inductive::ctor_nf_is(*self, recursor_data.rec_rules@[q].ctor_name, recursor_data.rec_rules@[q].ctor_telescope_size_wo_params),
+                                decreases recursor_data.rec_rules@.len() - j,
+                            {
+                                proof {
+                                    broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                                }
+                                let rule = &recursor_data.rec_rules[j];
+                                assert!(crate::level_arena_bridge::name_ptr_eq(rule.ctor_name, i.all_ctor_names[j]),
+                                    "recursor: a rule is not its inductive's constructor");
+                                proof {
+                                    crate::util_model::build_hasher_default_valid_fx();
+                                    crate::inductive::export_declars_get(*self, rule.ctor_name);
+                                }
+                                match self.declars.get(&rule.ctor_name) {
+                                    Some(Constructor(c)) => {
+                                        proof {
+                                            broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                            assert(self.declars_view().contains_key(rule.ctor_name));
+                                            assert(self.declars_view()[rule.ctor_name] == Declar::Constructor(*c));
+                                        }
+                                        assert!(c.num_fields == rule.ctor_telescope_size_wo_params, "recursor: a rule's field count is not its constructor's");
+                                    }
+                                    _ => panic!("recursor: a rule's constructor is not a constructor"),
+                                }
+                                j += 1;
+                            }
+                        }
+                        _ => panic!("recursor: its major premise's inductive is not an inductive"),
+                    }
                 }
                 match recursor_data.all_inductives.get(0) {
                     None => self.recursor_without_inductive(recursor_data.info.name),
@@ -432,6 +528,7 @@ impl<'p> ExportFile<'p> {
             crate::export_sound::all_certified(*self),
             crate::export_sound::all_block_certified(*self),
             crate::export_sound::all_rec_checked(*self),
+            crate::export_sound::all_ctors_listed(*self),
     {
         let ghost keys = self.declars_keys();
         proof {
@@ -457,6 +554,8 @@ impl<'p> ExportFile<'p> {
                     ==> (crate::export_sound::decl_at(*self, j) matches Declar::Inductive(ind) ==> crate::inductive::block_cert(*self, ind)),
                 forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
                     ==> (crate::export_sound::decl_at(*self, j) matches Declar::Recursor(r) ==> crate::inductive::rec_arm_ok(*self, r)),
+                forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
+                    ==> (crate::export_sound::decl_at(*self, j) matches Declar::Constructor(c) ==> crate::inductive::ctor_listed(*self, c)),
             decreases n - i,
         {
             let (_, d) = self.declars.get_index(i).unwrap();

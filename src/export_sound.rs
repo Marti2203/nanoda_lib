@@ -55,6 +55,12 @@ pub open spec fn all_block_certified<'p>(ef: crate::util::ExportFile<'p>) -> boo
         ==> (decl_at(ef, i) matches crate::env::Declar::Inductive(ind) ==> crate::inductive::block_cert(ef, ind))
 }
 
+/// Every constructor's arm of the check returned: its inductive lists it.
+pub open spec fn all_ctors_listed<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    forall|i: int| #![trigger decl_at(ef, i)] 0 <= i < ef.declars_keys().len()
+        ==> (decl_at(ef, i) matches crate::env::Declar::Constructor(c) ==> crate::inductive::ctor_listed(ef, c))
+}
+
 /// Every recursor's arm of the check returned: its inductives come first.
 pub open spec fn all_rec_checked<'p>(ef: crate::util::ExportFile<'p>) -> bool {
     forall|i: int| #![trigger decl_at(ef, i)] 0 <= i < ef.declars_keys().len()
@@ -170,6 +176,7 @@ pub open spec fn rmap<'p>(ef: crate::util::ExportFile<'p>, c: int) -> Map<u64, n
 pub open spec fn ex_bound<'p>(ef: crate::util::ExportFile<'p>) -> bool {
     &&& all_block_certified(ef)
     &&& all_rec_checked(ef)
+    &&& all_ctors_listed(ef)
     &&& crate::inductive::export_rec_names_ok(ef)
     &&& forall|i: int| #![trigger decl_at(ef, i)] 0 <= i < ef.declars_keys().len()
         ==> (decl_at(ef, i) is Recursor ==> rec_simple(ef, crate::level_arena_bridge::name_id(ef.declars_keys()[i])))

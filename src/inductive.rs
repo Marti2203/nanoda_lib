@@ -3801,7 +3801,8 @@ pub(crate) proof fn export_ok_facts<'p>(ef: ExportFile<'p>)
 
 /// WHAT THE RECURSOR ARM OF `check_declar` CHECKS: the recursor names an
 /// inductive, its first is an exported inductive, each comes before it, and
-/// a single-motive one's major premise is headed by one of them.
+/// a single-motive one's major premise is headed by one of them, whose
+/// constructors its rules are (`rules_listed`).
 pub open spec fn rec_arm_ok<'p>(ef: ExportFile<'p>, r: RecursorData<'p>) -> bool {
     let keys = ef.declars_keys();
     &&& r.all_inductives@.len() > 0
@@ -3813,6 +3814,36 @@ pub open spec fn rec_arm_ok<'p>(ef: ExportFile<'p>, r: RecursorData<'p>) -> bool
     &&& r.num_motives == 1 ==> exists|k: int| 0 <= k < r.all_inductives@.len()
         && rec_major_head(crate::expr_arena_bridge::to_model(r.info.ty), r.major_idx_spec())
             == Some(crate::level_arena_bridge::name_id(#[trigger] r.all_inductives@[k]))
+        && rules_listed(ef, r, r.all_inductives@[k])
+}
+
+/// A constructor of the export with `nf` fields, under its own name.
+pub open spec fn ctor_nf_is<'p>(ef: ExportFile<'p>, n: NamePtr<'p>, nf: u16) -> bool {
+    ef.declars_view().contains_key(n) && match ef.declars_view()[n] {
+        Declar::Constructor(c) => c.num_fields == nf,
+        _ => false,
+    }
+}
+
+/// THE RECURSOR'S RULES ARE ITS INDUCTIVE'S CONSTRUCTORS, in order, each
+/// with the rule's field count.
+pub open spec fn rules_listed<'p>(ef: ExportFile<'p>, r: RecursorData<'p>, n: NamePtr<'p>) -> bool {
+    ef.declars_view().contains_key(n) && match ef.declars_view()[n] {
+        Declar::Inductive(i) => i.all_ctor_names@.len() == r.rec_rules@.len()
+            && forall|j: int| 0 <= j < r.rec_rules@.len() ==> crate::level_arena_bridge::name_id(#[trigger] r.rec_rules@[j].ctor_name)
+                == crate::level_arena_bridge::name_id(i.all_ctor_names@[j])
+                && ctor_nf_is(ef, r.rec_rules@[j].ctor_name, r.rec_rules@[j].ctor_telescope_size_wo_params),
+        _ => false,
+    }
+}
+
+/// THE CONSTRUCTOR IS LISTED BY ITS INDUCTIVE, at its index.
+pub open spec fn ctor_listed<'p>(ef: ExportFile<'p>, c: ConstructorData<'p>) -> bool {
+    ef.declars_view().contains_key(c.inductive_name) && match ef.declars_view()[c.inductive_name] {
+        Declar::Inductive(i) => (c.ctor_idx as int) < i.all_ctor_names@.len()
+            && crate::level_arena_bridge::name_id(i.all_ctor_names@[c.ctor_idx as int]) == crate::level_arena_bridge::name_id(c.info.name),
+        _ => false,
+    }
 }
 
 /// A recursor listed under each of its inductives in the parser's table.
