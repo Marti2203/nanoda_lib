@@ -144,12 +144,17 @@ pub assume_specification<'a, K, V, S: core::hash::BuildHasher, Q: ?Sized + core:
             exists|kk: K| #[trigger] imap_view(m).contains_key(kk) && imap_view(m)[kk] == *v),
 ;
 
-/// Callable, claims nothing: the position of a key, used by the checker only
-/// to order declarations.
+/// The position of a key, used by the checker to order declarations: as
+/// `get_full`'s, a stored key's position.
 pub assume_specification<K, V, S: core::hash::BuildHasher, Q: ?Sized + core::hash::Hash + indexmap::Equivalent<K>>[ IndexMap::<K, V, S>::get_index_of::<Q> ](
     m: &IndexMap<K, V, S>,
     k: &Q,
-) -> Option<usize>
+) -> (result: Option<usize>)
+    ensures
+        borrowed_keys_obey_model::<K, Q>(imap_view(m).dom(), k) && builds_valid_hashers::<S>() && imap_wf(m) ==> match result {
+            Some(i) => i < imap_keys(m).len() && contains_borrowed_key(Map::<K, ()>::empty().insert(imap_keys(m)[i as int], ()), k),
+            None => !contains_borrowed_key(imap_view(m), k),
+        },
 ;
 
 /// `get` with the entry's position and stored key.

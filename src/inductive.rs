@@ -3669,6 +3669,18 @@ pub(crate) proof fn export_ok_facts<'p>(ef: ExportFile<'p>)
 {
 }
 
+/// WHAT THE RECURSOR ARM OF `check_declar` CHECKS: the recursor names an
+/// inductive, its first is an exported inductive, and each comes before it.
+pub open spec fn rec_arm_ok<'p>(ef: ExportFile<'p>, r: RecursorData<'p>) -> bool {
+    let keys = ef.declars_keys();
+    &&& r.all_inductives@.len() > 0
+    &&& ef.declars_view().contains_key(r.all_inductives@[0])
+    &&& ef.declars_view()[r.all_inductives@[0]] is Inductive
+    &&& forall|k: int| 0 <= k < r.all_inductives@.len() ==> exists|qi: int, qr: int|
+        #![trigger keys[qi], keys[qr]]
+        0 <= qi < qr < keys.len() && keys[qi] == #[trigger] r.all_inductives@[k] && keys[qr] == r.info.name
+}
+
 /// A recursor listed under each of its inductives in the parser's table.
 pub open spec fn rec_listed<'p>(m: Map<NamePtr<'p>, crate::util::FxHashSet<NamePtr<'p>>>, r: RecursorData<'p>) -> bool {
     forall|j: int| 0 <= j < r.all_inductives@.len() ==> m.contains_key(#[trigger] r.all_inductives@[j])

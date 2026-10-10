@@ -55,6 +55,12 @@ pub open spec fn all_block_certified<'p>(ef: crate::util::ExportFile<'p>) -> boo
         ==> (decl_at(ef, i) matches crate::env::Declar::Inductive(ind) ==> crate::inductive::block_cert(ef, ind))
 }
 
+/// Every recursor's arm of the check returned: its inductives come first.
+pub open spec fn all_rec_checked<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    forall|i: int| #![trigger decl_at(ef, i)] 0 <= i < ef.declars_keys().len()
+        ==> (decl_at(ef, i) matches crate::env::Declar::Recursor(r) ==> crate::inductive::rec_arm_ok(ef, r))
+}
+
 /// The export's built-in names are distinct: a Nat operation is no
 /// quotient eliminator, and the numeral constructors are neither.
 pub open spec fn names_ok(export: nat) -> bool {

@@ -163,6 +163,7 @@ impl<'p> ExportFile<'p> {
             // the declaration's certificate
             exists|c: int| #[trigger] declar_cert_at(*self, *d, c),
             *d matches Declar::Inductive(i) ==> crate::inductive::block_cert(*self, i),
+            *d matches Declar::Recursor(r) ==> crate::inductive::rec_arm_ok(*self, r),
     {
         use Declar::*;
         let ghost a = self.arena();
@@ -294,29 +295,83 @@ impl<'p> ExportFile<'p> {
                         declar_cert_intro(*self, env, *d);
                     }
                 }
+                let ghost keys = self.declars_keys();
+                proof {
+                    broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                    crate::inductive::export_ok_facts(*self);
+                    self.declars_views();
+                    crate::util_model::build_hasher_default_valid_fx();
+                    assert(crate::inductive::declar_export_tagged(a, *d));
+                }
                 match recursor_data.all_inductives.get(0) {
                     None => self.recursor_without_inductive(recursor_data.info.name),
-                    Some(ind_name) => match self.declars.get(ind_name) {
-                        None => self.recursor_inductive_missing(*ind_name),
-                        Some(Inductive {..}) => (),
-                        Some(_) => self.recursor_inductive_not_inductive(*ind_name),
-                    }
+                    Some(ind_name) => {
+                        proof {
+                            crate::inductive::export_declars_get(*self, *ind_name);
+                        }
+                        match self.declars.get(ind_name) {
+                            None => self.recursor_inductive_missing(*ind_name),
+                            Some(Inductive {..}) => {
+                                proof {
+                                    broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                                    assert(*ind_name == recursor_data.all_inductives@[0]);
+                                    assert(self.declars_view().contains_key(*ind_name));
+                                    assert(self.declars_view()[*ind_name] is Inductive);
+                                }
+                            },
+                            Some(_) => self.recursor_inductive_not_inductive(*ind_name),
+                        }
+                    },
+                }
+                proof {
+                    crate::inductive::export_declars_get(*self, recursor_data.info.name);
                 }
                 let recursor_idx = self.declars.get_index_of(&recursor_data.info.name).unwrap();
                 let mut k: usize = 0;
                 while k < recursor_data.all_inductives.len()
+                    invariant
+                        crate::inductive::export_ok(*self),
+                        a == self.arena(),
+                        *d == Declar::Recursor(*recursor_data),
+                        recursor_data.all_inductives@.len() > 0,
+                        k <= recursor_data.all_inductives@.len(),
+                        self.declars_view().contains_key(recursor_data.all_inductives@[0]),
+                        self.declars_view()[recursor_data.all_inductives@[0]] is Inductive,
+                        keys == self.declars_keys(),
+                        crate::indexmap_model::imap_wf(&self.declars),
+                        keys == crate::indexmap_model::imap_keys(&self.declars),
+                        self.declars_view() == crate::indexmap_model::imap_view(&self.declars),
+                        vstd::std_specs::hash::builds_valid_hashers::<core::hash::BuildHasherDefault<rustc_hash::FxHasher>>(),
+                        recursor_idx < keys.len() && keys[recursor_idx as int] == recursor_data.info.name,
+                        forall|q: int| 0 <= q < recursor_data.all_inductives@.len()
+                            ==> crate::util_model::export_tagged(a, #[trigger] recursor_data.all_inductives@[q]),
+                        forall|q: int| 0 <= q < k && k <= recursor_data.all_inductives@.len() ==> exists|qi: int, qr: int|
+                            #![trigger keys[qi], keys[qr]]
+                            0 <= qi < qr < keys.len() && keys[qi] == #[trigger] recursor_data.all_inductives@[q] && keys[qr] == recursor_data.info.name,
                     decreases recursor_data.all_inductives@.len() - k,
                 {
                     let ind_name = &recursor_data.all_inductives[k];
+                    proof {
+                        broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                        assert(*ind_name == recursor_data.all_inductives@[k as int]);
+                        crate::inductive::export_declars_get(*self, *ind_name);
+                    }
                     match self.declars.get_index_of(ind_name) {
                         None => self.recursor_references_missing(recursor_data.info.name, *ind_name),
                         Some(ind_idx) => {
                             if recursor_idx <= ind_idx {
                                 self.recursor_before_inductive(recursor_data.info.name, recursor_idx, *ind_name, ind_idx)
                             }
+                            proof {
+                                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                                assert(keys[ind_idx as int] == *ind_name);
+                            }
                         }
                     }
                     k += 1;
+                }
+                proof {
+                    assert(crate::inductive::rec_arm_ok(*self, *recursor_data));
                 }
             }
         }
@@ -335,6 +390,7 @@ impl<'p> ExportFile<'p> {
         ensures
             crate::export_sound::all_certified(*self),
             crate::export_sound::all_block_certified(*self),
+            crate::export_sound::all_rec_checked(*self),
     {
         let ghost keys = self.declars_keys();
         proof {
@@ -358,6 +414,8 @@ impl<'p> ExportFile<'p> {
                     ==> exists|c: int| #[trigger] declar_cert_at(*self, crate::export_sound::decl_at(*self, j), c),
                 forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
                     ==> (crate::export_sound::decl_at(*self, j) matches Declar::Inductive(ind) ==> crate::inductive::block_cert(*self, ind)),
+                forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
+                    ==> (crate::export_sound::decl_at(*self, j) matches Declar::Recursor(r) ==> crate::inductive::rec_arm_ok(*self, r)),
             decreases n - i,
         {
             let (_, d) = self.declars.get_index(i).unwrap();
