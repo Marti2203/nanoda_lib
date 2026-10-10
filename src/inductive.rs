@@ -927,6 +927,94 @@ pub(crate) open spec fn consts_params<'t>(st: InductiveCheckState<'t>) -> bool {
             ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(crate::expr_arena_bridge::const_levels_of(st.ind_consts@[i]))[k]) is Param
 }
 
+/// A recursor's level parameters over its inductive's: the same, or one
+/// more in front, not one of them (the motive's universe).
+pub(crate) open spec fn rec_lps_ok(ru: Seq<crate::level_model::LevelSpec>, iu: Seq<crate::level_model::LevelSpec>) -> bool {
+    ru == iu || (ru.len() == iu.len() + 1 && ru.drop_first() == iu && !iu.contains(ru[0]))
+}
+
+/// `rec_lps_ok`, tested, for parameter levels.
+fn rec_uparams_ok<'t, 'p>(ctx: &TcCtx<'t, 'p>, ru: LevelsPtr<'t>, iu: LevelsPtr<'t>) -> (result: bool)
+    requires
+        crate::util_model::owns(*ctx, ru),
+        crate::util_model::owns(*ctx, iu),
+        levels_all_param(ru),
+        levels_all_param(iu),
+    ensures
+        result ==> rec_lps_ok(crate::level_arena_bridge::to_model_of_levels(ru), crate::level_arena_bridge::to_model_of_levels(iu)),
+{
+    let ghost (rm, im) = (crate::level_arena_bridge::to_model_of_levels(ru), crate::level_arena_bridge::to_model_of_levels(iu));
+    let xs = crate::level_arena_bridge::read_levels_vec(ctx, ru);
+    let ys = crate::level_arena_bridge::read_levels_vec(ctx, iu);
+    let off: usize = if xs.len() == ys.len() { 0 } else if xs.len() > 0 && xs.len() - 1 == ys.len() { 1 } else { return false; };
+    let mut k: usize = 0;
+    while k < ys.len()
+        invariant
+            xs@.len() == ys@.len() + off,
+            off <= 1,
+            k <= ys@.len(),
+            crate::util_model::owns_all(*ctx, xs@),
+            crate::util_model::owns_all(*ctx, ys@),
+            xs@.len() == rm.len(),
+            ys@.len() == im.len(),
+            forall|i: int| 0 <= i < xs@.len() ==> #[trigger] crate::level_arena_bridge::to_model(xs@[i]) == rm[i],
+            forall|i: int| 0 <= i < ys@.len() ==> #[trigger] crate::level_arena_bridge::to_model(ys@[i]) == im[i],
+            forall|i: int| 0 <= i < rm.len() ==> (#[trigger] rm[i]) is Param,
+            forall|i: int| 0 <= i < im.len() ==> (#[trigger] im[i]) is Param,
+            forall|i: int| 0 <= i < k ==> rm[i + off] == #[trigger] im[i],
+        decreases ys@.len() - k,
+    {
+        proof {
+            crate::util_model::owned_raw_eq(*ctx, xs@[k + off], ys@[k as int]);
+            crate::level_arena_bridge::level_ptr_eq_iff_same_model_param(*ctx, xs@[k + off], ys@[k as int]);
+        }
+        if xs[k + off] != ys[k] {
+            return false;
+        }
+        k += 1;
+    }
+    if off == 1 {
+        let mut q: usize = 0;
+        while q < ys.len()
+            invariant
+                off == 1,
+                xs@.len() == ys@.len() + 1,
+                xs@.len() == rm.len(),
+                ys@.len() == im.len(),
+                q <= ys@.len(),
+                crate::util_model::owns_all(*ctx, xs@),
+                crate::util_model::owns_all(*ctx, ys@),
+                forall|i: int| 0 <= i < xs@.len() ==> #[trigger] crate::level_arena_bridge::to_model(xs@[i]) == rm[i],
+                forall|i: int| 0 <= i < ys@.len() ==> #[trigger] crate::level_arena_bridge::to_model(ys@[i]) == im[i],
+                forall|i: int| 0 <= i < rm.len() ==> (#[trigger] rm[i]) is Param,
+                forall|i: int| 0 <= i < im.len() ==> (#[trigger] im[i]) is Param,
+                forall|i: int| 0 <= i < q ==> #[trigger] im[i] != rm[0],
+            decreases ys@.len() - q,
+        {
+            proof {
+                assert(crate::level_arena_bridge::to_model(xs@[0]) == rm[0]);
+                assert(rm[0] is Param);
+                assert(crate::level_arena_bridge::to_model(ys@[q as int]) == im[q as int]);
+                assert(im[q as int] is Param);
+                crate::util_model::owned_raw_eq(*ctx, xs@[0], ys@[q as int]);
+                crate::level_arena_bridge::level_ptr_eq_iff_same_model_param(*ctx, xs@[0], ys@[q as int]);
+            }
+            if xs[0] == ys[q] {
+                return false;
+            }
+            q += 1;
+        }
+        proof {
+            assert(rm.drop_first() =~= im);
+        }
+    } else {
+        proof {
+            assert(rm =~= im);
+        }
+    }
+    true
+}
+
 /// Two level lists, compared element by element by pointer.
 fn levels_ptr_eq<'t, 'p>(ctx: &TcCtx<'t, 'p>, a: LevelsPtr<'t>, b: LevelsPtr<'t>) -> (result: bool)
     requires
@@ -2104,9 +2192,13 @@ pub(crate) open spec fn ind_old<'x, 't>(env: crate::env::Env<'x, 't>, h: IndTyHe
 
 /// THE CHECKED CONSTRUCTOR IS THE EXPORTED ONE: an exported constructor of
 /// its name whose declared type is the checked type, closed.
-pub(crate) open spec fn ctor_old<'x, 't>(env: crate::env::Env<'x, 't>, c: CtorHeader<'t>) -> bool {
+pub(crate) open spec fn ctor_old<'x, 't>(env: crate::env::Env<'x, 't>, c: CtorHeader<'t>, ind: NamePtr<'t>, np: nat) -> bool {
     exists|od: Declar<'t>| #[trigger] env_old(env, od)
-        && od is Constructor
+        && (match od {
+            Declar::Constructor(cd) => crate::level_arena_bridge::name_id(cd.inductive_name) == crate::level_arena_bridge::name_id(ind)
+                && cd.num_params as nat == np,
+            _ => false,
+        })
         && crate::env::declar_info(od).name == c.name
         && crate::expr_arena_bridge::to_model(crate::env::declar_info(od).ty) == crate::expr_arena_bridge::to_model(c.ty)
         && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(c.ty)) == 0
@@ -2142,7 +2234,7 @@ pub(crate) open spec fn rec_matches<'t>(od: Declar<'t>, nd: Declar<'t>, rec_up: 
 /// (`assert_def_eq`, `def_eq_claim`): its type at the generated universe
 /// parameters converts to the generated type, and each exported rule
 /// converts to the generated rule at the exported parameters.
-pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar<'t>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
+pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar<'t>, nd: Declar<'t>, rec_up: LevelsPtr<'t>, iu: LevelsPtr<'t>) -> bool {
     match (od, nd) {
         (Declar::Recursor(or), Declar::Recursor(nr)) => {
             let ru = crate::level_arena_bridge::to_model_of_levels(rec_up);
@@ -2154,6 +2246,7 @@ pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Decla
             &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec()) is Some
             &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec())
                 == rec_major_head(crate::expr_arena_bridge::to_model(nr.info.ty), or.major_idx_spec())
+            &&& rec_lps_ok(ou, crate::level_arena_bridge::to_model_of_levels(iu))
             &&& or.num_params == nr.num_params && or.num_indices == nr.num_indices
             &&& or.num_motives == nr.num_motives && or.num_minors == nr.num_minors
             &&& or.rec_rules@.len() == nr.rec_rules@.len()
@@ -2233,8 +2326,8 @@ fn major_head_name<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (r
 }
 
 /// Some exported declaration converts to the generated recursor `nd`.
-pub(crate) open spec fn rec_conv_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
-    exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, rec_up)
+pub(crate) open spec fn rec_conv_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>, iu: LevelsPtr<'t>) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, rec_up, iu)
 }
 
 /// One minor premise built: its witness.
@@ -4987,7 +5080,7 @@ pub(crate) proof fn shape_end<'x, 't>(st: InductiveCheckState<'t>, env: crate::e
         st.all_inductives_incl_specialized@.len() == 1,
         ind_old(env, st.all_inductives_incl_specialized@[0]),
         forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
-            ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y]),
+            ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y], st.all_inductives_incl_specialized@[0].name, st.local_params@.len() as nat),
         st.elim_level is Some,
         lm == crate::level_arena_bridge::to_model(st.elim_level->0),
         fields_admitted(st),
@@ -4999,7 +5092,7 @@ pub(crate) proof fn shape_end<'x, 't>(st: InductiveCheckState<'t>, env: crate::e
     assert forall|j: int| 0 <= j < h.ctors@.len() implies
         crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(#[trigger] h.ctors@[j].ty)) == 0
         && ctor_syn(st, crate::level_arena_bridge::name_id(h.name), crate::expr_arena_bridge::to_model(h.ctors@[j].ty)) by {
-        assert(ctor_old(env, h.ctors@[j]));
+        assert(ctor_old(env, h.ctors@[j], h.name, st.local_params@.len() as nat));
     }
     shape_exists(st, lm);
 }
@@ -8501,8 +8594,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// (the contract uses Verus's `old`); VERUS-REWRITE(tested-input): the
     /// constructor the checker built is
     /// the exported one structurally (`model_eq`), not only convertible to it
-    /// -- what the certificate records (`ctor_old`). Never fails on a block
-    /// Lean exports: a non-nested constructor is rebuilt as it was declared.
+    /// -- what the certificate records (`ctor_old`), with the exported
+    /// constructor's inductive and parameter count being the block's (where
+    /// `aux_data_ck`, unverified, compares them with the temporary
+    /// declaration's). Never fails on a block Lean exports: a non-nested
+    /// constructor is rebuilt as it was declared.
     #[verifier::exec_allows_no_decreases_clause]
     fn assert_nonnested_ctors_def_eq(&mut self, st: &InductiveCheckState<'t>)
         requires
@@ -8517,7 +8613,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             forall|x: int, y: int| #![trigger st.all_inductives_incl_specialized@[x].ctors@[y]]
                 0 <= x < st.all_inductives_incl_specialized@.len() && 0 <= y < st.all_inductives_incl_specialized@[x].ctors@.len()
-                ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y]),
+                ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y], st.all_inductives_incl_specialized@[x].name, st.local_params@.len() as nat),
     {
         assert!(!st.is_nested());
         let mut x: usize = 0;
@@ -8533,7 +8629,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 x <= st.all_inductives_incl_specialized@.len(),
                 forall|x2: int, y: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y]]
                     0 <= x2 < x && 0 <= y < st.all_inductives_incl_specialized@[x2].ctors@.len()
-                    ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y]),
+                    ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat),
             decreases st.all_inductives_incl_specialized@.len() - x,
         {
             let inductive = &st.all_inductives_incl_specialized[x];
@@ -8552,9 +8648,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     y <= inductive.ctors@.len(),
                     forall|x2: int, y2: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y2]]
                         0 <= x2 < x && 0 <= y2 < st.all_inductives_incl_specialized@[x2].ctors@.len()
-                        ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2]),
+                        ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat),
                     forall|y2: int| #![trigger st.all_inductives_incl_specialized@[x as int].ctors@[y2]]
-                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2]),
+                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2], st.all_inductives_incl_specialized@[x as int].name, st.local_params@.len() as nat),
                 decreases inductive.ctors@.len() - y,
             {
                 let ctor = &inductive.ctors[y];
@@ -8571,11 +8667,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         self.assert_closed(new.info.ty);
                         assert!(crate::expr_arena_bridge::model_eq(self.ctx, ctor.ty, old_c.info.ty),
                             "constructor: the checked constructor is not the exported one");
+                        assert!(old_c.inductive_name == inductive.name && old_c.num_params as usize == st.local_params.len(),
+                            "constructor: its inductive or parameter count is not the block's");
                         proof {
                             level_free_in_scope(*self, old_c.info.ty);
                             level_free_in_scope(*self, new.info.ty);
                             assert(env_old(*old(self).env, Declar::Constructor(*old_c)));
-                            assert(ctor_old(*old(self).env, *ctor));
+                            assert(ctor_old(*old(self).env, *ctor, inductive.name, st.local_params@.len() as nat));
                         }
                         self.assert_def_eq(old_c.info.ty, new.info.ty);
                     }
@@ -8679,6 +8777,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn assert_nonnested_recursors_def_eq(&mut self, st: &InductiveCheckState<'t>, recursors: &Vec<Declar<'t>>) -> (matched: bool)
         requires
             crate::tc::tc_wf(*old(self)),
+            crate::util_model::owns(*old(self).ctx, st.uparams),
+            levels_all_param(st.uparams),
             st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*old(self).ctx, ls)
                 && levels_all_param(ls),
             forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
@@ -8697,7 +8797,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             matched ==> forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
-            forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+            forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams),
     {
         let mut ok = true;
         assert!(!st.is_nested());
@@ -8714,6 +8814,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*self.ctx, ls) && levels_all_param(ls),
+                crate::util_model::owns(*self.ctx, st.uparams),
+                levels_all_param(st.uparams),
                 forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
@@ -8724,7 +8826,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 },
                 n <= recursors@.len(),
                 ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
-                forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+                forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams),
             decreases recursors@.len() - n,
         {
             let new_rec = &recursors[n];
@@ -8745,6 +8847,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     // Should be structurally != because they come from different envs.
                     assert_ne!(old_d, new);
                     assert!(self.ctx.no_dupes_all_params(old_d.info().uparams));
+                    // VERUS-REWRITE(tested-input): the exported recursor's
+                    // universe parameters are its inductive's, possibly behind
+                    // one fresh one (the motive's universe), by name, not only of
+                    // the right arity -- what the twin reads (`rec_lps_ok`).
+                    // Never fails on a recursor Lean exports.
+                    assert!(rec_uparams_ok(self.ctx, old_d.info().uparams, st.uparams),
+                        "recursor: its universe parameters are not its inductive's");
                     if self.ctx.read_levels(old_d.info().uparams).len() != self.ctx.read_levels(st.rec_uparams.unwrap()).len() {
                         return panic!("recursor: universe arity mismatch");
                     }
@@ -8811,6 +8920,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))
                                 && crate::level_arena_bridge::name_id(old_rec_rules@[q].ctor_name) == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name),
                             env_old(*old(self).env, *old_d),
+                            rec_lps_ok(crate::level_arena_bridge::to_model_of_levels(old_r.info.uparams), crate::level_arena_bridge::to_model_of_levels(st.uparams)),
                             old_r.num_params == new_r.num_params && old_r.num_indices == new_r.num_indices,
                             old_r.num_motives == new_r.num_motives && old_r.num_minors == new_r.num_minors,
                             rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec()) is Some,
@@ -8820,7 +8930,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name)
                                 && old_rec_rules@[q].ctor_telescope_size_wo_params == new_rec_rules@[q].ctor_telescope_size_wo_params,
                             ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
-                            forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
+                            forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams),
                             forall|q: int| 0 <= q < j ==> crate::tc::def_eq_claim(*old(self).env,
                                 crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val),
                                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))),
