@@ -52,7 +52,7 @@ pub open spec fn fbnd(sig: Sig, ind: u64, pv: Seq<Cpt>, ty: ExprSpec, rec: bool,
         &&& le(c, crate::dom_code::ceval(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), Seq::empty(), ty))
         &&& crate::rec_canon::simple_ty(sig, ind, ty)
         &&& crate::dom_canon::ranked(sig, ty, crate::dom_code::rk(sig, ind))
-        &&& crate::dom_code::styped(sig, ty)
+        &&& crate::dom_code::styped(sig, crate::dom_code::rk(sig, ind), ty)
     }
 }
 
@@ -92,6 +92,7 @@ pub proof fn fbnd_at(sig: Sig, c: u64, j: int, k: int, us: Seq<LevelSpec>, pv: S
 pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty: ExprSpec, v: Cpt, d: Cpt, n0: nat, w: Cpt, c: Cpt,
     ind: u64, rec: bool, pv: Seq<Cpt>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         has_type(n, v, d),
         has_type(n, d, Cpt::U),
         rel_ty(sig, n, g, ty, ty, d),
@@ -321,10 +322,12 @@ pub open spec fn rec_model_p(sig: Sig, c: u64) -> bool {
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
 }
 
-/// The hypothesis soundness and adequacy take: the recursors' facts
-/// (vacuous without recursors or outside the fragment) and the structures'
-/// (`dom_proj_sound::proj_sem`).
+/// The hypothesis soundness and adequacy take: the recursor conditions
+/// (the model's facts are typed below ranks, `ti_strip::strip_below`, so
+/// lift to the signature only with them), the recursors' facts (vacuous
+/// without recursors) and the structures' (`dom_proj_sound::proj_sem`).
 pub open spec fn sig_sr(sig: Sig) -> bool {
+    &&& crate::ti_syntax::iota_ok(sig)
     &&& (crate::ti_syntax::iota_ok(sig) && !crate::ti_syntax::no_recs(sig) ==> sig_rec(sig))
     &&& crate::dom_proj_sound::proj_sem(sig)
 }

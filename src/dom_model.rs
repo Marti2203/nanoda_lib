@@ -163,6 +163,30 @@ pub open spec fn consts_ranked(sig: Sig) -> bool {
         && crate::ti_syntax::crank(sig, sig.consts[c].ty) <= sig.rank[c]
 }
 
+/// A telescope's rank bounds each domain's.
+pub proof fn crank_binds_ge(sig: Sig, bk: crate::expr_model::BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, i: int)
+    requires
+        0 <= i < ds.len(),
+    ensures
+        crate::ti_syntax::crank(sig, crate::rec_canon::binds(bk, ds, b)) >= crate::ti_syntax::crank(sig, ds[i]),
+    decreases ds.len(),
+{
+    if i > 0 {
+        crank_binds_ge(sig, bk, ds.drop_first(), b, i - 1);
+    }
+}
+
+/// An application spine's rank bounds its head's.
+pub proof fn crank_spine_ge(sig: Sig, h: ExprSpec, args: Seq<ExprSpec>)
+    ensures
+        crate::ti_syntax::crank(sig, crate::beta_model::spine_app(h, args)) >= crate::ti_syntax::crank(sig, h),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        crank_spine_ge(sig, h, args.subrange(0, args.len() - 1));
+    }
+}
+
 /// Level substitution keeps a term's constants, so its rank.
 pub proof fn crank_sl(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     ensures

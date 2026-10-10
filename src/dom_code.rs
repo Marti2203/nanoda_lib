@@ -370,33 +370,33 @@ pub open spec fn is_prop_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>) -> bool {
 /// Field `k` of constructor `p`, at the level instance `ls`, is a type
 /// without recursors.
 pub open spec fn ftyped(sig: Sig, ind: u64, p: int, k: int, ls: Seq<LevelSpec>) -> bool {
-    styped(sig, crate::expr_model::subst_expr_levels(canon_shape(sig, ind).fields[p][k], sig.consts[ind].lps, ls))
+    styped(sig, rk(sig, ind), crate::expr_model::subst_expr_levels(canon_shape(sig, ind).fields[p][k], sig.consts[ind].lps, ls))
 }
 
-/// A closed type typed without recursors, and so its arguments, its type
-/// parameters at their declared sorts.
-pub open spec fn styped(sig: Sig, e: ExprSpec) -> bool
+/// A closed type typed below rank `r` (`ti_strip::strip_below`), and so its
+/// arguments, its type parameters at their declared sorts.
+pub open spec fn styped(sig: Sig, r: int, e: ExprSpec) -> bool
     decreases e, 1int,
 {
-    crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), e) && sargs_typed(sig, e) && sdoms_typed(sig, e)
+    crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, r), e) && sargs_typed(sig, r, e) && sdoms_typed(sig, r, e)
 }
 
 /// The type parameters of a canonical former without level parameters, in
 /// a closed type, are typed at their declared sorts.
-pub open spec fn sdoms_typed(sig: Sig, e: ExprSpec) -> bool {
+pub open spec fn sdoms_typed(sig: Sig, r: int, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = canon_shape(sig, h->Const_0);
     h is Const && has_canon(sig, h->Const_0) ==>
         forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
-            ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
+            ==> crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
 }
 
-pub open spec fn sargs_typed(sig: Sig, e: ExprSpec) -> bool
+pub open spec fn sargs_typed(sig: Sig, r: int, e: ExprSpec) -> bool
     decreases e, 0int,
 {
     match e {
-        ExprSpec::App(f, x) => sargs_typed(sig, *f) && styped(sig, *x),
+        ExprSpec::App(f, x) => sargs_typed(sig, r, *f) && styped(sig, r, *x),
         _ => true,
     }
 }
@@ -423,7 +423,7 @@ pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
 pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
     let sh = canon_shape(sig, ind);
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
-    &&& crate::dom_psimple::ptyped(sig, sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
+    &&& crate::dom_psimple::ptyped(sig, rk(sig, ind), sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
     &&& crate::dom_canon::pranked(sig, sh.fields[p][k], rk(sig, ind))
 }
 
@@ -432,7 +432,7 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -440,7 +440,7 @@ pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
 /// What subject reduction needs of `ind`: its canonical tables' syntactic
 /// half, at any sort.
 pub open spec fn canon_sr(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }

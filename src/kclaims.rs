@@ -152,7 +152,6 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
             assert(s.ienv.ctor_ind == denv.ctor_ind);
             assert(denv.recs.contains_key(c));
         }
-        sig_sr_of(s);
         assert forall|cid: u64| #[trigger] s.ienv.ctor_ind.contains_key(cid) implies ctor_sem(s, cid) by {
             assert(ctor_form(s, cid));
             assert forall|ls: Seq<LevelSpec>| ls.len() == s.consts[s.ienv.ctor_ind[cid]].lps.len()
@@ -167,6 +166,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
                 assert(rec_small(s, c));
             }
         }
+        sig_sr_of(s);
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
     }
 }
@@ -181,6 +181,7 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
         crate::dom_rec_end::sig_sr_h(sig),
         crate::dom_model::consts_ranked(sig),
         iota_syn(sig),
+        crate::ti_syntax::iota_ok(sig),
         crate::dom_levels::sig_lps(sig),
         forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
     ensures
@@ -217,20 +218,39 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
     }
     assert forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) implies crate::dom_proj_sound::struct_sem(sig, s) by {
         assert(crate::dom_proj_sound::struct_sem_h(sig, s));
-        let sh = crate::dom_code::canon_shape(sig, s);
-        crate::dom_code::canon_side(sig, s);
-        reveal(crate::dom_code::ind_side);
-        assert(sh.ind == s);
-        crate::ti_syntax::struct_of_basic(sig, s);
-        assert(crate::dom_code::ind_core(sig, s, sh));
-        assert(sig.consts.contains_key(sh.ctors[0]) && sig.consts[sh.ctors[0]].lps == sig.consts[s].lps);
-        assert(!sig.ienv.recs.contains_key(sh.ctors[0]));
-        assert forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() implies
-            #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls) by {
-            crate::dom_model::sem_const_of(sig, s, ls);
-            crate::dom_model::sem_const_of(sig, sh.ctors[0], ls);
-        }
+        struct_sem_of(sig, s);
     }
+}
+
+/// A structure's facts with its semantic constants, from the ranks.
+proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
+    requires
+        crate::dom_proj_sound::struct_sem_h(sig, s),
+        crate::ti_syntax::struct_of(sig, s),
+        crate::dom_model::consts_ranked(sig),
+    ensures
+        crate::dom_proj_sound::struct_sem(sig, s),
+{
+    assert(crate::dom_proj_sound::struct_sem_h(sig, s));
+    let sh = crate::dom_code::canon_shape(sig, s);
+    crate::dom_code::canon_side(sig, s);
+    reveal(crate::dom_code::ind_side);
+    assert(sh.ind == s);
+    crate::ti_syntax::struct_of_basic(sig, s);
+    assert(crate::dom_code::ind_core(sig, s, sh));
+    assert(sig.consts.contains_key(sh.ctors[0]) && sig.consts[sh.ctors[0]].lps == sig.consts[s].lps);
+    assert(!sig.ienv.recs.contains_key(sh.ctors[0]));
+    assert forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() implies
+        #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls) by {
+        crate::dom_model::sem_const_of(sig, s, ls);
+        crate::dom_model::sem_const_of(sig, sh.ctors[0], ls);
+    }
+    assert(crate::dom_code::canon_sr(sig, s));
+    assert(crate::dom_rec_ty::ind_scope(sig, sh));
+    assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, s, Seq::empty())));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty())));
+    assert(!sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s));
 }
 
 /// THE CANONICAL TWIN'S OBLIGATIONS (docs/TYPED_TARGET.md, "B5 design";

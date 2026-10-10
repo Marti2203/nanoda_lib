@@ -1803,6 +1803,7 @@ proof fn ind_pv_mem_wf(sig: Sig, rid: u64, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv
 #[verifier::spinoff_prover]
 proof fn cf_ps_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>, k: int)
     requires
+        crate::ti_syntax::iota_ok(sig),
         cf_fields_ok(sig, rid, p, cl, dps, pv, xf, ak),
         0 <= k < xf.len(),
         !isrec(sig, rid, p, k),
@@ -1823,6 +1824,7 @@ proof fn cf_ps_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: Seq<Cp
 #[verifier::spinoff_prover]
 pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         cf_fields_ok(sig, rid, p, cl, dps, pv, xf, ak),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -1839,6 +1841,7 @@ pub proof fn cf_val_typed(sig: Sig, rid: u64, p: int, cl: Seq<LevelSpec>, dps: S
 #[verifier::spinoff_prover]
 pub proof fn cf_step(sig: Sig, rid: u64, p: int, clv: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>) -> (r: (Cpt, Cpt))
     requires
+        crate::ti_syntax::iota_ok(sig),
         cf_fields_ok(sig, rid, p, clv, dps, pv, xf, ak),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, rid);
@@ -2245,6 +2248,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     let us = crate::dom_rec_ty::rinst(sig, rid, lv);
     &&& crate::dom_rec_ty::rec_scope(sig, rid)
+    &&& crate::ti_syntax::iota_ok(sig)
     &&& 0 <= p < sh.nmin()
     &&& lv.len() == sig.ienv.recs[rid].uparams.len()
     &&& clv.len() == sig.consts[sh.ind].lps.len()
@@ -2354,6 +2358,23 @@ pub proof fn r2l_pv(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<Lev
     }
 }
 
+/// An interpreted recursor's inductive ranks below it.
+pub proof fn r2l_ind_below(sig: Sig, rid: u64, lv: Seq<LevelSpec>)
+    requires
+        crate::dom_rec_end::rec_hyps(sig, rid),
+        lv.len() == sig.ienv.recs[rid].uparams.len(),
+    ensures
+        crate::dom_code::rk(sig, crate::dom_rec_ty::rshape(sig, rid).ind) < crate::dom_code::rk(sig, rid),
+        crate::ti_syntax::iota_ok(sig),
+{
+    reveal(crate::dom_rec_end::sig_rec);
+    reveal(crate::dom_rec_end::rec_interp);
+    assert(crate::dom_rec_end::rec_model(sig, rid));
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    assert(crate::dom_model::sem_const(sig, sh.ind, sig.consts[sh.ind].lps.map_values(|n: u64| LevelSpec::Param(n))));
+    crate::dom_rec_ty::ind_below_rec(sig, rid, lv);
+}
+
 /// A closed field's input: typed at a member of its closed type at the
 /// constructor's instance (the type's two instances convert, so have the
 /// same members).
@@ -2406,13 +2427,14 @@ pub proof fn r2l_closed_field(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p
     // the two instances of the closed type convert, so have the same members
     crate::dom_rec_end::rec_canon_ok(sig, rid);
     crate::dom_lift::field_facts(sig, sh.ind, p, k);
-    // the field's typing is the rank-0 signature's, below the recursor's
-    let s0 = crate::ti_strip::strip(sig);
-    crate::ti_strip::strip_below_zero(sig);
-    crate::dom_sound::oracle_down(sig, 0, crate::dom_code::rk(sig, rid));
+    // the field is typed below its inductive's rank, below the recursor's
+    let ri = crate::dom_code::rk(sig, sh.ind);
+    let s0 = crate::ti_strip::strip_below(sig, ri);
+    r2l_ind_below(sig, rid, lv);
+    crate::dom_sound::oracle_down(sig, ri, crate::dom_code::rk(sig, rid));
     let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, crate::ti_syntax::eq(Seq::empty(), f, f, crate::ti_syntax::sort(l)));
-    crate::dom_levels::sig_lps_at(sig, sh.lps, us);
-    crate::dom_levels::sig_lps_at(sig, sh.lps, clv);
+    crate::dom_levels::sig_lps_below(sig, ri, sh.lps, us);
+    crate::dom_levels::sig_lps_below(sig, ri, sh.lps, clv);
     crate::ti_ls2::ls_pair_nil(s0, f, f, crate::ti_syntax::sort(l), sh.lps, us, clv);
     let te = crate::expr_model::subst_expr_levels(crate::ti_syntax::sort(l), sh.lps, us);
     let d = crate::ti_sub::get(s0, crate::ti_syntax::eq(Seq::empty(), fu, fu2, te));
@@ -2731,9 +2753,9 @@ proof fn r2l_ps_mem(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv
         }
         crate::dom_psimple::ps_mem_plow(sig, sh.ind, sh.pdoms, np, k as nat, fu, env, env2, ak[k]);
         crate::dom_psimple::ps_mem_plow(sig, sh.ind, sh.pdoms, np, k as nat, fu2, env, env2, ak[k]);
-        let s0 = crate::ti_strip::strip(sig);
-        crate::ti_strip::strip_below_zero(sig);
-        crate::dom_sound::oracle_down(sig, 0, crate::dom_code::rk(sig, rid));
+        let s0 = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, sh.ind));
+        r2l_ind_below(sig, rid, lv);
+        crate::dom_sound::oracle_down(sig, crate::dom_code::rk(sig, sh.ind), crate::dom_code::rk(sig, rid));
         let l0 = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, crate::ti_syntax::eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
         assert(crate::ti_level::gls(sh.pdoms, sig.consts[sh.ind].lps, us) =~= pdoms_at(sig, rid, us));
         crate::dom_psimple::ps_mem_lv(s0, sig, sh.ind, us, clv, e, l0, ds.subrange(0, np as int), pv, ak[k]);
@@ -3148,6 +3170,7 @@ proof fn ind_pv_mem_wf_s(sig: Sig, sh: crate::rec_canon::IndShape, cl: Seq<Level
 #[verifier::spinoff_prover]
 proof fn cf_ps_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>, k: int)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::dom_rec_ty::ind_scope(sig, sh),
         cf_fields_ok_s(sig, sh, p, cl, dps, pv, xf, ak),
         0 <= k < xf.len(),
@@ -3206,6 +3229,7 @@ proof fn cf_ps_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq
 #[verifier::spinoff_prover]
 pub proof fn cf_val_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::dom_rec_ty::ind_scope(sig, sh),
         cf_fields_ok_s(sig, sh, p, cl, dps, pv, xf, ak),
     ensures ({
@@ -3295,6 +3319,7 @@ pub proof fn cf_val_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl
 #[verifier::spinoff_prover]
 pub proof fn cf_step_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, clv: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>) -> (r: (Cpt, Cpt))
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::dom_rec_ty::ind_scope(sig, sh),
         cf_fields_ok_s(sig, sh, p, clv, dps, pv, xf, ak),
     ensures ({

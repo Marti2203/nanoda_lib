@@ -560,6 +560,27 @@ pub open spec fn rbody(sig: Sig, rid: u64) -> ExprSpec {
     ExprSpec::App(Box::new(ExprSpec::Var(rshape(sig, rid).nmin() + 1)), Box::new(ExprSpec::Var(0)))
 }
 
+/// AN INDUCTIVE RANKS BELOW ITS RECURSOR: the recursor's type has the
+/// inductive at its major premise, and a semantic constant's type mentions
+/// only lower-ranked constants.
+pub proof fn ind_below_rec(sig: Sig, rid: u64, lv: Seq<LevelSpec>)
+    requires
+        rec_scope(sig, rid),
+        crate::dom_model::sem_const(sig, rid, lv),
+        sig.rank.contains_key(rshape(sig, rid).ind),
+    ensures
+        crate::dom_code::rk(sig, rshape(sig, rid).ind) < crate::dom_code::rk(sig, rid),
+{
+    let sh = rshape(sig, rid);
+    let pre = (sh.np + 1 + sh.nmin()) as int;
+    rec_ty_split(sig, rid, lv);
+    crate::dom_iota::major_form(sig, rid, lv);
+    let tds = rtds(sig, rid, lv);
+    crate::dom_model::crank_binds_ge(sig, BinderKind::Pi, tds, rbody(sig, rid), pre);
+    let h = ExprSpec::Const(sh.ind, crate::level_model::subst_levels_spec(sh.us(), sig.ienv.recs[rid].uparams, lv));
+    crate::dom_model::crank_spine_ge(sig, h, vars(1 + sh.nmin(), sh.np));
+}
+
 /// The instantiated type splits into its domains and body.
 pub proof fn rec_ty_split(sig: Sig, rid: u64, ls: Seq<LevelSpec>)
     requires

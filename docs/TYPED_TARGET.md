@@ -2145,7 +2145,18 @@ constructors' (`rec_model*`) -- and a Prop-only recursor's rules
 Helpers take the level (`dom_levels::closed_conv(sig, rr, ..)`,
 `iota_sr::const_lv`) with `iota_ok(sig) || rr <= 0`
 (`ti_strip::derivable_up`); subject reduction's `sr_ok`/`srg_ok` carry
-`iota_ok`; `kstruct::canon_scope` returns the level its facts hold at.
+`iota_ok`; `kstruct::canon_scope` returns the level its facts hold at
+(7270ccf).
+R2b-2b: an inductive's field types are typed below the inductive's rank
+(`dom_code::styped`, `dom_psimple::ptyped` and their parts take the
+level; `ftyped`, `pfield_ok`, `fbnd` use `rk(ind)`; the field lemmas of
+`dom_lift`/`dom_psimple` read it off their inductive). A recursor
+reaches them from its own rank: its inductive ranks below it
+(`dom_rec_ty::ind_below_rec`, from its type's major premise and the rank
+bound of a semantic constant). Lifting a fact typed above rank 0 to the
+signature needs its recursor conditions, so `sig_sr`, `canon_ok` and
+`canon_sr` carry `iota_ok` -- not a new hypothesis: the kernel's
+signature has it, and `sig_sr_of` takes the one `frag_env_of` derives.
 
 The plan:
 

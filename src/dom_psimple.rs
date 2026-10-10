@@ -173,27 +173,27 @@ pub open spec fn ty_in(sig: Sig, dl: crate::ti_syntax::Ctx, x: ExprSpec) -> bool
 
 /// `styped` in the parameters' context `dl`: a type there, and so its
 /// arguments, its type parameters at their declared sorts.
-pub open spec fn ptyped(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
+pub open spec fn ptyped(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
     decreases e, 1int,
 {
-    ty_in(crate::ti_strip::strip(sig), dl, e) && pargs_typed(sig, dl, e) && pdoms_typed(sig, dl, e)
+    ty_in(crate::ti_strip::strip_below(sig, r), dl, e) && pargs_typed(sig, r, dl, e) && pdoms_typed(sig, r, dl, e)
 }
 
-pub open spec fn pargs_typed(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
+pub open spec fn pargs_typed(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
     decreases e, 0int,
 {
     match e {
-        ExprSpec::App(f, x) => pargs_typed(sig, dl, *f) && ptyped(sig, dl, *x),
+        ExprSpec::App(f, x) => pargs_typed(sig, r, dl, *f) && ptyped(sig, r, dl, *x),
         _ => true,
     }
 }
 
-pub open spec fn pdoms_typed(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool {
+pub open spec fn pdoms_typed(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = crate::dom_code::canon_shape(sig, h->Const_0);
     h is Const && crate::dom_code::has_canon(sig, h->Const_0) ==>
         forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
-            ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
+            ==> crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
 }
 
@@ -281,9 +281,10 @@ pub proof fn ps_inst2(sig: Sig, g: crate::ti_syntax::Ctx, pdoms: Seq<ExprSpec>, 
 pub proof fn ps_pair(sig: Sig, g: crate::ti_syntax::Ctx, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>, x: ExprSpec, t: ExprSpec,
     a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
     requires
+        crate::ti_syntax::iota_ok(sig) || crate::dom_code::rk(sig, j) <= 0,
         crate::dom_code::has_canon(sig, j),
         crate::dom_levels::sig_lps(sig),
-        crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, t)),
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, j)), crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, t)),
         t is Sort,
         forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, j).pdoms.len() ==> (#[trigger] crate::dom_code::canon_shape(sig, j).pdoms[q]) is Sort,
         ls1.len() == sig.consts[j].lps.len(),
@@ -296,13 +297,13 @@ pub proof fn ps_pair(sig: Sig, g: crate::ti_syntax::Ctx, j: u64, ls1: Seq<LevelS
             vsub(crate::expr_model::subst_expr_levels(x, ks, ls2), a2), crate::expr_model::subst_expr_levels(t, ks, ls1)))
     }),
 {
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, j));
     let pd = crate::dom_code::canon_shape(sig, j).pdoms;
     let ks = sig.consts[j].lps;
     let dl = crate::ti_level::gls(pd, ks, ls1);
-    crate::dom_levels::sig_lps_at(sig, ks, ls1);
+    crate::dom_levels::sig_lps_below(sig, crate::dom_code::rk(sig, j), ks, ls1);
     assert(ls2.len() == ls1.len());
-    crate::dom_levels::sig_lps_at(sig, ks, ls2);
+    crate::dom_levels::sig_lps_below(sig, crate::dom_code::rk(sig, j), ks, ls2);
     let d = crate::ti_sub::get(ss, crate::ti_syntax::eq(pd, x, x, t));
     let w = crate::ti_meta::d_wf(ss, d);
     crate::ti_meta::mk_d(ss, w);
@@ -310,7 +311,7 @@ pub proof fn ps_pair(sig: Sig, g: crate::ti_syntax::Ctx, j: u64, ls1: Seq<LevelS
     crate::ti_ls2::d_ls2(ss, d, dl, ks, ls1, ls2);
     let (x1, x2, t1) = (crate::expr_model::subst_expr_levels(x, ks, ls1), crate::expr_model::subst_expr_levels(x, ks, ls2),
         crate::expr_model::subst_expr_levels(t, ks, ls1));
-    crate::ti_strip::strip_derivable(sig, crate::ti_syntax::eq(dl, x1, x2, t1));
+    crate::ti_strip::derivable_up(sig, crate::dom_code::rk(sig, j), crate::ti_syntax::eq(dl, x1, x2, t1));
     ps_inst2(sig, g, dl, x1, x2, t1, a, a2);
 }
 
@@ -356,7 +357,7 @@ pub proof fn ps_mem_lv(ss: Sig, sig: Sig, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<
     dps: Seq<Cpt>, pv: Seq<Cpt>, d: Cpt)
     requires
         crate::dom_sound::sound_oracle(ss, sig),
-        ss == crate::ti_strip::strip(sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, j)),
         crate::dom_code::has_canon(sig, j),
         crate::dom_levels::sig_lps(sig),
         crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(crate::dom_code::canon_shape(sig, j).pdoms, x, x, crate::ti_syntax::sort(l))),
@@ -374,9 +375,9 @@ pub proof fn ps_mem_lv(ss: Sig, sig: Sig, j: u64, ls1: Seq<LevelSpec>, ls2: Seq<
     let pd = crate::dom_code::canon_shape(sig, j).pdoms;
     let ks = sig.consts[j].lps;
     let dl = crate::ti_level::gls(pd, ks, ls1);
-    crate::dom_levels::sig_lps_at(sig, ks, ls1);
+    crate::dom_levels::sig_lps_below(sig, crate::dom_code::rk(sig, j), ks, ls1);
     assert(ls2.len() == ls1.len());
-    crate::dom_levels::sig_lps_at(sig, ks, ls2);
+    crate::dom_levels::sig_lps_below(sig, crate::dom_code::rk(sig, j), ks, ls2);
     let d0 = crate::ti_sub::get(ss, crate::ti_syntax::eq(pd, x, x, crate::ti_syntax::sort(l)));
     let w = crate::ti_meta::d_wf(ss, d0);
     crate::ti_meta::mk_d(ss, w);
@@ -428,17 +429,17 @@ pub proof fn vsub_spine(e: ExprSpec, a: Seq<ExprSpec>)
 }
 
 /// A typed type's arguments are typed.
-pub proof fn ptyped_args(sig: Sig, dl: crate::ti_syntax::Ctx, e: ExprSpec)
+pub proof fn ptyped_args(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec)
     requires
-        pargs_typed(sig, dl, e),
+        pargs_typed(sig, r, dl, e),
     ensures
-        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] ptyped(sig, dl, spine_args(e)[i]),
+        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] ptyped(sig, r, dl, spine_args(e)[i]),
     decreases e,
 {
     if let ExprSpec::App(f, x) = e {
-        ptyped_args(sig, dl, *f);
+        ptyped_args(sig, r, dl, *f);
         let a = spine_args(e);
-        assert forall|i: int| 0 <= i < a.len() implies #[trigger] ptyped(sig, dl, a[i]) by {
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] ptyped(sig, r, dl, a[i]) by {
             if i < a.len() - 1 {
                 assert(a[i] == spine_args(*f)[i]);
             }

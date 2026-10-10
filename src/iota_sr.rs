@@ -622,7 +622,7 @@ proof fn ps_field_eq(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, us2
     let c = fs.subrange(0, k);
     crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu, ps, c);
     crate::dom_psimple::plow_vsub(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu2, ps2, c);
-    let l0 = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
+    let l0 = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, sh.ind)), eq(sh.pdoms, e, e, crate::ti_syntax::sort(l)));
     let gl = crate::ti_level::gls(sh.pdoms, sh.lps, us);
     assert forall|q: int| 0 <= q < gl.len() implies gl[q] is Sort
         && derivable(sig, eq(g, #[trigger] ps[q], ps2[q], gl[q])) by {
@@ -955,11 +955,11 @@ pub proof fn cfu_conv(sig: Sig, g: Ctx, rid: u64, p: int, k: int, us: Seq<LevelS
         ind_lv(sig, g, rid, us, us2, ps);
     } else if crate::rec_canon::simple_ty(sig, sh.ind, f) {
         crate::dom_lift::field_facts(sig, sh.ind, p, k);
-        let ss = crate::ti_strip::strip(sig);
+        let ri = crate::dom_code::rk(sig, sh.ind);
+        let ss = crate::ti_strip::strip_below(sig, ri);
         let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), f, f, crate::ti_syntax::sort(l)));
         crate::ti_scope::closed_of_empty(ss, f, f, crate::ti_syntax::sort(l));
-        crate::ti_strip::strip_below_zero(sig);
-        crate::dom_levels::closed_conv(sig, 0, g, f, l, sh.lps, us, us2);
+        crate::dom_levels::closed_conv(sig, ri, g, f, l, sh.lps, us, us2);
         crate::ti_level::ls_nlbv(f, sh.lps, us);
         crate::ti_level::ls_nlbv(f, sh.lps, us2);
         vsub_closed(fu, xs);

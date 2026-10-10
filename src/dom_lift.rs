@@ -27,16 +27,17 @@ verus! {
 
 /// A closed type, typed without recursors, is a type in every well-formed
 /// context.
-pub proof fn closed_typed(sig: Sig, g: Ctx, e: ExprSpec)
+pub proof fn closed_typed(sig: Sig, r: int, g: Ctx, e: ExprSpec)
     requires
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), e),
+        crate::ti_syntax::iota_ok(sig) || r <= 0,
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, r), e),
         crate::expr_model::nlbv(e) == 0,
         derivable(sig, Jd::Wf(g)),
     ensures
         crate::ti_sub::tconvd(sig, g, e, e),
 {
-    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), e, e, sort(l)));
-    crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), e, e, sort(l)));
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, r), eq(Seq::empty(), e, e, sort(l)));
+    crate::ti_strip::derivable_up(sig, r, eq(Seq::empty(), e, e, sort(l)));
     crate::ti_sr::wk_closed(sig, g, e, e, sort(l));
     assert(derivable(sig, eq(g, e, e, sort(l))));
     reveal(crate::ti_sub::tconvd);
@@ -345,26 +346,26 @@ pub proof fn fq_var(sig: Sig, j: u64, t: ExprSpec, pv: Seq<Cpt>, p: int, k: int)
 }
 
 /// A closed simple type's arguments are typed and ranked as it is.
-pub proof fn styped_args(sig: Sig, e: ExprSpec)
+pub proof fn styped_args(sig: Sig, r: int, e: ExprSpec)
     requires
-        styped(sig, e),
+        styped(sig, r, e),
     ensures
-        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] styped(sig, spine_args(e)[i]),
+        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] styped(sig, r, spine_args(e)[i]),
 {
-    sargs_args(sig, e);
+    sargs_args(sig, r, e);
 }
 
-proof fn sargs_args(sig: Sig, e: ExprSpec)
+proof fn sargs_args(sig: Sig, r: int, e: ExprSpec)
     requires
-        sargs_typed(sig, e),
+        sargs_typed(sig, r, e),
     ensures
-        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] styped(sig, spine_args(e)[i]),
+        forall|i: int| 0 <= i < spine_args(e).len() ==> #[trigger] styped(sig, r, spine_args(e)[i]),
     decreases e,
 {
     if let ExprSpec::App(f, x) = e {
-        sargs_args(sig, *f);
+        sargs_args(sig, r, *f);
         let a = spine_args(e);
-        assert forall|i: int| 0 <= i < a.len() implies #[trigger] styped(sig, a[i]) by {
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] styped(sig, r, a[i]) by {
             if i < a.len() - 1 {
                 assert(a[i] == spine_args(*f)[i]);
             }
@@ -376,9 +377,10 @@ proof fn sargs_args(sig: Sig, e: ExprSpec)
 /// below its canonical code (the lifting lemma's closed case).
 pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
     requires
+        crate::ti_syntax::iota_ok(sig) || rk(sig, j) <= 0,
         crate::rec_canon::simple_ty(sig, j, r),
         crate::dom_canon::ranked(sig, r, rk(sig, j)),
-        styped(sig, r),
+        styped(sig, rk(sig, j), r),
         derivable(sig, Jd::Wf(g)),
         wf(c),
         le(c, ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), r)),
@@ -409,7 +411,7 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), Seq::empty(), r);
     crate::dom_canon::simple_args(sig, j, r);
     crate::dom_canon::spine_args_size(r);
-    styped_args(sig, r);
+    styped_args(sig, rk(sig, j), r);
     // the head's canonical table, at the arguments' codes
     let sk = canon_shape(sig, kk);
     if ca.len() < sk.np {
@@ -420,7 +422,7 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
     canon_bnd(sig, kk, us2, ca, cs, c);
     // the type, typed, and stuck
     crate::dom_iota::simple_closed(sig, j, r);
-    closed_typed(sig, g, r);
+    closed_typed(sig, rk(sig, j), g, r);
     crate::ti_chain::tchain_one(sig, g, r, r);
     iapp_self(sig, r);
     // the parameters: the arguments, related below their codes
@@ -447,7 +449,7 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
             let x = spine_args(r)[q];
             let pt = crate::dom_rel::ptype(sig, kk, crate::dom_rel::iinst(sig, kk, r), q);
             crate::ti_chain::tchain_refl(sig, g, x);
-            crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), x, x, pt));
+            crate::ti_strip::derivable_up(sig, rk(sig, j), eq(Seq::empty(), x, x, pt));
             crate::dom_iota::simple_closed(sig, j, x);
             crate::ti_sr::wk_closed(sig, g, x, x, pt);
         }
@@ -472,9 +474,10 @@ pub open spec fn prel_at(sig: Sig, n: nat, g: Ctx, a: Seq<ExprSpec>, a2: Seq<Exp
 /// parameters' codes (the lifting lemma's parameter case).
 pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>, c: Cpt)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::rec_canon::psimple(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
-        crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
+        crate::dom_psimple::ptyped(sig, rk(sig, j), canon_shape(sig, j).pdoms, e),
         crate::dom_levels::sig_lps(sig),
         has_canon(sig, j),
         forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
@@ -524,7 +527,7 @@ pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: S
     assert(c0 == canon_code(sig, kk, us2, ca));
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), pv, e);
     crate::dom_canon::spine_args_size(e);
-    crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
+    crate::dom_psimple::ptyped_args(sig, rk(sig, j), sh.pdoms, e);
     crate::dom_levels::sl_spine(e, ks, ls);
     crate::dom_levels::sl_spine(e, ks, ls2);
     crate::dom_psimple::vsub_spine(e1, a);
@@ -570,10 +573,11 @@ pub open spec fn ptr_at(sig: Sig, n0: nat, n: nat, g: Ctx, a: Seq<ExprSpec>, a2:
 /// levels are equivalent.
 pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::rec_canon::psapp(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
         spine_args(e).len() == crate::rec_canon::tarity(sig.consts[spine_head(e)->Const_0].ty),
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
-        crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
+        crate::dom_psimple::ptyped(sig, rk(sig, j), canon_shape(sig, j).pdoms, e),
         crate::dom_levels::sig_lps(sig),
         has_canon(sig, j),
         forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
@@ -598,12 +602,12 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
     let kk = spine_head(e)->Const_0;
     let us = spine_head(e)->Const_1;
     let sk = canon_shape(sig, kk);
-    crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
+    crate::dom_psimple::ptyped_args(sig, rk(sig, j), sh.pdoms, e);
     crate::dom_levels::sl_spine(e, ks, ls);
     crate::dom_levels::sl_spine(e, ks, ls2);
     crate::dom_psimple::vsub_spine(e1, a);
     crate::dom_psimple::vsub_spine(e2, a2);
-    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, e, e, sort(l)));
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(sh.pdoms, e, e, sort(l)));
     crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, e, sort(l), a, a2);
     let lx = crate::level_model::subst_level_spec(l, ks, ls);
     assert(crate::expr_model::subst_expr_levels(sort(l), sig.consts[j].lps, ls) == sort(lx));
@@ -629,8 +633,8 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
             implies #[trigger] crate::dom_rel::peq(sig, g, kk, i1, q, spine_args(x)[q], spine_args(x2)[q]) by {
             let ai = spine_args(e)[q];
             let (y, y2) = (crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls2), a2));
-            assert(crate::dom_psimple::ptyped(sig, sh.pdoms, ai));
-            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, ai, ai, sort(l)));
+            assert(crate::dom_psimple::ptyped(sig, rk(sig, j), sh.pdoms, ai));
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(sh.pdoms, ai, ai, sort(l)));
             crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, ai, sort(la), a, a2);
             assert(crate::expr_model::subst_expr_levels(sort(la), sig.consts[j].lps, ls) == sort(crate::level_model::subst_level_spec(la, ks, ls)));
             crate::ti_chain::tchain_one(sig, g, y, y2);
@@ -647,8 +651,8 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
             implies #[trigger] crate::ti_chain::mchain(sig, g, spine_args(x)[q], spine_args(x2)[q]) by {
             let ai = spine_args(e)[q];
             let (y, y2) = (crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls2), a2));
-            assert(crate::dom_psimple::ptyped(sig, sh.pdoms, ai));
-            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(sh.pdoms, ai, ai, sort(l)));
+            assert(crate::dom_psimple::ptyped(sig, rk(sig, j), sh.pdoms, ai));
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(sh.pdoms, ai, ai, sort(l)));
             crate::dom_psimple::ps_pair(sig, g, j, ls, ls2, ai, sort(la), a, a2);
             assert(crate::expr_model::subst_expr_levels(sort(la), sig.consts[j].lps, ls) == sort(crate::level_model::subst_level_spec(la, ks, ls)));
             crate::ti_chain::mchain_one(sig, g, y, y2, sort(crate::level_model::subst_level_spec(la, ks, ls)));
@@ -664,7 +668,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSp
     requires
         crate::rec_canon::psimple(sig, j, canon_shape(sig, j).pdoms, canon_shape(sig, j).np, 0, e),
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
-        crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
+        crate::dom_psimple::ptyped(sig, rk(sig, j), canon_shape(sig, j).pdoms, e),
         crate::dom_levels::sig_lps(sig),
         has_canon(sig, j),
         forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
@@ -728,7 +732,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSp
     assert(c0 == canon_code(sig, kk, us2, ca));
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), pv, e);
     crate::dom_canon::spine_args_size(e);
-    crate::dom_psimple::ptyped_args(sig, sh.pdoms, e);
+    crate::dom_psimple::ptyped_args(sig, rk(sig, j), sh.pdoms, e);
     crate::dom_levels::sl_spine(e, ks, ls);
     crate::dom_levels::sl_spine(e, ks, ls2);
     crate::dom_psimple::vsub_spine(e1, a);
@@ -798,9 +802,10 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSp
 /// their type parameters `peq` and their levels equivalent.
 pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>)
     requires
+        crate::ti_syntax::iota_ok(sig) || rk(sig, j) <= 0,
         crate::rec_canon::simple_ty(sig, j, r),
         crate::dom_canon::ranked(sig, r, rk(sig, j)),
-        styped(sig, r),
+        styped(sig, rk(sig, j), r),
         crate::dom_levels::sig_lps(sig),
         sig.consts[j].lps.len() == ls1.len(),
         crate::conv_cr::levs_eq(ls1, ls2),
@@ -825,14 +830,13 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
     simple_head(sig, j, r);
     crate::dom_canon::simple_facts(sig, j, r, rj);
     crate::dom_canon::simple_args(sig, j, r);
-    styped_args(sig, r);
+    styped_args(sig, rk(sig, j), r);
     crate::dom_levels::sl_spine(r, ks, ls1);
     crate::dom_levels::sl_spine(r, ks, ls2);
     let sk = canon_shape(sig, kk);
     crate::dom_iota::simple_closed(sig, j, r);
-    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), r, r, sort(l)));
-    crate::ti_strip::strip_below_zero(sig);
-    crate::dom_levels::closed_conv(sig, 0, g, r, l, ks, ls1, ls2);
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(Seq::empty(), r, r, sort(l)));
+    crate::dom_levels::closed_conv(sig, rk(sig, j), g, r, l, ks, ls1, ls2);
     iapp_self(sig, r1);
     iapp_self(sig, r2);
     if has_canon(sig, kk) {
@@ -850,22 +854,21 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
         assert forall|q: int| 0 <= q < sk.np && sk.pdoms[q] is Sort
             implies #[trigger] crate::dom_rel::peq(sig, g, kk, i1, q, spine_args(r1)[q], spine_args(r2)[q]) by {
             let a = spine_args(r)[q];
-            assert(styped(sig, a));
+            assert(styped(sig, rk(sig, j), a));
             crate::dom_iota::simple_closed(sig, j, a);
-            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, sort(l)));
-            crate::ti_strip::strip_below_zero(sig);
-            crate::dom_levels::closed_conv(sig, 0, g, a, la, ks, ls1, ls2);
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(Seq::empty(), a, a, sort(l)));
+            crate::dom_levels::closed_conv(sig, rk(sig, j), g, a, la, ks, ls1, ls2);
             let pd = sk.pdoms[q];
             let pt = crate::dom_rel::ptype(sig, kk, ii, q);
-            assert(derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, pt)));
-            crate::dom_levels::sig_lps_at(sig, ks, ls1);
-            crate::dom_levels::sig_lps_at(sig, ks, ls2);
+            assert(derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(Seq::empty(), a, a, pt)));
+            crate::dom_levels::sig_lps_below(sig, rk(sig, j), ks, ls1);
+            crate::dom_levels::sig_lps_below(sig, rk(sig, j), ks, ls2);
             crate::dom_levels::pdoms_elp(sig, kk, q);
             crate::level_inst::expr_compose(pd, sig.consts[kk].lps, ii, ks, ls1);
             assert(crate::expr_model::subst_expr_levels(pt, ks, ls1) == crate::dom_rel::ptype(sig, kk, i1, q));
-            crate::ti_ls2::ls_pair_nil(crate::ti_strip::strip(sig), a, a, pt, ks, ls1, ls2);
+            crate::ti_ls2::ls_pair_nil(crate::ti_strip::strip_below(sig, rk(sig, j)), a, a, pt, ks, ls1, ls2);
             let pt1 = crate::dom_rel::ptype(sig, kk, i1, q);
-            crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), crate::expr_model::subst_expr_levels(a, ks, ls1),
+            crate::ti_strip::derivable_up(sig, rk(sig, j), eq(Seq::empty(), crate::expr_model::subst_expr_levels(a, ks, ls1),
                 crate::expr_model::subst_expr_levels(a, ks, ls2), pt1));
             crate::ti_level::ls_nlbv(a, ks, ls1);
             crate::ti_level::ls_nlbv(a, ks, ls2);
@@ -876,11 +879,10 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
         assert forall|q: int| 0 <= q < spine_args(r1).len()
             implies #[trigger] crate::ti_chain::mchain(sig, g, spine_args(r1)[q], spine_args(r2)[q]) by {
             let a = spine_args(r)[q];
-            assert(styped(sig, a));
+            assert(styped(sig, rk(sig, j), a));
             crate::dom_iota::simple_closed(sig, j, a);
-            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, sort(l)));
-            crate::ti_strip::strip_below_zero(sig);
-            crate::dom_levels::closed_conv(sig, 0, g, a, la, ks, ls1, ls2);
+            let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(Seq::empty(), a, a, sort(l)));
+            crate::dom_levels::closed_conv(sig, rk(sig, j), g, a, la, ks, ls1, ls2);
             crate::ti_chain::mchain_one(sig, g, crate::expr_model::subst_expr_levels(a, ks, ls1),
                 crate::expr_model::subst_expr_levels(a, ks, ls2), sort(crate::level_model::subst_level_spec(la, ks, ls1)));
         }
@@ -890,10 +892,11 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
 /// (the lifting lemma's closed case, universe-polymorphic).
 pub proof fn closed_rel2(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>, c: Cpt)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::rec_canon::simple_ty(sig, j, r),
         crate::dom_canon::ranked(sig, r, rk(sig, j)),
         crate::dom_code::blind_ty(sig, r),
-        styped(sig, r),
+        styped(sig, rk(sig, j), r),
         crate::dom_levels::sig_lps(sig),
         sig.consts[j].lps.len() == ls1.len(),
         crate::conv_cr::levs_eq(ls1, ls2),
@@ -928,7 +931,7 @@ pub proof fn closed_rel2(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, ls1: Seq
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), Seq::empty(), r);
     crate::dom_canon::simple_args(sig, j, r);
     crate::dom_canon::spine_args_size(r);
-    styped_args(sig, r);
+    styped_args(sig, rk(sig, j), r);
     crate::dom_levels::blind_args(sig, r);
     crate::dom_levels::sl_spine(r, ks, ls1);
     crate::dom_levels::sl_spine(r, ks, ls2);
@@ -964,7 +967,7 @@ pub proof fn closed_below2(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpe
         crate::rec_canon::simple_ty(sig, j, r),
         crate::dom_canon::ranked(sig, r, rk(sig, j)),
         crate::dom_code::blind_ty(sig, r),
-        styped(sig, r),
+        styped(sig, rk(sig, j), r),
         crate::dom_levels::sig_lps(sig),
         sig.consts[j].lps.len() == ls1.len(),
         crate::conv_cr::levs_eq(ls1, ls2),
@@ -1009,7 +1012,7 @@ pub proof fn closed_below2(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpe
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), Seq::empty(), r);
     crate::dom_canon::simple_args(sig, j, r);
     crate::dom_canon::spine_args_size(r);
-    styped_args(sig, r);
+    styped_args(sig, rk(sig, j), r);
     crate::dom_levels::blind_args(sig, r);
     crate::dom_levels::sl_spine(r, ks, ls1);
     crate::dom_levels::sl_spine(r, ks, ls2);
@@ -1263,7 +1266,7 @@ pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
         crate::rec_canon::simple_ty(sig, j, canon_shape(sig, j).fields[p][k]),
     ensures
         crate::dom_canon::ranked(sig, canon_shape(sig, j).fields[p][k], rk(sig, j)),
-        styped(sig, canon_shape(sig, j).fields[p][k]),
+        styped(sig, rk(sig, j), canon_shape(sig, j).fields[p][k]),
         crate::dom_code::blind_ty(sig, canon_shape(sig, j).fields[p][k]),
         crate::dom_levels::sig_lps(sig),
         cf(sig, j, Seq::empty(), p, k) == ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), canon_shape(sig, j).fields[p][k]),
@@ -1300,7 +1303,7 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
         &&& crate::dom_canon::pranked(sig, f, rk(sig, j))
         &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, 0, e)
         &&& crate::dom_canon::pranked(sig, e, rk(sig, j))
-        &&& crate::dom_psimple::ptyped(sig, sh.pdoms, e)
+        &&& crate::dom_psimple::ptyped(sig, rk(sig, j), sh.pdoms, e)
         &&& sh.pdoms.len() == sh.np
         &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
         &&& forall|pv: Seq<Cpt>| pv.len() >= sh.np ==>
@@ -1510,7 +1513,7 @@ pub proof fn closed_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpec
     requires
         crate::rec_canon::simple_ty(sig, j, r),
         crate::dom_canon::ranked(sig, r, rk(sig, j)),
-        styped(sig, r),
+        styped(sig, rk(sig, j), r),
         derivable(sig, Jd::Wf(g)),
         le(c1, ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), r)),
         le(c2, ceval(sig, rk(sig, j), j, Seq::empty(), Seq::empty(), r)),
@@ -1551,7 +1554,7 @@ pub proof fn closed_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, r: ExprSpec
     crate::dom_canon::cargs_spine(sig, rj, j, Seq::empty(), Seq::empty(), r);
     crate::dom_canon::simple_args(sig, j, r);
     crate::dom_canon::spine_args_size(r);
-    styped_args(sig, r);
+    styped_args(sig, rk(sig, j), r);
     let sk = canon_shape(sig, kk);
     let cs = if ca.len() >= sk.np { ca } else { ca + Seq::new((sk.np - ca.len()) as nat, |_i: int| Cpt::Bot) };
     canon_bnd(sig, kk, us2, ca, cs, c1);

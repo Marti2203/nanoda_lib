@@ -309,6 +309,43 @@ pub proof fn minor_split(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int) -> (r: 
     (f2 + i2, body)
 }
 
+/// The minor's field domain at its arguments: the field's type at the
+/// recursor's instance, at the parameters and the earlier fields.
+#[verifier::spinoff_prover]
+proof fn minor_dom_fld(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, i: int, xs0: Seq<ExprSpec>, yi: Seq<ExprSpec>, d: ExprSpec)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
+        0 <= j < rshape(sig, rid).nmin(),
+        0 <= i < rshape(sig, rid).fields[j].len(),
+        xs0.len() == rshape(sig, rid).np + 1 + j,
+        yi.len() == i,
+        d == crate::expr_model::subst_expr_levels(rshape(sig, rid).field_at(j, i, (1 + j) as nat), sig.ienv.recs[rid].uparams, lv),
+    ensures ({
+        let sh = rshape(sig, rid);
+        let fu = crate::iota_sr::cfu(sig, rid, j, i, crate::dom_rec_ty::rinst(sig, rid, lv));
+        &&& vsub(d, xs0 + yi) == vsub(fu, xs0.subrange(0, sh.np as int) + yi)
+        &&& crate::expr_model::nlbv(sh.fields[j][i]) == 0 ==> vsub(fu, xs0.subrange(0, sh.np as int) + yi) == fu
+    }),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let f = sh.fields[j][i];
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    let fu = crate::iota_sr::cfu(sig, rid, j, i, us);
+    crate::dom_rec_ty::rec_elp_parts(sig, rid, j);
+    crate::dom_rec_ty::rinst_id(sig, rid, lv, f);
+    crate::ti_level::ls_lift((1 + j) as nat, i as nat, f, rd.uparams, lv);
+    assert(d == crate::subst_algebra::lift((1 + j) as nat, i as nat, fu));
+    let (a, b) = (xs0.subrange(0, sh.np as int), xs0.subrange(sh.np as int, xs0.len() as int));
+    assert(a + b + yi =~= xs0 + yi);
+    field_vsub(sig, rid, j, i, us, (1 + j) as nat, a, b, yi);
+    if crate::expr_model::nlbv(f) == 0 {
+        crate::ti_level::ls_nlbv(f, sh.lps, us);
+        crate::ti_spine::vsub_closed(fu, a + yi);
+    }
+}
+
 /// THE MINOR'S DOMAIN after `i` of its own arguments: a field's closed
 /// type, or the motive at a recursive field.
 #[verifier::spinoff_prover]
@@ -345,21 +382,8 @@ pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
     vsub_pi_dom(ds[i], binds(BinderKind::Pi, ds.subrange(i + 1, ds.len() as int), body), xs0 + yi);
     let xa = xs0 + yi;
     if i < nf {
-        let f = sh.fields[j][i];
-        let us = crate::dom_rec_ty::rinst(sig, rid, lv);
-        let fu = crate::iota_sr::cfu(sig, rid, j, i, us);
-        crate::dom_rec_ty::rec_elp_parts(sig, rid, j);
-        crate::dom_rec_ty::rinst_id(sig, rid, lv, f);
-        crate::ti_level::ls_lift((1 + j) as nat, i as nat, f, rd.uparams, lv);
         assert(ds[i] == crate::expr_model::subst_expr_levels(sh.field_at(j, i, (1 + j) as nat), rd.uparams, lv));
-        assert(ds[i] == crate::subst_algebra::lift((1 + j) as nat, i as nat, fu));
-        let (a, b) = (xs0.subrange(0, sh.np as int), xs0.subrange(sh.np as int, xs0.len() as int));
-        assert(a + b + yi =~= xa);
-        field_vsub(sig, rid, j, i, us, (1 + j) as nat, a, b, yi);
-        if crate::expr_model::nlbv(f) == 0 {
-            crate::ti_level::ls_nlbv(f, sh.lps, us);
-            crate::ti_spine::vsub_closed(fu, a + yi);
-        }
+        minor_dom_fld(sig, rid, lv, j, i, xs0, yi, ds[i]);
     } else {
         let q = i - nf;
         crate::dom_rec_ty::rec_pos_facts(sh.fields[j], sh.ind, sh.us(), sh.np, sh.ni, nf);
