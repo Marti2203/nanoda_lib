@@ -648,4 +648,378 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     cr_env_of(dty, denv);
 }
 
+/// A declaration below the cutoff is the one its name resolves to there.
+proof fn pos_find<'p>(ef: crate::util::ExportFile<'p>, cc: int, q: int)
+    requires
+        crate::inductive::export_ok(ef),
+        0 <= q < cc,
+        q < ef.declars_keys().len(),
+    ensures
+        crate::env::find_at(ef.declars_view(), ef.declars_keys(), cc, crate::level_arena_bridge::name_id(ef.declars_keys()[q]))
+            == Some(decl_at(ef, q)),
+        crate::env::ids_at(ef.declars_keys(), cc).contains(crate::level_arena_bridge::name_id(ef.declars_keys()[q])),
+        pos_of(ef, crate::level_arena_bridge::name_id(ef.declars_keys()[q])) == q,
+{
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    let keys = ef.declars_keys();
+    let id = crate::level_arena_bridge::name_id(keys[q]);
+    assert(0 <= q < keys.len() && q < cc && crate::level_arena_bridge::name_id(keys[q]) == id);
+    let n = if cc <= keys.len() { cc } else { keys.len() as int };
+    let f = |k: crate::util::NamePtr<'p>| crate::level_arena_bridge::name_id(k);
+    assert(keys.take(n).map_values(f)[q] == id);
+    assert(keys.take(n).map_values(f).contains(id));
+}
+
+/// A term over constants none of which is `x` does not name `x`.
+proof fn all_consts_unnamed(e: ExprSpec, s: Set<u64>, x: u64)
+    requires
+        crate::ti_level::all_consts(e, s),
+        !s.contains(x),
+    ensures
+        !crate::inductive_model::contains_const_named(e, seq![x]),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => { all_consts_unnamed(*f, s, x); all_consts_unnamed(*a, s, x); },
+        ExprSpec::Bind(_, t, b) => { all_consts_unnamed(*t, s, x); all_consts_unnamed(*b, s, x); },
+        ExprSpec::Let(t, v, b) => { all_consts_unnamed(*t, s, x); all_consts_unnamed(*v, s, x); all_consts_unnamed(*b, s, x); },
+        ExprSpec::Proj(_, a) => { all_consts_unnamed(*a, s, x); },
+        ExprSpec::Const(c, _) => { assert(seq![x][0] == x); },
+        _ => {},
+    }
+}
+
+/// A declaration's type does not mention the declaration: it is typed
+/// before it.
+proof fn ty_self_free<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_dty(ef, cc).contains_key(cid),
+    ensures
+        !crate::inductive_model::contains_const_named(m_dty(ef, cc)[cid].1, seq![cid]),
+{
+    let c = decl_facts(ef, cc, cid);
+    let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+    let em = Map::<nat, ExprSpec>::empty();
+    let ty = m_dty(ef, cc)[cid].1;
+    let l = crate::jkernel::is_type_sort(dc, nc, em, ty);
+    let sc = crate::metatheory::jsig(dc, nc, em);
+    let dv = crate::ti_sub::get(sc, crate::ti_syntax::eq(Seq::empty(), ty, ty, crate::ti_syntax::sort(l)));
+    crate::ti_level::d_consts(sc, dv);
+    assert(sc.consts.dom() =~= dc.dom());
+    if dc.dom().contains(cid) {
+        assert(dc.contains_key(cid));
+        assert(pos_of(ef, cid) < c);
+    }
+    all_consts_unnamed(ty, dc.dom(), cid);
+}
+
+/// A recursor's checked universe parameters, as names.
+proof fn rec_lps_names(ru: Seq<crate::level_model::LevelSpec>, lps: Seq<u64>)
+    requires
+        forall|i: int| 0 <= i < ru.len() ==> (#[trigger] ru[i]) is Param,
+        crate::inductive::rec_lps_ok(ru, crate::rec_canon::plevels(lps)),
+    ensures ({
+        let ns = crate::level_model::level_names(ru);
+        ns == lps || (ns.len() == lps.len() + 1 && ns.drop_first() == lps && !lps.contains(ns[0]))
+    }),
+{
+    let ns = crate::level_model::level_names(ru);
+    if ru == crate::rec_canon::plevels(lps) {
+        assert(ns =~= lps);
+    } else {
+        let iu = crate::rec_canon::plevels(lps);
+        assert(ns.drop_first() =~= lps) by {
+            assert forall|k: int| 0 <= k < lps.len() implies ns.drop_first()[k] == lps[k] by {
+                assert(ru.drop_first()[k] == iu[k]);
+            }
+        }
+        if lps.contains(ns[0]) {
+            let k = choose|k: int| 0 <= k < lps.len() && lps[k] == ns[0];
+            assert(iu[k] == ru[0]);
+            assert(iu.contains(ru[0]));
+        }
+    }
+}
+
+/// THE BOUNDARY OF THE CERTIFIED RECURSORS: the recursor's block is a
+/// single, non-nested inductive.
+pub open spec fn rec_simple<'p>(ef: crate::util::ExportFile<'p>, rid: u64) -> bool {
+    match decl_at(ef, pos_of(ef, rid)) {
+        crate::env::Declar::Recursor(r) => match ef.declars_view()[r.all_inductives@[0]] {
+            crate::env::Declar::Inductive(i) => i.all_ind_names@.len() == 1 && !i.is_nested,
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+/// The other boundary: the recursor's constructors' fields are of an
+/// admitted kind.
+pub open spec fn rec_fields_ok(sig: crate::ti_syntax::Sig, rid: u64) -> bool {
+    let rd = sig.ienv.recs[rid];
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    let sh = crate::rec_canon::shape_of(sig, rd, ind);
+    forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() ==>
+        crate::rec_canon::field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, #[trigger] sh.fields[j][k])
+}
+
+/// A block constructor in the signature at the cutoff.
+pub open spec fn ctor_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, sh: crate::rec_canon::IndShape, j: int) -> bool {
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let c = sh.ctors[j];
+    &&& dty.contains_key(c) && !denv.defs.contains_key(c) && !denv.recs.contains_key(c)
+    &&& denv.ctor_ind.contains_key(c) && denv.ctor_ind[c] == sh.ind
+    &&& denv.ctor_np.contains_key(c) && denv.ctor_np[c] as nat == sh.np
+    &&& dty[c].0 == dty[sh.ind].0
+    &&& dty[c].1 == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j],
+            crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j]))
+    &&& crate::beta_model::string_free(dty[c].1)
+}
+
+/// The block certificate's constructor is the signature's.
+#[verifier::spinoff_prover]
+proof fn ctor_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, sh: crate::rec_canon::IndShape, j: int)
+    requires
+        below_ok(ef, cc),
+        crate::inductive::ctor_ok_ex(ef, sh, j),
+        m_dty(ef, cc).contains_key(sh.ctors[j]),
+    ensures
+        ctor_at(ef, cc, sh, j),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let cid = sh.ctors[j];
+    let c = choose|c: crate::env::ConstructorData<'p>| #[trigger] crate::inductive::ex_decl(ef, crate::env::Declar::Constructor(c))
+        && crate::level_arena_bridge::name_id(c.info.name) == sh.ctors[j]
+        && crate::level_arena_bridge::name_id(c.inductive_name) == sh.ind
+        && c.num_params as nat == sh.np
+        && crate::expr_arena_bridge::to_model(c.info.ty) == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j],
+            crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j]))
+        && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(c.info.ty)) == 0
+        && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(c.info.ty));
+    let i = entry_of(ef, cc, cid);
+    assert(pos_of(ef, cid) == i);
+    assert(keys.to_set().contains(keys[i]));
+    let pc = choose|pc: int| 0 <= pc < keys.len() && keys[pc] == c.info.name;
+    assert(i == pc);
+    let d = decl_at(ef, i);
+    assert(d == crate::env::Declar::Constructor(c));
+    assert(dty[cid] == crate::env_model::ty_entry(d)->0);
+    assert(!denv.defs.contains_key(cid));
+    assert(!denv.recs.contains_key(cid));
+    assert(denv.ctor_ind.contains_key(cid) && denv.ctor_ind[cid] == sh.ind);
+    assert(denv.ctor_np.contains_key(cid) && denv.ctor_np[cid] as nat == sh.np);
+    let c2 = decl_facts(ef, cc, cid);
+    assert(crate::tc::ctor_e2_cert(m_dty(ef, c2), m_denv(ef, c2), c));
+    assert(m_dty(ef, c2).contains_key(sh.ind));
+    assert(dty[sh.ind] == m_dty(ef, c2)[sh.ind]);
+    assert(kh_hyp(dty, denv));
+    crate::kclaims::frag_term_sf(dty[cid].1);
+}
+
+/// The shape the signature reads off a recursor is the certificate's
+/// when the inductive's and constructors' types and the recursor's data
+/// are the certificate's.
+#[verifier::spinoff_prover]
+proof fn shape_read(raw: crate::ti_syntax::Sig, rd: crate::expr_arena_bridge::RecDataSpec, sh: crate::rec_canon::IndShape, ti: ExprSpec)
+    requires
+        raw.consts[sh.ind].ty == ti,
+        raw.consts[sh.ind].lps == sh.lps,
+        ti == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(ti, sh.np + sh.ni)),
+        sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni,
+        sh.fields.len() == sh.nmin() && sh.tss.len() == sh.nmin(),
+        rd.num_params == sh.np,
+        rd.num_minors == sh.nmin(),
+        rd.rules.len() == sh.nmin(),
+        rd.major_idx == sh.np + 1 + sh.nmin() + sh.ni,
+        forall|j: int| 0 <= j < sh.nmin() ==> #[trigger] rd.rules[j].ctor_id == sh.ctors[j] && rd.rules[j].nfields == sh.fields[j].len()
+            && sh.tss[j].len() == sh.ni
+            && raw.consts[sh.ctors[j]].ty == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j],
+                crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
+    ensures
+        crate::rec_canon::shape_of(raw, rd, sh.ind) == sh,
+{
+    let shr = crate::rec_canon::shape_of(raw, rd, sh.ind);
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let b = crate::rec_canon::tbody(ti, np + ni);
+    let pi = crate::expr_model::BinderKind::Pi;
+    crate::dom_rec_shape::binds_concat(pi, sh.pdoms, sh.idoms, b);
+    let x = crate::rec_canon::binds(pi, sh.idoms, b);
+    crate::kminor::tdoms_binds(sh.pdoms, x);
+    crate::dom_iota::tbody_binds(sh.pdoms, x);
+    crate::kminor::tdoms_binds(sh.idoms, b);
+    assert(shr.pdoms == sh.pdoms);
+    assert(shr.idoms == sh.idoms);
+    assert(shr.ctors =~= sh.ctors);
+    assert forall|j: int| 0 <= j < nmin implies shr.fields[j] == sh.fields[j] && shr.tss[j] == sh.tss[j] by {
+        let c = sh.ctors[j];
+        let t = raw.consts[c].ty;
+        let nf = sh.fields[j].len();
+        let ia = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j]);
+        assert(rd.rules[j].ctor_id == c);
+        crate::dom_rec_shape::binds_concat(pi, sh.pdoms, sh.fields[j], ia);
+        let y = crate::rec_canon::binds(pi, sh.fields[j], ia);
+        crate::kminor::tdoms_binds(sh.pdoms, y);
+        crate::dom_iota::tbody_binds(sh.pdoms, y);
+        crate::kminor::tdoms_binds(sh.fields[j], ia);
+        crate::dom_iota::tbody_binds(sh.fields[j], ia);
+        crate::kgen::tbody_add(t, np, nf);
+        let args = crate::rec_canon::vars(nf, np) + sh.tss[j];
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, sh.us()), args);
+        assert(args.subrange(np as int, (np + ni) as int) =~= sh.tss[j]);
+    }
+    assert(shr.fields =~= sh.fields);
+    assert(shr.tss =~= sh.tss);
+}
+
+/// THE CANONICAL RECURSOR, CERTIFIED (B6a-4c): a recursor of the
+/// environment at a cutoff whose block is single and non-nested, with
+/// fields of admitted kinds, is the generated one: `rec_core` holds of it.
+/// From its block certificate (`inductive::block_cert`), its arm's checks
+/// (`rec_arm_ok`) and the parser's name table; its inductive's type misses
+/// the inductive (typed before it), and the pieces are string-free (`kh_hyp`).
+#[verifier::spinoff_prover]
+pub proof fn rec_core_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
+    requires
+        below_ok(ef, cc),
+        all_block_certified(ef),
+        all_rec_checked(ef),
+        crate::inductive::export_rec_names_ok(ef),
+        m_denv(ef, cc).recs.contains_key(rid),
+        rec_simple(ef, rid),
+        rec_fields_ok(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+    ensures
+        crate::twin::rec_core(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    // the recursor
+    rec_ctors(ef, cc, rid);
+    let p = entry_of(ef, cc, rid);
+    assert(pos_of(ef, rid) == p);
+    let d = decl_at(ef, p);
+    assert(keys.to_set().contains(keys[p]));
+    assert(view.contains_key(keys[p]));
+    assert(denv.recs[rid] == crate::env_model::rec_entry(d)->0);
+    assert(dty[rid] == crate::env_model::ty_entry(d)->0);
+    if let crate::env::Declar::Recursor(r) = d {
+        assert(r.info.name == keys[p]);
+        let rd = denv.recs[rid];
+        // its block
+        assert(crate::inductive::rec_arm_ok(ef, r));
+        let iname = r.all_inductives@[0];
+        let (qi, qr) = choose|qi: int, qr: int| #![trigger keys[qi], keys[qr]]
+            0 <= qi < qr < keys.len() && keys[qi] == r.all_inductives@[0] && keys[qr] == r.info.name;
+        assert(qr == p);
+    if let crate::env::Declar::Inductive(ind_d) = view[iname] {
+            assert(decl_at(ef, qi) == crate::env::Declar::Inductive(ind_d));
+            assert(crate::inductive::block_cert(ef, ind_d));
+            let (sh, od_r) = choose|sh: crate::rec_canon::IndShape, od_r: crate::env::Declar<'p>| #[trigger] crate::inductive::block_ok(ef, ind_d, sh, od_r);
+            crate::inductive::rec_names_listed(ef, keys[p]);
+            assert(crate::inductive::rec_names_of(ef, r.all_inductives@[0]).contains(r.info.name));
+            assert(od_r == d);
+            let ind = sh.ind;
+            let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+            // the inductive, below the cutoff
+            pos_find(ef, cc, qi);
+            assert(ind_d.info.name == iname);
+            assert(dty.contains_key(ind) && dty[ind] == crate::env_model::ty_entry(decl_at(ef, qi))->0);
+            assert(!denv.recs.contains_key(ind));
+            assert(!denv.defs.contains_key(ind));
+            let ti = raw.consts[ind].ty;
+            assert(ti == crate::expr_arena_bridge::to_model(ind_d.info.ty));
+            ty_self_free(ef, cc, ind);
+            // the recursor's data
+            assert(raw.consts[rid].ty == crate::expr_arena_bridge::to_model(r.info.ty));
+            assert(rd.major_idx == r.major_idx_spec());
+            assert(crate::rec_canon::rec_ind(raw, rid) == ind);
+            assert(rd.num_motives == 1 && rd.num_params == np && rd.num_minors == nmin && rd.rules.len() == nmin);
+            assert(rd.major_idx == np + 1 + nmin + ni);
+            rec_lps_names(crate::level_arena_bridge::to_model_of_levels(r.info.uparams), sh.lps);
+            assert(raw.consts[ind].lps == sh.lps);
+            // the constructors
+            assert forall|j: int| 0 <= j < nmin implies #[trigger] rd.rules[j].ctor_id == sh.ctors[j] && rd.rules[j].nfields == sh.fields[j].len() by {
+                assert(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name) == sh.ctors[j]);
+            }
+            assert forall|j: int| 0 <= j < nmin implies #[trigger] ctor_at(ef, cc, sh, j) by {
+                assert(rd.rules[j].ctor_id == sh.ctors[j]);
+                assert(dty.contains_key(rd.rules[j].ctor_id));
+                ctor_facts(ef, cc, sh, j);
+            }
+            // the shape read off the signature is the certificate's
+            assert forall|j: int| 0 <= j < nmin implies #[trigger] rd.rules[j].ctor_id == sh.ctors[j] && rd.rules[j].nfields == sh.fields[j].len()
+                && sh.tss[j].len() == sh.ni
+                && raw.consts[sh.ctors[j]].ty == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j],
+                    crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])) by {
+                assert(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name) == sh.ctors[j]);
+                assert(ctor_at(ef, cc, sh, j));
+            }
+            shape_read(raw, rd, sh, ti);
+            let lm = crate::rec_canon::elim_level(raw, rid, ind);
+            let cty = Seq::new(nmin, |j: int| raw.consts[sh.ctors[j]].ty);
+            assert forall|j: int| 0 <= j < nmin implies crate::beta_model::string_free(#[trigger] cty[j])
+                && cty[j] == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j],
+                    crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])) by {
+                assert(ctor_at(ef, cc, sh, j));
+            }
+            assert(kh_hyp(dty, denv));
+            crate::kclaims::frag_term_sf(ti);
+            crate::twin::shape_sf_of(sh, ti, cty);
+            assert forall|j: int| 0 <= j < nmin implies crate::rec_canon::rule_shape(#[trigger] sh.rule_rhs(lm, rid, crate::rec_canon::plevels(rd.uparams), j)) by {
+                crate::twin::rule_shape_canon(sh, lm, rid, j, rd.uparams);
+            }
+            let shr = crate::rec_canon::shape_of(raw, rd, crate::rec_canon::rec_ind(raw, rid));
+            assert(shr == sh);
+            assert(raw.ienv.recs.contains_key(rid));
+            assert(raw.consts.contains_key(rid) && raw.consts[rid].val is None && raw.consts[rid].lps == rd.uparams);
+            assert(crate::rec_canon::tdoms(raw.consts[rid].ty, rd.major_idx + 1).len() == rd.major_idx + 1);
+            assert(crate::beta_model::spine_head(crate::rec_canon::tdoms(raw.consts[rid].ty, rd.major_idx + 1)[rd.major_idx as int]) is Const);
+            assert(raw.consts.contains_key(ind) && raw.consts[ind].val is None);
+            assert(!raw.ienv.recs.contains_key(ind));
+            assert(rd.uparams == raw.consts[ind].lps
+                || (rd.uparams.len() == raw.consts[ind].lps.len() + 1 && rd.uparams.drop_first() == raw.consts[ind].lps
+                    && !raw.consts[ind].lps.contains(rd.uparams[0])));
+            assert(crate::rec_canon::tbody(ti, np + ni) is Sort);
+            assert(!crate::inductive_model::contains_const_named(ti, seq![ind]));
+            assert(crate::rec_canon::rec_ind(raw, rid) == ind);
+            assert(crate::rec_canon::elim_level(raw, rid, ind) == lm);
+            assert forall|j: int| 0 <= j < nmin implies {
+                let c = #[trigger] sh.ctors[j];
+                let t = raw.consts[c].ty;
+                let nf = rd.rules[j].nfields;
+                &&& raw.consts.contains_key(c) && raw.consts[c].val is None && raw.consts[c].lps == raw.consts[ind].lps
+                &&& raw.ienv.ctor_ind.contains_key(c) && raw.ienv.ctor_ind[c] == ind
+                &&& raw.ienv.ctor_np.contains_key(c) && raw.ienv.ctor_np[c] as nat == np
+                &&& !raw.ienv.recs.contains_key(c)
+                &&& sh.fields[j].len() == nf
+                &&& t == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j], crate::rec_canon::tbody(t, np + nf))
+                &&& crate::rec_canon::tbody(t, np + nf) == crate::rec_canon::ind_app(ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j])
+                &&& sh.tss[j].len() == ni
+            } by {
+                assert(ctor_at(ef, cc, sh, j));
+                assert(rd.rules[j].nfields == sh.fields[j].len());
+                let nf = sh.fields[j].len();
+                let ia = crate::rec_canon::ind_app(ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j]);
+                crate::dom_iota::tbody_binds(sh.pdoms + sh.fields[j], ia);
+            }
+            reveal(crate::twin::rec_core);
+        } else {
+            assert(false);
+        }
+    } else {
+        assert(crate::env_model::rec_entry(d) is Some);
+    }
+}
+
 } // verus!

@@ -2227,6 +2227,7 @@ pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crat
     &&& sh.ind == crate::level_arena_bridge::name_id(i.info.name)
     &&& sh.lps == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(i.info.uparams))
     &&& sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni
+    &&& sh.fields.len() == sh.nmin() && sh.tss.len() == sh.nmin()
     &&& crate::rec_canon::tbody(ti, sh.np + sh.ni) is Sort
     &&& ti == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(ti, sh.np + sh.ni))
     &&& crate::expr_model::nlbv(ti) == 0 && !crate::expr_model::has_fv(ti)
@@ -5271,6 +5272,7 @@ pub(crate) proof fn block_ind_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         &&& sh.ind == crate::level_arena_bridge::name_id(i.info.name)
         &&& sh.lps == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(i.info.uparams))
         &&& sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni
+        &&& sh.fields.len() == sh.nmin() && sh.tss.len() == sh.nmin()
         &&& crate::rec_canon::tbody(ti, sh.np + sh.ni) is Sort
         &&& ti == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(ti, sh.np + sh.ni))
         &&& crate::expr_model::nlbv(ti) == 0 && !crate::expr_model::has_fv(ti)

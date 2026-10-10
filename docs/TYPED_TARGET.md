@@ -1886,6 +1886,22 @@ and eta step is vacuous (about thirty sites use that). Stages:
     shape) are certifiable, leaving `sig_sr` and `rec_interp` -- the model
     facts, B7 -- and the boundary (single, non-nested, field kinds) as
     hypotheses.
+    B6a-4 (1)+(2) done: `export_sound::rec_core_at(ef, cc, rid)` -- under
+    `below_ok` and the driver's collections (`all_block_certified`,
+    `all_rec_checked`) with the parser's name table, every recursor at a
+    cutoff whose block is single and non-nested (`rec_simple`, export
+    side) and whose fields have admitted kinds (`rec_fields_ok`, model
+    side) satisfies `twin::rec_core` of the raw signature. The pieces: the
+    shape the signature reads off is the certificate's (`shape_read`); the
+    constructors are the signature's (`ctor_facts`, their universe
+    parameters from `ctor_e2_cert`); the inductive's type misses the
+    inductive because it is typed before it (`ty_self_free`); the
+    constructors' index arguments miss it (a tested check's consequence,
+    `block_ok`); the canonical rules are closed, string-free lambdas with
+    no loose bound variable (`twin::rule_shape_canon`; string-freedom of
+    the pieces from `kh_hyp`'s `frag_term`). `field_kind` stays a boundary
+    hypothesis: it is the model's simple-field predicate, which nanoda's
+    positivity check approximates but does not state.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

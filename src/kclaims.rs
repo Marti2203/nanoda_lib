@@ -2448,6 +2448,22 @@ pub open spec fn frag_term(e: ExprSpec) -> bool
     }
 }
 
+/// A fragment term has no string literal.
+pub proof fn frag_term_sf(e: ExprSpec)
+    requires
+        frag_term(e),
+    ensures
+        crate::beta_model::string_free(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => { frag_term_sf(*f); frag_term_sf(*a); },
+        ExprSpec::Bind(_, t, b) => { frag_term_sf(*t); frag_term_sf(*b); },
+        ExprSpec::Let(t, v, b) => { frag_term_sf(*t); frag_term_sf(*v); frag_term_sf(*b); },
+        _ => {},
+    }
+}
+
 /// A sort is a type.
 pub proof fn is_type_of_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, t: ExprSpec, l: LevelSpec)
     requires

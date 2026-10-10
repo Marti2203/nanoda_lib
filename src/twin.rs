@@ -1248,6 +1248,162 @@ pub proof fn rule_sf(sh: IndShape, lm: LevelSpec, rid: u64, j: int, up: Seq<u64>
     binds_sf(BinderKind::Lam, hd, spine_app(ExprSpec::Var((nmin - 1 - j + nf) as nat), bargs));
 }
 
+/// A telescope of any binder kind within a scope.
+pub proof fn binds_k_nlbv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, m: nat)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> crate::expr_model::nlbv(#[trigger] ds[i]) <= m + i,
+        crate::expr_model::nlbv(b) <= m + ds.len(),
+    ensures
+        crate::expr_model::nlbv(binds(bk, ds, b)) <= m,
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        let d2 = ds.drop_first();
+        assert forall|i: int| 0 <= i < d2.len() implies crate::expr_model::nlbv(#[trigger] d2[i]) <= (m + 1) + i by {
+            assert(d2[i] == ds[i + 1]);
+        }
+        binds_k_nlbv(bk, d2, b, m + 1);
+    }
+}
+
+/// A rule's canonical right-hand side has no loose bound variables.
+#[verifier::spinoff_prover]
+pub proof fn rule_nlbv(sh: IndShape, lm: LevelSpec, rid: u64, rls: Seq<LevelSpec>, j: int)
+    requires
+        shape_nlbv(sh),
+        0 <= j < sh.nmin(),
+    ensures
+        crate::expr_model::nlbv(sh.rule_rhs(lm, rid, rls, j)) == 0,
+{
+    let (np, nmin) = (sh.np, sh.nmin());
+    let nf = sh.fields[j].len();
+    let rp = sh.rposj(j);
+    let hd0 = sh.head_doms(lm);
+    let mins = Seq::new(nmin, |j2: int| sh.minor_ty(j2));
+    motive_nlbv(sh, lm);
+    assert forall|i: int| 0 <= i < hd0.len() implies crate::expr_model::nlbv(#[trigger] hd0[i]) <= i by {
+        if i < sh.pdoms.len() {
+            assert(hd0[i] == sh.pdoms[i]);
+        } else if i == sh.pdoms.len() {
+            assert(hd0[i] == sh.motive_ty(lm));
+        } else {
+            let j2 = i - sh.pdoms.len() - 1;
+            assert(hd0[i] == mins[j2]);
+            minor_nlbv(sh, j2);
+        }
+    }
+    let b = (np + 1 + nmin) as nat;
+    assert(hd0.len() == b);
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, 1 + nmin));
+    assert forall|i: int| 0 <= i < fds.len() implies crate::expr_model::nlbv(#[trigger] fds[i]) <= b + i by {
+        crate::ti_scope::lift_scope(1 + nmin, i as nat, sh.fields[j][i], np + i as nat);
+    }
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[j], sh.ind, sh.us(), np, sh.ni, nf);
+    let d = b + nf;
+    let ih = |r: int| {
+        let k = rp[r];
+        let idx = occ_idx(sh.fields[j][k as int], np, sh.ni);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q])));
+        spine_app(ExprSpec::Const(rid, rls),
+            vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + vars(nf, nmin) + idx2.push(ExprSpec::Var((nf - 1 - k) as nat)))
+    };
+    let ihs = Seq::new(rp.len(), ih);
+    assert forall|r: int| 0 <= r < ihs.len() implies crate::expr_model::nlbv(#[trigger] ihs[r]) <= d by {
+        let k = rp[r];
+        let f = sh.fields[j][k as int];
+        let idx = occ_idx(f, np, sh.ni);
+        crate::kgen::spine_args_nlbv(f, np + k);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q])));
+        let pre = vars(1 + nmin + nf, np) + seq![ExprSpec::Var(nmin + nf)] + vars(nf, nmin);
+        let args = pre + idx2.push(ExprSpec::Var((nf - 1 - k) as nat));
+        assert forall|q: int| 0 <= q < args.len() implies crate::expr_model::nlbv(#[trigger] args[q]) <= d by {
+            if q < pre.len() {
+                assert(args[q] == pre[q]);
+                if q < np { assert(pre[q] == vars(1 + nmin + nf, np)[q]); }
+                else if q > np { assert(pre[q] == vars(nf, nmin)[q - np - 1]); }
+            } else if q < pre.len() + sh.ni {
+                let q2 = q - pre.len();
+                assert(args[q] == idx2[q2]);
+                assert(idx[q2] == crate::beta_model::spine_args(f)[np + q2]);
+                crate::ti_scope::lift_scope(1 + nmin, k, idx[q2], np + k);
+                crate::ti_scope::lift_scope((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, idx[q2]), np + k + 1 + nmin);
+            }
+        }
+        spine_nlbv(ExprSpec::Const(rid, rls), args, d);
+        assert(ihs[r] == spine_app(ExprSpec::Const(rid, rls), args));
+    }
+    let bargs = vars(0, nf) + ihs;
+    assert forall|q: int| 0 <= q < bargs.len() implies crate::expr_model::nlbv(#[trigger] bargs[q]) <= d by {
+        if q >= nf { assert(bargs[q] == ihs[q - nf]); } else { assert(bargs[q] == vars(0, nf)[q]); }
+    }
+    spine_nlbv(ExprSpec::Var((nmin - 1 - j + nf) as nat), bargs, d);
+    let hd = hd0 + fds;
+    assert forall|i: int| 0 <= i < hd.len() implies crate::expr_model::nlbv(#[trigger] hd[i]) <= 0 + i by {
+        if i < hd0.len() { assert(hd[i] == hd0[i]); } else { assert(hd[i] == fds[i - hd0.len()]); }
+    }
+    binds_k_nlbv(BinderKind::Lam, hd, spine_app(ExprSpec::Var((nmin - 1 - j + nf) as nat), bargs), 0);
+}
+
+/// A canonical rule has the shape every rule value must have.
+pub proof fn rule_shape_canon(sh: IndShape, lm: LevelSpec, rid: u64, j: int, up: Seq<u64>)
+    requires
+        shape_nlbv(sh),
+        shape_nofv(sh),
+        shape_sf(sh),
+        0 <= j < sh.nmin(),
+    ensures
+        crate::rec_canon::rule_shape(sh.rule_rhs(lm, rid, plevels(up), j)),
+{
+    rule_nlbv(sh, lm, rid, plevels(up), j);
+    rule_nofv(sh, lm, rid, j, up);
+    rule_sf(sh, lm, rid, j, up);
+    let nf = sh.fields[j].len();
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, 1 + sh.nmin()));
+    let hd = sh.head_doms(lm) + fds;
+    assert(hd.len() > 0);
+    reveal_with_fuel(binds, 1);
+}
+
+/// A shape's pieces are string-free when the inductive's and the
+/// constructors' types are.
+#[verifier::spinoff_prover]
+pub proof fn shape_sf_of(sh: IndShape, ti: ExprSpec, ctys: Seq<ExprSpec>)
+    requires
+        crate::beta_model::string_free(ti),
+        ti == binds(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(ti, sh.np + sh.ni)),
+        ctys.len() == sh.nmin(),
+        forall|j: int| 0 <= j < sh.nmin() ==> crate::beta_model::string_free(#[trigger] ctys[j])
+            && ctys[j] == binds(BinderKind::Pi, sh.pdoms + sh.fields[j],
+                ind_app(sh.ind, sh.us(), vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
+        sh.pdoms.len() == sh.np,
+    ensures
+        shape_sf(sh),
+{
+    binds_parts_sf(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(ti, sh.np + sh.ni));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies crate::beta_model::string_free(#[trigger] sh.pdoms[q]) by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+    }
+    assert forall|q: int| 0 <= q < sh.idoms.len() implies crate::beta_model::string_free(#[trigger] sh.idoms[q]) by {
+        assert((sh.pdoms + sh.idoms)[sh.pdoms.len() + q] == sh.idoms[q]);
+    }
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies crate::beta_model::string_free(#[trigger] sh.fields[j][k]) by {
+        let nf = sh.fields[j].len();
+        assert(crate::beta_model::string_free(ctys[j]));
+        binds_parts_sf(BinderKind::Pi, sh.pdoms + sh.fields[j], ind_app(sh.ind, sh.us(), vars(nf, sh.np) + sh.tss[j]));
+        assert((sh.pdoms + sh.fields[j])[sh.pdoms.len() + k] == sh.fields[j][k]);
+    }
+    assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies crate::beta_model::string_free(#[trigger] sh.tss[j][q]) by {
+        let nf = sh.fields[j].len();
+        assert(crate::beta_model::string_free(ctys[j]));
+        let body = ind_app(sh.ind, sh.us(), vars(nf, sh.np) + sh.tss[j]);
+        binds_parts_sf(BinderKind::Pi, sh.pdoms + sh.fields[j], body);
+        let args = vars(nf, sh.np) + sh.tss[j];
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, sh.us()), args);
+        spine_args_sf(body);
+        assert(args[sh.np + q] == sh.tss[j][q]);
+    }
+}
+
 /// THE CANONICAL SHAPE'S PIECES are closed when the inductive's and the
 /// constructors' types are.
 #[verifier::spinoff_prover]
