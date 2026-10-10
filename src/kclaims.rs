@@ -188,7 +188,7 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_rec(sig, sig.ienv.ctor_ind[cid])
         && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
         && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
@@ -203,7 +203,7 @@ pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_np.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_rec(sig, sig.ienv.ctor_ind[cid])
         && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
         && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]

@@ -48,7 +48,7 @@ pub proof fn closed_typed(sig: Sig, g: Ctx, e: ExprSpec)
 pub proof fn former_args_typed(sig: Sig, g: Ctx, j: u64, us: Seq<LevelSpec>, xs: Seq<ExprSpec>, th: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        has_canon(sig, j),
+        has_rec(sig, j),
         xs.len() <= canon_shape(sig, j).np + canon_shape(sig, j).ni,
         derivable(sig, eq(g, spine_app(ExprSpec::Const(j, us), xs), spine_app(ExprSpec::Const(j, us), xs), th)),
     ensures
@@ -269,7 +269,7 @@ pub proof fn tbl_canon_le(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt, b: Cpt)
 /// itself, and its canonical code reads no parameters.
 pub proof fn fq_closed(sig: Sig, j: u64, t: ExprSpec, p: int, k: int)
     requires
-        has_canon(sig, j),
+        has_rec(sig, j),
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),
         !crate::rec_canon::direct_occ(canon_shape(sig, j).fields[p][k], j, canon_shape(sig, j).us(), canon_shape(sig, j).np,
@@ -438,7 +438,7 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
             ty_bot(sig, n, g, pq(sig, kk, r, q), pq(sig, kk, r, q));
         }
     }
-    if has_canon(sig, kk) {
+    if has_rec(sig, kk) {
         // fully applied and typed: its parameters are equal to themselves
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
@@ -476,7 +476,7 @@ pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: S
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
         crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
         crate::dom_levels::sig_lps(sig),
-        has_canon(sig, j),
+        has_rec(sig, j),
         forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
         ls.len() == sig.consts[j].lps.len(),
         crate::conv_cr::levs_eq(ls, ls2),
@@ -575,7 +575,7 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
         crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
         crate::dom_levels::sig_lps(sig),
-        has_canon(sig, j),
+        has_rec(sig, j),
         forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
         ls.len() == sig.consts[j].lps.len(),
         crate::conv_cr::levs_eq(ls, ls2),
@@ -612,7 +612,7 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
     crate::ti_chain::tchain_one(sig, g, x, x2);
     iapp_self(sig, x);
     iapp_self(sig, x2);
-    if has_canon(sig, kk) {
+    if has_rec(sig, kk) {
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
         // the levels
@@ -666,7 +666,7 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSp
         crate::dom_canon::pranked(sig, e, rk(sig, j)),
         crate::dom_psimple::ptyped(sig, canon_shape(sig, j).pdoms, e),
         crate::dom_levels::sig_lps(sig),
-        has_canon(sig, j),
+        has_rec(sig, j),
         forall|q: int| 0 <= q < canon_shape(sig, j).pdoms.len() ==> (#[trigger] canon_shape(sig, j).pdoms[q]) is Sort,
         ls.len() == sig.consts[j].lps.len(),
         crate::conv_cr::levs_eq(ls, ls2),
@@ -834,7 +834,7 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
     crate::dom_levels::closed_conv(sig, g, r, l, ks, ls1, ls2);
     iapp_self(sig, r1);
     iapp_self(sig, r2);
-    if has_canon(sig, kk) {
+    if has_rec(sig, kk) {
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
         // the instances' levels
@@ -1280,7 +1280,7 @@ pub proof fn field_facts(sig: Sig, j: u64, p: int, k: int)
 /// code read only the parameters.
 pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
     requires
-        has_canon(sig, j),
+        has_rec(sig, j),
         fields_typed(sig, j),
         0 <= p < canon_shape(sig, j).nmin(),
         0 <= k < canon_shape(sig, j).fields[p].len(),

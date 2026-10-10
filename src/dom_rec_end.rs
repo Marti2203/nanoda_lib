@@ -371,7 +371,7 @@ pub proof fn rec_canon_ok(sig: Sig, c: u64)
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let ind = crate::rec_canon::rec_ind(sig, c);
     assert(crate::dom_model::sem_const(sig, sh.ind, crate::dom_rel::lpad(Seq::empty(), sig.consts[sh.ind].lps.len())));
-    assert(crate::dom_code::has_canon(sig, ind));
+    assert(crate::dom_code::has_rec(sig, ind));
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == c);

@@ -148,7 +148,7 @@ pub open spec fn rf_fun(sig: Sig, rid: u64, t: ExprSpec, pre: Seq<Cpt>, v: Cpt) 
 
 /// `c` is a constructor of `ind`'s canonical recursor.
 pub open spec fn ctor_of(sig: Sig, ind: u64, c: u64) -> bool {
-    crate::dom_code::has_canon(sig, ind)
+    crate::dom_code::has_rec(sig, ind)
         && exists|p: int| 0 <= p < crate::dom_code::canon_shape(sig, ind).nmin() && crate::dom_code::canon_shape(sig, ind).ctors[p] == c
 }
 

@@ -195,8 +195,8 @@ pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
     assert forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s implies r2 == r by {
         canon_grow(sig, sig2, r2);
     }
-    assert(crate::dom_code::has_canon(sig, s));
-    assert(crate::dom_code::has_canon(sig2, s));
+    assert(crate::dom_code::has_rec(sig, s));
+    assert(crate::dom_code::has_rec(sig2, s));
     let c1 = crate::dom_code::canon_rec(sig, s);
     let c2 = crate::dom_code::canon_rec(sig2, s);
     assert(c1 == r);

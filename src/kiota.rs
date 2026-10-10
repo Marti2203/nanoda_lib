@@ -64,7 +64,7 @@ pub proof fn stuck_hred(sig: Sig, t: ExprSpec, y: ExprSpec)
 pub proof fn pi_not_ind(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, a: ExprSpec, b: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
-        crate::dom_code::has_canon(sig, ind),
+        crate::dom_code::has_rec(sig, ind),
         crate::dom_model::sem_const(sig, ind, ls),
         !sig.ienv.ctor_ind.contains_key(ind),
         !sig.ienv.recs.contains_key(ind),
@@ -471,7 +471,7 @@ pub proof fn ctor_arity_at(sig: Sig, g: Ctx, r2: u64, p: int, x: ExprSpec, s: u6
         0 <= p < rshape(sig, r2).nmin(),
         spine_head(x) is Const,
         spine_head(x)->Const_0 == rshape(sig, r2).ctors[p],
-        crate::dom_code::has_canon(sig, s),
+        crate::dom_code::has_rec(sig, s),
         crate::dom_model::sem_const(sig, s, us),
         !sig.ienv.ctor_ind.contains_key(s),
         !sig.ienv.recs.contains_key(s),

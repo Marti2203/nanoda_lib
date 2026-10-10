@@ -62,8 +62,8 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
         reveal(crate::ti_syntax::proj_ty);
         reveal(crate::ti_syntax::proj_fire);
         reveal(crate::ti_syntax::struct_of);
-        assert forall|s: u64| !crate::dom_code::has_canon(strip(sig), s) by {
-            if crate::dom_code::has_canon(strip(sig), s) {
+        assert forall|s: u64| !crate::dom_code::has_rec(strip(sig), s) by {
+            if crate::dom_code::has_rec(strip(sig), s) {
                 let rid = choose|rid: u64| crate::rec_canon::rec_canon(strip(sig), rid) && crate::rec_canon::rec_ind(strip(sig), rid) == s;
                 assert(strip(sig).ienv.recs.contains_key(rid));
             }

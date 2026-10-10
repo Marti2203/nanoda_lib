@@ -422,7 +422,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 /// propositions.
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
-    &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
+    &&& crate::dom_code::has_rec(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
     &&& forall|k: int| 0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() ==>
         crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             #[trigger] crate::dom_code::canon_shape(sig, s).fields[0][k])

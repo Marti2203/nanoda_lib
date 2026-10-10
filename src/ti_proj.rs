@@ -94,7 +94,7 @@ pub open spec fn sfield(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>) -> ExprSpe
 /// earlier fields.
 pub proof fn sfield_vsub(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>, a: Seq<ExprSpec>, b: Seq<ExprSpec>, c: Seq<ExprSpec>)
     requires
-        crate::dom_code::has_canon(sig, s),
+        crate::dom_code::has_rec(sig, s),
         crate::dom_code::canon_shape(sig, s).nmin() == 1,
         crate::dom_code::canon_shape(sig, s).ni == 0,
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
@@ -320,7 +320,7 @@ pub proof fn binds_fv(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, j: int)
 /// A structure's field has no local when its constructor's type has none.
 pub proof fn sfield_fv(sig: Sig, s: u64, i: nat, us: Seq<LevelSpec>)
     requires
-        crate::dom_code::has_canon(sig, s),
+        crate::dom_code::has_rec(sig, s),
         crate::dom_code::canon_shape(sig, s).nmin() == 1,
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
         !crate::expr_model::has_fv(sig.consts[crate::dom_code::canon_shape(sig, s).ctors[0]].ty),
@@ -356,7 +356,7 @@ pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
     let r1 = crate::dom_code::canon_rec(s1, s);
     assert(crate::rec_canon::rec_canon(s1, r1) && crate::rec_canon::rec_ind(s1, r1) == s);
     assert(crate::rec_canon::rec_canon(s2, r1) && crate::rec_canon::rec_ind(s2, r1) == s);
-    assert(crate::dom_code::has_canon(s2, s));
+    assert(crate::dom_code::has_rec(s2, s));
     let r2 = crate::dom_code::canon_rec(s2, s);
     assert(crate::rec_canon::rec_canon(s2, r2) && crate::rec_canon::rec_ind(s2, r2) == s);
     assert(crate::rec_canon::rec_canon(s1, r2) && crate::rec_canon::rec_ind(s1, r2) == s);

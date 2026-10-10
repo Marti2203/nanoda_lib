@@ -441,12 +441,12 @@ pub proof fn scope_canon(sig: Sig, rid: u64)
     requires
         rec_scope_g(sig, rid),
     ensures
-        crate::dom_code::has_canon(sig, rshape(sig, rid).ind),
+        crate::dom_code::has_rec(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
 {
     let ind = crate::rec_canon::rec_ind(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid) && crate::rec_canon::rec_ind(sig, rid) == ind);
-    assert(crate::dom_code::has_canon(sig, ind));
+    assert(crate::dom_code::has_rec(sig, ind));
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == rid);
@@ -523,7 +523,7 @@ pub proof fn scope_ctor(sig: Sig, rid: u64, p: int)
     let ind = crate::rec_canon::rec_ind(sig, rid);
     let c = sh.ctors[p];
     assert(sh.ind == ind);
-    assert(crate::dom_code::has_canon(sig, ind));
+    assert(crate::dom_code::has_rec(sig, ind));
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == rid);
@@ -541,7 +541,7 @@ pub proof fn scope_ctor_ind(sig: Sig, rid: u64)
         rec_scope_g(sig, rid),
     ensures ({
         let sh = rshape(sig, rid);
-        &&& crate::dom_code::has_canon(sig, sh.ind)
+        &&& crate::dom_code::has_rec(sig, sh.ind)
         &&& crate::dom_code::canon_shape(sig, sh.ind) == sh
         &&& sig.consts.contains_key(sh.ind) && sig.consts[sh.ind].val is None
         &&& !sig.ienv.ctor_ind.contains_key(sh.ind) && !sig.ienv.recs.contains_key(sh.ind)
@@ -550,7 +550,7 @@ pub proof fn scope_ctor_ind(sig: Sig, rid: u64)
     let sh = rshape(sig, rid);
     let ind = crate::rec_canon::rec_ind(sig, rid);
     assert(sh.ind == ind);
-    assert(crate::dom_code::has_canon(sig, ind));
+    assert(crate::dom_code::has_rec(sig, ind));
     let r2 = crate::dom_code::canon_rec(sig, ind);
     assert(crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == ind);
     assert(r2 == rid);

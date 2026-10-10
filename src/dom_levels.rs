@@ -300,7 +300,7 @@ pub proof fn lpad_sl(us: Seq<LevelSpec>, n: nat, ks: Seq<u64>, vs: Seq<LevelSpec
 pub proof fn pdoms_elp(sig: Sig, j: u64, q: int)
     requires
         sig_lps(sig),
-        crate::dom_code::has_canon(sig, j),
+        crate::dom_code::has_rec(sig, j),
         0 <= q < crate::dom_code::canon_shape(sig, j).np,
     ensures
         crate::level_inst::elp_in(crate::dom_code::canon_shape(sig, j).pdoms[q], sig.consts[j].lps),

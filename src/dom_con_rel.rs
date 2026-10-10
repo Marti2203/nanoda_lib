@@ -571,7 +571,7 @@ pub proof fn sort_code(sig: Sig, n: nat, g: Ctx, l: LevelSpec, t2: ExprSpec, d: 
 pub proof fn ctor_inst(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: nat, np: nat)
     requires
         ctor_at(sig, c, ind, pc, np),
-        crate::dom_code::has_canon(sig, ind),
+        crate::dom_code::has_rec(sig, ind),
         0 <= pc < crate::dom_code::canon_shape(sig, ind).nmin(),
     ensures ({
         let sh = crate::dom_code::canon_shape(sig, ind);
@@ -952,7 +952,7 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
     crate::dom_rel::ty_ind(sig, n, g, t, t, a);
     crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
-    if crate::dom_code::has_canon(sig, ind) {
+    if crate::dom_code::has_rec(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, ty), q, spine_args(ty)[q], spine_args(t)[q]) by {
             assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
@@ -992,7 +992,7 @@ pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: 
     crate::dom_rel::ty_ind(sig, n, g, t, t2, a);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls2), xs2);
-    if crate::dom_code::has_canon(sig, ind) {
+    if crate::dom_code::has_rec(sig, ind) {
         // the levels: the type's instance is the constructor's own
         let n = sig.consts[ind].lps.len();
         let (it, it2) = (crate::dom_rel::iinst(sig, ind, t), crate::dom_rel::iinst(sig, ind, t2));

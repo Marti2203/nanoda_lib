@@ -25,7 +25,7 @@ use vstd::prelude::*;
 verus! {
 
 /// `ind` has a canonical recursor.
-pub open spec fn has_canon(sig: Sig, ind: u64) -> bool {
+pub open spec fn has_rec(sig: Sig, ind: u64) -> bool {
     exists|rid: u64| rec_canon(sig, rid) && rec_ind(sig, rid) == ind
 }
 
@@ -159,7 +159,7 @@ pub open spec fn styped(sig: Sig, e: ExprSpec) -> bool
 pub open spec fn sdoms_typed(sig: Sig, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = canon_shape(sig, h->Const_0);
-    h is Const && has_canon(sig, h->Const_0) ==>
+    h is Const && has_rec(sig, h->Const_0) ==>
         forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
             ==> crate::ti_syntax::derivable(crate::ti_strip::strip(sig), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
@@ -205,7 +205,7 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_rec(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -213,7 +213,7 @@ pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
 /// What subject reduction needs of `ind`: its canonical tables' syntactic
 /// half, at any sort.
 pub open spec fn canon_sr(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && fields_typed(sig, ind)
+    rk(sig, ind) >= 0 && has_rec(sig, ind) && fields_typed(sig, ind)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -234,7 +234,7 @@ pub open spec fn tabled(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>) 
 /// The arguments a code keeps: a canonical inductive's parameters (its
 /// indices never reach typing), any other type former's all.
 pub open spec fn code_args(sig: Sig, ind: u64, args: Seq<Cpt>) -> Seq<Cpt> {
-    if rk(sig, ind) >= 0 && has_canon(sig, ind) && canon_shape(sig, ind).np <= args.len() {
+    if rk(sig, ind) >= 0 && has_rec(sig, ind) && canon_shape(sig, ind).np <= args.len() {
         args.subrange(0, canon_shape(sig, ind).np as int)
     } else {
         args

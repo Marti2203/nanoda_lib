@@ -1932,10 +1932,42 @@ and eta step is vacuous (about thirty sites use that). Stages:
     the boundary, now explicit: `export_sound::ex_bound` (every
     recursor's block simple, and the driver's collections with the
     parser's recursor table) in `below_ok`/`export_kh`, and
-    `rec_fields_ok` (field kinds) in `kh_hyp`. TRADEOFF: an export with a
-    mutual or nested block is now outside `export_kh`'s scope even for
-    its other declarations (before, `ind_ok_hyp` simply assumed its
-    recursors' facts); widening the boundary per recursor is later work.
+    `rec_fields_ok` (field kinds) in `kh_hyp`. No scope is lost: a mutual
+    or nested block's recursors have several motives, which `rec_canon`
+    excludes, so `ind_ok_hyp` already failed for such exports; `ex_bound`
+    states that boundary at the export.
+    FINDING (2026-10-10), KH IS FALSE INSIDE A BLOCK: the parser inserts a
+    block's inductives, then its constructors, then its recursors
+    (`parser.rs`), so at a cutoff between a block's first constructor and
+    its recursor, `ctor_ind` has the constructors and `recs` lacks the
+    recursor; `ind_ok`'s constructor clause (`has_canon` of the
+    constructor's inductive) is false there, so `kh` and `kh_hyp` are.
+    `export_kh` assumes `kh_hyp` at every cutoff, so its hypotheses are
+    unsatisfiable for any export with a constructor: the end-to-end
+    statement is vacuous on real exports. Every proof is still valid; it
+    is the theorem's scope that is empty.
+    FIX CHOSEN: MATCH NANODA, NOT THE EXPORT ORDER'S IDEAL. nanoda checks
+    each constructor's and recursor's type in the environment up to it --
+    mid-block, constructors without their recursor -- and treats an
+    inductive as a structure from its declaration alone (`get_structure`:
+    one constructor, no indices). So the theory, not nanoda, gives way:
+    (1) `ind_ok`'s constructor, structure and field-count clauses hold
+    once the inductive's shape is known, not unconditionally; a probe
+    (full verify with the weakened clauses) broke 7 of 3588 proofs: three
+    where a recursor is present (iota, `cr_env_of`) and four structure
+    steps (unit eta, structure eta, projection typing). (2) STRUCTURES
+    REBASED: the judgment sees a structure from its declaration tables,
+    as nanoda does. Stages: S1 `has_canon` (a canonical recursor exists)
+    renamed `has_rec`; S2 `struct_decl` -- the structure's shape read off
+    `struct_ctor`, `ctor_np`, `ctor_nf` and the constructor's declared
+    type -- and `has_canon := has_rec || struct_decl`, `canon_shape` the
+    recursor's shape when there is one and the tables' otherwise (equal
+    when both are); S3 the structure soundness proofs read declaration
+    facts, not recursor facts; S4 the weakened clauses, the three
+    recursor-present fixes, and the export's certification. Mid-block,
+    between a structure and its constructor, nanoda's structure steps
+    read the constructor's tables (`ctor_num_fields`), which are absent,
+    so no structure fact is needed there.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

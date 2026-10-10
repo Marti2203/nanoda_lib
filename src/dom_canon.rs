@@ -281,7 +281,7 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
 /// The codes of `ind`'s type parameters among `args` are types.
 pub open spec fn sparams_typed(sig: Sig, ind: u64, args: Seq<Cpt>) -> bool {
     let sh = canon_shape(sig, ind);
-    has_canon(sig, ind) ==> forall|q: int| 0 <= q < sh.np && q < args.len() && sh.pdoms[q] is Sort ==> #[trigger] typed(args[q], Cpt::U)
+    has_rec(sig, ind) ==> forall|q: int| 0 <= q < sh.np && q < args.len() && sh.pdoms[q] is Sort ==> #[trigger] typed(args[q], Cpt::U)
 }
 
 /// Bottom parameters' codes are types.
@@ -349,7 +349,7 @@ pub proof fn chain_sparams(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSp
     ensures
         sparams_typed(sig, c, xs),
 {
-    if has_canon(sig, c) {
+    if has_rec(sig, c) {
         let sh = canon_shape(sig, c);
         crate::dom_ctor_bound::ctor_shape_ind(sig, c);
         let ty = sig.consts[c].ty;
@@ -667,7 +667,7 @@ pub proof fn sl_none(e: ExprSpec, vs: Seq<LevelSpec>)
 /// type parameters, or simple types over the parameters.
 pub proof fn canon_fields(sig: Sig, ind: u64, j: int, k: int)
     requires
-        has_canon(sig, ind),
+        has_rec(sig, ind),
         0 <= j < canon_shape(sig, ind).nmin(),
         0 <= k < canon_shape(sig, ind).fields[j].len(),
     ensures ({

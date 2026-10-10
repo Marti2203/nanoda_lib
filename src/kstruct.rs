@@ -70,7 +70,7 @@ pub proof fn struct_type_arity(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec)
     let sh = crate::dom_code::canon_shape(sig, s);
     let np = sh.np;
     let lps = sig.consts[s].lps;
-    assert(crate::dom_code::has_canon(sig, s) && sh.nmin() == 1 && sh.ni == 0) by {
+    assert(crate::dom_code::has_rec(sig, s) && sh.nmin() == 1 && sh.ni == 0) by {
         reveal(crate::ti_syntax::struct_of);
     }
     let th = crate::dom_iota::spine_gen(sig, g, h, ps, sort(l));

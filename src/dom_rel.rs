@@ -209,7 +209,7 @@ pub proof fn peq_lv(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::Leve
 /// its type reduces to, and its levels, as many as the inductive's, are
 /// that application's.
 pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> bool {
-    crate::dom_code::has_canon(sig, ind) ==> {
+    crate::dom_code::has_rec(sig, ind) ==> {
         &&& crate::beta_model::spine_head(x)->Const_1.len() == sig.consts[ind].lps.len()
             ==> crate::conv_cr::levs_eq(crate::beta_model::spine_head(x)->Const_1, iinst(sig, ind, ir(sig, t, ind)))
         &&& forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
@@ -227,7 +227,7 @@ pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> b
 pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) -> bool {
     let sh = crate::dom_code::canon_shape(sig, ind);
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
-    crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() == a.len()
+    crate::dom_code::has_rec(sig, ind) ==> a.len() >= sh.np && a2.len() == a.len()
         && crate::conv_cr::levs_eq(iinst(sig, ind, ir(sig, t, ind)), iinst(sig, ind, ir(sig, t2, ind)))
         && (forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q]))
         && forall|q: int| 0 <= q < a.len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))

@@ -315,7 +315,7 @@ pub proof fn tb_cod(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv
 pub proof fn canon_prefix(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ws: Seq<Cpt>)
     requires
         rk(sig, ind) >= 0,
-        has_canon(sig, ind),
+        has_rec(sig, ind),
         canon_shape(sig, ind).np <= ws.len(),
     ensures
         canon_code(sig, ind, ls, ws) == canon_code(sig, ind, ls, ws.subrange(0, canon_shape(sig, ind).np as int)),
@@ -346,7 +346,7 @@ pub proof fn canon_prefix(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ws: Seq<Cpt>)
 /// The shape of a canonical inductive and of its constructor `pc`'s type.
 pub proof fn ctor_shape(sig: Sig, ind: u64, pc: int)
     requires
-        has_canon(sig, ind),
+        has_rec(sig, ind),
         0 <= pc < canon_shape(sig, ind).nmin(),
     ensures ({
         let sh = canon_shape(sig, ind);
@@ -406,7 +406,7 @@ pub proof fn ind_bound(sig: Sig, ind: u64, us: Seq<LevelSpec>, args: Seq<ExprSpe
 /// The inductive's shape facts alone.
 pub proof fn ctor_shape_ind(sig: Sig, ind: u64)
     requires
-        has_canon(sig, ind),
+        has_rec(sig, ind),
     ensures ({
         let sh = canon_shape(sig, ind);
         &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
