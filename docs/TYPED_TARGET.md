@@ -2116,7 +2116,11 @@ outside the model. Direction (the user, 2026-10-10): align with nanoda.
 Why the strip exists: soundness's Iota case calls soundness on the rule
 body's derivation, which must be smaller -- it was `inode` (0 without
 Iota/RecEta nodes, 1 with), decreasing because the stripped signature
-fires none. R1 started: soundness now decreases on `irank`.
+fires none. R1 DONE: soundness decreases on `irank` (1ef011d);
+`ti_strip::strip_below` with `strip_below_zero` (it is `strip` below rank
+0) and `strip_below_valid` (a derivation below rank `r` is one of the
+signature, `irank <= r + 1`, given `iota_ok`); `ti_valid::sig_ext` admits
+the same constants and ranks in place of `def_ok`.
 
 The plan:
 

@@ -974,6 +974,9 @@ pub proof fn kh_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map
         && (exists|l: LevelSpec| #[trigger] derivable(s1, eq(Seq::empty(), dty_at(s1, c, ls), dty_at(s1, c, ls), sort(l))))
         && derivable(s1, eq(Seq::empty(), dval(s1, c, ls), dval(s1, c, ls), dty_at(s1, c, ls))) by {
         assert(is_def(s0, c, ls));
+        assert(def_ok(s0, c, ls));
+        assert(dval(s1, c, ls) == dval(s0, c, ls));
+        crate::ti_locals::crank_same(s0, s1, dval(s0, c, ls));
         let l = choose|l: LevelSpec| #[trigger] derivable(s0, eq(Seq::empty(), dty_at(s0, c, ls), dty_at(s0, c, ls), sort(l)));
         crate::ti_valid::derivable_ext(s0, s1, eq(Seq::empty(), dty_at(s0, c, ls), dty_at(s0, c, ls), sort(l)));
         crate::ti_valid::derivable_ext(s0, s1, eq(Seq::empty(), dval(s0, c, ls), dval(s0, c, ls), dty_at(s0, c, ls)));

@@ -112,6 +112,89 @@ pub proof fn irank_free(sig: Sig, d: Deriv)
     pmax_zero(sig, d, ps.len());
 }
 
+/// THE SIGNATURE BELOW RANK `r` (docs/TYPED_TARGET.md, "Rank-stratified
+/// strip"): the recursors and structures ranked below `r`, no locals.
+/// Below rank 0 it is `strip`.
+pub open spec fn strip_below(sig: Sig, r: int) -> Sig {
+    Sig {
+        ienv: crate::expr_arena_bridge::EnvSpec {
+            recs: sig.ienv.recs.restrict(sig.ienv.recs.dom().filter(|k: u64| 0 <= crate::dom_code::rk(sig, k) < r)),
+            struct_ctor: sig.ienv.struct_ctor.restrict(sig.ienv.struct_ctor.dom().filter(|k: u64| 0 <= crate::dom_code::rk(sig, k) < r)),
+            ..sig.ienv
+        },
+        locals: Map::empty(),
+        ..sig
+    }
+}
+
+pub proof fn strip_below_zero(sig: Sig)
+    ensures
+        strip_below(sig, 0) == strip(sig),
+{
+    assert(strip_below(sig, 0).ienv.recs =~= Map::empty());
+    assert(strip_below(sig, 0).ienv.struct_ctor =~= Map::empty());
+    assert(strip_below(sig, 0).ienv =~= strip(sig).ienv);
+}
+
+/// The measure is at most `b` when the node fires at most `b` and every
+/// premise measures at most `b`.
+pub proof fn irank_le(sig: Sig, d: Deriv, b: nat)
+    requires
+        fire_rank(sig, d->Node_0, d->Node_1) <= b,
+        forall|k: int| 0 <= k < d->Node_2.len() ==> irank(sig, #[trigger] d->Node_2[k]) <= b,
+    ensures
+        irank(sig, d) <= b,
+{
+    pmax_le(sig, d, d->Node_2.len(), b);
+}
+
+proof fn pmax_le(sig: Sig, d: Deriv, n: nat, b: nat)
+    requires
+        n <= d->Node_2.len(),
+        forall|k: int| 0 <= k < d->Node_2.len() ==> irank(sig, #[trigger] d->Node_2[k]) <= b,
+    ensures
+        pmax(sig, d, n) <= b,
+    decreases n,
+{
+    if n > 0 {
+        pmax_le(sig, d, (n - 1) as nat, b);
+    }
+}
+
+/// A DERIVATION BELOW RANK `r` is one of the full signature firing only
+/// recursors ranked below `r` (`ti_valid::d_ext`: the same constants and
+/// ranks, fewer tables).
+pub proof fn strip_below_valid(sig: Sig, r: int, d: Deriv)
+    requires
+        valid(strip_below(sig, r), d),
+        crate::ti_syntax::iota_ok(sig),
+        r >= 0,
+    ensures
+        valid(sig, d),
+        irank(sig, d) <= r + 1,
+    decreases d,
+{
+    let ss = strip_below(sig, r);
+    assert(crate::ti_valid::sig_ext(ss, sig));
+    crate::ti_valid::d_ext(ss, sig, d);
+    crate::ti_meta::valid_prems(ss, d);
+    let Deriv::Node(rl, j, ps) = d;
+    assert forall|k: int| 0 <= k < ps.len() implies irank(sig, #[trigger] d->Node_2[k]) <= (r + 1) as nat by {
+        strip_below_valid(sig, r, ps[k]);
+    }
+    assert(step_ok(ss, rl, j, ps)) by {
+        reveal_with_fuel(valid, 1);
+    }
+    if rl is Iota {
+        assert(crate::beta_model::rec_ready(ss.ienv, j->Eq_1));
+    }
+    if rl is RecEta {
+        reveal(crate::ti_syntax::rec_eta_ok);
+        assert(crate::ti_hred::rec_major(ss, j->Eq_1));
+    }
+    irank_le(sig, d, (r + 1) as nat);
+}
+
 /// A DERIVATION OF THE STRIPPED SIGNATURE is one of the full signature,
 /// without Iota nodes.
 pub proof fn strip_valid(sig: Sig, d: Deriv)

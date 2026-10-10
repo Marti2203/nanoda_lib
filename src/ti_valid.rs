@@ -127,11 +127,13 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
 }
 
 /// `sig2` extends `sig`: more constants and more locals, the old ones
-/// unchanged, and every definition of `sig2` well ranked in it.
+/// unchanged, and every definition of `sig2` well ranked in it -- or the
+/// same constants and ranks (`ti_strip::strip_below`).
 pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> sig2.consts.contains_key(c) && sig2.consts[c] == sig.consts[c]
     &&& forall|k: nat| #[trigger] sig.locals.contains_key(k) ==> sig2.locals.contains_key(k) && sig2.locals[k] == sig.locals[k]
-    &&& forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls)
+    &&& (forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls))
+        || (sig2.consts == sig.consts && sig2.rank == sig.rank)
     &&& sig.ienv.sub(sig2.ienv)
     &&& iota_ok(sig2)
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_ind.contains_key(k) ==> sig2.ienv.ctor_ind.contains_key(k) && sig2.ienv.ctor_ind[k] == sig.ienv.ctor_ind[k]
@@ -350,10 +352,16 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             if !(r is ConstAx) {
                 let ls = j->Eq_1->Const_1;
                 assert(is_def(sig2, c, ls));
+                if sig2.consts == sig.consts && sig2.rank == sig.rank {
+                    crate::ti_locals::crank_same(sig, sig2, crate::ti_syntax::dval(sig, c, ls));
+                }
                 assert(def_ok(sig2, c, ls));
                 if r is ConstDef {
                     let ls2 = j->Eq_2->Const_1;
                     assert(is_def(sig2, c, ls2));
+                    if sig2.consts == sig.consts && sig2.rank == sig.rank {
+                        crate::ti_locals::crank_same(sig, sig2, crate::ti_syntax::dval(sig, c, ls2));
+                    }
                     assert(def_ok(sig2, c, ls2));
                 }
             }
