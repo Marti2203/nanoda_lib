@@ -2234,6 +2234,7 @@ pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crat
     &&& rec_ok_ex(ef, sh, od_r)
     &&& crate::twin::shape_nlbv(sh)
     &&& crate::twin::shape_nofv(sh)
+    &&& forall|n: NamePtr<'p>| #[trigger] rec_names_of(ef, i.info.name).contains(n) ==> n == crate::env::declar_info(od_r).name
 }
 
 /// THE BLOCK CERTIFICATE (B6a-3): an exported single, non-nested inductive
@@ -3621,6 +3622,8 @@ pub(crate) proof fn export_rec_names_ok_intro<'p>(ef: ExportFile<'p>)
         forall|k: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@.contains_key(k)
             ==> crate::util_model::export_tagged(ef.arena(), k)
                 && forall|n: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@[k]@.contains(n) ==> crate::util_model::export_tagged(ef.arena(), n),
+        forall|k: NamePtr<'p>| #[trigger] ef.declars_view().contains_key(k)
+            ==> (ef.declars_view()[k] matches Declar::Recursor(r) ==> rec_listed(ef.ind_name_to_recursor_names@, r)),
     ensures
         export_rec_names_ok(ef),
 {
@@ -3664,6 +3667,12 @@ pub(crate) proof fn export_ok_facts<'p>(ef: ExportFile<'p>)
                 && crate::env_model::declar_params_ok(crate::indexmap_model::imap_view(&ef.declars)[k])
                 && crate::env::declar_info(crate::indexmap_model::imap_view(&ef.declars)[k]).name == k,
 {
+}
+
+/// A recursor listed under each of its inductives in the parser's table.
+pub open spec fn rec_listed<'p>(m: Map<NamePtr<'p>, crate::util::FxHashSet<NamePtr<'p>>>, r: RecursorData<'p>) -> bool {
+    forall|j: int| 0 <= j < r.all_inductives@.len() ==> m.contains_key(#[trigger] r.all_inductives@[j])
+        && m[r.all_inductives@[j]]@.contains(r.info.name)
 }
 
 /// The parser's mutual-block table is keyed by the export file's own names.
@@ -3894,9 +3903,28 @@ impl<'t, 'p: 't> ExportFile<'p> {
 /// every name in its sets are export pointers.
 pub closed spec fn export_rec_names_ok<'p>(ef: ExportFile<'p>) -> bool {
     let a = ef.arena();
-    forall|k: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@.contains_key(k)
+    &&& forall|k: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@.contains_key(k)
         ==> crate::util_model::export_tagged(a, k)
             && forall|n: NamePtr<'p>| #[trigger] ef.ind_name_to_recursor_names@[k]@.contains(n) ==> crate::util_model::export_tagged(a, n)
+    &&& forall|k: NamePtr<'p>| #[trigger] ef.declars_view().contains_key(k)
+        ==> (ef.declars_view()[k] matches Declar::Recursor(r) ==> rec_listed(ef.ind_name_to_recursor_names@, r))
+}
+
+/// The parser's table entry for an inductive: its exported recursors' names.
+pub closed spec fn rec_names_of<'p>(ef: ExportFile<'p>, k: NamePtr<'p>) -> Set<NamePtr<'p>> {
+    if ef.ind_name_to_recursor_names@.contains_key(k) { ef.ind_name_to_recursor_names@[k]@ } else { Set::empty() }
+}
+
+/// THE PARSER'S RECURSOR TABLE lists every recursor declaration under each
+/// of its inductives.
+pub proof fn rec_names_listed<'p>(ef: ExportFile<'p>, k: NamePtr<'p>)
+    requires
+        export_rec_names_ok(ef),
+        ef.declars_view().contains_key(k),
+    ensures
+        ef.declars_view()[k] matches Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.all_inductives@.len()
+            ==> #[trigger] rec_names_of(ef, r.all_inductives@[j]).contains(r.info.name),
+{
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
@@ -3974,6 +4002,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             forall|i: int| 0 <= i < recursors@.len() ==> crate::util_model::owns(*self, #[trigger] crate::env::declar_info(recursors@[i]).name),
         ensures
             forall|n: NamePtr<'t>| #[trigger] result@.contains(n) ==> crate::util_model::owns(*self, n),
+            forall|n: NamePtr<'t>| #[trigger] result@.contains(n) ==> exists|k: int| 0 <= k < recursors@.len()
+                && crate::env::declar_info(#[trigger] recursors@[k]).name == n,
     {
         let mut out = new_fx_hash_set();
         let mut i: usize = 0;
@@ -3981,6 +4011,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             invariant
                 forall|k: int| 0 <= k < recursors@.len() ==> crate::util_model::owns(*self, #[trigger] crate::env::declar_info(recursors@[k]).name),
                 forall|n: NamePtr<'t>| #[trigger] out@.contains(n) ==> crate::util_model::owns(*self, n),
+                forall|n: NamePtr<'t>| #[trigger] out@.contains(n) ==> exists|k: int| 0 <= k < i
+                    && crate::env::declar_info(#[trigger] recursors@[k]).name == n,
+                i <= recursors@.len(),
             decreases recursors@.len() - i,
         {
             let n = recursors[i].info().name;
@@ -3989,7 +4022,18 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::util_model::build_hasher_default_valid_fx();
                 crate::util_model::ptr_owned_keys(*self, out@.insert(n));
             }
+            let ghost out0 = out@;
             out.insert(n);
+            proof {
+                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                assert forall|m: NamePtr<'t>| #[trigger] out@.contains(m) implies exists|k: int| 0 <= k < i + 1
+                    && crate::env::declar_info(#[trigger] recursors@[k]).name == m by {
+                    if !out0.contains(m) {
+                        assert(m == n);
+                        assert(crate::env::declar_info(recursors@[i as int]).name == m);
+                    }
+                }
+            }
             i += 1;
         }
         out
@@ -4564,6 +4608,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     shape_pre_frame(st_rec, st);
                     let lm = crate::level_arena_bridge::to_model(st.elim_level->0);
                     if ind.all_ind_names@.len() == 1 && !ind.is_nested {
+                        table_one(*tc.ctx.export_file, crate::env::declar_info(*d).name, rec_names@, recursors@);
                         block_cert_end(*self, *tc.env, st, *ind, recursors@[0], st.rec_uparams->0, lm);
                     }
                 }
@@ -5330,6 +5375,7 @@ pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         },
     ensures
         rec_ok_ex(ef, decl_shape(st), od_r),
+        crate::env::declar_info(od_r).name == crate::env::declar_info(nd).name,
 {
     ef.declars_views();
     export_ok_facts(ef);
@@ -5354,6 +5400,23 @@ pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         assert(r.major_idx_spec() == sh.np + 1 + sh.nmin() + sh.ni);
     }
     od
+}
+
+/// A block of one recursor: the parser's entry names only it.
+pub(crate) proof fn table_one<'t>(ef: ExportFile<'t>, name: NamePtr<'t>, names: Set<NamePtr<'t>>, recs: Seq<Declar<'t>>)
+    requires
+        ef.ind_name_to_recursor_names@.contains_key(name),
+        names == ef.ind_name_to_recursor_names@[name]@,
+        forall|n: NamePtr<'t>| #[trigger] names.contains(n) ==> exists|k: int| 0 <= k < recs.len()
+            && crate::env::declar_info(#[trigger] recs[k]).name == n,
+        recs.len() == 1,
+    ensures
+        forall|n: NamePtr<'t>| #[trigger] rec_names_of(ef, name).contains(n) ==> n == crate::env::declar_info(recs[0]).name,
+{
+    assert forall|n: NamePtr<'t>| #[trigger] rec_names_of(ef, name).contains(n) implies n == crate::env::declar_info(recs[0]).name by {
+        assert(names.contains(n));
+        let k = choose|k: int| 0 <= k < recs.len() && crate::env::declar_info(#[trigger] recs[k]).name == n;
+    }
 }
 
 /// THE BLOCK CERTIFICATE from the end of a single non-nested inductive's
@@ -5387,6 +5450,7 @@ pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::
                 && nr.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
                     == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[k].ty))
         },
+        forall|n: NamePtr<'t>| #[trigger] rec_names_of(ef, i.info.name).contains(n) ==> n == crate::env::declar_info(nd).name,
     ensures
         block_cert(ef, i),
 {

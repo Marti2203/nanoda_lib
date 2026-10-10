@@ -660,6 +660,8 @@ impl<'a> ExportBuilder<'a> {
         ensures
             forall|k: NamePtr<'a>| #[trigger] result@.contains_key(k) ==> crate::util_model::export_tagged(self.arena(), k)
                 && forall|n: NamePtr<'a>| #[trigger] result@[k]@.contains(n) ==> crate::util_model::export_tagged(self.arena(), n),
+            forall|k: NamePtr<'a>| #[trigger] crate::indexmap_model::imap_view(&self.declars).contains_key(k)
+                ==> (crate::indexmap_model::imap_view(&self.declars)[k] matches Declar::Recursor(r) ==> crate::inductive::rec_listed(result@, r)),
     {
         let ghost a = self.arena();
         let mut m: crate::util::FxHashMap<NamePtr<'a>, crate::util::FxHashSet<NamePtr<'a>>> = crate::util::new_fx_hash_map();
@@ -673,8 +675,12 @@ impl<'a> ExportBuilder<'a> {
                 i <= n,
                 forall|k: NamePtr<'a>| #[trigger] m@.contains_key(k) ==> crate::util_model::export_tagged(a, k)
                     && forall|x: NamePtr<'a>| #[trigger] m@[k]@.contains(x) ==> crate::util_model::export_tagged(a, x),
+                forall|q: int| #![trigger crate::indexmap_model::imap_keys(&self.declars)[q]] 0 <= q < i
+                    ==> (crate::indexmap_model::imap_view(&self.declars)[crate::indexmap_model::imap_keys(&self.declars)[q]] matches Declar::Recursor(r)
+                        ==> crate::inductive::rec_listed(m@, r)),
             decreases n - i,
         {
+            let ghost m_i = m@;
             let (_, d) = self.declars.get_index(i).unwrap();
             proof {
                 let keys = crate::indexmap_model::imap_keys(&self.declars);
@@ -689,6 +695,10 @@ impl<'a> ExportBuilder<'a> {
                     invariant
                         j <= all@.len(),
                         all@ == r.all_inductives@,
+                        rname == r.info.name,
+                        forall|k: NamePtr<'a>, x: NamePtr<'a>| #![trigger m_i[k]@.contains(x)] m_i.contains_key(k) && m_i[k]@.contains(x)
+                            ==> m@.contains_key(k) && m@[k]@.contains(x),
+                        forall|q: int| 0 <= q < j ==> m@.contains_key(#[trigger] all@[q]) && m@[all@[q]]@.contains(rname),
                         crate::util_model::export_tagged(a, rname),
                         forall|q: int| 0 <= q < all@.len() ==> crate::util_model::export_tagged(a, #[trigger] all@[q]),
                         forall|k: NamePtr<'a>| #[trigger] m@.contains_key(k) ==> crate::util_model::export_tagged(a, k)
@@ -700,10 +710,16 @@ impl<'a> ExportBuilder<'a> {
                         crate::util_model::build_hasher_default_valid_fx();
                         crate::inductive::export_keys_obey_model(a, m@.dom().insert(ind));
                     }
+                    let ghost m_j = m@;
+                    let ghost old_set: Set<NamePtr<'a>> = if m_j.contains_key(ind) { m_j[ind]@ } else { Set::empty() };
                     let mut set = match m.remove(&ind) {
                         Some(st) => st,
                         None => crate::util::new_fx_hash_set(),
                     };
+                    proof {
+                        broadcast use vstd::std_specs::hash::group_hash_axioms;
+                        assert(set@ == old_set);
+                    }
                     proof {
                         crate::inductive::export_keys_obey_model(a, set@.insert(rname));
                     }
@@ -711,11 +727,56 @@ impl<'a> ExportBuilder<'a> {
                     proof {
                         crate::inductive::export_keys_obey_model(a, m@.dom().insert(ind));
                     }
+                    let ghost new_set = set@;
                     m.insert(ind, set);
+                    proof {
+                        broadcast use vstd::std_specs::hash::group_hash_axioms;
+                        assert(new_set == old_set.insert(rname));
+                        assert(m@ == m_j.insert(ind, set));
+                        assert forall|k: NamePtr<'a>, x: NamePtr<'a>| #![trigger m_i[k]@.contains(x)] m_i.contains_key(k) && m_i[k]@.contains(x)
+                            implies m@.contains_key(k) && m@[k]@.contains(x) by {
+                            assert(m_j.contains_key(k) && m_j[k]@.contains(x));
+                            if k == ind {
+                                assert(old_set.contains(x));
+                            }
+                        }
+                        assert forall|q: int| 0 <= q < j + 1 implies m@.contains_key(#[trigger] all@[q]) && m@[all@[q]]@.contains(rname) by {
+                            if q < j && all@[q] != ind {
+                                assert(m_j.contains_key(all@[q]) && m_j[all@[q]]@.contains(rname));
+                            }
+                        }
+                    }
                     j = j + 1;
                 }
             }
+            proof {
+                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                let keys = crate::indexmap_model::imap_keys(&self.declars);
+                let view = crate::indexmap_model::imap_view(&self.declars);
+                assert forall|q: int| #![trigger keys[q]] 0 <= q < i + 1
+                    implies (view[keys[q]] matches Declar::Recursor(r) ==> crate::inductive::rec_listed(m@, r)) by {
+                    if q < i {
+                        if let Declar::Recursor(r) = view[keys[q]] {
+                            assert(crate::inductive::rec_listed(m_i, r));
+                            assert forall|jj: int| 0 <= jj < r.all_inductives@.len() implies m@.contains_key(#[trigger] r.all_inductives@[jj])
+                                && m@[r.all_inductives@[jj]]@.contains(r.info.name) by {
+                                assert(m_i.contains_key(r.all_inductives@[jj]) && m_i[r.all_inductives@[jj]]@.contains(r.info.name));
+                            }
+                        }
+                    }
+                }
+            }
             i = i + 1;
+        }
+        proof {
+            let keys = crate::indexmap_model::imap_keys(&self.declars);
+            let view = crate::indexmap_model::imap_view(&self.declars);
+            assert forall|k: NamePtr<'a>| #[trigger] view.contains_key(k)
+                implies (view[k] matches Declar::Recursor(r) ==> crate::inductive::rec_listed(m@, r)) by {
+                assert(keys.to_set().contains(k));
+                let q = keys.index_of(k);
+                assert(keys[q] == k);
+            }
         }
         m
     }
@@ -736,6 +797,7 @@ impl<'a> ExportBuilder<'a> {
         let ExportBuilder { dag, declars, mutual_block_sizes } = self;
         let ef = crate::util::ExportFile::from_parts(dag, declars, notations, name_cache, config, mutual_block_sizes, recs);
         proof {
+            ef.declars_views();
             crate::inductive::export_ok_intro(ef);
             crate::inductive::export_rec_names_ok_intro(ef);
             crate::inductive::export_blocks_ok_intro(ef);

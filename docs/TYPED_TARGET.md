@@ -1869,7 +1869,23 @@ and eta step is vacuous (about thirty sites use that). Stages:
     the generated recursor's rules have the constructors' arities
     (`pi_telescope_size` states the arity); and three checks tying the
     export's `is_nested`, block size and first type to nanoda's branch.
-    Next: B6a-4, `rec_core` at the export from the certificate.
+    B6a-4 plan. (1) Linking an environment recursor to its block: the
+    parser's table covers every recursor declaration (contract on
+    `ExportBuilder::recursor_names`, part of `export_rec_names_ok`);
+    `ck_recursor_names_simple` makes a non-nested block's entry exactly the
+    generated names (`rec_names_set` states its set), and `rec_conv` makes
+    the generated name the exported one's; the recursor arm's checks give
+    the recursor's first inductive, declared before it. So a recursor
+    whose block is single and non-nested is that block's `od_r`. (2)
+    `rec_core(raw_cc, rid)` from `block_ok` and the export model's entries
+    (types, tables, `rec_entry`), with the field kinds (`field_kind`) the
+    one fragment condition left. (3) What it buys: with `twin_canon`,
+    `rec_canon` of the twin for every such recursor; then `iota_ok`'s
+    syntactic parts (`rec_scope_g`: distinct constructors and universe
+    parameters, one canonical recursor per inductive, `rec_elp`; rules'
+    shape) are certifiable, leaving `sig_sr` and `rec_interp` -- the model
+    facts, B7 -- and the boundary (single, non-nested, field kinds) as
+    hypotheses.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.
