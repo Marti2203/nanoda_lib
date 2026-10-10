@@ -80,11 +80,34 @@ pub open spec fn tables_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -
     &&& forall|id: u64| #[trigger] denv.ctor_nf.contains_key(id) ==> denv.ctor_ind.contains_key(id)
 }
 
-/// The fragment, from its hypotheses and the certified tables.
+/// `iota_ok`'s syntactic part for one recursor: in scope, its
+/// constructors no recursors, its rules well formed.
+pub open spec fn rec_syn(sig: crate::ti_syntax::Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    &&& crate::dom_rec_ty::rec_scope_g(sig, c)
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> !sig.ienv.recs.contains_key(#[trigger] sh.ctors[p])
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> crate::beta_model::rule_rhs_ok(sig.ienv, #[trigger] sig.ienv.recs[c].rules[p])
+}
+
+pub open spec fn iota_syn(sig: crate::ti_syntax::Sig) -> bool {
+    forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_syn(sig, c)
+}
+
+/// THE FRAGMENT'S SHAPE of an interpreted recursor: no indices, the
+/// parameters sorts (`rec_frag_l` beyond its scope).
+pub open spec fn rec_small(sig: crate::ti_syntax::Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    &&& sh.ni == 0
+    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+}
+
+/// The fragment, from its hypotheses, the certified tables and the
+/// certified syntactic part of `iota_ok`.
 pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     requires
         frag_hyp(dty, denv),
         tables_ok(dty, denv),
+        forall|d: Map<nat, ExprSpec>| #[trigger] iota_syn(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -92,6 +115,13 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         reveal(ind_ok_hyp);
         let s = jsig(dty, denv, d);
         assert(ind_ok_hyp(s));
+        assert(iota_syn(s));
+        assert(crate::ti_syntax::iota_ok(s)) by {
+            reveal(crate::ti_syntax::iota_ok);
+            assert forall|c: u64| #[trigger] s.ienv.recs.contains_key(c) implies crate::dom_rec_end::rec_frag(s, c) by {
+                assert(rec_small(s, c));
+            }
+        }
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
     }
 }
@@ -149,10 +179,13 @@ pub proof fn recs_declared(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, i
 /// (docs/TYPED_TARGET.md, "S6.6 plan"): its recursors in the model's
 /// fragment and interpreted, the model's hypothesis, no structures yet,
 /// and each constructor one of its inductive's canonical recursor.
-/// `ind_ok` without what the constructor tables give (`tables_ok`).
+/// `ind_ok` without what the constructor tables give (`tables_ok`) and
+/// without `iota_ok`'s syntactic part (`iota_syn`), which the export
+/// certifies for simple blocks (`export_sound::iota_syn_at`): of `iota_ok`
+/// it keeps the fragment's shape (`rec_small`).
 #[verifier::opaque]
 pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
-    &&& crate::ti_syntax::iota_ok(sig)
+    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])

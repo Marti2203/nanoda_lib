@@ -80,6 +80,7 @@ pub open spec fn kh_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> b
     &&& names_ok(denv.export)
     &&& forall|cid: u64| #[trigger] dty.contains_key(cid) ==> crate::kclaims::frag_term(dty[cid].1)
     &&& forall|cid: u64| #[trigger] denv.defs.contains_key(cid) ==> crate::kclaims::frag_term(denv.defs[cid].1)
+    &&& forall|rid: u64| #[trigger] denv.recs.contains_key(rid) ==> rec_fields_ok(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid)
 }
 
 /// A name visible at a cutoff is one of the declarations before it.
@@ -158,6 +159,17 @@ pub open spec fn rmap<'p>(ef: crate::util::ExportFile<'p>, c: int) -> Map<u64, n
     Map::new(m_dty(ef, c).dom(), |id: u64| pos_of(ef, id) as nat)
 }
 
+/// THE EXPORT'S BOUNDARY AND THE DRIVER'S COLLECTIONS: every recursor's
+/// block is simple (single, non-nested), every block's and recursor's
+/// check returned, and the parser's recursor table is the export's.
+pub open spec fn ex_bound<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    &&& all_block_certified(ef)
+    &&& all_rec_checked(ef)
+    &&& crate::inductive::export_rec_names_ok(ef)
+    &&& forall|i: int| #![trigger decl_at(ef, i)] 0 <= i < ef.declars_keys().len()
+        ==> (decl_at(ef, i) is Recursor ==> rec_simple(ef, crate::level_arena_bridge::name_id(ef.declars_keys()[i])))
+}
+
 /// What every cutoff before `cc` has, and the hypotheses everywhere.
 /// A TWINNED RECURSOR'S CANONICAL TYPE IS A TYPE in the environment of
 /// its certificate (docs/TYPED_TARGET.md, "B5 design"; certified in T3
@@ -177,6 +189,7 @@ pub open spec fn below_ok<'p>(ef: crate::util::ExportFile<'p>, cc: int) -> bool 
     &&& crate::inductive::export_ok(ef)
     &&& twin_types(ef)
     &&& all_certified(ef)
+    &&& ex_bound(ef)
     &&& forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c))
     &&& 0 <= cc <= ef.declars_keys().len()
     &&& forall|c: int| 0 <= c < cc ==> #[trigger] crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c))
@@ -467,24 +480,23 @@ proof fn twin_le_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, c1: int, c2: i
 /// The fragment at a cutoff: its hypotheses and the certified tables.
 proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     requires
-        kh_hyp(m_dty(ef, c), m_denv(ef, c)),
+        below_ok(ef, c),
     ensures
         crate::kclaims::frag_env(m_dty(ef, c), m_denv(ef, c)),
 {
+    assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
     crate::env_model::tables_ok_at(ef.arena(), ef.declars_view(), ef.declars_keys(), c);
+    iota_syn_at(ef, c);
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
 /// Every cutoff's recursors are in the model's fragment.
 proof fn iota_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     requires
-        crate::inductive::export_ok(ef),
-        forall|c2: int| 0 <= c2 <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c2), m_denv(ef, c2)),
-        0 <= c <= ef.declars_keys().len(),
+        below_ok(ef, c),
     ensures
         crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())),
 {
-    assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
     frag_at(ef, c);
     assert(crate::kclaims::ind_ok(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty())));
 }
@@ -564,6 +576,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         all_certified(ef),
         forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c)),
         twin_types(ef),
+        ex_bound(ef),
         0 <= cc <= ef.declars_keys().len(),
     ensures
         crate::kclaims::kh(m_dty(ef, cc), m_denv(ef, cc)),
@@ -578,11 +591,11 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     crate::inductive::export_keys_ids_inj(ef);
     ef.declars_views();
     assert(kh_hyp(dty, denv));
-    frag_at(ef, cc);
     assert forall|c: int| 0 <= c < cc implies #[trigger] crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)) by {
         export_kh(ef, c);
     }
     assert(below_ok(ef, cc));
+    frag_at(ef, cc);
     ranked_at(ef, cc);
     iota_at(ef, cc);
     wf_at(ef, cc);
@@ -1254,6 +1267,45 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
         assert(crate::twin::canon_rules(raw, rid)[q].ctor_id == rd.rules[q].ctor_id);
         assert(sh.ctors[q] == rd.rules[q].ctor_id);
         assert(ctor_at(ef, cc, sh, q));
+    }
+}
+
+
+/// `IOTA_OK`'S SYNTACTIC PART, CERTIFIED at every cutoff and any locals:
+/// every recursor's block is simple (`ex_bound`), so each is twinned and
+/// in scope (`twin_scope_at`); the locals change nothing it reads.
+#[verifier::spinoff_prover]
+proof fn iota_syn_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::kclaims::iota_syn(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    assert(kh_hyp(dty, denv));
+    assert forall|rid: u64| #[trigger] s0.ienv.recs.contains_key(rid) implies crate::kclaims::rec_syn(s0, rid) by {
+        crate::twin::twin_keeps(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid);
+        assert(denv.recs.contains_key(rid));
+        let p = entry_of(ef, cc, rid);
+        assert(pos_of(ef, rid) == p);
+        assert(keys.to_set().contains(keys[p]));
+        assert(denv.recs[rid] == crate::env_model::rec_entry(decl_at(ef, p))->0);
+        assert(decl_at(ef, p) is Recursor);
+        assert(rec_simple(ef, rid));
+        twin_scope_at(ef, cc, rid);
+    }
+    assert forall|d: Map<nat, ExprSpec>| #[trigger] crate::kclaims::iota_syn(crate::metatheory::jsig(dty, denv, d)) by {
+        let sd = crate::metatheory::jsig(dty, denv, d);
+        crate::jkernel::jsig_locals(dty, denv, d);
+        assert forall|rid: u64| #[trigger] sd.ienv.recs.contains_key(rid) implies crate::kclaims::rec_syn(sd, rid) by {
+            assert(crate::kclaims::rec_syn(s0, rid));
+            crate::dom_rec_end::scope_dir(s0, sd, rid);
+            assert(crate::dom_rec_ty::rshape(s0, rid) == crate::dom_rec_ty::rshape(sd, rid));
+        }
     }
 }
 

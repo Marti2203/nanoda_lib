@@ -1924,6 +1924,18 @@ and eta step is vacuous (about thirty sites use that). Stages:
     interpreted clause (`rec_interp ==> rec_frag_l`: no indices, sort
     parameters) -- a model fact, B7 -- and nothing of the others, which
     stay under `ind_ok_hyp` (B8 splits it by `rec_simple`).
+    B8 step 1 done: `iota_ok`'s syntactic part left the hypotheses.
+    `ind_ok_hyp` keeps of it only `rec_small` (no indices, sort
+    parameters -- the fragment's shape); `frag_env_of` takes
+    `kclaims::iota_syn` as it takes `tables_ok`, and the export
+    certifies it at every cutoff and locals (`iota_syn_at`). The cost is
+    the boundary, now explicit: `export_sound::ex_bound` (every
+    recursor's block simple, and the driver's collections with the
+    parser's recursor table) in `below_ok`/`export_kh`, and
+    `rec_fields_ok` (field kinds) in `kh_hyp`. TRADEOFF: an export with a
+    mutual or nested block is now outside `export_kh`'s scope even for
+    its other declarations (before, `ind_ok_hyp` simply assumed its
+    recursors' facts); widening the boundary per recursor is later work.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.
