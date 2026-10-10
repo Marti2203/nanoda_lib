@@ -12,9 +12,11 @@ use vstd::prelude::*;
 verus! {
 
 /// The signature without recursors or structures (a structure's rules
-/// read its declaration, `dom_code::struct_decl`, which this hides).
+/// read its declaration, `dom_code::struct_decl`, which this hides), and
+/// without locals: what it types is closed, and a local's type may
+/// mention level parameters an instance substitutes (`dom_levels::sig_lps`).
 pub open spec fn strip(sig: Sig) -> Sig {
-    Sig { ienv: crate::expr_arena_bridge::EnvSpec { recs: Map::empty(), struct_ctor: Map::empty(), ..sig.ienv }, ..sig }
+    Sig { ienv: crate::expr_arena_bridge::EnvSpec { recs: Map::empty(), struct_ctor: Map::empty(), ..sig.ienv }, locals: Map::empty(), ..sig }
 }
 
 /// No Iota node.

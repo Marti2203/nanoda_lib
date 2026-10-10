@@ -2070,6 +2070,15 @@ and eta step is vacuous (about thirty sites use that). Stages:
     (`rec_model_h`, `rec_model_p_h`, `struct_sem_h`). One table fact joins
     `tables_ok`, certified as the others (`env_model::tables_ok_at`): no
     recursor is in the constructor tables (a declaration is one kind).
+    A SECOND VACUITY, FOUND AND FIXED: `sig_sr`'s level facts
+    (`dom_levels::sig_lps`, in `rec_model` and `rec_model_p`) asked that
+    every local of the stripped signature be fixed by every level
+    substitution, and `frag_hyp` asks `ind_ok_hyp` at every locals map --
+    so a local `Sort u` refuted it, and `kh_hyp` was unsatisfiable for any
+    export with a recursor (the claims held vacuously there). `ti_strip::strip`
+    now drops the locals too: it types closed terms only (rule bodies,
+    constructor and recursor types), and its derivations still weaken to
+    the full signature. No proof used the stripped signature's locals.
   - **B7** the model's facts (`rec_model_h`, `struct_sem_h`): typed rules,
     fields typed and blind, closed types, from the canonical form and the
     certificates (the semantic constants are done, above).
