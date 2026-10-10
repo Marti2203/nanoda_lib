@@ -2091,6 +2091,17 @@ pub(crate) open spec fn env_old<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar
         && env.old_view()[keys[i]] == od
 }
 
+/// THE CHECKED CONSTRUCTOR IS THE EXPORTED ONE: an exported constructor of
+/// its name whose declared type is the checked type, closed.
+pub(crate) open spec fn ctor_old<'x, 't>(env: crate::env::Env<'x, 't>, c: CtorHeader<'t>) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od)
+        && od is Constructor
+        && crate::env::declar_info(od).name == c.name
+        && crate::expr_arena_bridge::to_model(crate::env::declar_info(od).ty) == crate::expr_arena_bridge::to_model(c.ty)
+        && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(c.ty)) == 0
+        && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(c.ty))
+}
+
 /// Some exported declaration is the generated recursor `nd`.
 pub(crate) open spec fn rec_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>) -> bool {
     exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_matches(od, nd, rec_up)
@@ -8232,11 +8243,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Verified in place. VERUS-REWRITE(tested-closed): both types handed to
     /// `assert_def_eq` are tested closed first, as in `check_restored_recursor1`;
-    /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`.
+    /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`;
+    /// VERUS-REWRITE(index-walk): the two `for` loops over the block's
+    /// inductives and their constructors are the scans by index they stand
+    /// for; VERUS-REWRITE(name-clash): the pattern binding `old` is `old_c`
+    /// (the contract uses Verus's `old`); VERUS-REWRITE(tested-input): the
+    /// constructor the checker built is
+    /// the exported one structurally (`model_eq`), not only convertible to it
+    /// -- what the certificate records (`ctor_old`). Never fails on a block
+    /// Lean exports: a non-nested constructor is rebuilt as it was declared.
     #[verifier::exec_allows_no_decreases_clause]
     fn assert_nonnested_ctors_def_eq(&mut self, st: &InductiveCheckState<'t>)
         requires
             crate::tc::tc_wf(*old(self)),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
@@ -8244,9 +8264,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            forall|x: int, y: int| #![trigger st.all_inductives_incl_specialized@[x].ctors@[y]]
+                0 <= x < st.all_inductives_incl_specialized@.len() && 0 <= y < st.all_inductives_incl_specialized@[x].ctors@.len()
+                ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y]),
     {
         assert!(!st.is_nested());
-        for inductive in it: st.all_inductives_incl_specialized.iter()
+        let mut x: usize = 0;
+        while x < st.all_inductives_incl_specialized.len()
             invariant
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
@@ -8254,8 +8278,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
+                crate::inductive_model::st_owned(*self.ctx, *st),
+                x <= st.all_inductives_incl_specialized@.len(),
+                forall|x2: int, y: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y]]
+                    0 <= x2 < x && 0 <= y < st.all_inductives_incl_specialized@[x2].ctors@.len()
+                    ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y]),
+            decreases st.all_inductives_incl_specialized@.len() - x,
         {
-            for ctor in it2: inductive.ctors.iter()
+            let inductive = &st.all_inductives_incl_specialized[x];
+            let mut y: usize = 0;
+            while y < inductive.ctors.len()
                 invariant
                     mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
@@ -8263,23 +8295,44 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                     crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                     self.live == old(self).live,
+                    crate::inductive_model::st_owned(*self.ctx, *st),
+                    x < st.all_inductives_incl_specialized@.len(),
+                    *inductive == st.all_inductives_incl_specialized@[x as int],
+                    y <= inductive.ctors@.len(),
+                    forall|x2: int, y2: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y2]]
+                        0 <= x2 < x && 0 <= y2 < st.all_inductives_incl_specialized@[x2].ctors@.len()
+                        ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2]),
+                    forall|y2: int| #![trigger st.all_inductives_incl_specialized@[x as int].ctors@[y2]]
+                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2]),
+                decreases inductive.ctors@.len() - y,
             {
+                let ctor = &inductive.ctors[y];
+                proof {
+                    assert(crate::util_model::owns(*self.ctx, ctor.name));
+                    assert(crate::util_model::owns(*self.ctx, ctor.ty));
+                }
                 match (self.env.get_old_declar(&ctor.name), self.env.get_temp_declar(&ctor.name)) {
-                    (Some(Declar::Constructor(old)), Some(Declar::Constructor(new))) => {
-                        assert!(old.aux_data_ck(new));
-                        debug_assert!(!crate::env_model::same_object(old, new));
+                    (Some(Declar::Constructor(old_c)), Some(Declar::Constructor(new))) => {
+                        assert!(old_c.aux_data_ck(new));
+                        debug_assert!(!crate::env_model::same_object(old_c, new));
                         self.tc_cache.clear();
-                        self.assert_closed(old.info.ty);
+                        self.assert_closed(old_c.info.ty);
                         self.assert_closed(new.info.ty);
+                        assert!(crate::expr_arena_bridge::model_eq(self.ctx, ctor.ty, old_c.info.ty),
+                            "constructor: the checked constructor is not the exported one");
                         proof {
-                            level_free_in_scope(*self, old.info.ty);
+                            level_free_in_scope(*self, old_c.info.ty);
                             level_free_in_scope(*self, new.info.ty);
+                            assert(env_old(*old(self).env, Declar::Constructor(*old_c)));
+                            assert(ctor_old(*old(self).env, *ctor));
                         }
-                        self.assert_def_eq(old.info.ty, new.info.ty);
+                        self.assert_def_eq(old_c.info.ty, new.info.ty);
                     }
                     _ => panic!(),
                 }
+                y += 1;
             }
+            x += 1;
         }
     }
 
