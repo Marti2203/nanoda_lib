@@ -1858,7 +1858,8 @@ and eta step is vacuous (about thirty sites use that). Stages:
     single, non-nested inductive, the exported inductive, constructors
     and a recursor have a canonical shape (`block_ok`: types, closedness,
     bounds, the recursor's counts, rules' constructors and field counts,
-    universe parameters, and, for admitted fields, its major premise).
+    universe parameters and its major premise -- the latter now tested
+    against the block's inductive itself, not only the generated one's).
     `check_inductive_declar` ensures it (`block_ind_part`,
     `block_rec_part`, `block_cert_end`), `check_declar` passes it on, and
     the serial driver collects `export_sound::all_block_certified`.

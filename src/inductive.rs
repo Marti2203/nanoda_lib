@@ -2214,7 +2214,7 @@ pub open spec fn rec_ok_ex<'p>(ef: ExportFile<'p>, sh: crate::rec_canon::IndShap
             &&& forall|k: int| 0 <= k < sh.nmin() ==> crate::level_arena_bridge::name_id((#[trigger] r.rec_rules@[k]).ctor_name) == sh.ctors[k]
                 && r.rec_rules@[k].ctor_telescope_size_wo_params as nat == sh.fields[k].len()
             &&& rec_lps_ok(crate::level_arena_bridge::to_model_of_levels(r.info.uparams), sh.us())
-            &&& fkind_sh(sh) ==> rec_major_head(crate::expr_arena_bridge::to_model(r.info.ty), r.major_idx_spec()) == Some(sh.ind)
+            &&& rec_major_head(crate::expr_arena_bridge::to_model(r.info.ty), r.major_idx_spec()) == Some(sh.ind)
         },
         _ => false,
     }
@@ -2298,7 +2298,7 @@ pub(crate) open spec fn rec_matches<'t>(od: Declar<'t>, nd: Declar<'t>, rec_up: 
 /// (`assert_def_eq`, `def_eq_claim`): its type at the generated universe
 /// parameters converts to the generated type, and each exported rule
 /// converts to the generated rule at the exported parameters.
-pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar<'t>, nd: Declar<'t>, rec_up: LevelsPtr<'t>, iu: LevelsPtr<'t>) -> bool {
+pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar<'t>, nd: Declar<'t>, rec_up: LevelsPtr<'t>, iu: LevelsPtr<'t>, ih: u64) -> bool {
     match (od, nd) {
         (Declar::Recursor(or), Declar::Recursor(nr)) => {
             let ru = crate::level_arena_bridge::to_model_of_levels(rec_up);
@@ -2307,7 +2307,7 @@ pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Decla
             &&& crate::tc::def_eq_claim(env,
                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(or.info.ty), crate::level_model::level_names(ou), ru),
                 crate::expr_arena_bridge::to_model(nr.info.ty))
-            &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec()) is Some
+            &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec()) == Some(ih)
             &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec())
                 == rec_major_head(crate::expr_arena_bridge::to_model(nr.info.ty), or.major_idx_spec())
             &&& rec_lps_ok(ou, crate::level_arena_bridge::to_model_of_levels(iu))
@@ -2390,8 +2390,8 @@ fn major_head_name<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (r
 }
 
 /// Some exported declaration converts to the generated recursor `nd`.
-pub(crate) open spec fn rec_conv_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>, iu: LevelsPtr<'t>) -> bool {
-    exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, rec_up, iu)
+pub(crate) open spec fn rec_conv_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: Declar<'t>, rec_up: LevelsPtr<'t>, iu: LevelsPtr<'t>, ih: u64) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, rec_up, iu, ih)
 }
 
 /// One minor premise built: its witness.
@@ -4563,9 +4563,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     // and the export's declarations have it (`block_cert`)
                     shape_pre_frame(st_rec, st);
                     let lm = crate::level_arena_bridge::to_model(st.elim_level->0);
-                    if st.all_inductives_incl_specialized@.len() == 1 && fields_admitted(st) {
-                        shape_end(st, *tc.env, lm);
-                    }
                     if ind.all_ind_names@.len() == 1 && !ind.is_nested {
                         block_cert_end(*self, *tc.env, st, *ind, recursors@[0], st.rec_uparams->0, lm);
                     }
@@ -5304,9 +5301,8 @@ pub(crate) proof fn block_ind_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
 }
 
 /// THE CERTIFICATE'S RECURSOR: the exported recursor nanoda compared with
-/// the generated one (`rec_conv_old`) has the shape's table data, and --
-/// for admitted fields, where the generated type is canonical -- the
-/// shape's major premise.
+/// the generated one (`rec_conv_old`) has the shape's table data and major
+/// premise.
 #[verifier::spinoff_prover]
 pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, nd: Declar<'t>,
     ru: LevelsPtr<'t>, lm: crate::level_model::LevelSpec) -> (od_r: Declar<'t>)
@@ -5321,7 +5317,7 @@ pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
             == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[0].ctors@[k].ty)),
         forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(st.uparams).len()
             ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(st.uparams)[k]) is Param,
-        rec_conv_old(env, nd, ru, st.uparams),
+        rec_conv_old(env, nd, ru, st.uparams, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].name)),
         nd matches Declar::Recursor(nr) && {
             &&& nr.num_params as nat == st.local_params@.len()
             &&& nr.num_motives == 1
@@ -5332,7 +5328,6 @@ pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
                 && nr.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
                     == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[k].ty))
         },
-        fields_admitted(st) ==> crate::expr_arena_bridge::to_model(crate::env::declar_info(nd).ty) == decl_shape(st).rec_ty(lm),
     ensures
         rec_ok_ex(ef, decl_shape(st), od_r),
 {
@@ -5340,7 +5335,8 @@ pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
     export_ok_facts(ef);
     let sh = decl_shape(st);
     let h = st.all_inductives_incl_specialized@[0];
-    let od = choose|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, ru, st.uparams);
+    let od = choose|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, ru, st.uparams,
+        crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].name));
     let keys = ef.declars_keys();
     let idx = choose|idx: int| 0 <= idx < keys.len() && idx < env.visible() && #[trigger] keys[idx] == crate::env::declar_info(od).name
         && env.old_view()[keys[idx]] == od;
@@ -5355,11 +5351,7 @@ pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::
             assert(nr.rec_rules@[k].ctor_name == h.ctors@[k].name);
             assert(sh.fields[k].len() + sh.np == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(h.ctors@[k].ty)));
         }
-        if fkind_sh(sh) {
-            assert(fields_admitted(st));
-            crate::twin::rec_ty_major(sh, lm);
-            assert(r.major_idx_spec() == sh.np + 1 + sh.nmin() + sh.ni);
-        }
+        assert(r.major_idx_spec() == sh.np + 1 + sh.nmin() + sh.ni);
     }
     od
 }
@@ -5381,7 +5373,7 @@ pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         ind_old(env, st.all_inductives_incl_specialized@[0]),
         forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
             ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y], st.all_inductives_incl_specialized@[0].name, st.local_params@.len() as nat),
-        rec_conv_old(env, nd, ru, st.uparams),
+        rec_conv_old(env, nd, ru, st.uparams, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].name)),
         st.motives@.len() == 1,
         st.minors@.len() == 1,
         st.minors@[0]@.len() == st.all_inductives_incl_specialized@[0].ctors@.len(),
@@ -5395,7 +5387,6 @@ pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::
                 && nr.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
                     == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[k].ty))
         },
-        fields_admitted(st) ==> crate::expr_arena_bridge::to_model(crate::env::declar_info(nd).ty) == decl_shape(st).rec_ty(lm),
     ensures
         block_cert(ef, i),
 {
@@ -9108,6 +9099,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::tc::tc_wf(*old(self)),
             crate::util_model::owns(*old(self).ctx, st.uparams),
             levels_all_param(st.uparams),
+            recursors@.len() <= st.all_inductives_incl_specialized@.len(),
             st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*old(self).ctx, ls)
                 && levels_all_param(ls),
             forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
@@ -9126,7 +9118,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             matched ==> forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
-            forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams),
+            forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams,
+                    crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[k].name)),
     {
         let mut ok = true;
         assert!(!st.is_nested());
@@ -9145,6 +9138,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.rec_uparams matches Some(ls) ==> crate::util_model::owns(*self.ctx, ls) && levels_all_param(ls),
                 crate::util_model::owns(*self.ctx, st.uparams),
                 levels_all_param(st.uparams),
+                recursors@.len() <= st.all_inductives_incl_specialized@.len(),
                 forall|i: int| 0 <= i < recursors@.len() ==> match #[trigger] recursors@[i] {
                     Declar::Recursor(r) => {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
@@ -9155,7 +9149,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 },
                 n <= recursors@.len(),
                 ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
-                forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams),
+                forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams,
+                    crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[k].name)),
             decreases recursors@.len() - n,
         {
             let new_rec = &recursors[n];
@@ -9203,7 +9198,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     // recursor Lean exports.
                     let mk = old_r.major_idx();
                     match (major_head_name(self.ctx, old_d.info().ty, mk), major_head_name(self.ctx, new.info().ty, mk)) {
-                        (Some(oh), Some(nh)) => assert!(oh == nh, "recursor: its major premise is not its inductive's"),
+                        (Some(oh), Some(nh)) => assert!(oh == nh && oh == st.all_inductives_incl_specialized[n].name,
+                            "recursor: its major premise is not its inductive's"),
                         _ => panic!("recursor: its major premise is not an inductive's"),
                     }
                     // VERUS-REWRITE(observe): whether the generated recursor's type at
@@ -9252,14 +9248,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             rec_lps_ok(crate::level_arena_bridge::to_model_of_levels(old_r.info.uparams), crate::level_arena_bridge::to_model_of_levels(st.uparams)),
                             old_r.num_params == new_r.num_params && old_r.num_indices == new_r.num_indices,
                             old_r.num_motives == new_r.num_motives && old_r.num_minors == new_r.num_minors,
-                            rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec()) is Some,
+                            rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec())
+                                == Some(crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[n as int].name)),
                             rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec())
                                 == rec_major_head(crate::expr_arena_bridge::to_model(new_r.info.ty), old_r.major_idx_spec()),
                             forall|q: int| 0 <= q < j ==> crate::level_arena_bridge::name_id((#[trigger] old_rec_rules@[q]).ctor_name)
                                 == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name)
                                 && old_rec_rules@[q].ctor_telescope_size_wo_params == new_rec_rules@[q].ctor_telescope_size_wo_params,
                             ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
-                            forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams),
+                            forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams,
+                    crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[k].name)),
                             forall|q: int| 0 <= q < j ==> crate::tc::def_eq_claim(*old(self).env,
                                 crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val),
                                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))),
