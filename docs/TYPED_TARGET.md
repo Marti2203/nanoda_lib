@@ -1828,6 +1828,32 @@ and eta step is vacuous (about thirty sites use that). Stages:
     lambdas (`frag_term` of the declarations, the motive binder). The
     field kinds `rec_core` reads (`psimple`/`direct_occ`, stricter than
     `fkind_ok`) stay the fragment's boundary in `kh_hyp`.
+    Done since: B6a-3a (`a4b1ca4`) a tested check that the exported
+    recursor's major premise has the generated one's head (`rec_major_head`
+    in `rec_conv`); B6a-3b (`b627683`) `rec_conv` records the exported
+    recursor's counts and per-rule constructors and telescope sizes
+    against the generated ones (the counts restated after the unverified
+    `aux_data_ck`).
+    B6a-3c design (the block certificate): the constructors `rec_core`
+    reads come from the recursor's rule table, so the certificate is keyed
+    on the block's exported recursor, not on the inductive's constructor
+    list -- its rules' constructors are the generated rules' (`rec_conv`),
+    those are the header's (`mk_recursors`), whose types are the exported
+    constructors' (`ctor_old`). The certificate states, for a block in the
+    fragment (one inductive, non-nested, fields admitted), that some
+    exported recursor named the inductive's `.rec` has the shape's counts,
+    rules and major head, and that the exported inductive and constructor
+    types have that shape. B6a-4 then needs every recursor of the
+    environment to be such a block's recursor: nanoda compares each
+    block's exported recursor names with the generated ones
+    (`ck_recursor_names_simple`, against the parser's
+    `ind_name_to_recursor_names`). That table is built from every
+    recursor declaration (`ExportBuilder::recursor_names`: each listed
+    under each inductive of its `all_inductives`), and the recursor arm of
+    `check_declar` checks its first inductive is a declared inductive. So
+    every recursor of the export is, by name, some block's generated
+    recursor: the link is certifiable (contracts on `recursor_names` and
+    `ck_recursor_names_simple`), not a new hypothesis.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.
