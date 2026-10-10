@@ -1974,10 +1974,10 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         fits_env(sig, concl(d)->Eq_0, rho),
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 1int,
+    decreases crate::ti_strip::irank(sig, d), d, 1int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2057,6 +2057,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             assert forall|d2: Deriv, rho2: Env| #[trigger] sound_at(ss, sig, d2, rho2) by {
                 if valid(ss, d2) && concl(d2) is Eq && fits_env(sig, concl(d2)->Eq_0, rho2) {
                     crate::ti_strip::strip_valid(sig, d2);
+                    crate::ti_strip::irank_free(sig, d2);
                     sound(sig, d2, rho2);
                 }
             }
@@ -2093,10 +2094,10 @@ proof fn sound_reta_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is RecEta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     let l = rule->RecEta_0;
@@ -2117,6 +2118,7 @@ proof fn sound_reta_d(sig: Sig, d: Deriv, rho: Env)
         assert forall|d2: Deriv, rho2: Env| #[trigger] sound_at(ss, sig, d2, rho2) by {
             if valid(ss, d2) && concl(d2) is Eq && fits_env(sig, concl(d2)->Eq_0, rho2) {
                 crate::ti_strip::strip_valid(sig, d2);
+                crate::ti_strip::irank_free(sig, d2);
                 sound(sig, d2, rho2);
             }
         }
@@ -2136,10 +2138,10 @@ proof fn sound_pi_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is PiCong,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2178,10 +2180,10 @@ proof fn sound_lam_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is LamCong,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2221,10 +2223,10 @@ proof fn sound_app_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is AppCong,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2261,10 +2263,10 @@ proof fn sound_beta_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is Beta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2297,10 +2299,10 @@ proof fn sound_eta_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is Eta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2356,10 +2358,10 @@ proof fn sound_leaf_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is ConstAx || d->Node_0 is Local,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let m = j->Eq_1;
     let n = j->Eq_2;
@@ -2405,10 +2407,10 @@ proof fn sound_def_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is ConstDef || d->Node_0 is Delta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;
@@ -2474,10 +2476,10 @@ proof fn sound_zeta_d(sig: Sig, d: Deriv, rho: Env)
         d->Node_0 is Zeta,
     ensures
         sound_ok(sig, concl(d)->Eq_1, concl(d)->Eq_2, concl(d)->Eq_3, rho),
-    decreases crate::ti_strip::inode(d), d, 0int,
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
 {
     valid_prems(sig, d);
-    crate::ti_strip::inode_prems(d);
+    crate::ti_strip::irank_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     let g = j->Eq_0;
     let m = j->Eq_1;

@@ -28,22 +28,88 @@ pub open spec fn iota_free(d: Deriv) -> bool
     }
 }
 
-/// The measure soundness decreases on first.
-pub open spec fn inode(d: Deriv) -> nat {
-    if iota_free(d) { 0 } else { 1 }
+/// The rank an Iota or RecEta node fires at: two more than its
+/// recursor's rank (`dom_code::rk`, -1 unranked), so at least one.
+pub open spec fn fire_rank(sig: Sig, r: Rule, j: crate::ti_syntax::Jd) -> nat {
+    if (r is Iota || r is RecEta) && j is Eq && crate::beta_model::spine_head(j->Eq_1) is Const {
+        (crate::dom_code::rk(sig, crate::beta_model::spine_head(j->Eq_1)->Const_0) + 2) as nat
+    } else {
+        0
+    }
 }
 
-/// A premise has no more Iota nodes than its conclusion.
-pub proof fn inode_prem(d: Deriv, k: int)
+/// THE RANK MEASURE (docs/TYPED_TARGET.md, "Rank-stratified strip"): the
+/// highest rank a node of `d` fires at, 0 without Iota and RecEta nodes.
+pub open spec fn irank(sig: Sig, d: Deriv) -> nat
+    decreases d, d->Node_2.len() + 1,
+{
+    let m = pmax(sig, d, d->Node_2.len());
+    if fire_rank(sig, d->Node_0, d->Node_1) > m { fire_rank(sig, d->Node_0, d->Node_1) } else { m }
+}
+
+/// The highest measure among `d`'s first `n` premises.
+pub open spec fn pmax(sig: Sig, d: Deriv, n: nat) -> nat
+    decreases d, n,
+{
+    if n == 0 || n > d->Node_2.len() {
+        0
+    } else {
+        let a = pmax(sig, d, (n - 1) as nat);
+        let b = irank(sig, d->Node_2[n - 1]);
+        if b > a { b } else { a }
+    }
+}
+
+proof fn pmax_ge(sig: Sig, d: Deriv, n: nat, k: int)
     requires
-        0 <= k < d->Node_2.len(),
+        0 <= k < n <= d->Node_2.len(),
     ensures
-        inode(d->Node_2[k]) <= inode(d),
+        irank(sig, d->Node_2[k]) <= pmax(sig, d, n),
+    decreases n,
+{
+    if k < n - 1 {
+        pmax_ge(sig, d, (n - 1) as nat, k);
+    }
+}
+
+proof fn pmax_zero(sig: Sig, d: Deriv, n: nat)
+    requires
+        n <= d->Node_2.len(),
+        forall|k: int| 0 <= k < n ==> irank(sig, #[trigger] d->Node_2[k]) == 0,
+    ensures
+        pmax(sig, d, n) == 0,
+    decreases n,
+{
+    if n > 0 {
+        pmax_zero(sig, d, (n - 1) as nat);
+    }
+}
+
+/// A premise's measure is at most its conclusion's, which is at least
+/// the node's own firing rank.
+pub proof fn irank_prems(sig: Sig, d: Deriv)
+    ensures
+        forall|k: int| 0 <= k < d->Node_2.len() ==> #[trigger] irank(sig, d->Node_2[k]) <= irank(sig, d),
+        fire_rank(sig, d->Node_0, d->Node_1) <= irank(sig, d),
+{
+    assert forall|k: int| 0 <= k < d->Node_2.len() implies #[trigger] irank(sig, d->Node_2[k]) <= irank(sig, d) by {
+        pmax_ge(sig, d, d->Node_2.len(), k);
+    }
+}
+
+/// Without Iota or RecEta nodes the measure is 0.
+pub proof fn irank_free(sig: Sig, d: Deriv)
+    requires
+        iota_free(d),
+    ensures
+        irank(sig, d) == 0,
+    decreases d,
 {
     let Deriv::Node(r, j, ps) = d;
-    if iota_free(d) {
-        assert(iota_free(ps[k]));
+    assert forall|k: int| 0 <= k < ps.len() implies irank(sig, #[trigger] d->Node_2[k]) == 0 by {
+        irank_free(sig, ps[k]);
     }
+    pmax_zero(sig, d, ps.len());
 }
 
 /// A DERIVATION OF THE STRIPPED SIGNATURE is one of the full signature,
@@ -114,16 +180,6 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
         _ => assert(step_ok(sig, r, j, ps)),
     }
     reveal_with_fuel(valid, 1);
-}
-
-/// Every premise, at once.
-pub proof fn inode_prems(d: Deriv)
-    ensures
-        forall|k: int| 0 <= k < d->Node_2.len() ==> #[trigger] inode(d->Node_2[k]) <= inode(d),
-{
-    assert forall|k: int| 0 <= k < d->Node_2.len() implies #[trigger] inode(d->Node_2[k]) <= inode(d) by {
-        inode_prem(d, k);
-    }
 }
 
 /// What the stripped signature derives, the full one does.

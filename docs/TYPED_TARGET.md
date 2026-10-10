@@ -502,10 +502,12 @@ The recursor stage is in the judgment and the model:
 - **Recursors are interpreted** where `rec_hyps` (= `sig_rec` ∧ `rec_frag`)
   holds: `code_ok` is then `rf_fun`, and `rec_wired` is a theorem
   (`dom_iota::rec_wired_holds`).
-- **Soundness is well-founded** by Iota-freeness first:
-  `sound` decreases on `(inode(d), d)`. In the Iota case, derivations of
-  the stripped signature have no Iota node (`ti_strip::strip_valid`), so
-  soundness can use them. The telescope lemmas take a syntax signature
+- **Soundness is well-founded** by the rank of the recursors fired first:
+  `sound` decreases on `(irank(sig, d), d)` (`ti_strip::irank`: two more
+  than the highest rank of a recursor an Iota or RecEta node fires, 0
+  without). In the Iota case, derivations of the stripped signature have
+  no Iota node (`ti_strip::strip_valid`, `irank_free`), so soundness can
+  use them. The telescope lemmas take a syntax signature
   `ss` and a soundness oracle `sound_oracle(ss, sig)` instead of calling
   `sound`. Ordinary callers pass `ss = sig` with the oracle from the
   theorem (`sound_all`). The Iota cores pass `ss = strip(sig)` with the
@@ -2098,6 +2100,39 @@ Out of the fragment until the model grows: large eliminators of Prop
 inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
 structure eta at structures outside the `struct_of` slice (dependent
 fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
+
+### Rank-stratified strip (2026-10-10, started)
+
+FOUND: the model's typing facts (`ty_closed`, `rule_typed`,
+`fields_typed`, `rule_typed_g`) are stated in `ti_strip::strip(sig)`, with
+no recursor or structure at all: an inductive's, constructor's or
+recursor's type, and a rule body, must be typed without any iota,
+projection or structure eta. nanoda checks a declaration in the
+environment before it, where every earlier recursor and structure
+reduces. So the facts cannot be certified as stated; a type whose
+checking needs an earlier recursor's iota is accepted by nanoda and
+outside the model. Direction (the user, 2026-10-10): align with nanoda.
+
+Why the strip exists: soundness's Iota case calls soundness on the rule
+body's derivation, which must be smaller -- it was `inode` (0 without
+Iota/RecEta nodes, 1 with), decreasing because the stripped signature
+fires none. R1 started: soundness now decreases on `irank`.
+
+The plan:
+
+- **R1** `strip_below(sig, r)`: recursors and structures of rank below
+  `r`, no locals (`strip(sig) == strip_below(sig, 0)`). Soundness
+  decreases on `irank(sig, d)`, one more than the highest rank of a
+  recursor an Iota/RecEta node of `d` fires (0 without); a derivation of
+  `strip_below(sig, r)` is one of `sig` with `irank <= r`
+  (`strip_below_valid`, as `ti_valid::d_ext` with equal ranks in place of
+  `def_ok`; it needs `iota_ok(sig)`, which an Iota node gives).
+- **R2** each fact at its own level: recursor `c`'s in
+  `strip_below(sig, rank(c))`, a structure's at its rank; the Iota case
+  hands the oracle of that level.
+- **R3** certified at the export: the declaration's typing at its
+  certificate's cutoff extends to `strip_below(jsig, rank)` (`derivable_ext`;
+  everything before it in position is below it in rank).
 
 ## The open fork before S4
 
