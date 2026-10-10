@@ -4014,6 +4014,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     st.is_zero is Some,
                     st.block_codom is Some,
                     x <= st.all_inductives_incl_specialized@.len(),
+                    crate::kgen::serials_in(crate::util_model::arena_ids(*tc.ctx), st.local_params@, sp0, sp1),
+                    sp1 <= crate::util::unique_count(*tc.ctx),
                     forall|i: int, j: int| #![trigger st.all_inductives_incl_specialized@[i].ctors@[j]]
                         0 <= i < x && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
                         ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[i].name),
@@ -4036,6 +4038,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         x < st.all_inductives_incl_specialized@.len(),
                         *ind == st.all_inductives_incl_specialized@[x as int],
                         y <= ind.ctors@.len(),
+                        crate::kgen::serials_in(crate::util_model::arena_ids(*tc.ctx), st.local_params@, sp0, sp1),
+                        sp1 <= crate::util::unique_count(*tc.ctx),
                         forall|i: int, j: int| #![trigger st.all_inductives_incl_specialized@[i].ctors@[j]]
                             0 <= i < x && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
                             ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[i].name),
@@ -4047,6 +4051,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     let ctor = &ind.ctors[y];
                     proof {
                         assert(level_free(*tc.ctx, st.all_inductives_incl_specialized@[x as int].ctors@[y as int].ty));
+                        crate::kgen::serials_distinct(crate::util_model::arena_ids(*tc.ctx), st.local_params@, sp0, sp1);
                     }
                     tc.check_ctor(&st, ind.name, ctor.ty);
                     proof {
@@ -4373,6 +4378,7 @@ pub(crate) open spec fn ctor_cert_ok<'x, 't>(
     &&& forall|k: int| 0 <= k < np ==> #[trigger] c.locals[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
         && crate::tc::kconv(env, c.bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])))
         && c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))
+    &&& c.locals.no_duplicates()
     &&& forall|k: int| np <= k < c.locals.len() ==> crate::tc::kinfer_claim(env, c.bts[k], ExprSpec::Sort(#[trigger] c.sorts[k]))
         && (st.is_zero == Some(true) || forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(c.sorts[k], rho)
             <= crate::level_model::interp(crate::level_arena_bridge::to_model(st.block_codom->0), rho))
@@ -4398,6 +4404,7 @@ pub(crate) open spec fn ctor_syn_cert<'t>(st: InductiveCheckState<'t>, pid: u64,
         && c.cursors[k + 1] == crate::expr_model::subst_full(c.bodies[k], seq![ExprSpec::Free(c.locals[k])], 0)
     &&& forall|k: int| 0 <= k < np ==> #[trigger] c.locals[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
         && c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))
+    &&& c.locals.no_duplicates()
     &&& ind_app_ok(st, pid, c.cursors.last())
 }
 
@@ -4445,6 +4452,63 @@ pub(crate) proof fn ctor_pdoms<'t>(st: InductiveCheckState<'t>, pid: u64, ti: Ex
         assert(c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])));
     }
     crate::kgen::tel_eq(cty, ti, pids, np as nat);
+}
+
+/// A CONSTRUCTOR'S RESULT, CLOSED: past its walk's `n` binders, the
+/// inductive applied, the parameters first as the bound variables they are.
+pub(crate) proof fn ctor_result<'t>(st: InductiveCheckState<'t>, pid: u64, cty: ExprSpec) -> (n: nat)
+    requires
+        ctor_syn(st, pid, cty),
+        crate::expr_model::nlbv(cty) == 0,
+        !crate::expr_model::has_fv(cty),
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+    ensures
+        st.local_params@.len() <= n,
+        crate::rec_canon::tdoms(cty, n).len() == n,
+        crate::beta_model::spine_head(crate::rec_canon::tbody(cty, n)) is Const,
+        crate::beta_model::spine_head(crate::rec_canon::tbody(cty, n))->Const_0 == pid,
+        crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n)).len() >= st.local_params@.len(),
+        forall|i: int| 0 <= i < st.local_params@.len() ==>
+            #[trigger] crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n))[i] == ExprSpec::Var((n - 1 - i) as nat),
+{
+    let np = st.local_params@.len();
+    let c = choose|c: CtorCert| #[trigger] ctor_syn_cert(st, pid, cty, c);
+    let ls = c.locals;
+    let n = ls.len();
+    assert forall|k: int| 0 <= k <= n implies #[trigger] crate::kgen::lit_open(cty, ls.subrange(0, k)) == c.cursors[k] by {
+        crate::kgen::chain_lit_open(cty, c.cursors, c.bts, c.bodies, ls, k);
+    }
+    assert forall|k: int| 0 <= k < n implies (#[trigger] crate::kgen::lit_open(cty, ls.subrange(0, k))) is Bind
+        && crate::kgen::lit_open(cty, ls.subrange(0, k))->Bind_0 == BinderKind::Pi by {
+        assert(c.cursors[k] == ExprSpec::Bind(BinderKind::Pi, Box::new(c.bts[k]), Box::new(c.bodies[k])));
+    }
+    crate::kgen::lit_open_pis(cty, ls, n as nat);
+    crate::kgen::opened_doms(cty, ls, n as nat);
+    assert(ls.subrange(0, n as int) =~= ls);
+    let r = crate::rec_canon::tbody(cty, n as nat);
+    let fx = crate::kgen::frees(ls);
+    let opened = crate::ti_spine::vsub(r, fx);
+    assert(opened == c.cursors.last());
+    // the head: the inductive
+    crate::kgen::vsub_head(r, ls);
+    crate::dom_psimple::vsub_spine(r, fx);
+    // the closed body's arguments
+    crate::kgen::tel_split(cty, n as nat);
+    crate::twin::binds_parts_nofv(BinderKind::Pi, crate::rec_canon::tdoms(cty, n as nat), r);
+    crate::twin::spine_args_nofv(r);
+    crate::kgen::spine_args_nlbv(r, n as nat);
+    let args = crate::beta_model::spine_args(r);
+    assert forall|i: int| 0 <= i < np implies #[trigger] args[i] == ExprSpec::Var((n - 1 - i) as nat) by {
+        assert(c.locals[i] == crate::expr_arena_bridge::expr_id(st.local_params@[i]));
+        assert(crate::beta_model::spine_args(opened)[i] == ExprSpec::Free(ls[i]));
+        crate::kgen::vsub_is_free(args[i], ls, ls[i]);
+        if args[i] != ExprSpec::Free(ls[i]) {
+            let m = choose|m: nat| m < ls.len() && args[i] == ExprSpec::Var(m) && ls[i] == ls[ls.len() - 1 - m];
+            assert(ls.no_duplicates());
+        }
+    }
+    n as nat
 }
 
 pub(crate) proof fn ctor_syn_of<'x, 't>(env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, pid: u64, ty: ExprSpec)
@@ -9188,6 +9252,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             st.block_codom is Some,
             level_free(*old(self).ctx, ctor_type_in),
             crate::util_model::owns(*old(self).ctx, parent_ind_name),
+            local_ids(st.local_params@).no_duplicates(),
+            forall|k: int| 0 <= k < st.local_params@.len() ==>
+                (#[trigger] crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::expr_id(st.local_params@[k]))) is Some
+                && (crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::expr_id(st.local_params@[k]))->Some_0 as nat)
+                    < crate::util::unique_count(*old(self).ctx),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
@@ -9286,9 +9355,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             reveal(params_conv);
         }
+        let ghost aids0 = crate::util_model::arena_ids(*self.ctx);
+        let ghost c0 = crate::util::unique_count(*self.ctx) as nat;
+        let ghost mut fls: Seq<ExprPtr<'t>> = Seq::empty();
+        proof {
+            assert(locs =~= local_ids(st.local_params@) + local_ids(fls)) by {
+                assert forall|k: int| 0 <= k < locs.len() implies locs[k] == (local_ids(st.local_params@) + local_ids(fls))[k] by {}
+            }
+        }
         // Non-param constructor args.
         while let Pi { binder_name, binder_type, binder_style, body, .. } = self.ctx.read_expr(ctor_type_cursor)
             invariant
+                crate::util_model::arena_ids(*self.ctx) == aids0,
+                c0 <= crate::util::unique_count(*self.ctx),
+                crate::kgen::serials_in(aids0, fls, c0, crate::util::unique_count(*self.ctx) as nat),
+                locs == local_ids(st.local_params@) + local_ids(fls),
+                forall|k: int| 0 <= k < st.local_params@.len() ==>
+                    (#[trigger] crate::expr_arena_bridge::unique_serial(aids0, crate::expr_arena_bridge::expr_id(st.local_params@[k]))) is Some
+                    && (crate::expr_arena_bridge::unique_serial(aids0, crate::expr_arena_bridge::expr_id(st.local_params@[k]))->Some_0 as nat) < c0,
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -9333,9 +9417,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
             // Assert that there are no non-positive occurrences in the constructor.
             self.check_positivity1(st, binder_type);
+            let ghost cnt = crate::util::unique_count(*self.ctx) as nat;
             let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
             proof {
                 crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                crate::kgen::serials_push(aids0, fls, c0, cnt, local, crate::util::unique_count(*self.ctx) as nat);
+                let fls0 = fls;
+                fls = fls.push(local);
+                assert(local_ids(fls) =~= local_ids(fls0).push(crate::expr_arena_bridge::expr_id(local)));
             }
             ctor_type_cursor = self.ctx.inst(body, &[local]);
             proof {
@@ -9348,6 +9437,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
                 bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
                 locs = locs.push(crate::expr_arena_bridge::expr_id(local));
+                assert(locs =~= local_ids(st.local_params@) + local_ids(fls));
                 sorts = sorts.push(crate::level_arena_bridge::to_model(s));
                 cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
                 assert forall|k: int| 0 <= k < st.local_params@.len() implies #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
@@ -9363,6 +9453,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let valid = self.is_valid_ind_app(st, parent_ind_name, ctor_type_cursor);
         assert!(valid);
         proof {
+            // the walk's locals are distinct: the parameters' serials are
+            // below the count the fields' start at
+            let cn = crate::util::unique_count(*self.ctx) as nat;
+            crate::kgen::serials_distinct(aids0, fls, c0, cn);
+            let pids = local_ids(st.local_params@);
+            let fids = local_ids(fls);
+            assert forall|k: int| 0 <= k < pids.len() implies crate::expr_arena_bridge::unique_serial(aids0, #[trigger] pids[k]) is Some
+                && 0 <= crate::expr_arena_bridge::unique_serial(aids0, pids[k])->Some_0
+                && (crate::expr_arena_bridge::unique_serial(aids0, pids[k])->Some_0 as nat) < c0 by {
+                assert(pids[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k]));
+            }
+            assert forall|k: int| 0 <= k < fids.len() implies crate::expr_arena_bridge::unique_serial(aids0, #[trigger] fids[k]) is Some
+                && c0 <= crate::expr_arena_bridge::unique_serial(aids0, fids[k])->Some_0
+                && (crate::expr_arena_bridge::unique_serial(aids0, fids[k])->Some_0 as nat) < cn by {
+                assert(fids[k] == crate::expr_arena_bridge::expr_id(fls[k]));
+            }
+            app_ids(aids0, pids, fids, 0, c0, c0, cn);
             let c = CtorCert { cursors: cs, bts, bodies, locals: locs, sorts };
             assert(ctor_cert_ok(env, *st, crate::level_arena_bridge::name_id(parent_ind_name), crate::expr_arena_bridge::to_model(ctor_type_in), c));
         }

@@ -380,6 +380,95 @@ pub proof fn tdoms_fv_absent(t: ExprSpec, m: nat, z: nat)
     }
 }
 
+/// Substituting a local keeps a constant head.
+pub proof fn inst_free_head(k: nat, x: nat, e: ExprSpec)
+    requires
+        crate::beta_model::spine_head(crate::subst_algebra::inst(k, ExprSpec::Free(x), e)) is Const,
+    ensures
+        crate::beta_model::spine_head(e) is Const,
+        crate::beta_model::spine_head(crate::subst_algebra::inst(k, ExprSpec::Free(x), e)) == crate::beta_model::spine_head(e),
+    decreases e,
+{
+    if let ExprSpec::App(f, _) = e {
+        inst_free_head(k, x, *f);
+    }
+}
+
+/// Substituting a local yields a local only from that variable or that
+/// local.
+pub proof fn inst_is_free(k: nat, x: nat, e: ExprSpec, z: nat)
+    requires
+        crate::subst_algebra::inst(k, ExprSpec::Free(x), e) == ExprSpec::Free(z),
+    ensures
+        (e == ExprSpec::Var(k) && z == x) || e == ExprSpec::Free(z),
+{
+    if let ExprSpec::Var(i) = e {
+        if i == k {
+            assert(crate::subst_algebra::lift(k, 0, ExprSpec::Free(x)) == ExprSpec::Free(x));
+        }
+    }
+}
+
+/// Instantiating with locals yields a local only from a variable or that
+/// local.
+pub proof fn vsub_is_free(e: ExprSpec, ids: Seq<nat>, z: nat)
+    requires
+        crate::ti_spine::vsub(e, frees(ids)) == ExprSpec::Free(z),
+        nlbv(e) <= ids.len(),
+    ensures
+        (exists|m: nat| m < ids.len() && e == ExprSpec::Var(m) && z == ids[ids.len() - 1 - m]) || e == ExprSpec::Free(z),
+    decreases ids.len(),
+{
+    if ids.len() > 0 {
+        let n = ids.len();
+        let fx = frees(ids);
+        let e2 = crate::subst_algebra::inst((n - 1) as nat, fx[0], e);
+        let rest = ids.drop_first();
+        assert(frees(ids).drop_first() =~= frees(rest));
+        assert(fx[0] == ExprSpec::Free(ids[0]));
+        crate::ti_scope::inst_scope((n - 1) as nat, fx[0], e, (n - 1) as nat);
+        vsub_is_free(e2, rest, z);
+        if e2 == ExprSpec::Free(z) {
+            inst_is_free((n - 1) as nat, ids[0], e, z);
+            if e == ExprSpec::Var((n - 1) as nat) {
+                assert(ids[n - 1 - (n - 1)] == ids[0]);
+            }
+        } else {
+            let m = choose|m: nat| m < rest.len() && e2 == ExprSpec::Var(m) && z == rest[rest.len() - 1 - m];
+            // `e` is a variable below the substituted index, kept as is
+            assert(e == ExprSpec::Var(m)) by {
+                match e {
+                    ExprSpec::Var(i) => {},
+                    ExprSpec::App(_, _) => {},
+                    ExprSpec::Bind(_, _, _) => {},
+                    ExprSpec::Let(_, _, _) => {},
+                    ExprSpec::Proj(_, _) => {},
+                    _ => {},
+                }
+            }
+            assert(rest[rest.len() - 1 - m] == ids[n - 1 - m]);
+        }
+    }
+}
+
+/// A spine's arguments are within its scope.
+pub proof fn spine_args_nlbv(e: ExprSpec, d: nat)
+    requires
+        nlbv(e) <= d,
+    ensures
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> nlbv(#[trigger] crate::beta_model::spine_args(e)[i]) <= d,
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        spine_args_nlbv(*f, d);
+        assert forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() implies nlbv(#[trigger] crate::beta_model::spine_args(e)[i]) <= d by {
+            if i < crate::beta_model::spine_args(*f).len() {
+                assert(crate::beta_model::spine_args(e)[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
 /// A telescope opened short of its binders is still a Pi.
 pub proof fn lit_open_pi(t: ExprSpec, ids: Seq<nat>, n: nat, k: int)
     requires
