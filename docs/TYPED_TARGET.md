@@ -1790,6 +1790,20 @@ and eta step is vacuous (about thirty sites use that). Stages:
     recursor data comparison (`aux_data_ck`); B6a-4 `rec_core` at the
     export from the certificate, so `has_canon` and the tables follow
     and `kh_hyp` keeps only the fragment's boundary.
+    B6a-2 done as a lemma (`inductive::shape_exists`): for a single
+    inductive whose fields are of an admitted kind, the declared types
+    give `gen_shape_ok(st, decl_shape(st), lm)`. `decl_shape` reads the
+    shape off the declared types as `rec_canon::shape_of` does (fields
+    up to the constructor's arity). Pieces: the constructor's parameters
+    are the inductive's (`ctor_pdoms`: B6a-1's check, `kgen::tel_eq`);
+    its result is the inductive at the block's universe parameters
+    (second tested check, `levels_ptr_eq`; Init 808/808) applied to the
+    parameters as variables (`ctor_result`: distinct walk locals,
+    `kgen::vsub_is_free`); bounds and closedness of the assembled motive
+    and minor premises (`twin::motive_nlbv`, `minor_nlbv`, `head_nofv`);
+    the block's constants (`ind_const_at`). Next: discharge
+    `shape_exists`'s requirements where `declar_rec_glue` is called, then
+    the certificate (B6a-3).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

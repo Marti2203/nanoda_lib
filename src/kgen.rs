@@ -469,6 +469,114 @@ pub proof fn spine_args_nlbv(e: ExprSpec, d: nat)
     }
 }
 
+/// A telescope's domains, split.
+pub proof fn tdoms_split(t: ExprSpec, a: nat, b: nat)
+    requires
+        crate::rec_canon::tdoms(t, a + b).len() == a + b,
+    ensures
+        crate::rec_canon::tdoms(t, a).len() == a,
+        crate::rec_canon::tdoms(crate::rec_canon::tbody(t, a), b).len() == b,
+        crate::rec_canon::tdoms(t, a + b) == crate::rec_canon::tdoms(t, a) + crate::rec_canon::tdoms(crate::rec_canon::tbody(t, a), b),
+    decreases a,
+{
+    if a > 0 {
+        let bd = *t->Bind_2;
+        tdoms_split(bd, (a - 1) as nat, b);
+        assert((a - 1 + b) as nat == (a + b - 1) as nat);
+        assert(crate::rec_canon::tdoms(t, a + b) =~= crate::rec_canon::tdoms(t, a) + crate::rec_canon::tdoms(crate::rec_canon::tbody(t, a), b));
+    } else {
+        assert(crate::rec_canon::tdoms(t, 0) =~= Seq::<ExprSpec>::empty());
+        assert(crate::rec_canon::tdoms(t, a + b) =~= crate::rec_canon::tdoms(t, a) + crate::rec_canon::tdoms(crate::rec_canon::tbody(t, a), b));
+    }
+}
+
+/// A telescope's body, in two steps.
+pub proof fn tbody_add(t: ExprSpec, a: nat, b: nat)
+    ensures
+        crate::rec_canon::tbody(crate::rec_canon::tbody(t, a), b) == crate::rec_canon::tbody(t, a + b),
+    decreases a,
+{
+    if a > 0 {
+        match t {
+            ExprSpec::Bind(BinderKind::Pi, _, bd) => {
+                tbody_add(*bd, (a - 1) as nat, b);
+                assert((a - 1 + b) as nat == (a + b - 1) as nat);
+            },
+            _ => {
+                if b > 0 {
+                    assert(crate::rec_canon::tbody(ExprSpec::Closed, b) == ExprSpec::Closed);
+                }
+            },
+        }
+    }
+}
+
+/// An opened term is a sort only if the term is.
+pub proof fn vsub_sort(e: ExprSpec, ids: Seq<nat>)
+    requires
+        vsub(e, frees(ids)) is Sort,
+    ensures
+        e is Sort,
+        vsub(e, frees(ids)) == e,
+    decreases ids.len(),
+{
+    if ids.len() > 0 {
+        let n = ids.len();
+        let fx = frees(ids);
+        let rest = ids.drop_first();
+        assert(fx.drop_first() =~= frees(rest));
+        let e2 = inst((n - 1) as nat, fx[0], e);
+        vsub_sort(e2, rest);
+        if let ExprSpec::Var(i) = e {
+            if i == n - 1 {
+                assert(crate::subst_algebra::lift((n - 1) as nat, 0, ExprSpec::Free(ids[0])) == ExprSpec::Free(ids[0]));
+            }
+        }
+    }
+}
+
+/// A walk that ends at a non-Pi has the type's arity.
+pub proof fn tarity_of(t: ExprSpec, n: nat)
+    requires
+        crate::rec_canon::tdoms(t, n).len() == n,
+        !(crate::rec_canon::tbody(t, n) is Bind && crate::rec_canon::tbody(t, n)->Bind_0 == BinderKind::Pi),
+    ensures
+        crate::rec_canon::tarity(t) == n,
+    decreases n,
+{
+    if n > 0 {
+        let bd = *t->Bind_2;
+        tarity_of(bd, (n - 1) as nat);
+    }
+}
+
+/// Parameter levels read back from their names.
+pub proof fn plevels_names(ls: Seq<crate::level_model::LevelSpec>)
+    requires
+        forall|i: int| 0 <= i < ls.len() ==> (#[trigger] ls[i]) is Param,
+    ensures
+        crate::rec_canon::plevels(crate::level_model::level_names(ls)) == ls,
+{
+    assert(crate::rec_canon::plevels(crate::level_model::level_names(ls)) =~= ls);
+}
+
+/// A closed term misses every local.
+pub proof fn nofv_absent(e: ExprSpec, z: nat)
+    requires
+        !crate::expr_model::has_fv(e),
+    ensures
+        fv_absent(e, z),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { nofv_absent(*f, z); nofv_absent(*x, z); },
+        ExprSpec::Bind(_, t, b) => { nofv_absent(*t, z); nofv_absent(*b, z); },
+        ExprSpec::Let(t, v, b) => { nofv_absent(*t, z); nofv_absent(*v, z); nofv_absent(*b, z); },
+        ExprSpec::Proj(_, x) => { nofv_absent(*x, z); },
+        _ => {},
+    }
+}
+
 /// A telescope opened short of its binders is still a Pi.
 pub proof fn lit_open_pi(t: ExprSpec, ids: Seq<nat>, n: nat, k: int)
     requires
