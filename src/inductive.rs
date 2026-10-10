@@ -2151,12 +2151,79 @@ pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Decla
             &&& crate::tc::def_eq_claim(env,
                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(or.info.ty), crate::level_model::level_names(ou), ru),
                 crate::expr_arena_bridge::to_model(nr.info.ty))
+            &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec()) is Some
+            &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec())
+                == rec_major_head(crate::expr_arena_bridge::to_model(nr.info.ty), or.major_idx_spec())
             &&& or.rec_rules@.len() == nr.rec_rules@.len()
             &&& forall|j: int| 0 <= j < or.rec_rules@.len() ==> crate::tc::def_eq_claim(env,
                 crate::expr_arena_bridge::to_model((#[trigger] or.rec_rules@[j]).val),
                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(nr.rec_rules@[j].val), crate::level_model::level_names(ru), ou))
         },
         _ => false,
+    }
+}
+
+/// THE HEAD OF A RECURSOR TYPE'S MAJOR PREMISE (binder `k`), read
+/// syntactically -- as `rec_canon::rec_ind` reads it.
+pub(crate) open spec fn rec_major_head(ty: ExprSpec, k: nat) -> Option<u64> {
+    let ds = crate::rec_canon::tdoms(ty, k + 1);
+    if ds.len() == k + 1 && crate::beta_model::spine_head(ds[k as int]) is Const {
+        Some(crate::beta_model::spine_head(ds[k as int])->Const_0)
+    } else {
+        None
+    }
+}
+
+/// The head constant of a telescope's `k`-th domain, read literally.
+fn major_head_name<'t, 'p>(ctx: &TcCtx<'t, 'p>, ty: ExprPtr<'t>, k: usize) -> (result: Option<NamePtr<'t>>)
+    requires
+        crate::util_model::owns(*ctx, ty),
+    ensures
+        result matches Some(n) ==> rec_major_head(crate::expr_arena_bridge::to_model(ty), k as nat)
+            == Some(crate::level_arena_bridge::name_id(n)),
+{
+    let ghost t = crate::expr_arena_bridge::to_model(ty);
+    let mut cur = ty;
+    let mut i: usize = 0;
+    proof {
+        assert(crate::rec_canon::tdoms(t, 0) =~= Seq::<ExprSpec>::empty());
+    }
+    while i < k
+        invariant
+            crate::util_model::owns(*ctx, cur),
+            i <= k,
+            crate::expr_arena_bridge::to_model(cur) == crate::rec_canon::tbody(t, i as nat),
+            crate::rec_canon::tdoms(t, i as nat).len() == i,
+        decreases k - i,
+    {
+        match ctx.read_expr(cur) {
+            Pi { body, .. } => {
+                proof {
+                    crate::kgen::tdoms_step(t, i as nat);
+                }
+                cur = body;
+            },
+            _ => return None,
+        }
+        i += 1;
+    }
+    match ctx.read_expr(cur) {
+        Pi { binder_type, .. } => {
+            proof {
+                crate::kgen::tdoms_step(t, k as nat);
+            }
+            let (h, args) = ctx.unfold_apps(binder_type);
+            match ctx.read_expr(h) {
+                Const { name, .. } => {
+                    proof {
+                        crate::beta_model::spine_destruct_app(crate::expr_arena_bridge::to_model(h), crate::expr_arena_bridge::ptr_models(args@));
+                    }
+                    Some(name)
+                },
+                _ => None,
+            }
+        },
+        _ => None,
     }
 }
 
@@ -8671,6 +8738,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         level_free_in_scope(*self, new_r.info.ty);
                     }
                     self.assert_def_eq(imported_w_new_uparams, new.info().ty);
+                    // VERUS-REWRITE(tested-input): the exported recursor's major
+                    // premise is headed by the generated one's inductive, read
+                    // syntactically (`rec_major_head`, as `rec_canon::rec_ind`
+                    // reads it), not only up to conversion. Never fails on a
+                    // recursor Lean exports.
+                    let mk = old_r.major_idx();
+                    match (major_head_name(self.ctx, old_d.info().ty, mk), major_head_name(self.ctx, new.info().ty, mk)) {
+                        (Some(oh), Some(nh)) => assert!(oh == nh, "recursor: its major premise is not its inductive's"),
+                        _ => panic!("recursor: its major premise is not an inductive's"),
+                    }
                     // VERUS-REWRITE(observe): whether the generated recursor's type at
                     // the exported recursor's universe parameters is the exported type
                     // syntactically (`model_eq`) is recorded, as each rule's is in

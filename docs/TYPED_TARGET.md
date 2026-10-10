@@ -1813,7 +1813,21 @@ and eta step is vacuous (about thirty sites use that). Stages:
     carried past the recursors' construction (`shape_pre_frame`), and
     `shape_end` gives `gen_shape_ok` at the end of the non-nested branch
     for a single inductive with admitted fields (`fields_admitted`).
-    Next: the certificate (B6a-3).
+    B6a-3/4 plan (what `twin::rec_core` at the export needs, and from
+    where): the declared inductive and constructor types in canonical
+    form (`shape_end`, `ind_old`, `ctor_old` -- done); the recursor's
+    table data (parameters, one motive, minors, major index, rules'
+    constructors and field counts, level parameters) from nanoda's
+    `aux_data_ck` of the exported recursor against the generated one,
+    with the generator's facts; `rec_ind`, the head of the exported
+    recursor type's major premise, a syntactic reading nanoda checks
+    only by `def_eq` (a tested check); the constructor tables and level
+    parameters from the export model and the constructor arm's checks;
+    the indices and the inductive's type not mentioning the inductive
+    (`ind_app_ok`; declaration order); the canonical rules string-free
+    lambdas (`frag_term` of the declarations, the motive binder). The
+    field kinds `rec_core` reads (`psimple`/`direct_occ`, stricter than
+    `fkind_ok`) stay the fragment's boundary in `kh_hyp`.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

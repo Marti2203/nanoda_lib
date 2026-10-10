@@ -577,6 +577,34 @@ pub proof fn nofv_absent(e: ExprSpec, z: nat)
     }
 }
 
+/// One more binder of a telescope: its domain and the body past it.
+pub proof fn tdoms_step(t: ExprSpec, i: nat)
+    requires
+        crate::rec_canon::tdoms(t, i).len() == i,
+        crate::rec_canon::tbody(t, i) is Bind,
+        crate::rec_canon::tbody(t, i)->Bind_0 == BinderKind::Pi,
+    ensures
+        crate::rec_canon::tdoms(t, i + 1).len() == i + 1,
+        crate::rec_canon::tdoms(t, i + 1)[i as int] == *crate::rec_canon::tbody(t, i)->Bind_1,
+        crate::rec_canon::tbody(t, i + 1) == *crate::rec_canon::tbody(t, i)->Bind_2,
+    decreases i,
+{
+    let a = *t->Bind_1;
+    let b = *t->Bind_2;
+    if i == 0 {
+        assert(crate::rec_canon::tdoms(b, 0) =~= Seq::<ExprSpec>::empty());
+        assert(crate::rec_canon::tdoms(t, 1) == seq![a] + crate::rec_canon::tdoms(b, 0));
+        assert(crate::rec_canon::tbody(t, 1) == crate::rec_canon::tbody(b, 0));
+    } else {
+        assert(crate::rec_canon::tdoms(t, i) == seq![a] + crate::rec_canon::tdoms(b, (i - 1) as nat));
+        assert(crate::rec_canon::tbody(t, i) == crate::rec_canon::tbody(b, (i - 1) as nat));
+        tdoms_step(b, (i - 1) as nat);
+        assert((i - 1 + 1) as nat == i);
+        assert(crate::rec_canon::tdoms(t, i + 1) == seq![a] + crate::rec_canon::tdoms(b, i));
+        assert(crate::rec_canon::tbody(t, i + 1) == crate::rec_canon::tbody(b, i));
+    }
+}
+
 /// A telescope opened short of its binders is still a Pi.
 pub proof fn lit_open_pi(t: ExprSpec, ids: Seq<nat>, n: nat, k: int)
     requires
