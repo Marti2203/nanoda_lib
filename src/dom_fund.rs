@@ -594,6 +594,69 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
     }
 }
 
+/// `ind_code_mem` for any type former whose type is a telescope ending in
+/// a sort, its shape unknown: its full application's code is its node.
+proof fn tf_code_mem(sig: Sig, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, tds: Seq<ExprSpec>, l: LevelSpec) -> (v: Cpt)
+    requires
+        crate::dom_model::sem_const(sig, c, ls),
+        crate::ti_syntax::dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)),
+        xs.len() == tds.len(),
+        !sig.ienv.ctor_ind.contains_key(c),
+        !sig.ienv.recs.contains_key(c),
+    ensures
+        mem(sig, crate::beta_model::spine_app(ExprSpec::Const(c, ls), xs), bot_env(), v),
+        typed(v, Cpt::U),
+        v is Nd && v->Nd_0 == crate::dom_compact::NdKey::Ty(c, crate::dom_code::is_prop_at(sig, c, ls), crate::dom_code::smash(sig, c)),
+{
+    let k = tds.len();
+    let bn = crate::dom_iota::bots(k);
+    crate::dom_iota::bot_chain(sig, tds, bot_env());
+    let (ai, vi) = crate::dom_canon::tf_step(sig, c, ls, tds, l, bn, bn);
+    typed_wf(vi, ai);
+    le_refl(vi);
+    assert(crate::dom_sem::sem_mem(sig, c, ls, vi, ai, vi));
+    crate::dom_sem::mem_sem(sig, c, ls, bot_env(), vi);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] mem(sig, xs[i], bot_env(), bn[i]) && wf(bn[i]) by {
+        mem_bot(sig, xs[i], bot_env());
+        reveal(mem);
+    }
+    let v = crate::dom_code::canon_code(sig, c, ls, bn);
+    assert forall|i: int| 0 <= i < bn.len() implies #[trigger] wf(bn[i]) by {}
+    crate::dom_code::canon_wf(sig, c, ls, bn);
+    crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(c, ls), xs, bot_env(), vi, bn, v);
+    crate::dom_canon::bots_sparams(sig, c, bn);
+    crate::dom_canon::canon_typed(sig, c, ls, bn);
+    v
+}
+
+/// A TYPE FORMER FULLY APPLIED reduces, along any chain, only to
+/// applications of itself -- its shape unknown (`tf_code_mem`).
+pub proof fn tf_head_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, tds: Seq<ExprSpec>, l: LevelSpec, t2: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::dom_model::sem_const(sig, c, ls),
+        crate::ti_syntax::dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)),
+        xs.len() == tds.len(),
+        !sig.ienv.ctor_ind.contains_key(c),
+        !sig.ienv.recs.contains_key(c),
+        tchain(sig, g, crate::beta_model::spine_app(ExprSpec::Const(c, ls), xs), t2),
+    ensures
+        ind_red(sig, t2, c),
+{
+    let t = crate::beta_model::spine_app(ExprSpec::Const(c, ls), xs);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
+    crate::dom_lift::iapp_self(sig, t);
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == t && #[trigger] ch[ch.len() - 1] == t2
+        && crate::ti_chain::chain_ok(sig, g, ch);
+    if ch.len() > 1 {
+        let v = tf_code_mem(sig, c, ls, xs, tds, l);
+        let nn = cstage(v, Cpt::U);
+        typed_up(v, Cpt::U, nn);
+        chain_rel(sig, g, ch, ch.len() - 1, nn, v);
+        ty_ind(sig, nn, g, t, t2, v);
+    }
+}
+
 /// A TYPE CHAINED TO AN APPLICATION OF THE INDUCTIVE reduces to one, its
 /// type parameters chained to the application's. Unlike `ind_inj_chain`
 /// it asks no typing of the application, so uniqueness of types can use it.

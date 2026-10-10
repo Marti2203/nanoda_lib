@@ -876,7 +876,12 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         requires
             crate::util_model::owns(*self, rec.info.ty),
         ensures
-            result matches Some(n) ==> crate::util_model::owns(*self, n),
+            result matches Some(n) ==> crate::util_model::owns(*self, n) && {
+                let p = crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(rec.info.ty), rec.major_idx_spec());
+                &&& p is Some
+                &&& crate::beta_model::spine_head(crate::expr_model::bind_dom(p->Some_0)) is Const
+                &&& crate::beta_model::spine_head(crate::expr_model::bind_dom(p->Some_0))->Const_0 == crate::level_arena_bridge::name_id(n)
+            },
     {
         match self.get_nth_pi_binder(rec.info.ty, rec.major_idx()).map(
             |x: ExprPtr<'t>| -> (r: Expr<'t>)
@@ -884,6 +889,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     crate::util_model::owns(*self, x),
                 ensures
                     crate::expr_arena_bridge::expr_children_owned(*self, r),
+                    !(r is Local) ==> crate::expr_arena_bridge::to_model_of_expr(r)
+                        == crate::beta_model::spine_head(crate::expr_arena_bridge::to_model(x)),
                 { self.read_expr(self.unfold_apps_fun(x)) },
         ) {
             Some(Const { name, .. }) => Some(name),

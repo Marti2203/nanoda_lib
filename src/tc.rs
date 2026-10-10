@@ -4546,6 +4546,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     fn to_ctor_when_k(&mut self, major: ExprPtr<'t>, rec: &RecursorData<'t>) -> (result: Option<ExprPtr<'t>>)
         requires
             crate::env_model::recursor_data_owned(*old(self).env, *rec),
+            exists|rid: u64| (*old(self).env).find(rid) == Some(Declar::Recursor(*rec)),
             crate::util_model::owns(*(*old(self)).ctx, major),
             tc_wf(*old(self)),
             in_scope(*old(self), major),
@@ -4621,6 +4622,19 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(params + rest =~= am);
                         kcprop_of(env, to_model_expr(major_ty));
                         crate::kclaims::cwh_refl(kd, ke, kg, to_model_expr(major_ty));
+                        // the K recursor's major premise is headed by the major's inductive
+                        let rid = choose|rid: u64| env.find(rid) == Some(Declar::Recursor(*rec));
+                        crate::env_model::to_model_of_recursors_at(env, rid);
+                        crate::env_model::to_model_of_declar_ty_at(env, rid);
+                        assert(ke.recs.contains_key(rid));
+                        assert(kd.contains_key(rid));
+                        assert(kd[rid].1 == to_model_expr(rec.info.ty));
+                        assert(ke.recs[rid].major_idx == rec.major_idx_spec());
+                        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), am);
+                        assert(crate::beta_model::spine_head(to_model_expr(major_ty)) == ExprSpec::Const(ind, ls));
+                        assert(ind == crate::level_arena_bridge::name_id(name));
+                        assert(name == n);
+                        assert(crate::kclaims::k_rec(kd, ke, rid, ind));
                         crate::kclaims::cwh_k(kd, ke, kg, to_model_expr(major), to_model_expr(major_ty), to_model_expr(major_ty),
                             to_model_expr(new_ctor_app), to_model_expr(new_type), ind, cid, ls, params, rest);
                     }

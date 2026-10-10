@@ -2000,6 +2000,29 @@ and eta step is vacuous (about thirty sites use that). Stages:
     (nanoda's `reduce_proj` checks only that the head is a constructor);
     and the structure steps through a clause that a structure with a
     declared constructor has a known shape.
+    S4 DONE (the vacuity is gone from the statement): `ind_ok`'s
+    constructor and field-count clauses hold once the inductive's shape is
+    known (`has_canon`), its structure clause once the structure's
+    constructor is declared -- when nanoda's kernel can use the structure.
+    Mid-block, an inductive without its recursor (not a structure) is
+    constrained by none of them. Two kernel steps reached a constructor's
+    inductive by typing and are justified without its shape: K, through
+    nanoda's own check that the major premise's head is the K recursor's
+    major inductive (`expr::get_major_induct` now states what it reads;
+    `kclaims::k_rec`, `k_rec_canon`: that recursor is in the fragment, so
+    the inductive has a canonical recursor); the projection, as nanoda's
+    `reduce_proj` does (the head is any constructor): a constructor of an
+    inductive of unknown shape is no term of a structure's application
+    (`kiota::foreign_ctor_absurd`, over `dom_fund::tf_head_red` -- a type
+    former's full application reduces only to its own applications, its
+    shape unknown). New per-constructor facts in `ind_ok` (and so in
+    `ind_ok_hyp`): `ctor_form` (its declared type a telescope ending in its
+    inductive at its level parameters, fully applied; the inductive a type
+    former) -- what nanoda's block check establishes, certified for simple
+    blocks by `block_ok` (to certify at the export next) -- and
+    `ctor_sem` (its inductive a semantic constant: the rank bound
+    `rec_model` states for an inductive with a recursor; a model
+    hypothesis, B7).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

@@ -188,14 +188,44 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
-        && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
-    &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
-        && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) ==>
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
+        ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_form(sig, cid) && ctor_sem(sig, cid)
+    &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
+        ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid]) ==>
         forall|j: int| 0 <= j < crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).nmin()
             && #[trigger] crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors[j] == cid
             ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat
+}
+
+/// A CONSTRUCTOR'S DECLARED FORM, as nanoda's block check leaves it --
+/// with or without its inductive's recursor: its type a telescope ending
+/// in its inductive at its own level parameters, fully applied; its
+/// inductive a type former (a telescope ending in a sort), neither a
+/// constructor nor a recursor.
+pub open spec fn ctor_form(sig: crate::ti_syntax::Sig, cid: u64) -> bool {
+    let ind = sig.ienv.ctor_ind[cid];
+    let t = sig.consts[cid].ty;
+    let ti = sig.consts[ind].ty;
+    let r = crate::rec_canon::tbody(t, crate::rec_canon::tarity(t));
+    &&& sig.consts.contains_key(cid) && sig.consts[cid].val is None
+    &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
+    &&& sig.consts[cid].lps == sig.consts[ind].lps
+    &&& !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
+    &&& crate::rec_canon::tdoms(t, crate::rec_canon::tarity(t)).len() == crate::rec_canon::tarity(t)
+    &&& crate::rec_canon::tdoms(ti, crate::rec_canon::tarity(ti)).len() == crate::rec_canon::tarity(ti)
+    &&& crate::rec_canon::tbody(ti, crate::rec_canon::tarity(ti)) is Sort
+    &&& crate::beta_model::spine_head(r) == ExprSpec::Const(ind, crate::rec_canon::plevels(sig.consts[ind].lps))
+    &&& crate::beta_model::spine_args(r).len() == crate::rec_canon::tarity(ti)
+}
+
+/// A constructor's inductive is a semantic constant at every instance (the
+/// model's hypothesis; `rec_model` states it of an inductive with a
+/// recursor, this of one whose constructors are declared before it).
+pub open spec fn ctor_sem(sig: crate::ti_syntax::Sig, cid: u64) -> bool {
+    forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sig.ienv.ctor_ind[cid]].lps.len()
+        ==> #[trigger] crate::dom_model::sem_const(sig, sig.ienv.ctor_ind[cid], ls)
 }
 
 /// A STRUCTURE'S CANONICAL RECURSOR IS OF ITS DECLARED SHAPE: the
@@ -253,14 +283,15 @@ pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_np.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
-        && crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
-    &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) ==> crate::dom_code::smash(sig, ind)
-        && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
+        ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)
+    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_form(sig, cid) && ctor_sem(sig, cid)
+    &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
+        ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_nf.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
-        && forall|j: int| 0 <= j < crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).nmin()
+        && (crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid]) ==> forall|j: int| 0 <= j < crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).nmin()
             && #[trigger] crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors[j] == cid
-            ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat
+            ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).fields[j].len() == sig.ienv.ctor_nf[cid] as nat)
 }
 
 /// CONVERSION in the judgment: one derivation relating `x` and `y`.
@@ -1414,6 +1445,72 @@ pub proof fn ci_whnf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
     }
 }
 
+/// A RECURSOR OF THE ENVIRONMENT whose major premise's type is headed by
+/// `ind`, as the kernel reads it (`get_major_induct`: the binder at the
+/// major index, its head constant).
+pub open spec fn k_rec(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, rid: u64, ind: u64) -> bool {
+    let p = crate::beta_model::pi_spine(dty[rid].1, denv.recs[rid].major_idx);
+    &&& denv.recs.contains_key(rid) && dty.contains_key(rid)
+    &&& p is Some
+    &&& crate::beta_model::spine_head(crate::expr_model::bind_dom(p->Some_0)) is Const
+    &&& crate::beta_model::spine_head(crate::expr_model::bind_dom(p->Some_0))->Const_0 == ind
+}
+
+/// The binder at index `k` of a telescope of at least `k + 1` Pi binders
+/// is its `k`-th domain.
+pub proof fn pi_spine_tdoms(t: ExprSpec, k: nat)
+    requires
+        crate::rec_canon::tdoms(t, k + 1).len() == k + 1,
+    ensures
+        crate::beta_model::pi_spine(t, k) is Some,
+        crate::expr_model::bind_dom(crate::beta_model::pi_spine(t, k)->Some_0) == crate::rec_canon::tdoms(t, k + 1)[k as int],
+    decreases k,
+{
+    if k > 0 {
+        let b = *t->Bind_2;
+        assert(crate::rec_canon::tdoms(t, k + 1) == seq![*t->Bind_1] + crate::rec_canon::tdoms(b, k));
+        pi_spine_tdoms(b, (k - 1) as nat);
+    } else {
+        assert(crate::rec_canon::tdoms(t, 1) == seq![*t->Bind_1] + crate::rec_canon::tdoms(*t->Bind_2, 0));
+    }
+}
+
+/// THE K RECURSOR'S INDUCTIVE HAS A CANONICAL RECURSOR in the judgment:
+/// every recursor is in the fragment (`iota_ok`), its type a telescope up
+/// to its major premise, so the kernel's reading of its major's head is
+/// the one `rec_ind` makes.
+pub proof fn k_rec_canon(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, rid: u64, ind: u64)
+    requires
+        kh(dty, denv),
+        k_rec(dty, denv, rid, ind),
+    ensures
+        crate::dom_code::has_canon(jsig(dty, denv, d), ind),
+{
+    let raw = crate::metatheory::jsig_raw(dty, denv, d);
+    let sig = jsig(dty, denv, d);
+    crate::jkernel::kh_at(dty, denv, d);
+    assert(ind_ok(sig));
+    crate::twin::twin_keeps(raw, rid);
+    assert(sig.ienv.recs.contains_key(rid));
+    crate::ti_syntax::frag_of(sig, rid);
+    assert(crate::rec_canon::rec_canon(sig, rid));
+    let rd = raw.ienv.recs[rid];
+    if crate::twin::rec_core(raw, rid) {
+        crate::twin::twin_canon(raw, rid);
+        reveal(crate::twin::rec_core);
+        pi_spine_tdoms(raw.consts[rid].ty, rd.major_idx);
+    } else {
+        assert(sig.consts[rid] == raw.consts[rid]);
+        assert(sig.ienv.recs[rid] == rd);
+        let ind2 = crate::rec_canon::rec_ind(sig, rid);
+        let sh = crate::rec_canon::shape_of(sig, rd, ind2);
+        crate::twin::rec_ty_major(sh, crate::rec_canon::elim_level(sig, rid, ind2));
+        pi_spine_tdoms(raw.consts[rid].ty, rd.major_idx);
+    }
+    assert(crate::rec_canon::rec_ind(sig, rid) == ind);
+    assert(crate::dom_code::has_rec(sig, ind));
+}
+
 /// K-LIKE REDUCTION, the major premise's step (`to_ctor_when_k`): the
 /// major converts to the constructor built from its type's parameters (proof
 /// irrelevance: both prove the major's proposition), the constructor has a
@@ -1441,6 +1538,7 @@ pub proof fn cwh_k(
         cwh(dty, denv, g, t0, mty),
         mty == spine_app(ExprSpec::Const(ind, ls), params + rest),
         denv.ctor_inductive(cid) == Some(ind),
+        exists|rid: u64| #[trigger] k_rec(dty, denv, rid, ind),
         denv.ctor_num_params(cid) == Some(params.len() as u16),
         params.len() < 0x1_0000,
         nc == spine_app(ExprSpec::Const(cid, ls), params),
@@ -1483,6 +1581,8 @@ pub proof fn cwh_k(
             let sm = choose|s: ExprSpec| #[trigger] typed(dty, denv, d, mty, s);
             assert(ind_ok(sig));
             assert(sig.ienv.ctor_ind.contains_key(cid));
+            let rid = choose|rid: u64| #[trigger] k_rec(dty, denv, rid, ind);
+            k_rec_canon(dty, denv, d, rid, ind);
             let sh = crate::dom_code::canon_shape(sig, ind);
             let j = choose|j: int| 0 <= j < sh.ctors.len() && sh.ctors[j] == cid;
             crate::dom_ctor_bound::ctor_shape(sig, ind, j);

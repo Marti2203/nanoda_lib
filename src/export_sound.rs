@@ -138,10 +138,15 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         crate::ti_syntax::frag_of(s0, id);
         assert(crate::rec_canon::rec_canon(s0, id));
         assert(s0.consts.contains_key(id));
+        assert(dty.contains_key(id));
+        assert(!denv.defs.contains_key(id));
         assert(crate::kclaims::twin_ok(dty, denv));
         // closed (certified), a string-free lambda (`twin_ok`), at a constructor (T3a)
         assert forall|i: int| 0 <= i < denv.recs[id].rules.len() implies crate::beta_model::rule_rhs_ok(denv, #[trigger] denv.recs[id].rules[i]) by {
             assert(crate::expr_model::nlbv(denv.recs[id].rules[i].rhs) == 0);
+            assert(crate::beta_model::string_free(denv.recs[id].rules[i].rhs) && denv.recs[id].rules[i].rhs is Bind);
+            assert(!crate::expr_model::has_fv(denv.recs[id].rules[i].rhs));
+            assert(denv.ctor_num_params(denv.recs[id].rules[i].ctor_id) is Some);
         }
     }
     assert forall|id: u64| #[trigger] denv.defs.contains_key(id) implies !crate::confluence::redex_head(denv, id) by {
