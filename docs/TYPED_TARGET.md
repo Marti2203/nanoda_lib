@@ -1801,9 +1801,19 @@ and eta step is vacuous (about thirty sites use that). Stages:
     parameters as variables (`ctor_result`: distinct walk locals,
     `kgen::vsub_is_free`); bounds and closedness of the assembled motive
     and minor premises (`twin::motive_nlbv`, `minor_nlbv`, `head_nofv`);
-    the block's constants (`ind_const_at`). Next: discharge
-    `shape_exists`'s requirements where `declar_rec_glue` is called, then
-    the certificate (B6a-3).
+    the block's constants (`ind_const_at`).
+    B6a-2g: `shape_exists` is reached inside `check_inductive_declar`.
+    Three more tested checks (each registered, Init/Init.Core clean): the
+    inductive's literal walk covers its parameters; the checked
+    constructors and the checked inductive are the exported ones
+    structurally (`model_eq` in `assert_nonnested_ctors_def_eq` /
+    `assert_nonnested_tys_def_eq`, giving `ctor_old` / `ind_old` and the
+    declared types' closedness). The state's facts are bundled where
+    they are fresh (opaque `shape_pre`, after the constructor checks),
+    carried past the recursors' construction (`shape_pre_frame`), and
+    `shape_end` gives `gen_shape_ok` at the end of the non-nested branch
+    for a single inductive with admitted fields (`fields_admitted`).
+    Next: the certificate (B6a-3).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

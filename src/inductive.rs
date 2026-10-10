@@ -4140,6 +4140,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 0 <= i < st_rec.all_inductives_incl_specialized@.len() && 0 <= j < st_rec.all_inductives_incl_specialized@[i].ctors@.len()
                 ==> ctor_syn(st_rec, crate::level_arena_bridge::name_id(st_rec.all_inductives_incl_specialized@[i].name),
                     crate::expr_arena_bridge::to_model(st_rec.all_inductives_incl_specialized@[i].ctors@[j].ty)));
+            crate::kgen::serials_distinct(crate::util_model::arena_ids(ctx), st.local_params@, sp0, sp1);
+            shape_pre_intro(st_rec);
         }
         let recursors = {
             let env = crate::env_model::ctx_env_ext(&ctx, &ctor_extension, env_limit);
@@ -4308,6 +4310,13 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 tc.assert_nonnested_tys_def_eq(ind, &st);
                 tc.assert_nonnested_ctors_def_eq(&st);
                 tc.assert_nonnested_recursors_def_eq(&st, &recursors);
+                proof {
+                    // in the fragment, nanoda's checks give the canonical shape
+                    shape_pre_frame(st_rec, st);
+                    if st.all_inductives_incl_specialized@.len() == 1 && fields_admitted(st) {
+                        shape_end(st, *tc.env, crate::level_arena_bridge::to_model(st.elim_level->0));
+                    }
+                }
             }
         }
     }
@@ -4799,6 +4808,128 @@ pub(crate) proof fn shape_exists<'t>(st: InductiveCheckState<'t>, lm: crate::lev
         assert(hd[sh.np + 1 + j] == sh.minor_ty(j));
         crate::kgen::nofv_absent(sh.minor_ty(j), z);
     }
+}
+
+/// WHAT THE CANONICAL SHAPE NEEDS OF THE CHECKER'S STATE, gathered once the
+/// constructors are checked (opaque: carried, not re-derived).
+#[verifier::opaque]
+pub(crate) open spec fn shape_pre<'t>(st: InductiveCheckState<'t>) -> bool {
+    let h = st.all_inductives_incl_specialized@[0];
+    let ti = crate::expr_arena_bridge::to_model(h.ty);
+    let pids = local_ids(st.local_params@);
+    &&& st.all_inductives_incl_specialized@.len() >= 1
+    &&& st.ind_consts@.len() == st.all_inductives_incl_specialized@.len()
+    &&& st.local_indices@.len() >= 1
+    &&& st.tele@.len() >= 1
+    &&& ind_const_at(st, 0)
+    &&& walk_syn(st, 0)
+    &&& st.tele@[0].locals.len() >= st.local_params@.len()
+    &&& pids.no_duplicates()
+    &&& forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+        == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k]))
+    &&& forall|k: int| 0 <= k < st.local_params@.len() && (#[trigger] crate::kgen::lit_open(ti, pids.subrange(0, k))) is Bind
+        ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.local_params@[k])), Box::new(
+            *crate::kgen::lit_open(ti, pids.subrange(0, k))->Bind_2)) == crate::kgen::lit_open(ti, pids.subrange(0, k))
+    &&& forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(st.uparams).len()
+        ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(st.uparams)[k]) is Param
+    &&& forall|j: int| 0 <= j < h.ctors@.len() ==>
+        ctor_syn(st, crate::level_arena_bridge::name_id(h.name), crate::expr_arena_bridge::to_model(#[trigger] h.ctors@[j].ty))
+    &&& ctors_closed(h)
+}
+
+/// `shape_pre` from its parts.
+pub(crate) proof fn shape_pre_intro<'t>(st: InductiveCheckState<'t>)
+    requires
+        st.all_inductives_incl_specialized@.len() >= 1,
+        st.ind_consts@.len() == st.all_inductives_incl_specialized@.len(),
+        st.local_indices@.len() >= 1,
+        st.tele@.len() >= 1,
+        ind_const_at(st, 0),
+        walk_syn(st, 0),
+        st.tele@[0].locals.len() >= st.local_params@.len(),
+        local_ids(st.local_params@).no_duplicates(),
+        forall|k: int| 0 <= k < st.local_params@.len() ==> crate::expr_arena_bridge::to_model(#[trigger] st.local_params@[k])
+            == ExprSpec::Free(crate::expr_arena_bridge::expr_id(st.local_params@[k])),
+        forall|k: int| 0 <= k < st.local_params@.len() && (#[trigger] crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty),
+            local_ids(st.local_params@).subrange(0, k))) is Bind
+            ==> ExprSpec::Bind(BinderKind::Pi, Box::new(crate::quot_model::local_type(st.local_params@[k])), Box::new(
+                *crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty), local_ids(st.local_params@).subrange(0, k))->Bind_2))
+                == crate::kgen::lit_open(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ty), local_ids(st.local_params@).subrange(0, k)),
+        forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(st.uparams).len()
+            ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(st.uparams)[k]) is Param,
+        forall|j: int| 0 <= j < st.all_inductives_incl_specialized@[0].ctors@.len() ==>
+            ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[0].name),
+                crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[0].ctors@[j].ty)),
+        ctors_closed(st.all_inductives_incl_specialized@[0]),
+    ensures
+        shape_pre(st),
+{
+    reveal(shape_pre);
+}
+
+/// A constructor's syntactic certificate reads only the state's parameters,
+/// levels, constants and indices.
+pub(crate) proof fn ctor_syn_frame<'t>(st1: InductiveCheckState<'t>, st2: InductiveCheckState<'t>, pid: u64, ty: ExprSpec)
+    requires
+        ctor_syn(st1, pid, ty),
+        st2.local_params@ == st1.local_params@,
+        st2.uparams == st1.uparams,
+        st2.ind_consts@ == st1.ind_consts@,
+        st2.local_indices@ == st1.local_indices@,
+    ensures
+        ctor_syn(st2, pid, ty),
+{
+    let c = choose|c: CtorCert| #[trigger] ctor_syn_cert(st1, pid, ty, c);
+    assert(ctor_syn_cert(st2, pid, ty, c));
+}
+
+/// The recursors' construction keeps what the shape needs.
+pub(crate) proof fn shape_pre_frame<'t>(st1: InductiveCheckState<'t>, st2: InductiveCheckState<'t>)
+    requires
+        shape_pre(st1),
+        st2.all_inductives_incl_specialized@ == st1.all_inductives_incl_specialized@,
+        st2.local_params@ == st1.local_params@,
+        st2.uparams == st1.uparams,
+        st2.ind_consts@ == st1.ind_consts@,
+        st2.local_indices@ == st1.local_indices@,
+        st2.tele@ == st1.tele@,
+    ensures
+        shape_pre(st2),
+{
+    reveal(shape_pre);
+    let h = st1.all_inductives_incl_specialized@[0];
+    assert forall|j: int| 0 <= j < h.ctors@.len() implies
+        ctor_syn(st2, crate::level_arena_bridge::name_id(h.name), crate::expr_arena_bridge::to_model(#[trigger] h.ctors@[j].ty)) by {
+        ctor_syn_frame(st1, st2, crate::level_arena_bridge::name_id(h.name), crate::expr_arena_bridge::to_model(h.ctors@[j].ty));
+    }
+    assert(ind_const_at(st2, 0));
+    assert(walk_syn(st2, 0));
+}
+
+/// THE CANONICAL SHAPE AT THE END OF THE BLOCK'S CHECK: the state's facts,
+/// the declared types' closedness (`ind_old`, `ctor_old`), the elimination
+/// level, and the fragment's boundary.
+pub(crate) proof fn shape_end<'x, 't>(st: InductiveCheckState<'t>, env: crate::env::Env<'x, 't>, lm: crate::level_model::LevelSpec)
+    requires
+        shape_pre(st),
+        st.all_inductives_incl_specialized@.len() == 1,
+        ind_old(env, st.all_inductives_incl_specialized@[0]),
+        forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
+            ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y]),
+        st.elim_level is Some,
+        lm == crate::level_arena_bridge::to_model(st.elim_level->0),
+        fields_admitted(st),
+    ensures
+        gen_shape_ok(st, decl_shape(st), lm),
+{
+    reveal(shape_pre);
+    let h = st.all_inductives_incl_specialized@[0];
+    assert forall|j: int| 0 <= j < h.ctors@.len() implies
+        crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(#[trigger] h.ctors@[j].ty)) == 0
+        && ctor_syn(st, crate::level_arena_bridge::name_id(h.name), crate::expr_arena_bridge::to_model(h.ctors@[j].ty)) by {
+        assert(ctor_old(env, h.ctors@[j]));
+    }
+    shape_exists(st, lm);
 }
 
 /// A CONSTRUCTOR'S RESULT, CLOSED: past its walk's `n` binders, the
