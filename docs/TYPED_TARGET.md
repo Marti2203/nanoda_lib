@@ -2123,7 +2123,13 @@ signature, `irank <= r + 1`, given `iota_ok`); `ti_valid::sig_ext` admits
 the same constants and ranks in place of `def_ok` (2dc5495).
 R2a: `dom_levels::sig_lps` holds below every rank (`sig_lps_below`) --
 the kept recursors' rules over their own parameters too -- certified as
-before (`export_sound::lps_at`, with `rules_at`).
+before (`export_sound::lps_at`, with `rules_at`) (1a379a9).
+R2 base: below a rank the recursor conditions hold
+(`ti_strip::iota_ok_below`: a kept recursor stays canonical --
+`canon_below`, fewer recursors leave its fields' kinds, `psimple_shrink`
+-- and unique, any other kept one being the signature's); so a
+derivation below a rank is one below any higher rank
+(`derivable_below_mono`) and of the signature (`derivable_below`).
 
 The plan:
 

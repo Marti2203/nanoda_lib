@@ -195,6 +195,125 @@ pub proof fn strip_below_valid(sig: Sig, r: int, d: Deriv)
     irank_le(sig, d, (r + 1) as nat);
 }
 
+/// Fewer recursors, the same constants: a simple type over the parameters
+/// stays one (another former is one that is no recursor).
+pub proof fn psimple_shrink(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        forall|j: u64| #[trigger] s2.ienv.recs.contains_key(j) ==> s1.ienv.recs.contains_key(j),
+    ensures
+        crate::rec_canon::psimple(s1, ind, pdoms, np, k, e) ==> crate::rec_canon::psimple(s2, ind, pdoms, np, k, e),
+        crate::rec_canon::psapp(s1, ind, pdoms, np, k, e) ==> crate::rec_canon::psapp(s2, ind, pdoms, np, k, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        psimple_shrink(s1, s2, ind, pdoms, np, k, *f);
+        psimple_shrink(s1, s2, ind, pdoms, np, k, *x);
+    }
+}
+
+/// THE SIGNATURE BELOW A RANK keeps a canonical recursor of it canonical:
+/// its entry, the constants and the constructor tables are the same, and
+/// fewer recursors leave its fields' kinds.
+pub proof fn canon_below(sig: Sig, r: int, rid: u64)
+    requires
+        crate::rec_canon::rec_canon(sig, rid),
+        strip_below(sig, r).ienv.recs.contains_key(rid),
+    ensures
+        crate::rec_canon::rec_canon(strip_below(sig, r), rid),
+        crate::rec_canon::rec_ind(strip_below(sig, r), rid) == crate::rec_canon::rec_ind(sig, rid),
+        crate::dom_rec_ty::rshape(strip_below(sig, r), rid) == crate::dom_rec_ty::rshape(sig, rid),
+{
+    let sb = strip_below(sig, r);
+    let rd = sig.ienv.recs[rid];
+    assert(sb.ienv.recs[rid] == rd);
+    let ind = crate::rec_canon::rec_ind(sig, rid);
+    assert(crate::rec_canon::rec_ind(sb, rid) == ind);
+    let sh = crate::rec_canon::shape_of(sig, rd, ind);
+    let sh2 = crate::rec_canon::shape_of(sb, rd, ind);
+    assert(sh2.ctors =~= sh.ctors);
+    assert(sh2.fields =~= sh.fields);
+    assert(sh2.tss =~= sh.tss);
+    assert(sh2 == sh);
+    reveal(crate::rec_canon::field_kind);
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+        crate::rec_canon::field_kind(sb, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, #[trigger] sh.fields[j][k]) by {
+        psimple_shrink(sig, sb, ind, sh.pdoms, sh.np, k as nat, sh.fields[j][k]);
+    }
+}
+
+/// Below a rank, each kept recursor is in the fragment: its scope and
+/// shape as in the signature, the only canonical recursor of its
+/// inductive (any other kept one is the signature's), a structure's
+/// agreement where its entry is kept.
+pub proof fn frag_below(sig: Sig, r: int, rid: u64)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        strip_below(sig, r).ienv.recs.contains_key(rid),
+    ensures
+        crate::dom_rec_end::rec_frag(strip_below(sig, r), rid),
+{
+    let sb = strip_below(sig, r);
+    crate::ti_syntax::frag_of(sig, rid);
+    canon_below(sig, r, rid);
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    assert forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(sb, r2) && crate::rec_canon::rec_ind(sb, r2) == crate::rec_canon::rec_ind(sb, rid)
+        implies r2 == rid by {
+        assert(sig.ienv.recs.contains_key(r2));
+        crate::ti_syntax::frag_of(sig, r2);
+        canon_below(sig, r, r2);
+    }
+    if crate::dom_code::struct_decl(sb, sh.ind) {
+        reveal(crate::dom_code::struct_decl);
+        assert(sig.ienv.struct_ctor.contains_key(sh.ind));
+        assert(crate::dom_code::struct_decl(sig, sh.ind));
+        assert(crate::dom_code::struct_rd(sb, sh.ind) == crate::dom_code::struct_rd(sig, sh.ind));
+    }
+    reveal(crate::dom_rec_ty::rec_elp);
+    reveal(crate::dom_rec_end::rec_interp);
+    reveal(crate::dom_rec_end::rec_large);
+}
+
+/// `iota_ok` holds below every rank.
+pub proof fn iota_ok_below(sig: Sig, r: int)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+    ensures
+        crate::ti_syntax::iota_ok(strip_below(sig, r)),
+{
+    reveal(crate::ti_syntax::iota_ok);
+    assert forall|rid: u64| #[trigger] strip_below(sig, r).ienv.recs.contains_key(rid) implies crate::dom_rec_end::rec_frag(strip_below(sig, r), rid) by {
+        frag_below(sig, r, rid);
+    }
+}
+
+/// What the signature below a rank derives, the signature below any
+/// higher rank does.
+pub proof fn derivable_below_mono(sig: Sig, r1: int, r2: int, j: crate::ti_syntax::Jd)
+    requires
+        crate::ti_syntax::derivable(strip_below(sig, r1), j),
+        r1 <= r2,
+        crate::ti_syntax::iota_ok(sig),
+    ensures
+        crate::ti_syntax::derivable(strip_below(sig, r2), j),
+{
+    iota_ok_below(sig, r2);
+    assert(crate::ti_valid::sig_ext(strip_below(sig, r1), strip_below(sig, r2)));
+    crate::ti_valid::derivable_ext(strip_below(sig, r1), strip_below(sig, r2), j);
+}
+
+/// What the signature below a rank derives, the signature does.
+pub proof fn derivable_below(sig: Sig, r: int, j: crate::ti_syntax::Jd)
+    requires
+        crate::ti_syntax::derivable(strip_below(sig, r), j),
+        crate::ti_syntax::iota_ok(sig),
+    ensures
+        crate::ti_syntax::derivable(sig, j),
+{
+    assert(crate::ti_valid::sig_ext(strip_below(sig, r), sig));
+    crate::ti_valid::derivable_ext(strip_below(sig, r), sig, j);
+}
+
 /// A DERIVATION OF THE STRIPPED SIGNATURE is one of the full signature,
 /// without Iota nodes.
 pub proof fn strip_valid(sig: Sig, d: Deriv)
