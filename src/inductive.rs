@@ -4379,6 +4379,7 @@ pub(crate) open spec fn ctor_cert_ok<'x, 't>(
         && crate::tc::kconv(env, c.bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])))
         && c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))
     &&& c.locals.no_duplicates()
+    &&& crate::beta_model::spine_head(c.cursors.last()) == ExprSpec::Const(pid, crate::level_arena_bridge::to_model_of_levels(st.uparams))
     &&& forall|k: int| np <= k < c.locals.len() ==> crate::tc::kinfer_claim(env, c.bts[k], ExprSpec::Sort(#[trigger] c.sorts[k]))
         && (st.is_zero == Some(true) || forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(c.sorts[k], rho)
             <= crate::level_model::interp(crate::level_arena_bridge::to_model(st.block_codom->0), rho))
@@ -4405,6 +4406,7 @@ pub(crate) open spec fn ctor_syn_cert<'t>(st: InductiveCheckState<'t>, pid: u64,
     &&& forall|k: int| 0 <= k < np ==> #[trigger] c.locals[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
         && c.bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k]))
     &&& c.locals.no_duplicates()
+    &&& crate::beta_model::spine_head(c.cursors.last()) == ExprSpec::Const(pid, crate::level_arena_bridge::to_model_of_levels(st.uparams))
     &&& ind_app_ok(st, pid, c.cursors.last())
 }
 
@@ -4468,6 +4470,7 @@ pub(crate) proof fn ctor_result<'t>(st: InductiveCheckState<'t>, pid: u64, cty: 
         crate::rec_canon::tdoms(cty, n).len() == n,
         crate::beta_model::spine_head(crate::rec_canon::tbody(cty, n)) is Const,
         crate::beta_model::spine_head(crate::rec_canon::tbody(cty, n))->Const_0 == pid,
+        crate::beta_model::spine_head(crate::rec_canon::tbody(cty, n)) == ExprSpec::Const(pid, crate::level_arena_bridge::to_model_of_levels(st.uparams)),
         crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n)).len() >= st.local_params@.len(),
         forall|i: int| 0 <= i < st.local_params@.len() ==>
             #[trigger] crate::beta_model::spine_args(crate::rec_canon::tbody(cty, n))[i] == ExprSpec::Var((n - 1 - i) as nat),
@@ -9452,6 +9455,25 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         // as in `List A` or `Nat.le x y`
         let valid = self.is_valid_ind_app(st, parent_ind_name, ctor_type_cursor);
         assert!(valid);
+        // VERUS-REWRITE(tested-input): the result's levels are the block's
+        // universe parameters themselves, not only equivalent to them
+        // (`is_valid_ind_app` compares with `eq_antisymm`) -- what the
+        // canonical shape reads (`gen_shape_ok`). Never fails on a
+        // constructor Lean exports (Init: 808 of 808).
+        let (res_head, res_args) = self.ctx.unfold_apps(ctor_type_cursor);
+        match self.ctx.read_expr(res_head) {
+            Const { levels, .. } => {
+                assert!(levels_ptr_eq(self.ctx, levels, st.uparams),
+                    "constructor: its result's levels are not the inductive's parameters");
+                proof {
+                    let rh = crate::expr_arena_bridge::to_model(res_head);
+                    crate::beta_model::spine_destruct_app(rh, crate::expr_arena_bridge::ptr_models(res_args@));
+                    assert(rh == ExprSpec::Const(crate::expr_arena_bridge::const_id(res_head),
+                        crate::level_arena_bridge::to_model_of_levels(levels)));
+                }
+            },
+            _ => panic!("constructor: its result is not headed by its inductive"),
+        }
         proof {
             // the walk's locals are distinct: the parameters' serials are
             // below the count the fields' start at
