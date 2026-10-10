@@ -1737,6 +1737,36 @@ pub proof fn twin_locals(sig: Sig, l2: Map<nat, ExprSpec>)
     assert(twin(s2).ienv.recs =~= twin(sig).ienv.recs);
 }
 
+/// The twin of a signature with other ranks is the twin with those ranks:
+/// the twin reads no rank.
+pub proof fn twin_rank(sig: Sig, r2: Map<u64, nat>)
+    ensures
+        twin(Sig { rank: r2, ..sig }) == (Sig { rank: r2, ..twin(sig) }),
+{
+    let s2 = Sig { rank: r2, ..sig };
+    assert forall|r: u64| rec_core(s2, r) == rec_core(sig, r) by {
+        reveal(rec_core);
+        let rd = sig.ienv.recs[r];
+        let ind = rec_ind(sig, r);
+        let sh = shape_of(sig, rd, ind);
+        assert(rec_ind(s2, r) == ind);
+        assert(shape_of(s2, rd, ind) == sh);
+        assert forall|k: nat, e: ExprSpec| #[trigger] field_kind(s2, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, e)
+            == field_kind(sig, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, e) by {
+            reveal(field_kind);
+            crate::dom_rec_end::psimple_congr(s2, sig, ind, sh.pdoms, sh.np, k, e);
+        }
+    }
+    assert forall|r: u64| #[trigger] canon_ty(s2, r) == canon_ty(sig, r) by {
+        assert(rec_ind(s2, r) == rec_ind(sig, r));
+    }
+    assert forall|r: u64| #[trigger] canon_rules(s2, r) == canon_rules(sig, r) by {
+        assert(rec_ind(s2, r) == rec_ind(sig, r));
+    }
+    assert(twin(s2).consts =~= twin(sig).consts);
+    assert(twin(s2).ienv.recs =~= twin(sig).ienv.recs);
+}
+
 /// THE CANONICAL RECURSOR TYPE'S MAJOR PREMISE is the inductive, applied.
 pub proof fn rec_ty_major(sh: IndShape, lm: LevelSpec)
     requires

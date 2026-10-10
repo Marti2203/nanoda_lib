@@ -54,8 +54,14 @@ pub open spec fn jsig_r(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, r: M
     }
 }
 
+/// ... under which, in the twin, every constant's type mentions only
+/// lower-ranked constants too.
+pub open spec fn types_ranked(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, r: Map<u64, nat>) -> bool {
+    crate::dom_model::consts_ranked(crate::twin::twin(jsig_r(dty, denv, r)))
+}
+
 pub open spec fn jrank(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> Map<u64, nat> {
-    choose|r: Map<u64, nat>| rank_ok(dty, denv, r)
+    choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r)
 }
 
 /// REAL TYPING: the typed judgment types `e` at `t`, in the empty de Bruijn

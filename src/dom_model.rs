@@ -157,6 +157,42 @@ pub open spec fn ctor_pos(sig: Sig, ind: u64, c: u64) -> int {
     choose|p: int| 0 <= p < crate::dom_code::canon_shape(sig, ind).nmin() && crate::dom_code::canon_shape(sig, ind).ctors[p] == c
 }
 
+/// Every constant's type mentions only constants of lower rank.
+pub open spec fn consts_ranked(sig: Sig) -> bool {
+    forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> sig.rank.contains_key(c)
+        && crate::ti_syntax::crank(sig, sig.consts[c].ty) <= sig.rank[c]
+}
+
+/// Level substitution keeps a term's constants, so its rank.
+pub proof fn crank_sl(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        crate::ti_syntax::crank(sig, crate::expr_model::subst_expr_levels(e, ks, vs)) == crate::ti_syntax::crank(sig, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { crank_sl(sig, *f, ks, vs); crank_sl(sig, *x, ks, vs); },
+        ExprSpec::Bind(_, t, b) => { crank_sl(sig, *t, ks, vs); crank_sl(sig, *b, ks, vs); },
+        ExprSpec::Let(t, v, b) => { crank_sl(sig, *t, ks, vs); crank_sl(sig, *v, ks, vs); crank_sl(sig, *b, ks, vs); },
+        ExprSpec::Proj(_, x) => { crank_sl(sig, *x, ks, vs); },
+        _ => {},
+    }
+}
+
+/// A DECLARED AXIOM-LIKE CONSTANT IS SEMANTIC where every constant's type
+/// is over lower ranks (`consts_ranked`).
+pub proof fn sem_const_of(sig: Sig, c: u64, ls: Seq<LevelSpec>)
+    requires
+        consts_ranked(sig),
+        sig.consts.contains_key(c),
+        sig.consts[c].val is None,
+        sig.consts[c].lps.len() == ls.len(),
+        !(sig.ienv.ctor_ind.contains_key(c) && sig.ienv.recs.contains_key(c)),
+    ensures
+        sem_const(sig, c, ls),
+{
+    crank_sl(sig, sig.consts[c].ty, sig.consts[c].lps, ls);
+}
+
 /// The code function a semantic constant approximates: a constructor's
 /// where its inductive has canonical tables, a recursor's where the model
 /// interprets it (`rec_hyps`; otherwise both only bottom), or a type

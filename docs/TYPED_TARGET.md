@@ -2051,6 +2051,16 @@ and eta step is vacuous (about thirty sites use that). Stages:
     `ctor_sem`, and the structure clause (a structure with a declared
     constructor is a smashed structure of the model: field kinds and the
     proposition conditions of the `struct_of` slice -- the boundary).
+    RANKS ORDER EVERY TYPE: `metatheory::jrank` now also requires that,
+    in the twin, every constant's type mentions only lower-ranked
+    constants (`types_ranked`, `dom_model::consts_ranked`); the export's
+    position ranks witness it (`export_sound::ranked_at`: a type at its
+    declaration's certificate, a recursor's canonical one by `twin_types`,
+    mentions only earlier declarations -- `type_crank`). So every declared
+    axiom-like constant is semantic (`dom_model::sem_const_of`), and
+    `ctor_sem` left `ind_ok_hyp` (`frag_env_of` derives it). `ind_ok_hyp`
+    is now `rec_small`, `sig_sr`, every recursor interpreted, and the
+    structure clause.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

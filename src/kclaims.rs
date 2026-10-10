@@ -133,6 +133,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|d: Map<nat, ExprSpec>| #[trigger] iota_syn(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] ctor_forms(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] ctor_clauses(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_model::consts_ranked(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -143,6 +144,14 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         assert(iota_syn(s));
         assert(ctor_forms(s));
         assert(ctor_clauses(s));
+        assert(crate::dom_model::consts_ranked(s));
+        assert forall|cid: u64| #[trigger] s.ienv.ctor_ind.contains_key(cid) implies ctor_sem(s, cid) by {
+            assert(ctor_form(s, cid));
+            assert forall|ls: Seq<LevelSpec>| ls.len() == s.consts[s.ienv.ctor_ind[cid]].lps.len()
+                implies #[trigger] crate::dom_model::sem_const(s, s.ienv.ctor_ind[cid], ls) by {
+                crate::dom_model::sem_const_of(s, s.ienv.ctor_ind[cid], ls);
+            }
+        }
         assert forall|cid: u64| #[trigger] s.ienv.ctor_ind.contains_key(cid) implies ctor_clause(s, cid) by {}
         assert(crate::ti_syntax::iota_ok(s)) by {
             reveal(crate::ti_syntax::iota_ok);
@@ -216,7 +225,6 @@ pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr(sig)
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
-    &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) ==> ctor_sem(sig, cid)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
         ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
 }
@@ -242,9 +250,8 @@ pub open spec fn ctor_form(sig: crate::ti_syntax::Sig, cid: u64) -> bool {
     &&& crate::beta_model::spine_args(r).len() == crate::rec_canon::tarity(ti)
 }
 
-/// A constructor's inductive is a semantic constant at every instance (the
-/// model's hypothesis; `rec_model` states it of an inductive with a
-/// recursor, this of one whose constructors are declared before it).
+/// A constructor's inductive is a semantic constant at every instance
+/// (from the ranks, `dom_model::sem_const_of`; certified at the export).
 pub open spec fn ctor_sem(sig: crate::ti_syntax::Sig, cid: u64) -> bool {
     forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sig.ienv.ctor_ind[cid]].lps.len()
         ==> #[trigger] crate::dom_model::sem_const(sig, sig.ienv.ctor_ind[cid], ls)

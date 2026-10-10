@@ -249,6 +249,30 @@ proof fn decl_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64) -> (
     c
 }
 
+/// A type at a cutoff no later than `cid`'s position mentions only
+/// constants ranked (by position) below it.
+proof fn type_crank<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: int, ty: ExprSpec, sig: crate::ti_syntax::Sig)
+    requires
+        0 <= c <= pos_of(ef, cid),
+        forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> 0 <= pos_of(ef, id) < c,
+        crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), ty),
+        forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> sig.rank.contains_key(id) && sig.rank[id] == pos_of(ef, id) as nat,
+    ensures
+        crate::ti_syntax::crank(sig, ty) <= pos_of(ef, cid),
+{
+    let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+    let em = Map::<nat, ExprSpec>::empty();
+    let l = crate::jkernel::is_type_sort(dc, nc, em, ty);
+    let sc = crate::metatheory::jsig(dc, nc, em);
+    let dv = crate::ti_sub::get(sc, crate::ti_syntax::eq(Seq::empty(), ty, ty, crate::ti_syntax::sort(l)));
+    crate::ti_level::d_consts(sc, dv);
+    assert(sc.consts.dom() =~= dc.dom());
+    assert forall|id: u64| #[trigger] dc.dom().contains(id) implies sig.rank.contains_key(id) && sig.rank[id] < pos_of(ef, cid) by {
+        assert(dc.contains_key(id));
+    }
+    crate::ti_level::crank_bound(sig, ty, dc.dom(), pos_of(ef, cid) as nat);
+}
+
 /// THE RANKS: a definition's value mentions only earlier declarations.
 #[verifier::spinoff_prover]
 proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
@@ -257,10 +281,36 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     ensures
         crate::metatheory::rank_ok(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
         crate::env_weaken::defs_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
+        crate::dom_model::consts_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
 {
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let r = rmap(ef, cc);
     let sr = crate::metatheory::jsig_r(dty, denv, r);
+    // every type of the twin, over lower ranks: a type at its declaration's
+    // certificate (a recursor's canonical one, `twin_types`)
+    let raw0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    assert(sr == (crate::ti_syntax::Sig { rank: r, ..raw0 }));
+    crate::twin::twin_rank(raw0, r);
+    let tw = crate::twin::twin(sr);
+    assert forall|cid: u64| #[trigger] tw.consts.contains_key(cid) implies tw.rank.contains_key(cid)
+        && crate::ti_syntax::crank(tw, tw.consts[cid].ty) <= tw.rank[cid] by {
+        assert(dty.contains_key(cid));
+        let c = decl_facts(ef, cc, cid);
+        assert forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) implies tw.rank.contains_key(id) && tw.rank[id] == pos_of(ef, id) as nat by {
+            crate::inductive::export_keys_ids_inj(ef);
+            ef.declars_views();
+            crate::env_model::env_le_at(ef.arena(), ef.declars_view(), ef.declars_keys(), c, cc);
+            assert(dty.contains_key(id));
+        }
+        crate::twin::twin_keeps(raw0, cid);
+        if denv.recs.contains_key(cid) && crate::twin::rec_core(raw0, cid) {
+            assert(crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), crate::twin::canon_ty(raw0, cid)));
+            type_crank(ef, cc, cid, c, crate::twin::canon_ty(raw0, cid), tw);
+        } else {
+            type_crank(ef, cc, cid, c, dty[cid].1, tw);
+        }
+    }
+    assert(crate::metatheory::types_ranked(dty, denv, r));
     assert forall|cid: u64, ls: Seq<crate::level_model::LevelSpec>| #[trigger] crate::ti_syntax::is_def(sr, cid, ls)
         implies crate::ti_syntax::def_ok(sr, cid, ls) by {
         let c = decl_facts(ef, cc, cid);
@@ -283,7 +333,7 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
     assert(crate::metatheory::rank_ok(dty, denv, r));
     let jr = crate::metatheory::jrank(dty, denv);
-    assert(crate::metatheory::rank_ok(dty, denv, jr));
+    assert(crate::metatheory::rank_ok(dty, denv, jr) && crate::metatheory::types_ranked(dty, denv, jr));
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     assert(raw == crate::metatheory::jsig_r(dty, denv, jr));
     let s = crate::metatheory::jsig(dty, denv, Map::empty());
@@ -501,6 +551,7 @@ proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     iota_syn_at(ef, c);
     ctor_forms_at(ef, c);
     ctor_clauses_at(ef, c);
+    ranks_at(ef, c);
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
@@ -615,58 +666,9 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     iota_at(ef, cc);
     wf_at(ef, cc);
     levok_at(ef, cc);
-    // the declarations' types: closed, own levels, and types
-    assert forall|cid: u64| #[trigger] dty.contains_key(cid) implies
-        !crate::expr_model::has_fv(dty[cid].1)
-        && crate::level_inst::elp_in(dty[cid].1, dty[cid].0)
-        && crate::metatheory::is_type(dty, denv, em, dty[cid].1) by {
-        let i = entry_of(ef, cc, cid);
-        let c = cert_of(ef, i);
-        export_kh(ef, c);
-        crate::env_model::env_le_at(a, view, keys, c, cc);
-        crate::env_model::defs_stable_at(a, view, keys, c, cc);
-        twin_le_at(ef, cc, c, cc);
-        crate::env_weaken::ew_is_type(m_dty(ef, c), m_denv(ef, c), dty, denv, em, dty[cid].1);
-    }
-    // the definitions' values: closed, own levels, typed at their types
-    assert forall|cid: u64| #[trigger] denv.defs.contains_key(cid) implies
-        crate::expr_model::nlbv(denv.defs[cid].1) == 0
-        && !crate::expr_model::has_fv(denv.defs[cid].1)
-        && crate::level_inst::elp_in(denv.defs[cid].1, denv.defs[cid].0)
-        && dty.contains_key(cid) && dty[cid].0 == denv.defs[cid].0
-        && exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, em, denv.defs[cid].1, t2)
-            && crate::metatheory::tconv(dty, denv, em, t2, dty[cid].1) by {
-        let i = entry_of(ef, cc, cid);
-        let c = cert_of(ef, i);
-        let d = decl_at(ef, i);
-        assert(crate::tc::declar_value(d) is Some);
-        export_kh(ef, c);
-        crate::env_model::env_le_at(a, view, keys, c, cc);
-        crate::env_model::defs_stable_at(a, view, keys, c, cc);
-        let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
-        let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dc, nc, em, denv.defs[cid].1, t2)
-            && crate::metatheory::tconv(dc, nc, em, t2, dty[cid].1);
-        twin_le_at(ef, cc, c, cc);
-        crate::env_weaken::ew_typed(dc, nc, dty, denv, em, denv.defs[cid].1, t2);
-        crate::env_weaken::ew_tconv(dc, nc, dty, denv, em, t2, dty[cid].1);
-        crate::ti_scope::closed_of_empty(crate::metatheory::jsig(dty, denv, em), denv.defs[cid].1, denv.defs[cid].1, t2);
-    }
-    // the recursors' rules: closed, own levels
-    assert forall|id: u64, j: int| #![trigger denv.recs[id].rules[j]] denv.recs.contains_key(id) && 0 <= j < denv.recs[id].rules.len() implies
-        !crate::expr_model::has_fv(denv.recs[id].rules[j].rhs)
-        && crate::level_inst::elp_in(denv.recs[id].rules[j].rhs, denv.recs[id].uparams)
-        && crate::expr_model::nlbv(denv.recs[id].rules[j].rhs) == 0
-        && denv.ctor_np.contains_key(denv.recs[id].rules[j].ctor_id) by {
-        let i = entry_of(ef, cc, id);
-        let c = cert_of(ef, i);
-        let d = decl_at(ef, i);
-        crate::env_model::env_le_at(a, view, keys, c, cc);
-        if let crate::env::Declar::Recursor(r) = d {
-            assert(r.rec_rules@[j].val == crate::tc_model::rec_rule_val_of(r.rec_rules@[j]));
-            assert(denv.recs[id].rules[j].ctor_id == crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name));
-            assert(m_denv(ef, c).ctor_np.contains_key(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name)));
-        }
-    }
+    types_at(ef, cc);
+    defs_at(ef, cc);
+    rules_at(ef, cc);
     assert(crate::metatheory::env_wf(dty, denv));
     assert(crate::swap_model::dty_fv_free(dty));
     assert(crate::swap_model::env_fv_free(denv));
@@ -1644,6 +1646,167 @@ proof fn ctor_clauses_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         assert forall|cid: u64| #[trigger] sd.ienv.ctor_ind.contains_key(cid) implies crate::kclaims::ctor_clause(sd, cid) by {
             assert(crate::kclaims::ctor_clause(s0, cid));
             canon_locals(s0, sd, sd.ienv.ctor_ind[cid]);
+        }
+    }
+}
+
+
+/// THE RANKS ORDER EVERY TYPE, at every cutoff and any locals.
+proof fn ranks_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_model::consts_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    ranked_at(ef, cc);
+    assert forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_model::consts_ranked(crate::metatheory::jsig(dty, denv, d)) by {
+        crate::jkernel::jsig_locals(dty, denv, d);
+        let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+        let sd = crate::metatheory::jsig(dty, denv, d);
+        assert forall|c: u64| #[trigger] sd.consts.contains_key(c) implies sd.rank.contains_key(c)
+            && crate::ti_syntax::crank(sd, sd.consts[c].ty) <= sd.rank[c] by {
+            assert(s0.consts.contains_key(c));
+            crate::ti_locals::crank_same(s0, sd, s0.consts[c].ty);
+        }
+    }
+}
+
+
+/// At a cutoff, the declarations' types: closed, own levels, and types
+#[verifier::spinoff_prover]
+proof fn types_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures ({
+        let dty = m_dty(ef, cc);
+        let denv = m_denv(ef, cc);
+        let em = Map::<nat, ExprSpec>::empty();
+        forall|cid: u64| #[trigger] dty.contains_key(cid) ==>
+        !crate::expr_model::has_fv(dty[cid].1)
+        && crate::level_inst::elp_in(dty[cid].1, dty[cid].0)
+        && crate::metatheory::is_type(dty, denv, em, dty[cid].1)
+    }),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let a = ef.arena();
+    let dty = m_dty(ef, cc);
+    let denv = m_denv(ef, cc);
+    let em = Map::<nat, ExprSpec>::empty();
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    assert(kh_hyp(dty, denv));
+    ranked_at(ef, cc);
+    iota_at(ef, cc);
+    // the declarations' types: closed, own levels, and types
+    assert forall|cid: u64| #[trigger] dty.contains_key(cid) implies
+        !crate::expr_model::has_fv(dty[cid].1)
+        && crate::level_inst::elp_in(dty[cid].1, dty[cid].0)
+        && crate::metatheory::is_type(dty, denv, em, dty[cid].1) by {
+        let i = entry_of(ef, cc, cid);
+        let c = cert_of(ef, i);
+        assert(crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)));
+        crate::env_model::env_le_at(a, view, keys, c, cc);
+        crate::env_model::defs_stable_at(a, view, keys, c, cc);
+        twin_le_at(ef, cc, c, cc);
+        crate::env_weaken::ew_is_type(m_dty(ef, c), m_denv(ef, c), dty, denv, em, dty[cid].1);
+    }
+}
+
+/// At a cutoff, the definitions' values: closed, own levels, typed at their types
+#[verifier::spinoff_prover]
+proof fn defs_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures ({
+        let dty = m_dty(ef, cc);
+        let denv = m_denv(ef, cc);
+        let em = Map::<nat, ExprSpec>::empty();
+        forall|cid: u64| #[trigger] denv.defs.contains_key(cid) ==>
+        crate::expr_model::nlbv(denv.defs[cid].1) == 0
+        && !crate::expr_model::has_fv(denv.defs[cid].1)
+        && crate::level_inst::elp_in(denv.defs[cid].1, denv.defs[cid].0)
+        && dty.contains_key(cid) && dty[cid].0 == denv.defs[cid].0
+        && exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, em, denv.defs[cid].1, t2)
+            && crate::metatheory::tconv(dty, denv, em, t2, dty[cid].1)
+    }),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let a = ef.arena();
+    let dty = m_dty(ef, cc);
+    let denv = m_denv(ef, cc);
+    let em = Map::<nat, ExprSpec>::empty();
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    assert(kh_hyp(dty, denv));
+    ranked_at(ef, cc);
+    iota_at(ef, cc);
+    // the definitions' values: closed, own levels, typed at their types
+    assert forall|cid: u64| #[trigger] denv.defs.contains_key(cid) implies
+        crate::expr_model::nlbv(denv.defs[cid].1) == 0
+        && !crate::expr_model::has_fv(denv.defs[cid].1)
+        && crate::level_inst::elp_in(denv.defs[cid].1, denv.defs[cid].0)
+        && dty.contains_key(cid) && dty[cid].0 == denv.defs[cid].0
+        && exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, em, denv.defs[cid].1, t2)
+            && crate::metatheory::tconv(dty, denv, em, t2, dty[cid].1) by {
+        let i = entry_of(ef, cc, cid);
+        let c = cert_of(ef, i);
+        let d = decl_at(ef, i);
+        assert(crate::tc::declar_value(d) is Some);
+        assert(crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)));
+        crate::env_model::env_le_at(a, view, keys, c, cc);
+        crate::env_model::defs_stable_at(a, view, keys, c, cc);
+        let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+        let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dc, nc, em, denv.defs[cid].1, t2)
+            && crate::metatheory::tconv(dc, nc, em, t2, dty[cid].1);
+        twin_le_at(ef, cc, c, cc);
+        crate::env_weaken::ew_typed(dc, nc, dty, denv, em, denv.defs[cid].1, t2);
+        crate::env_weaken::ew_tconv(dc, nc, dty, denv, em, t2, dty[cid].1);
+        crate::ti_scope::closed_of_empty(crate::metatheory::jsig(dty, denv, em), denv.defs[cid].1, denv.defs[cid].1, t2);
+    }
+}
+
+/// At a cutoff, the recursors' rules: closed, own levels
+#[verifier::spinoff_prover]
+proof fn rules_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures ({
+        let dty = m_dty(ef, cc);
+        let denv = m_denv(ef, cc);
+        let em = Map::<nat, ExprSpec>::empty();
+        forall|id: u64, j: int| #![trigger denv.recs[id].rules[j]] denv.recs.contains_key(id) && 0 <= j < denv.recs[id].rules.len() ==>
+        !crate::expr_model::has_fv(denv.recs[id].rules[j].rhs)
+        && crate::level_inst::elp_in(denv.recs[id].rules[j].rhs, denv.recs[id].uparams)
+        && crate::expr_model::nlbv(denv.recs[id].rules[j].rhs) == 0
+        && denv.ctor_np.contains_key(denv.recs[id].rules[j].ctor_id)
+    }),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let a = ef.arena();
+    let dty = m_dty(ef, cc);
+    let denv = m_denv(ef, cc);
+    let em = Map::<nat, ExprSpec>::empty();
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    assert(kh_hyp(dty, denv));
+    // the recursors' rules: closed, own levels
+    assert forall|id: u64, j: int| #![trigger denv.recs[id].rules[j]] denv.recs.contains_key(id) && 0 <= j < denv.recs[id].rules.len() implies
+        !crate::expr_model::has_fv(denv.recs[id].rules[j].rhs)
+        && crate::level_inst::elp_in(denv.recs[id].rules[j].rhs, denv.recs[id].uparams)
+        && crate::expr_model::nlbv(denv.recs[id].rules[j].rhs) == 0
+        && denv.ctor_np.contains_key(denv.recs[id].rules[j].ctor_id) by {
+        let i = entry_of(ef, cc, id);
+        let c = cert_of(ef, i);
+        let d = decl_at(ef, i);
+        crate::env_model::env_le_at(a, view, keys, c, cc);
+        if let crate::env::Declar::Recursor(r) = d {
+            assert(r.rec_rules@[j].val == crate::tc_model::rec_rule_val_of(r.rec_rules@[j]));
+            assert(denv.recs[id].rules[j].ctor_id == crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name));
+            assert(m_denv(ef, c).ctor_np.contains_key(crate::level_arena_bridge::name_id(r.rec_rules@[j].ctor_name)));
         }
     }
 }
