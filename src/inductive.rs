@@ -2154,7 +2154,12 @@ pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Decla
             &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec()) is Some
             &&& rec_major_head(crate::expr_arena_bridge::to_model(or.info.ty), or.major_idx_spec())
                 == rec_major_head(crate::expr_arena_bridge::to_model(nr.info.ty), or.major_idx_spec())
+            &&& or.num_params == nr.num_params && or.num_indices == nr.num_indices
+            &&& or.num_motives == nr.num_motives && or.num_minors == nr.num_minors
             &&& or.rec_rules@.len() == nr.rec_rules@.len()
+            &&& forall|j: int| 0 <= j < or.rec_rules@.len() ==> crate::level_arena_bridge::name_id((#[trigger] or.rec_rules@[j]).ctor_name)
+                == crate::level_arena_bridge::name_id(nr.rec_rules@[j].ctor_name)
+                && or.rec_rules@[j].ctor_telescope_size_wo_params == nr.rec_rules@[j].ctor_telescope_size_wo_params
             &&& forall|j: int| 0 <= j < or.rec_rules@.len() ==> crate::tc::def_eq_claim(env,
                 crate::expr_arena_bridge::to_model((#[trigger] or.rec_rules@[j]).val),
                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(nr.rec_rules@[j].val), crate::level_model::level_names(ru), ou))
@@ -6760,6 +6765,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*(*final(self)).ctx, #[trigger] r.rec_rules@[k].val)
                     &&& crate::util_model::owns(*(*final(self)).ctx, r.info.ty)
                     &&& crate::util_model::owns(*(*final(self)).ctx, r.info.name)
+                    &&& r.num_params == st.local_params@.len()
+                    &&& r.num_motives == st.motives@.len()
+                    &&& r.num_minors == flat_ptrs(st.minors@).len()
+                    &&& r.num_indices == st.local_indices@[i]@.len()
                     &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                         == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                     &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[i].ctors@.len()
@@ -6827,6 +6836,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val)
                         &&& crate::util_model::owns(*self.ctx, r.info.ty)
                         &&& crate::util_model::owns(*self.ctx, r.info.name)
+                        &&& r.num_params == st.local_params@.len()
+                        &&& r.num_motives == st.motives@.len()
+                        &&& r.num_minors == flat_ptrs(st.minors@).len()
+                        &&& r.num_indices == st.local_indices@[a]@.len()
                         &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                             == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                         &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
@@ -8615,6 +8628,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
                 crate::level_arena_bridge::to_model_of_levels(old_uparams)),
             matched ==> crate::level_arena_bridge::name_id(imported_rr.ctor_name) == crate::level_arena_bridge::name_id(constructed_rr.ctor_name),
+            crate::level_arena_bridge::name_id(imported_rr.ctor_name) == crate::level_arena_bridge::name_id(constructed_rr.ctor_name),
+            imported_rr.ctor_telescope_size_wo_params == constructed_rr.ctor_telescope_size_wo_params,
     {
         assert!(!crate::env_model::same_object(imported_rr, constructed_rr));
         // Should be structurally != because they come from different envs.
@@ -8721,6 +8736,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ) => {
                     self.tc_cache.clear();
                     assert!(old_r.aux_data_ck(new_r));
+                    // VERUS-REWRITE(restated-check): `aux_data_ck` is not
+                    // verified (it compares hash sets), so the counts it compares
+                    // are compared again, verified. Never fails where it passed.
+                    assert!(old_r.num_params == new_r.num_params && old_r.num_indices == new_r.num_indices
+                        && old_r.num_motives == new_r.num_motives && old_r.num_minors == new_r.num_minors);
                     assert!(!crate::env_model::same_object(old_d, new));
                     // Should be structurally != because they come from different envs.
                     assert_ne!(old_d, new);
@@ -8791,6 +8811,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))
                                 && crate::level_arena_bridge::name_id(old_rec_rules@[q].ctor_name) == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name),
                             env_old(*old(self).env, *old_d),
+                            old_r.num_params == new_r.num_params && old_r.num_indices == new_r.num_indices,
+                            old_r.num_motives == new_r.num_motives && old_r.num_minors == new_r.num_minors,
+                            rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec()) is Some,
+                            rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec())
+                                == rec_major_head(crate::expr_arena_bridge::to_model(new_r.info.ty), old_r.major_idx_spec()),
+                            forall|q: int| 0 <= q < j ==> crate::level_arena_bridge::name_id((#[trigger] old_rec_rules@[q]).ctor_name)
+                                == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name)
+                                && old_rec_rules@[q].ctor_telescope_size_wo_params == new_rec_rules@[q].ctor_telescope_size_wo_params,
                             ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
                             forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
                             forall|q: int| 0 <= q < j ==> crate::tc::def_eq_claim(*old(self).env,
