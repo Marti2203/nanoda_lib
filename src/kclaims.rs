@@ -136,6 +136,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|d: Map<nat, ExprSpec>| #[trigger] ctor_clauses(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_model::consts_ranked(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_levels::sig_lps(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_rec_end::types_below(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -166,16 +167,19 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
                 assert(rec_small(s, c));
             }
         }
+        assert(crate::dom_rec_end::types_below(s));
         sig_sr_of(s);
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
     }
 }
 
-/// THE SEMANTIC CONSTANTS FROM THE RANKS: the model's hypothesis without
-/// them (`sig_sr_h`), the ranks and `iota_ok`'s certified syntactic part
-/// give `sig_sr` -- each recursor, its inductive and constructors, and
-/// each structure and its constructor, are declared constants ranked
-/// above their types -- with the certified level facts (`sig_lps`).
+/// THE SEMANTIC CONSTANTS AND CLOSED TYPES FROM THE RANKS: the model's
+/// hypothesis without them (`sig_sr_h`), the ranks and `iota_ok`'s
+/// certified syntactic part give `sig_sr` -- each recursor, its inductive
+/// and constructors, and each structure and its constructor, are declared
+/// constants ranked above their types, the types typed below their ranks
+/// (`types_below`), and the inductive and constructors below the
+/// recursor -- with the certified level facts (`sig_lps`).
 pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
     requires
         crate::dom_rec_end::sig_sr_h(sig),
@@ -183,6 +187,7 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
         iota_syn(sig),
         crate::ti_syntax::iota_ok(sig),
         crate::dom_levels::sig_lps(sig),
+        crate::dom_rec_end::types_below(sig),
         forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
     ensures
         crate::dom_rec_end::sig_sr(sig),
@@ -202,11 +207,20 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
                 implies #[trigger] crate::dom_model::sem_const(sig, ind, ls) by {
                 crate::dom_model::sem_const_of(sig, ind, ls);
             }
+            let rr = crate::dom_code::rk(sig, c);
+            assert forall|p: int| 0 <= p < sh.nmin() implies
+                crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, rr), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty())) by {
+                crate::dom_rec_minor::ctor_below_rec(sig, c, p);
+                crate::dom_rec_end::ty_closed_at(sig, sh.ctors[p], rr, Seq::empty());
+            }
             if crate::dom_rec_end::rec_interp(sig, c) {
+                crate::dom_rec_minor::ind_below_rec_g(sig, c);
+                crate::dom_rec_end::ty_closed_at(sig, ind, rr, Seq::empty());
                 assert forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() implies
                     #[trigger] crate::dom_model::sem_const(sig, c, lv)
-                    && crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, c, lv)) by {
+                    && crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, rr), crate::ti_syntax::dty_at(sig, c, lv)) by {
                     crate::dom_model::sem_const_of(sig, c, lv);
+                    crate::dom_rec_end::ty_closed_at(sig, c, rr, lv);
                 }
                 assert forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[ind].lps.len() && 0 <= p < sh.nmin()
                     implies #[trigger] crate::dom_model::sem_const(sig, sh.ctors[p], ls) by {
@@ -228,6 +242,9 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
         crate::dom_proj_sound::struct_sem_h(sig, s),
         crate::ti_syntax::struct_of(sig, s),
         crate::dom_model::consts_ranked(sig),
+        crate::dom_rec_end::types_below(sig),
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_levels::sig_lps(sig),
     ensures
         crate::dom_proj_sound::struct_sem(sig, s),
 {
@@ -248,8 +265,8 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     assert(crate::dom_code::canon_sr(sig, s));
     assert(crate::dom_rec_ty::ind_scope(sig, sh));
     assert(crate::dom_code::never_prop(sig, s));
-    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty())));
-    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty())));
+    crate::dom_rec_end::ty_closed_at(sig, s, crate::dom_code::rk(sig, s), Seq::empty());
+    crate::dom_rec_end::ty_closed_at(sig, sh.ctors[0], crate::dom_code::rk(sig, sh.ctors[0]), Seq::empty());
     assert(!sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s));
 }
 

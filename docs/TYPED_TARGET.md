@@ -2101,7 +2101,7 @@ inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
 structure eta at structures outside the `struct_of` slice (dependent
 fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
 
-### Rank-stratified strip (2026-10-10, started)
+### Rank-stratified strip (2026-10-10, R1-R3a done)
 
 FOUND: the model's typing facts (`ty_closed`, `rule_typed`,
 `fields_typed`, `rule_typed_g`) are stated in `ti_strip::strip(sig)`, with
@@ -2191,6 +2191,35 @@ The plan:
   declaration's certified typing at its cutoff (`types_at`, the twin's
   canonical rules) lifted into `strip_below(jsig, position)`
   (`ti_valid::derivable_ext`; `ti_strip::iota_ok_below`).
+- **R3a** the closed types. `jrank`'s choice adds `types_typed`: where
+  the recursors are in the fragment, every constant's type is typed with
+  only the recursors and structures ranked below it
+  (`dom_rec_end::types_below`). It is conditional on `iota_ok` because
+  the judgment's `iota_ok` comes from the fragment (`kclaims::frag_env_of`),
+  which now consumes these facts; the export proves the implication at
+  the positions, the claims use it once `frag_env_of` has `iota_ok`
+  (`frag_congr` moves `iota_ok` across ranks). The witness
+  (`export_sound::typed_below_at`): each declaration's certified type at
+  its cutoff, its canonical one for a twinned recursor, extends into
+  `strip_below(twin at positions, position)` (`cut_ext`: the cutoff's
+  recursors and structures are table keys, so declarations before it,
+  `table_declared`). The closed-type facts leave `rec_model_h`,
+  `rec_model_p_h` and `struct_sem_h`; `kclaims::sig_sr_of` derives them
+  (`ty_closed_at`, level instances by `ti_level::d_ls`), with a recursor's
+  constructors and inductive below it because its type has them in its
+  minors and major (`dom_rec_minor::ctor_below_rec`, `ind_below_rec_g`).
+  TRADEOFF: a structure's constructor's type is now typed below the
+  constructor's rank, not the structure's. That is what nanoda checked:
+  the constructor after the structure, whose structure-eta entry is
+  then in scope (it comes with the inductive's declaration,
+  `env_model::struct_ctor_entry`). `kstruct::canon_scope` returns the larger of
+  the two ranks; `struct_cx_typed` lifts at the constructor's.
+- **R3b** (open) `fields_typed`, from the constructor's typing by Pi
+  inversion.
+- **R3c** (open, deep) `rule_typed`: nanoda never types rule bodies, it
+  converts the declared rules to the ones it generates, so this is the
+  theorem that canonical recursor rules are well typed, not a
+  certificate lift.
 
 ## The open fork before S4
 

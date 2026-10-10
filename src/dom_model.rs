@@ -176,6 +176,17 @@ pub proof fn crank_binds_ge(sig: Sig, bk: crate::expr_model::BinderKind, ds: Seq
     }
 }
 
+/// A telescope's rank bounds its body's.
+pub proof fn crank_binds_body(sig: Sig, bk: crate::expr_model::BinderKind, ds: Seq<ExprSpec>, b: ExprSpec)
+    ensures
+        crate::ti_syntax::crank(sig, crate::rec_canon::binds(bk, ds, b)) >= crate::ti_syntax::crank(sig, b),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        crank_binds_body(sig, bk, ds.drop_first(), b);
+    }
+}
+
 /// An application spine's rank bounds its head's.
 pub proof fn crank_spine_ge(sig: Sig, h: ExprSpec, args: Seq<ExprSpec>)
     ensures

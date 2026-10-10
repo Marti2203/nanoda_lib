@@ -136,6 +136,17 @@ pub proof fn strip_below_zero(sig: Sig)
     assert(strip_below(sig, 0).ienv =~= strip(sig).ienv);
 }
 
+/// The strip forgets the locals.
+pub proof fn strip_below_locals(sig: Sig, d: Map<nat, ExprSpec>, r: int)
+    ensures
+        strip_below(Sig { locals: d, ..sig }, r) == strip_below(sig, r),
+{
+    let s2 = Sig { locals: d, ..sig };
+    assert(strip_below(s2, r).ienv.recs =~= strip_below(sig, r).ienv.recs);
+    assert(strip_below(s2, r).ienv.struct_ctor =~= strip_below(sig, r).ienv.struct_ctor);
+    assert(strip_below(s2, r).ienv =~= strip_below(sig, r).ienv);
+}
+
 /// The measure is at most `b` when the node fires at most `b` and every
 /// premise measures at most `b`.
 pub proof fn irank_le(sig: Sig, d: Deriv, b: nat)

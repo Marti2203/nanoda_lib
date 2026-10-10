@@ -458,6 +458,74 @@ pub proof fn minor_end(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
     assert(xa[xa.len() - 1 - (j + nf + nr)] == xs0[np as int]);
 }
 
+/// A CONSTRUCTOR RANKS BELOW ITS RECURSOR: the recursor's type has it in
+/// its minor premise, and a constant's type mentions only lower-ranked
+/// constants.
+pub proof fn ctor_below_rec(sig: Sig, rid: u64, j: int)
+    requires
+        crate::dom_rec_ty::rec_scope_g(sig, rid),
+        crate::dom_model::consts_ranked(sig),
+        0 <= j < rshape(sig, rid).nmin(),
+    ensures
+        sig.consts.contains_key(rshape(sig, rid).ctors[j]),
+        crate::dom_code::rk(sig, rshape(sig, rid).ctors[j]) < crate::dom_code::rk(sig, rid),
+{
+    let sh = rshape(sig, rid);
+    let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni));
+    let body = spine_app(ExprSpec::Var(nmin + ni + 1), crate::rec_canon::vars(1, ni).push(ExprSpec::Var(0)));
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert(sig.consts[rid].ty == binds(BinderKind::Pi, ds, body));
+    assert(sh.pdoms.len() == np) by {
+        crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    }
+    assert(ds[np + 1 + j] == sh.minor_ty(j));
+    crate::dom_model::crank_binds_ge(sig, BinderKind::Pi, ds, body, np + 1 + j);
+    let (nf, nr) = (sh.fields[j].len(), sh.rposj(j).len());
+    let s1 = (1 + j) as nat;
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, s1));
+    let ihs = Seq::new(nr, |r: int| sh.ih_ty(j, r));
+    let ts = Seq::new(ni, |q: int| crate::subst_algebra::lift(nr, 0, crate::subst_algebra::lift(s1, nf, sh.tss[j][q])));
+    let h = ExprSpec::Const(sh.ctors[j], sh.us());
+    let cargs = crate::rec_canon::vars(s1 + nf + nr, np) + crate::rec_canon::vars(nr, nf);
+    let value = spine_app(h, cargs);
+    let mb = spine_app(ExprSpec::Var((j + nf + nr) as nat), ts.push(value));
+    crate::dom_model::crank_binds_body(sig, BinderKind::Pi, fds, binds(BinderKind::Pi, ihs, mb));
+    crate::dom_model::crank_binds_body(sig, BinderKind::Pi, ihs, mb);
+    assert(ts.push(value).subrange(0, ni as int) =~= ts);
+    crate::dom_model::crank_spine_ge(sig, h, cargs);
+    assert(sig.consts.contains_key(sh.ctors[j])) by {
+        crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    }
+}
+
+/// AN INDUCTIVE RANKS BELOW ITS RECURSOR: the recursor's type has it at
+/// its major premise.
+pub proof fn ind_below_rec_g(sig: Sig, rid: u64)
+    requires
+        crate::dom_rec_ty::rec_scope_g(sig, rid),
+        crate::dom_model::consts_ranked(sig),
+    ensures
+        sig.consts.contains_key(rshape(sig, rid).ind),
+        crate::dom_code::rk(sig, rshape(sig, rid).ind) < crate::dom_code::rk(sig, rid),
+{
+    let sh = rshape(sig, rid);
+    let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    let margs = crate::rec_canon::vars(1 + nmin + ni, np) + crate::rec_canon::vars(0, ni);
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), margs);
+    let body = spine_app(ExprSpec::Var(nmin + ni + 1), crate::rec_canon::vars(1, ni).push(ExprSpec::Var(0)));
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert(sig.consts[rid].ty == binds(BinderKind::Pi, ds, body));
+    assert(ds[ds.len() - 1] == major);
+    crate::dom_model::crank_binds_ge(sig, BinderKind::Pi, ds, body, ds.len() - 1);
+    crate::dom_model::crank_spine_ge(sig, ExprSpec::Const(sh.ind, sh.us()), margs);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+}
+
 /// The recursor type's `i`-th declared domain.
 pub proof fn rec_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, i: int)
     requires

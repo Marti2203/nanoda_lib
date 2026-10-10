@@ -273,6 +273,124 @@ proof fn type_crank<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: i
     crate::ti_level::crank_bound(sig, ty, dc.dom(), pos_of(ef, cid) as nat);
 }
 
+/// A table's names at a cutoff are declared there.
+proof fn table_declared<'p>(ef: crate::util::ExportFile<'p>, c: int, k: u64)
+    requires
+        m_denv(ef, c).recs.contains_key(k) || m_denv(ef, c).struct_ctor.contains_key(k),
+    ensures
+        m_dty(ef, c).contains_key(k),
+{
+    let (view, keys) = (ef.declars_view(), ef.declars_keys());
+    assert(crate::env::ids_at(keys, c).contains(k));
+    assert(crate::env::find_at(view, keys, c, k) is Some);
+    assert(crate::env_model::ty_entry(crate::env::find_at(view, keys, c, k)->0) is Some);
+}
+
+/// A CERTIFICATE'S SIGNATURE IS BELOW ITS DECLARATION in the position-ranked
+/// twin: its recursors and structures are declared earlier.
+#[verifier::spinoff_prover]
+proof fn cut_ext<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: int)
+    requires
+        below_ok(ef, cc),
+        crate::metatheory::rank_ok(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
+        m_dty(ef, cc).contains_key(cid),
+        0 <= c <= pos_of(ef, cid) < cc,
+        forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> 0 <= pos_of(ef, id) < c,
+        crate::ti_syntax::iota_ok(crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)))),
+    ensures
+        crate::ti_valid::sig_ext(crate::metatheory::jsig(m_dty(ef, c), m_denv(ef, c), Map::empty()),
+            crate::ti_strip::strip_below(crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc))), pos_of(ef, cid) as int)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+    let (a, view, keys) = (ef.arena(), ef.declars_view(), ef.declars_keys());
+    let r = rmap(ef, cc);
+    let n = pos_of(ef, cid) as int;
+    let raw0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let sr = crate::metatheory::jsig_r(dty, denv, r);
+    assert(sr == (crate::ti_syntax::Sig { rank: r, ..raw0 }));
+    crate::twin::twin_rank(raw0, r);
+    let tw = crate::twin::twin(sr);
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    assert(tw == (crate::ti_syntax::Sig { rank: r, ..s0 }));
+    let sc = crate::metatheory::jsig(dc, nc, Map::empty());
+    let sb = crate::ti_strip::strip_below(tw, n);
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    crate::env_model::env_le_at(a, view, keys, c, cc);
+    crate::env_model::defs_stable_at(a, view, keys, c, cc);
+    twin_le_at(ef, cc, c, cc);
+    assert forall|k: u64| #[trigger] sc.consts.contains_key(k) implies sb.consts.contains_key(k) && sb.consts[k] == sc.consts[k] by {
+        assert(dc.contains_key(k));
+        if nc.defs.contains_key(k) {
+            assert(denv.defs.contains_key(k) && denv.defs[k] == nc.defs[k]);
+        }
+    }
+    assert forall|k: u64| #[trigger] sc.ienv.recs.contains_key(k) implies sb.ienv.recs.contains_key(k) && sc.ienv.recs[k] == sb.ienv.recs[k] by {
+        assert(nc.recs.contains_key(k));
+        table_declared(ef, c, k);
+        assert(dty.contains_key(k));
+        assert(denv.recs.contains_key(k) && denv.recs[k] == nc.recs[k]);
+        assert(crate::dom_code::rk(tw, k) == pos_of(ef, k));
+    }
+    assert(sc.ienv.sub(sb.ienv));
+    assert forall|k: u64| #[trigger] sc.ienv.struct_ctor.contains_key(k) implies sb.ienv.struct_ctor.contains_key(k) && sb.ienv.struct_ctor[k] == sc.ienv.struct_ctor[k] by {
+        table_declared(ef, c, k);
+        assert(dty.contains_key(k));
+        assert(crate::dom_code::rk(tw, k) == pos_of(ef, k));
+    }
+    assert forall|k: u64, ls: Seq<crate::level_model::LevelSpec>| #[trigger] crate::ti_syntax::is_def(sb, k, ls)
+        implies crate::ti_syntax::def_ok(sb, k, ls) by {
+        crate::twin::twin_keeps(raw0, k);
+        assert(crate::ti_syntax::is_def(sr, k, ls));
+        assert(crate::ti_syntax::dval(sb, k, ls) == crate::ti_syntax::dval(sr, k, ls));
+        crate::ti_locals::crank_same(sr, sb, crate::ti_syntax::dval(sr, k, ls));
+    }
+    crate::ti_strip::iota_ok_below(tw, n);
+}
+
+/// THE TYPES BELOW THEIR POSITIONS: in the position-ranked twin, with its
+/// recursors in the fragment, each constant's type -- a twinned
+/// recursor's canonical one -- is typed with only the recursors and
+/// structures declared before it, from its certificate.
+#[verifier::spinoff_prover]
+proof fn typed_below_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+        crate::metatheory::rank_ok(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
+    ensures
+        crate::metatheory::types_typed(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let r = rmap(ef, cc);
+    let raw0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let sr = crate::metatheory::jsig_r(dty, denv, r);
+    assert(sr == (crate::ti_syntax::Sig { rank: r, ..raw0 }));
+    crate::twin::twin_rank(raw0, r);
+    let tw = crate::twin::twin(sr);
+    if crate::ti_syntax::iota_ok(tw) {
+        assert forall|cid: u64| #[trigger] tw.consts.contains_key(cid) implies
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(tw, crate::dom_code::rk(tw, cid)), tw.consts[cid].ty) by {
+            assert(dty.contains_key(cid));
+            let c = decl_facts(ef, cc, cid);
+            let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+            crate::twin::twin_keeps(raw0, cid);
+            let t = tw.consts[cid].ty;
+            if denv.recs.contains_key(cid) && crate::twin::rec_core(raw0, cid) {
+                assert(crate::metatheory::is_type(dc, nc, Map::empty(), crate::twin::canon_ty(raw0, cid)));
+                assert(t == crate::twin::canon_ty(raw0, cid));
+            } else {
+                assert(t == dty[cid].1);
+            }
+            let l = crate::jkernel::is_type_sort(dc, nc, Map::empty(), t);
+            assert(crate::dom_code::rk(tw, cid) == pos_of(ef, cid));
+            cut_ext(ef, cc, cid, c);
+            crate::ti_valid::derivable_ext(crate::metatheory::jsig(dc, nc, Map::empty()),
+                crate::ti_strip::strip_below(tw, pos_of(ef, cid) as int), crate::ti_syntax::eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)));
+        }
+    }
+}
+
 /// THE RANKS: a definition's value mentions only earlier declarations.
 #[verifier::spinoff_prover]
 proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
@@ -282,6 +400,8 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         crate::metatheory::rank_ok(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
         crate::env_weaken::defs_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
         crate::dom_model::consts_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()))
+            ==> crate::dom_rec_end::types_below(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
 {
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let r = rmap(ef, cc);
@@ -332,8 +452,10 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         crate::ti_level::crank_bound(sr, crate::ti_syntax::dval(sr, cid, ls), dc.dom(), pos_of(ef, cid) as nat);
     }
     assert(crate::metatheory::rank_ok(dty, denv, r));
+    typed_below_at(ef, cc);
     let jr = crate::metatheory::jrank(dty, denv);
-    assert(crate::metatheory::rank_ok(dty, denv, jr) && crate::metatheory::types_ranked(dty, denv, jr));
+    assert(crate::metatheory::rank_ok(dty, denv, jr) && crate::metatheory::types_ranked(dty, denv, jr)
+        && crate::metatheory::types_typed(dty, denv, jr));
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     assert(raw == crate::metatheory::jsig_r(dty, denv, jr));
     let s = crate::metatheory::jsig(dty, denv, Map::empty());
@@ -553,6 +675,7 @@ proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     ctor_clauses_at(ef, c);
     ranks_at(ef, c);
     lps_at(ef, c);
+    typed_at(ef, c);
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
@@ -1724,6 +1847,31 @@ proof fn ctor_clauses_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
 }
 
+
+/// THE TYPES BELOW THEIR RANKS, at every cutoff and any locals, wherever
+/// the recursors are in the fragment.
+proof fn typed_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d))
+            ==> crate::dom_rec_end::types_below(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    ranked_at(ef, cc);
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    assert forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] crate::metatheory::jsig(dty, denv, d))
+        implies crate::dom_rec_end::types_below(crate::metatheory::jsig(dty, denv, d)) by {
+        crate::jkernel::jsig_locals(dty, denv, d);
+        let sd = crate::metatheory::jsig(dty, denv, d);
+        crate::dom_rec_end::frag_congr(s0, sd);
+        assert forall|c: u64| #[trigger] sd.consts.contains_key(c) implies
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sd, crate::dom_code::rk(sd, c)), sd.consts[c].ty) by {
+            crate::ti_strip::strip_below_locals(s0, d, crate::dom_code::rk(s0, c));
+            assert(s0.consts.contains_key(c));
+        }
+    }
+}
 
 /// THE RANKS ORDER EVERY TYPE, at every cutoff and any locals.
 proof fn ranks_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)

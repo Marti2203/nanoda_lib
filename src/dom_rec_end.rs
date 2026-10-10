@@ -242,6 +242,61 @@ pub open spec fn ty_closed(sig: Sig, t: ExprSpec) -> bool {
     exists|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)))
 }
 
+/// EVERY TYPE TYPED BELOW ITS RANK: a constant's type is typed with only
+/// the recursors and structures ranked below it -- as nanoda checked it,
+/// before the later ones were declared.
+pub open spec fn types_below(sig: Sig) -> bool {
+    forall|c: u64| #[trigger] sig.consts.contains_key(c) ==>
+        ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), sig.consts[c].ty)
+}
+
+/// A closed type below a rank is one below any higher rank.
+pub proof fn ty_closed_up(sig: Sig, r1: int, r2: int, t: ExprSpec)
+    requires
+        ty_closed(crate::ti_strip::strip_below(sig, r1), t),
+        r1 <= r2,
+        crate::ti_syntax::iota_ok(sig),
+    ensures
+        ty_closed(crate::ti_strip::strip_below(sig, r2), t),
+{
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, r1), eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)));
+    crate::ti_strip::derivable_below_mono(sig, r1, r2, eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)));
+}
+
+/// A constant's type, at an instance or as declared, typed at any rank
+/// from its own.
+pub proof fn ty_closed_at(sig: Sig, c: u64, r: int, ls: Seq<LevelSpec>)
+    requires
+        types_below(sig),
+        sig.consts.contains_key(c),
+        crate::dom_code::rk(sig, c) <= r,
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_levels::sig_lps(sig),
+        ls.len() == sig.consts[c].lps.len() || ls.len() == 0,
+    ensures
+        ty_closed(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::dty_at(sig, c, ls)),
+{
+    let (t, ks) = (sig.consts[c].ty, sig.consts[c].lps);
+    let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)),
+        eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)));
+    let j = eq(Seq::empty(), t, t, crate::ti_syntax::sort(l));
+    crate::ti_strip::derivable_below_mono(sig, crate::dom_code::rk(sig, c), r, j);
+    let sb = crate::ti_strip::strip_below(sig, r);
+    if ls.len() == 0 {
+        crate::dom_levels::sl_nil(t, ks);
+        assert(ls =~= Seq::<LevelSpec>::empty());
+        assert(derivable(sb, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::sort(l))));
+    } else {
+        crate::dom_levels::sig_lps_below(sig, r, ks, ls);
+        let d = crate::ti_sub::get(sb, j);
+        crate::ti_level::d_ls(sb, d, ks, ls);
+        let l2 = crate::level_model::subst_level_spec(l, ks, ls);
+        assert(crate::ti_level::jls(j, ks, ls) == eq(Seq::empty(), crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::sort(l2))) by {
+            assert(crate::ti_level::gls(Seq::empty(), ks, ls) =~= Seq::<ExprSpec>::empty());
+        }
+    }
+}
+
 /// Rule `p`'s binders at a level instance: the recursor's head binders,
 /// then the constructor's fields.
 pub open spec fn rule_ctx(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> Seq<ExprSpec> {
@@ -338,12 +393,8 @@ pub open spec fn sig_sr(sig: Sig) -> bool {
 pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
-    &&& forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() ==>
-        #[trigger] ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, c, lv))
-    &&& ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
     &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
@@ -356,7 +407,6 @@ pub open spec fn rec_model_p_h(sig: Sig, c: u64) -> bool {
     let rd = sig.ienv.recs[c];
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
         ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
 }
 

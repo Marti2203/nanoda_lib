@@ -34,7 +34,8 @@ pub proof fn struct_facts(sig: Sig, s: u64)
         &&& crate::dom_code::canon_ok(sig, s)
         &&& crate::dom_levels::sig_lps(sig)
         &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
-        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
+        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, sh.ctors[0])), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
+        &&& crate::ti_syntax::iota_ok(sig)
         &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
             #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls)
     }),
@@ -95,11 +96,15 @@ pub proof fn canon_scope(sig: Sig, ind: u64) -> (rr: int)
         struct_facts(sig, ind);
         crate::dom_code::struct_decl_shape(sig, ind);
         crate::dom_code::canon_shape_struct(sig, ind);
+        let (ri, rc) = (crate::dom_code::rk(sig, ind), crate::dom_code::rk(sig, sh.ctors[0]));
+        let rr = if ri <= rc { rc } else { ri };
+        crate::dom_rec_end::ty_closed_up(sig, ri, rr, crate::ti_syntax::dty_at(sig, ind, Seq::empty()));
+        crate::dom_rec_end::ty_closed_up(sig, rc, rr, crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()));
         assert forall|p: int| 0 <= p < sh.nmin() implies
-            crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, ind)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty())) by {
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, rr), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty())) by {
             assert(p == 0);
         }
-        crate::dom_code::rk(sig, ind)
+        rr
     }
 }
 
@@ -371,7 +376,7 @@ pub proof fn struct_cx_typed(sig: Sig, g: Ctx, st: ExprSpec, lt: LevelSpec, x: E
     crate::dom_levels::sig_lps_at(sig, sig.consts[s].lps, us);
     crate::iota_sr::ctor_at_s(sig, sh, 0, us);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
-    crate::iota_sr::const_lv(sig, crate::dom_code::rk(sig, s), g, c, us, us);
+    crate::iota_sr::const_lv(sig, crate::dom_code::rk(sig, c), g, c, us, us);
     let tds = crate::dom_iota::ctds_s(sig, sh, 0, us);
     let cb = crate::dom_iota::cbody_s(sig, sh, 0, us);
     let tc = crate::rec_canon::binds(BinderKind::Pi, tds, cb);

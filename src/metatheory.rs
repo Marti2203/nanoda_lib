@@ -60,8 +60,16 @@ pub open spec fn types_ranked(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec
     crate::dom_model::consts_ranked(crate::twin::twin(jsig_r(dty, denv, r)))
 }
 
+/// ... and under which, wherever the recursors are in the fragment, every
+/// constant's type is typed with only the recursors and structures ranked
+/// below it, as nanoda checked it (`dom_rec_end::types_below`).
+pub open spec fn types_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, r: Map<u64, nat>) -> bool {
+    let s = crate::twin::twin(jsig_r(dty, denv, r));
+    crate::ti_syntax::iota_ok(s) ==> crate::dom_rec_end::types_below(s)
+}
+
 pub open spec fn jrank(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> Map<u64, nat> {
-    choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r)
+    choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r) && types_typed(dty, denv, r)
 }
 
 /// REAL TYPING: the typed judgment types `e` at `t`, in the empty de Bruijn
