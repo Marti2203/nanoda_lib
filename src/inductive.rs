@@ -2091,6 +2091,17 @@ pub(crate) open spec fn env_old<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar
         && env.old_view()[keys[i]] == od
 }
 
+/// THE CHECKED INDUCTIVE IS THE EXPORTED ONE: an exported inductive of its
+/// name whose declared type is the checked type, closed.
+pub(crate) open spec fn ind_old<'x, 't>(env: crate::env::Env<'x, 't>, h: IndTyHeader<'t>) -> bool {
+    exists|od: Declar<'t>| #[trigger] env_old(env, od)
+        && od is Inductive
+        && crate::env::declar_info(od).name == h.name
+        && crate::expr_arena_bridge::to_model(crate::env::declar_info(od).ty) == crate::expr_arena_bridge::to_model(h.ty)
+        && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(h.ty)) == 0
+        && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(h.ty))
+}
+
 /// THE CHECKED CONSTRUCTOR IS THE EXPORTED ONE: an exported constructor of
 /// its name whose declared type is the checked type, closed.
 pub(crate) open spec fn ctor_old<'x, 't>(env: crate::env::Env<'x, 't>, c: CtorHeader<'t>) -> bool {
@@ -4683,6 +4694,12 @@ pub(crate) proof fn shape_ctor<'t>(st: InductiveCheckState<'t>, j: int)
         && !crate::expr_model::has_fv(sh.tss[j][q]) by {
         assert(sh.tss[j][q] == args[np + q]);
     }
+}
+
+/// THE FRAGMENT'S BOUNDARY on fields: each of an admitted kind.
+pub(crate) open spec fn fields_admitted<'t>(st: InductiveCheckState<'t>) -> bool {
+    forall|j: int, k: int| 0 <= j < decl_shape(st).nmin() && 0 <= k < decl_shape(st).fields[j].len()
+        ==> fkind_ok(#[trigger] decl_shape(st).fields[j][k], decl_shape(st).ind, decl_shape(st).us(), decl_shape(st).np, decl_shape(st).ni, k as nat)
 }
 
 /// NANODA'S CHECKS ESTABLISH THE CANONICAL SHAPE (B6a-2): for a single
@@ -8196,12 +8213,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     // `assert_def_eq` are tested closed first, as in `check_restored_recursor1`;
     // VERUS-REWRITE(ptr-eq-wrapper): `std::ptr::eq(old, new)` is the same call
     // behind `env_model::same_object` (Verus cannot pass a borrow as a raw
-    // pointer).
+    // pointer). VERUS-REWRITE(tested-input): the block's first inductive, as
+    // the checker walked it, is the exported one structurally (`model_eq`)
+    // and closed -- what the certificate records (`ind_old`). Never fails on
+    // a block Lean exports.
     #[verifier::exec_allows_no_decreases_clause]
     fn assert_nonnested_tys_def_eq(&mut self, base_ind: &InductiveData<'t>, st: &InductiveCheckState<'t>)
         requires
             crate::tc::tc_wf(*old(self)),
             crate::env_model::inductive_data_owned(*old(self).env, *base_ind),
+            crate::inductive_model::st_owned(*old(self).ctx, *st),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             crate::tc::tc_wf(*final(self)),
@@ -8209,6 +8230,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
+            st.all_inductives_incl_specialized@.len() > 0 ==> ind_old(*old(self).env, st.all_inductives_incl_specialized@[0]),
     {
         assert!(!st.is_nested());
         proof {
@@ -8237,6 +8259,24 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     self.assert_def_eq(old.info.ty, new.info.ty);
                 }
                 _ => panic!(),
+            }
+        }
+        if st.all_inductives_incl_specialized.len() > 0 {
+            let h0 = &st.all_inductives_incl_specialized[0];
+            proof {
+                assert(crate::util_model::owns(*self.ctx, h0.name));
+                assert(crate::util_model::owns(*self.ctx, h0.ty));
+            }
+            match self.env.get_old_declar(&h0.name) {
+                Some(Declar::Inductive(old_i)) => {
+                    self.assert_closed(h0.ty);
+                    assert!(crate::expr_arena_bridge::model_eq(self.ctx, h0.ty, old_i.info.ty),
+                        "inductive: the checked type is not the exported one");
+                    proof {
+                        assert(env_old(*old(self).env, Declar::Inductive(*old_i)));
+                    }
+                },
+                _ => panic!("inductive: the block's first type is not an exported inductive"),
             }
         }
     }
