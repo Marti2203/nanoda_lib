@@ -876,6 +876,14 @@ pub(crate) proof fn recs_syn_minors<'t>(st: InductiveCheckState<'t>, st2: Induct
 }
 
 /// The block's recorded inductives are constants at parameter levels.
+/// The block's `i`-th inductive constant: its name, at the block's
+/// universe parameters (`mk_const`).
+pub(crate) open spec fn ind_const_at<'t>(st: InductiveCheckState<'t>, i: int) -> bool {
+    &&& crate::expr_arena_bridge::is_const_shape(st.ind_consts@[i])
+    &&& crate::expr_arena_bridge::const_name_of(st.ind_consts@[i]) == st.all_inductives_incl_specialized@[i].name
+    &&& crate::expr_arena_bridge::const_levels_of(st.ind_consts@[i]) == st.uparams
+}
+
 pub(crate) open spec fn consts_params<'t>(st: InductiveCheckState<'t>) -> bool {
     forall|i: int| 0 <= i < st.ind_consts@.len() ==> crate::expr_arena_bridge::is_const_shape(#[trigger] st.ind_consts@[i])
         && forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(crate::expr_arena_bridge::const_levels_of(st.ind_consts@[i])).len()
@@ -10330,6 +10338,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ..*old(st)
             }),
             final(st).ind_consts@.len() == old(st).ind_consts@.len() + final(st).all_inductives_incl_specialized@.len(),
+            old(st).ind_consts@.len() == 0 ==> forall|k: int| 0 <= k < final(st).ind_consts@.len() ==> #[trigger] ind_const_at(*final(st), k),
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -10377,6 +10386,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ..*old(st)
                 }),
                 st.ind_consts@.len() == old(st).ind_consts@.len() + i,
+                old(st).ind_consts@.len() == 0 ==> forall|k: int| 0 <= k < i ==> #[trigger] ind_const_at(*st, k),
                 st.local_indices@.len() == i,
                 st.tele@.len() == i,
                 i > 0 ==> st.block_codom is Some,
@@ -10404,6 +10414,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 self.check_inductive_specs_mutual1(st, st.all_inductives_incl_specialized[i].clone());
             }
             proof {
+                if old(st).ind_consts@.len() == 0 {
+                    assert forall|k: int| 0 <= k < i + 1 implies #[trigger] ind_const_at(*st, k) by {
+                        if k < i {
+                            assert(st.ind_consts@[k] == st.ind_consts@.subrange(0, st0.ind_consts@.len() as int)[k]);
+                            assert(ind_const_at(st0, k));
+                        } else {
+                            assert(st.ind_consts@[k] == st.ind_consts@.last());
+                        }
+                    }
+                }
                 assert(st.tele@.last() == st.tele@[i as int]);
                 assert(st.local_indices@.last() == st.local_indices@[i as int]);
                 assert(walk_k_ok(*old(self).env, *st, i as int)) by { reveal(walk_k_ok); }
@@ -10452,6 +10472,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ..*old(st)
             }),
             final(st).ind_consts@.len() == old(st).ind_consts@.len() + 1,
+            final(st).ind_consts@.subrange(0, old(st).ind_consts@.len() as int) == old(st).ind_consts@,
+            crate::expr_arena_bridge::is_const_shape(final(st).ind_consts@.last()),
+            crate::expr_arena_bridge::const_name_of(final(st).ind_consts@.last()) == old(st).all_inductives_incl_specialized@[0].name,
+            crate::expr_arena_bridge::const_levels_of(final(st).ind_consts@.last()) == uparams,
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
@@ -10709,6 +10733,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ..*old(st)
             }),
             final(st).ind_consts@.len() == old(st).ind_consts@.len() + 1,
+            final(st).ind_consts@.subrange(0, old(st).ind_consts@.len() as int) == old(st).ind_consts@,
+            crate::expr_arena_bridge::is_const_shape(final(st).ind_consts@.last()),
+            crate::expr_arena_bridge::const_name_of(final(st).ind_consts@.last()) == ind.name,
+            crate::expr_arena_bridge::const_levels_of(final(st).ind_consts@.last()) == old(st).uparams,
             crate::tc::tc_wf(*final(self)),
             (*final(self)).env == (*old(self)).env,
             (*final(self)).ctx.dbj_level_counter == 0,
