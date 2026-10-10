@@ -2138,7 +2138,14 @@ recursor has them. Soundness's Iota case hands the oracle of that level
 (`strip_below_valid`: those derivations measure at most `rk + 1`, the
 redex `rk + 2`); `dom_iota_sound::sound_iota` and the telescope lemmas
 take it; the field facts still at rank 0 reach it by
-`dom_sound::oracle_down`.
+`dom_sound::oracle_down` (ee19629).
+R2b-2a: a recursor's closed types -- its own, its inductive's and
+constructors' (`rec_model*`) -- and a Prop-only recursor's rules
+(`iota_gen::rule_typed_g`) are typed below the recursor's rank too.
+Helpers take the level (`dom_levels::closed_conv(sig, rr, ..)`,
+`iota_sr::const_lv`) with `iota_ok(sig) || rr <= 0`
+(`ti_strip::derivable_up`); subject reduction's `sr_ok`/`srg_ok` carry
+`iota_ok`; `kstruct::canon_scope` returns the level its facts hold at.
 
 The plan:
 

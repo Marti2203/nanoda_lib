@@ -357,7 +357,7 @@ pub proof fn sr_ok_of(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     crate::iota_sr::rule_ty_split(sig, rid, lv, p);
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     crate::dom_rec_end::rec_model_at(sig, rid, crate::dom_rec_ty::rinst(sig, rid, lv));
-    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty())));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), crate::ti_syntax::dty_at(sig, sh.ctors[p], Seq::empty())));
 }
 
 } // verus!

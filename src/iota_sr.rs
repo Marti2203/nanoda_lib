@@ -49,10 +49,11 @@ pub open spec fn sr_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
     &&& rec_scope(sig, rid)
+    &&& crate::ti_syntax::iota_ok(sig)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& crate::dom_code::canon_sr(sig, sh.ind) && crate::dom_code::canon_shape(sig, sh.ind) == sh
     &&& crate::dom_model::sem_const(sig, sh.ind, crate::dom_rec_ty::rinst(sig, rid, lv))
-    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, sh.ctors[p], Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, sh.ctors[p], Seq::empty()))
     &&& 0 <= p < sh.nmin()
     &&& lv.len() == rd.uparams.len()
     &&& crate::expr_model::nlbv(crate::expr_model::subst_expr_levels(rule_ty(sig, rid, p), rd.uparams, lv)) == 0
@@ -279,12 +280,13 @@ pub proof fn ptype_at_s(sig: Sig, sh: crate::rec_canon::IndShape, us: Seq<LevelS
 
 /// `ctor_lv` for any declared constant whose type is a closed type: no
 /// recursor needed.
-pub proof fn const_lv(sig: Sig, g: Ctx, c: u64, us: Seq<LevelSpec>, clv: Seq<LevelSpec>)
+pub proof fn const_lv(sig: Sig, rr: int, g: Ctx, c: u64, us: Seq<LevelSpec>, clv: Seq<LevelSpec>)
     requires
         sig.consts.contains_key(c) && sig.consts[c].val is None,
         crate::dom_levels::sig_lps(sig),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, c, Seq::empty())),
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, rr), dty_at(sig, c, Seq::empty())),
+        crate::ti_syntax::iota_ok(sig) || rr <= 0,
         us.len() == sig.consts[c].lps.len(),
         crate::conv_cr::levs_eq(us, clv),
     ensures
@@ -294,14 +296,14 @@ pub proof fn const_lv(sig: Sig, g: Ctx, c: u64, us: Seq<LevelSpec>, clv: Seq<Lev
 {
     let lps = sig.consts[c].lps;
     let r = sig.consts[c].ty;
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, rr);
     crate::dom_levels::sl_nil(r, lps);
     assert(dty_at(sig, c, Seq::empty()) == r);
     let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), r, r, crate::ti_syntax::sort(l)));
     crate::ti_scope::closed_of_empty(ss, r, r, crate::ti_syntax::sort(l));
     assert(crate::conv_cr::levs_eq(us, us));
-    crate::dom_levels::closed_conv(sig, g, r, l, lps, us, us);
-    crate::dom_levels::closed_conv(sig, g, r, l, lps, us, clv);
+    crate::dom_levels::closed_conv(sig, rr, g, r, l, lps, us, us);
+    crate::dom_levels::closed_conv(sig, rr, g, r, l, lps, us, clv);
     crate::ti_level::ls_nlbv(r, lps, us);
     crate::ti_level::ls_nlbv(r, lps, clv);
     let lu = crate::level_model::subst_level_spec(l, lps, us);
@@ -483,11 +485,12 @@ pub proof fn const_ax(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
 /// type at the first (`ConstAx`, its premise from the closed type).
 pub proof fn ctor_lv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, clv: Seq<LevelSpec>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         rec_scope_g(sig, rid),
         crate::dom_levels::sig_lps(sig),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         0 <= p < rshape(sig, rid).nmin(),
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),
         us.len() == sig.consts[rshape(sig, rid).ctors[p]].lps.len(),
         crate::conv_cr::levs_eq(us, clv),
     ensures
@@ -501,15 +504,15 @@ pub proof fn ctor_lv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, clv
     let c = sh.ctors[p];
     let lps = sig.consts[c].lps;
     let r = sig.consts[c].ty;
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid));
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_levels::sl_nil(r, lps);
     assert(dty_at(sig, c, Seq::empty()) == r);
     let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), r, r, crate::ti_syntax::sort(l)));
     crate::ti_scope::closed_of_empty(ss, r, r, crate::ti_syntax::sort(l));
     assert(crate::conv_cr::levs_eq(us, us));
-    crate::dom_levels::closed_conv(sig, g, r, l, lps, us, us);
-    crate::dom_levels::closed_conv(sig, g, r, l, lps, us, clv);
+    crate::dom_levels::closed_conv(sig, crate::dom_code::rk(sig, rid), g, r, l, lps, us, us);
+    crate::dom_levels::closed_conv(sig, crate::dom_code::rk(sig, rid), g, r, l, lps, us, clv);
     crate::ti_level::ls_nlbv(r, lps, us);
     crate::ti_level::ls_nlbv(r, lps, clv);
     let lu = crate::level_model::subst_level_spec(l, lps, us);
@@ -523,11 +526,12 @@ pub proof fn ctor_lv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, clv
 #[verifier::spinoff_prover]
 pub proof fn sr_switch(sig: Sig, g: Ctx, rid: u64, p: int, clv: Seq<LevelSpec>, us: Seq<LevelSpec>, cargs: Seq<ExprSpec>, tm: ExprSpec)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::dom_rec_end::sig_sr(sig),
         rec_scope_g(sig, rid),
         crate::dom_levels::sig_lps(sig),
         0 <= p < rshape(sig, rid).nmin(),
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),
         us.len() == sig.consts[rshape(sig, rid).ctors[p]].lps.len(),
         crate::conv_cr::levs_eq(us, clv),
         derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], clv), cargs),
@@ -850,9 +854,10 @@ pub proof fn field_conv(sig: Sig, g: Ctx, rid: u64, p: int, us: Seq<LevelSpec>, 
 /// converts (`ConstAx` on its closed type, then congruence).
 pub proof fn ind_lv(sig: Sig, g: Ctx, rid: u64, us: Seq<LevelSpec>, us2: Seq<LevelSpec>, ps: Seq<ExprSpec>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         rec_scope(sig, rid),
         crate::dom_levels::sig_lps(sig),
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ind, Seq::empty())),
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, rshape(sig, rid).ind, Seq::empty())),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
         crate::conv_cr::levs_eq(us, us2),
@@ -869,14 +874,14 @@ pub proof fn ind_lv(sig: Sig, g: Ctx, rid: u64, us: Seq<LevelSpec>, us2: Seq<Lev
     let (ci, ci2) = (ExprSpec::Const(ind, us), ExprSpec::Const(ind, us2));
     let lps = sig.consts[ind].lps;
     let r = sig.consts[ind].ty;
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid));
     crate::dom_rec_ty::scope_ctor_ind(sig, rid);
     crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
     crate::dom_levels::sl_nil(r, lps);
     assert(dty_at(sig, ind, Seq::empty()) == r);
     let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), r, r, crate::ti_syntax::sort(l)));
     crate::ti_scope::closed_of_empty(ss, r, r, crate::ti_syntax::sort(l));
-    crate::dom_levels::closed_conv(sig, g, r, l, lps, us, us2);
+    crate::dom_levels::closed_conv(sig, crate::dom_code::rk(sig, rid), g, r, l, lps, us, us2);
     crate::ti_level::ls_nlbv(r, lps, us);
     crate::ti_level::ls_nlbv(r, lps, us2);
     const_ax(sig, g, ind, us, us2, crate::level_model::subst_level_spec(l, lps, us));
@@ -914,10 +919,11 @@ pub proof fn ind_lv(sig: Sig, g: Ctx, rid: u64, us: Seq<LevelSpec>, us2: Seq<Lev
 pub proof fn cfu_conv(sig: Sig, g: Ctx, rid: u64, p: int, k: int, us: Seq<LevelSpec>, us2: Seq<LevelSpec>,
     ps: Seq<ExprSpec>, fs: Seq<ExprSpec>)
     requires
+        crate::ti_syntax::iota_ok(sig),
         rec_scope(sig, rid),
         crate::dom_code::canon_sr(sig, rshape(sig, rid).ind),
         crate::dom_code::canon_shape(sig, rshape(sig, rid).ind) == rshape(sig, rid),
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ind, Seq::empty())),
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, rshape(sig, rid).ind, Seq::empty())),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         0 <= p < rshape(sig, rid).nmin(),
         0 <= k < rshape(sig, rid).fields[p].len(),
@@ -952,7 +958,8 @@ pub proof fn cfu_conv(sig: Sig, g: Ctx, rid: u64, p: int, k: int, us: Seq<LevelS
         let ss = crate::ti_strip::strip(sig);
         let l = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), f, f, crate::ti_syntax::sort(l)));
         crate::ti_scope::closed_of_empty(ss, f, f, crate::ti_syntax::sort(l));
-        crate::dom_levels::closed_conv(sig, g, f, l, sh.lps, us, us2);
+        crate::ti_strip::strip_below_zero(sig);
+        crate::dom_levels::closed_conv(sig, 0, g, f, l, sh.lps, us, us2);
         crate::ti_level::ls_nlbv(f, sh.lps, us);
         crate::ti_level::ls_nlbv(f, sh.lps, us2);
         vsub_closed(fu, xs);

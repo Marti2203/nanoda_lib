@@ -272,9 +272,10 @@ pub open spec fn rule_typed(sig: Sig, c: u64, lv: Seq<LevelSpec>, p: int) -> boo
 }
 
 /// What the model assumes of each recursor beyond the syntactic fragment:
-/// the constants involved are semantic, the recursor's and constructors'
-/// types and the rules' bodies (in their binders) are typed without
-/// recursors (so without Iota: soundness's Iota case uses their soundness),
+/// the constants involved are semantic, the recursor's, inductive's and
+/// constructors' types and the rules' bodies (in their binders) are typed
+/// with the recursors ranked below it (`ti_strip::strip_below`: soundness's
+/// Iota case uses their soundness),
 /// the inductive is not a proposition if the recursor eliminates into any
 /// universe, and its closed fields are ranked
 /// below it.
@@ -282,15 +283,15 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
     &&& forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() ==>
-        #[trigger] crate::dom_model::sem_const(sig, c, lv) && ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv))
+        #[trigger] crate::dom_model::sem_const(sig, c, lv) && ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, c, lv))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sh.ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, sh.ind, ls)
-    &&& ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
+    &&& ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
     &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& crate::dom_levels::sig_lps(sig)
     &&& forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[sh.ind].lps.len() && 0 <= p < sh.nmin()
         ==> #[trigger] crate::dom_model::sem_const(sig, sh.ctors[p], ls)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
@@ -314,7 +315,7 @@ pub open spec fn rec_model_p(sig: Sig, c: u64) -> bool {
     let rd = sig.ienv.recs[c];
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
         ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sh.ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, sh.ind, ls)
     &&& crate::dom_levels::sig_lps(sig)
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
@@ -335,11 +336,11 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
     &&& forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() ==>
-        #[trigger] ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv))
-    &&& ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
+        #[trigger] ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, c, lv))
+    &&& ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
     &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
@@ -352,7 +353,7 @@ pub open spec fn rec_model_p_h(sig: Sig, c: u64) -> bool {
     let rd = sig.ienv.recs[c];
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
         ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
-    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+    &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
 }
 
@@ -429,9 +430,9 @@ pub proof fn rec_model_at(sig: Sig, c: u64, ls: Seq<LevelSpec>)
         ls.len() == sig.consts[crate::dom_rec_ty::rshape(sig, c).ind].lps.len(),
     ensures
         crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, c).ind, ls),
-        ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty())),
+        ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty())),
         forall|p: int| 0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin() ==>
-            ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] crate::dom_rec_ty::rshape(sig, c).ctors[p], Seq::empty())),
+            ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] crate::dom_rec_ty::rshape(sig, c).ctors[p], Seq::empty())),
 {
     reveal(sig_rec);
     assert(rec_model(sig, c));

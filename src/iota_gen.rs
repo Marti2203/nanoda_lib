@@ -418,10 +418,11 @@ pub open spec fn rule_bty_g(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> E
     spine_app(ExprSpec::Var(nmin + nf), ts.push(value))
 }
 
-/// Rule `p`'s body at a level instance is typed in its binders, without
-/// recursors, and its type telescope is closed.
+/// Rule `p`'s body at a level instance is typed in its binders, with the
+/// recursors ranked below the recursor (`ti_strip::strip_below`), and its
+/// type telescope is closed.
 pub open spec fn rule_typed_g(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid));
     let (ctx, b, bt) = (rule_ctx_g(sig, rid, lv, p), rule_body_g(sig, rid, lv, p), rule_bty_g(sig, rid, lv, p));
     &&& derivable(ss, crate::ti_syntax::Jd::Wf(ctx))
     &&& derivable(ss, eq(ctx, b, b, bt))
@@ -434,6 +435,7 @@ pub open spec fn rule_typed_g(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) ->
 pub proof fn rule_closed_g(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     requires
         rec_scope_g(sig, rid),
+        crate::ti_syntax::iota_ok(sig),
         rule_typed_g(sig, rid, lv, p),
         0 <= p < rshape(sig, rid).nmin(),
         lv.len() == sig.ienv.recs[rid].uparams.len(),
@@ -447,7 +449,7 @@ pub proof fn rule_closed_g(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
         &&& crate::expr_model::nlbv(rty) == 0
     }),
 {
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid));
     let ctx = rule_ctx_g(sig, rid, lv, p);
     let (b, bt) = (rule_body_g(sig, rid, lv, p), rule_bty_g(sig, rid, lv, p));
     rule_split_g(sig, rid, lv, p);
@@ -455,7 +457,7 @@ pub proof fn rule_closed_g(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int)
     assert(Seq::<ExprSpec>::empty() + ctx =~= ctx);
     crate::ti_beta::lam_tele(ss, Seq::empty(), ctx, b, bt, lb);
     let (lt, pt) = (binds(BinderKind::Lam, ctx, b), binds(BinderKind::Pi, ctx, bt));
-    crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), lt, lt, pt));
+    crate::ti_strip::derivable_below(sig, crate::dom_code::rk(sig, rid), eq(Seq::empty(), lt, lt, pt));
     crate::ti_scope::closed_of_empty(sig, lt, lt, pt);
 }
 
@@ -516,6 +518,7 @@ proof fn srg_rule_arg(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, he
 pub proof fn srg_rule(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, heads: Seq<ExprSpec>, fs: Seq<ExprSpec>)
     requires
         rec_scope_g(sig, rid),
+        crate::ti_syntax::iota_ok(sig),
         rule_typed_g(sig, rid, lv, p),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         0 <= p < rshape(sig, rid).nmin(),
@@ -624,10 +627,11 @@ pub proof fn cbody_form(sig: Sig, rid: u64, p: int, us: Seq<LevelSpec>)
 /// its result type a type there.
 pub proof fn srg_ctel(sig: Sig, rid: u64, p: int, us: Seq<LevelSpec>) -> (lb: LevelSpec)
     requires
+        crate::ti_syntax::iota_ok(sig),
         rec_scope_g(sig, rid),
         crate::dom_levels::sig_lps(sig),
         0 <= p < rshape(sig, rid).nmin(),
-        crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),
+        crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, rshape(sig, rid).ctors[p], Seq::empty())),
         us.len() == sig.consts[rshape(sig, rid).ind].lps.len(),
     ensures
         derivable(sig, crate::ti_syntax::Jd::Wf(crate::dom_iota::ctds(sig, rid, p, us))),
@@ -638,7 +642,7 @@ pub proof fn srg_ctel(sig: Sig, rid: u64, p: int, us: Seq<LevelSpec>) -> (lb: Le
     let c = sh.ctors[p];
     let lps = sig.consts[c].lps;
     let r = sig.consts[c].ty;
-    let ss = crate::ti_strip::strip(sig);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid));
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
     crate::dom_ctor_bound::ctor_shape(sig, sh.ind, p);
     crate::dom_levels::sl_nil(r, lps);
@@ -647,7 +651,7 @@ pub proof fn srg_ctel(sig: Sig, rid: u64, p: int, us: Seq<LevelSpec>) -> (lb: Le
     crate::ti_scope::closed_of_empty(ss, r, r, crate::ti_syntax::sort(l));
     wf_empty(sig);
     crate::ti_ls2::levs_eq_refl(us);
-    crate::dom_levels::closed_conv(sig, Seq::empty(), r, l, lps, us, us);
+    crate::dom_levels::closed_conv(sig, crate::dom_code::rk(sig, rid), Seq::empty(), r, l, lps, us, us);
     let lu = crate::level_model::subst_level_spec(l, lps, us);
     crate::dom_iota::ctor_ty_split(sig, rid, p, us);
     let (tds, cb) = (crate::dom_iota::ctds(sig, rid, p, us), crate::dom_iota::cbody(sig, rid, p, us));
@@ -871,10 +875,11 @@ pub proof fn srg_end(sig: Sig, g: Ctx, f: ExprSpec, ds: Seq<ExprSpec>, l: LevelS
 pub open spec fn srg_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int) -> bool {
     let sh = rshape(sig, rid);
     &&& rec_scope_g(sig, rid)
+    &&& crate::ti_syntax::iota_ok(sig)
     &&& 0 <= p < sh.nmin()
     &&& lv.len() == sig.ienv.recs[rid].uparams.len()
     &&& rule_typed_g(sig, rid, lv, p)
-    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), dty_at(sig, sh.ctors[p], Seq::empty()))
+    &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)), dty_at(sig, sh.ctors[p], Seq::empty()))
     &&& crate::dom_model::sem_const(sig, sh.ind, crate::dom_rec_ty::rinst(sig, rid, lv))
     &&& crate::dom_levels::sig_lps(sig)
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))

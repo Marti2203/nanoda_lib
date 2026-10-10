@@ -186,10 +186,12 @@ pub proof fn sl_nil(e: ExprSpec, ks: Seq<u64>)
     }
 }
 
-/// A CLOSED TYPE'S TWO INSTANCES CONVERT, in any well-formed context.
-pub proof fn closed_conv(sig: Sig, g: Ctx, r: ExprSpec, l: LevelSpec, ks: Seq<u64>, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>)
+/// A CLOSED TYPE'S TWO INSTANCES CONVERT, in any well-formed context --
+/// typed below a rank (`ti_strip::strip_below`).
+pub proof fn closed_conv(sig: Sig, rr: int, g: Ctx, r: ExprSpec, l: LevelSpec, ks: Seq<u64>, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>)
     requires
-        derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), r, r, sort(l))),
+        derivable(crate::ti_strip::strip_below(sig, rr), eq(Seq::empty(), r, r, sort(l))),
+        crate::ti_syntax::iota_ok(sig) || rr <= 0,
         crate::expr_model::nlbv(r) == 0,
         derivable(sig, Jd::Wf(g)),
         sig_lps(sig),
@@ -199,13 +201,13 @@ pub proof fn closed_conv(sig: Sig, g: Ctx, r: ExprSpec, l: LevelSpec, ks: Seq<u6
         derivable(sig, eq(g, subst_expr_levels(r, ks, ls1), subst_expr_levels(r, ks, ls2), sort(subst_level_spec(l, ks, ls1)))),
         crate::ti_chain::tchain(sig, g, subst_expr_levels(r, ks, ls1), subst_expr_levels(r, ks, ls2)),
 {
-    let ss = crate::ti_strip::strip(sig);
-    sig_lps_at(sig, ks, ls1);
-    sig_lps_at(sig, ks, ls2);
+    let ss = crate::ti_strip::strip_below(sig, rr);
+    sig_lps_below(sig, rr, ks, ls1);
+    sig_lps_below(sig, rr, ks, ls2);
     crate::ti_ls2::ls_pair_nil(ss, r, r, sort(l), ks, ls1, ls2);
     let (r1, r2) = (subst_expr_levels(r, ks, ls1), subst_expr_levels(r, ks, ls2));
     let t1 = sort(subst_level_spec(l, ks, ls1));
-    crate::ti_strip::strip_derivable(sig, eq(Seq::empty(), r1, r2, t1));
+    crate::ti_strip::derivable_up(sig, rr, eq(Seq::empty(), r1, r2, t1));
     crate::ti_level::ls_nlbv(r, ks, ls1);
     crate::ti_level::ls_nlbv(r, ks, ls2);
     crate::ti_sr::wk_closed(sig, g, r1, r2, t1);

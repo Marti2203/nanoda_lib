@@ -49,7 +49,7 @@ pub proof fn struct_facts(sig: Sig, s: u64)
 /// AN INDUCTIVE OF KNOWN SHAPE IS IN SCOPE, with the model's facts about
 /// it: from its canonical recursor's interpretation, or -- a structure
 /// before its recursor -- from the structure's (`struct_facts`).
-pub proof fn canon_scope(sig: Sig, ind: u64)
+pub proof fn canon_scope(sig: Sig, ind: u64) -> (rr: int)
     requires
         crate::kclaims::ind_ok(sig),
         crate::dom_code::has_canon(sig, ind),
@@ -58,9 +58,10 @@ pub proof fn canon_scope(sig: Sig, ind: u64)
         &&& crate::dom_rec_ty::ind_scope(sig, sh)
         &&& sh.ind == ind && sh.lps == sig.consts[ind].lps
         &&& crate::dom_levels::sig_lps(sig)
-        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, ind, Seq::empty()))
+        &&& crate::ti_syntax::iota_ok(sig)
+        &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, rr), crate::ti_syntax::dty_at(sig, ind, Seq::empty()))
         &&& forall|p: int| 0 <= p < sh.nmin() ==>
-            crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, rr), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
         &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, ind, ls)
     }),
 {
@@ -86,6 +87,7 @@ pub proof fn canon_scope(sig: Sig, ind: u64)
             crate::dom_rec_end::rec_model_at(sig, rid, ls);
         }
         crate::dom_rec_end::rec_model_at(sig, rid, sig.consts[ind].lps.map_values(|n: u64| LevelSpec::Param(n)));
+        crate::dom_code::rk(sig, rid)
     } else {
         reveal(crate::dom_code::struct_decl);
         assert(sig.ienv.struct_ctor.contains_key(ind));
@@ -93,10 +95,12 @@ pub proof fn canon_scope(sig: Sig, ind: u64)
         struct_facts(sig, ind);
         crate::dom_code::struct_decl_shape(sig, ind);
         crate::dom_code::canon_shape_struct(sig, ind);
+        crate::ti_strip::strip_below_zero(sig);
         assert forall|p: int| 0 <= p < sh.nmin() implies
-            crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty())) by {
+            crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, 0), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty())) by {
             assert(p == 0);
         }
+        0
     }
 }
 
@@ -368,7 +372,8 @@ pub proof fn struct_cx_typed(sig: Sig, g: Ctx, st: ExprSpec, lt: LevelSpec, x: E
     crate::dom_levels::sig_lps_at(sig, sig.consts[s].lps, us);
     crate::iota_sr::ctor_at_s(sig, sh, 0, us);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
-    crate::iota_sr::const_lv(sig, g, c, us, us);
+    crate::ti_strip::strip_below_zero(sig);
+    crate::iota_sr::const_lv(sig, 0, g, c, us, us);
     let tds = crate::dom_iota::ctds_s(sig, sh, 0, us);
     let cb = crate::dom_iota::cbody_s(sig, sh, 0, us);
     let tc = crate::rec_canon::binds(BinderKind::Pi, tds, cb);

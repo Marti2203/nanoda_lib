@@ -314,6 +314,27 @@ pub proof fn derivable_below(sig: Sig, r: int, j: crate::ti_syntax::Jd)
     crate::ti_valid::derivable_ext(strip_below(sig, r), sig, j);
 }
 
+/// What the signature below a rank derives, the signature does -- with
+/// its recursor conditions, or below rank 0 (no recursor: `strip`).
+pub proof fn derivable_up(sig: Sig, rr: int, j: crate::ti_syntax::Jd)
+    requires
+        crate::ti_syntax::derivable(strip_below(sig, rr), j),
+        crate::ti_syntax::iota_ok(sig) || rr <= 0,
+    ensures
+        crate::ti_syntax::derivable(sig, j),
+{
+    if crate::ti_syntax::iota_ok(sig) {
+        derivable_below(sig, rr, j);
+    } else {
+        assert(strip_below(sig, rr) == strip(sig)) by {
+            assert(strip_below(sig, rr).ienv.recs =~= Map::empty());
+            assert(strip_below(sig, rr).ienv.struct_ctor =~= Map::empty());
+            assert(strip_below(sig, rr).ienv =~= strip(sig).ienv);
+        }
+        strip_derivable(sig, j);
+    }
+}
+
 /// A DERIVATION OF THE STRIPPED SIGNATURE is one of the full signature,
 /// without Iota nodes.
 pub proof fn strip_valid(sig: Sig, d: Deriv)

@@ -204,7 +204,7 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
             if crate::dom_rec_end::rec_interp(sig, c) {
                 assert forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() implies
                     #[trigger] crate::dom_model::sem_const(sig, c, lv)
-                    && crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, c, lv)) by {
+                    && crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, c, lv)) by {
                     crate::dom_model::sem_const_of(sig, c, lv);
                 }
                 assert forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[ind].lps.len() && 0 <= p < sh.nmin()

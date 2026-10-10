@@ -1297,10 +1297,11 @@ proof fn adeq_rec(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
     assert(crate::dom_rec_end::rec_hyps(sig, c));
     reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, c));
-    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip(sig), t));
-    let l0 = choose|l0: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), t, t, sort(l0)));
-    let d0 = crate::ti_sub::get(crate::ti_strip::strip(sig), eq(Seq::empty(), t, t, sort(l0)));
-    crate::ti_strip::strip_valid(sig, d0);
+    let sb = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c));
+    assert(crate::dom_rec_end::ty_closed(sb, t));
+    let l0 = choose|l0: LevelSpec| #[trigger] derivable(sb, eq(Seq::empty(), t, t, sort(l0)));
+    let d0 = crate::ti_sub::get(sb, eq(Seq::empty(), t, t, sort(l0)));
+    crate::ti_strip::strip_below_valid(sig, crate::dom_code::rk(sig, c), d0);
     crate::ti_meta::mk_d(sig, d0);
     // the type's denotation is join-closed
     crate::dom_sound::sound(sig, ps[1], rho);

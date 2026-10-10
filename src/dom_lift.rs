@@ -831,7 +831,8 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
     let sk = canon_shape(sig, kk);
     crate::dom_iota::simple_closed(sig, j, r);
     let l = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), r, r, sort(l)));
-    crate::dom_levels::closed_conv(sig, g, r, l, ks, ls1, ls2);
+    crate::ti_strip::strip_below_zero(sig);
+    crate::dom_levels::closed_conv(sig, 0, g, r, l, ks, ls1, ls2);
     iapp_self(sig, r1);
     iapp_self(sig, r2);
     if has_canon(sig, kk) {
@@ -852,7 +853,8 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
             assert(styped(sig, a));
             crate::dom_iota::simple_closed(sig, j, a);
             let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, sort(l)));
-            crate::dom_levels::closed_conv(sig, g, a, la, ks, ls1, ls2);
+            crate::ti_strip::strip_below_zero(sig);
+            crate::dom_levels::closed_conv(sig, 0, g, a, la, ks, ls1, ls2);
             let pd = sk.pdoms[q];
             let pt = crate::dom_rel::ptype(sig, kk, ii, q);
             assert(derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, pt)));
@@ -877,7 +879,8 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
             assert(styped(sig, a));
             crate::dom_iota::simple_closed(sig, j, a);
             let la = choose|l: LevelSpec| #[trigger] derivable(crate::ti_strip::strip(sig), eq(Seq::empty(), a, a, sort(l)));
-            crate::dom_levels::closed_conv(sig, g, a, la, ks, ls1, ls2);
+            crate::ti_strip::strip_below_zero(sig);
+            crate::dom_levels::closed_conv(sig, 0, g, a, la, ks, ls1, ls2);
             crate::ti_chain::mchain_one(sig, g, crate::expr_model::subst_expr_levels(a, ks, ls1),
                 crate::expr_model::subst_expr_levels(a, ks, ls2), sort(crate::level_model::subst_level_spec(la, ks, ls1)));
         }

@@ -777,7 +777,7 @@ pub proof fn ctor_arity_at_s(sig: Sig, g: Ctx, ind2: u64, p: int, x: ExprSpec, s
         spine_head(x)->Const_1.len() == sig.consts[s].lps.len(),
 {
     let sh = crate::dom_code::canon_shape(sig, ind2);
-    crate::kstruct::canon_scope(sig, ind2);
+    let _rr = crate::kstruct::canon_scope(sig, ind2);
     let (np, nmin, ind) = (sh.np, sh.nmin(), sh.ind);
     let tt = spine_app(ExprSpec::Const(s, us), ps);
     let (cid, clv) = (spine_head(x)->Const_0, spine_head(x)->Const_1);
