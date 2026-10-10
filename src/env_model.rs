@@ -273,8 +273,11 @@ pub fn ctx_env_ext<'x, 't, 'p: 't>(
         declar_map_owned_in(crate::util_model::arena_ids(*ctx), env_ext),
     ensures
         env_matches(result, *ctx),
+        result.old_view() == ctx.export_file.declars_view(),
+        result.old_keys() == ctx.export_file.declars_keys(),
 {
     proof {
+        ctx.export_file.declars_views();
         export_declars_owned(*ctx);
     }
     crate::env::Env::new_w_temp_ext(&ctx.export_file.declars, Some(env_ext), &ctx.export_file.notations, env_limit, Ghost(crate::util_model::arena_ids(*ctx)))

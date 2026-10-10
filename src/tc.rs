@@ -158,9 +158,11 @@ impl<'p> ExportFile<'p> {
             crate::inductive::export_rec_names_ok(*self),
             crate::inductive::export_blocks_ok(*self),
             crate::inductive::declar_export_tagged(self.arena(), *d),
+            crate::inductive::ex_decl(*self, *d),
         ensures
             // the declaration's certificate
             exists|c: int| #[trigger] declar_cert_at(*self, *d, c),
+            *d matches Declar::Inductive(i) ==> crate::inductive::block_cert(*self, i),
     {
         use Declar::*;
         let ghost a = self.arena();
@@ -332,6 +334,7 @@ impl<'p> ExportFile<'p> {
             crate::inductive::export_blocks_ok(*self),
         ensures
             crate::export_sound::all_certified(*self),
+            crate::export_sound::all_block_certified(*self),
     {
         let ghost keys = self.declars_keys();
         proof {
@@ -353,6 +356,8 @@ impl<'p> ExportFile<'p> {
                 i <= n,
                 forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
                     ==> exists|c: int| #[trigger] declar_cert_at(*self, crate::export_sound::decl_at(*self, j), c),
+                forall|j: int| #![trigger crate::export_sound::decl_at(*self, j)] 0 <= j < i
+                    ==> (crate::export_sound::decl_at(*self, j) matches Declar::Inductive(ind) ==> crate::inductive::block_cert(*self, ind)),
             decreases n - i,
         {
             let (_, d) = self.declars.get_index(i).unwrap();
@@ -360,6 +365,8 @@ impl<'p> ExportFile<'p> {
                 crate::inductive::export_ok_facts(*self);
                 assert(keys.to_set().contains(keys[i as int]));
                 assert(*d == crate::export_sound::decl_at(*self, i as int));
+                assert(self.declars_view().contains_key(keys[i as int]));
+                assert(crate::inductive::ex_decl(*self, *d));
             }
             self.check_declar(d);
             i = i + 1;

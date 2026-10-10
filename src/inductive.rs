@@ -929,7 +929,7 @@ pub(crate) open spec fn consts_params<'t>(st: InductiveCheckState<'t>) -> bool {
 
 /// A recursor's level parameters over its inductive's: the same, or one
 /// more in front, not one of them (the motive's universe).
-pub(crate) open spec fn rec_lps_ok(ru: Seq<crate::level_model::LevelSpec>, iu: Seq<crate::level_model::LevelSpec>) -> bool {
+pub open spec fn rec_lps_ok(ru: Seq<crate::level_model::LevelSpec>, iu: Seq<crate::level_model::LevelSpec>) -> bool {
     ru == iu || (ru.len() == iu.len() + 1 && ru.drop_first() == iu && !iu.contains(ru[0]))
 }
 
@@ -2179,6 +2179,70 @@ pub(crate) open spec fn env_old<'x, 't>(env: crate::env::Env<'x, 't>, od: Declar
         && env.old_view()[keys[i]] == od
 }
 
+/// A declaration of the export, under its own name.
+pub open spec fn ex_decl<'p>(ef: ExportFile<'p>, od: Declar<'p>) -> bool {
+    ef.declars_view().contains_key(crate::env::declar_info(od).name)
+        && ef.declars_view()[crate::env::declar_info(od).name] == od
+}
+
+/// The fields of a shape, each of an admitted kind.
+pub open spec fn fkind_sh(sh: crate::rec_canon::IndShape) -> bool {
+    forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len()
+        ==> fkind_ok(#[trigger] sh.fields[j][k], sh.ind, sh.us(), sh.np, sh.ni, k as nat)
+}
+
+/// The shape's `k`-th constructor, as the export declares it.
+pub open spec fn ctor_ok_ex<'p>(ef: ExportFile<'p>, sh: crate::rec_canon::IndShape, k: int) -> bool {
+    exists|c: ConstructorData<'p>| #[trigger] ex_decl(ef, Declar::Constructor(c))
+        && crate::level_arena_bridge::name_id(c.info.name) == sh.ctors[k]
+        && crate::level_arena_bridge::name_id(c.inductive_name) == sh.ind
+        && c.num_params as nat == sh.np
+        && crate::expr_arena_bridge::to_model(c.info.ty) == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.fields[k],
+            crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[k].len(), sh.np) + sh.tss[k]))
+        && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(c.info.ty)) == 0
+        && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(c.info.ty))
+}
+
+/// The block's exported recursor, as the shape has it.
+pub open spec fn rec_ok_ex<'p>(ef: ExportFile<'p>, sh: crate::rec_canon::IndShape, od: Declar<'p>) -> bool {
+    &&& ex_decl(ef, od)
+    &&& match od {
+        Declar::Recursor(r) => {
+            &&& r.num_params as nat == sh.np && r.num_motives == 1
+            &&& r.num_minors as nat == sh.nmin() && r.num_indices as nat == sh.ni
+            &&& r.rec_rules@.len() == sh.nmin()
+            &&& forall|k: int| 0 <= k < sh.nmin() ==> crate::level_arena_bridge::name_id((#[trigger] r.rec_rules@[k]).ctor_name) == sh.ctors[k]
+                && r.rec_rules@[k].ctor_telescope_size_wo_params as nat == sh.fields[k].len()
+            &&& rec_lps_ok(crate::level_arena_bridge::to_model_of_levels(r.info.uparams), sh.us())
+            &&& fkind_sh(sh) ==> rec_major_head(crate::expr_arena_bridge::to_model(r.info.ty), r.major_idx_spec()) == Some(sh.ind)
+        },
+        _ => false,
+    }
+}
+
+/// THE BLOCK CERTIFICATE'S CONTENT: the exported inductive, constructors
+/// and recursor have the canonical shape `sh`.
+pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crate::rec_canon::IndShape, od_r: Declar<'p>) -> bool {
+    let ti = crate::expr_arena_bridge::to_model(i.info.ty);
+    &&& sh.ind == crate::level_arena_bridge::name_id(i.info.name)
+    &&& sh.lps == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(i.info.uparams))
+    &&& sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni
+    &&& crate::rec_canon::tbody(ti, sh.np + sh.ni) is Sort
+    &&& ti == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(ti, sh.np + sh.ni))
+    &&& crate::expr_model::nlbv(ti) == 0 && !crate::expr_model::has_fv(ti)
+    &&& forall|k: int| 0 <= k < sh.nmin() ==> #[trigger] ctor_ok_ex(ef, sh, k)
+    &&& rec_ok_ex(ef, sh, od_r)
+    &&& crate::twin::shape_nlbv(sh)
+    &&& crate::twin::shape_nofv(sh)
+}
+
+/// THE BLOCK CERTIFICATE (B6a-3): an exported single, non-nested inductive
+/// whose check returned has its canonical shape and recursor.
+pub open spec fn block_cert<'p>(ef: ExportFile<'p>, i: InductiveData<'p>) -> bool {
+    i.all_ind_names@.len() == 1 && !i.is_nested ==>
+        exists|sh: crate::rec_canon::IndShape, od_r: Declar<'p>| #[trigger] block_ok(ef, i, sh, od_r)
+}
+
 /// THE CHECKED INDUCTIVE IS THE EXPORTED ONE: an exported inductive of its
 /// name whose declared type is the checked type, closed.
 pub(crate) open spec fn ind_old<'x, 't>(env: crate::env::Env<'x, 't>, h: IndTyHeader<'t>) -> bool {
@@ -2263,7 +2327,7 @@ pub(crate) open spec fn rec_conv<'x, 't>(env: crate::env::Env<'x, 't>, od: Decla
 
 /// THE HEAD OF A RECURSOR TYPE'S MAJOR PREMISE (binder `k`), read
 /// syntactically -- as `rec_canon::rec_ind` reads it.
-pub(crate) open spec fn rec_major_head(ty: ExprSpec, k: nat) -> Option<u64> {
+pub open spec fn rec_major_head(ty: ExprSpec, k: nat) -> Option<u64> {
     let ds = crate::rec_canon::tdoms(ty, k + 1);
     if ds.len() == k + 1 && crate::beta_model::spine_head(ds[k as int]) is Const {
         Some(crate::beta_model::spine_head(ds[k as int])->Const_0)
@@ -3962,8 +4026,10 @@ impl<'t, 'p: 't> ExportFile<'p> {
             export_blocks_ok(*self),
             declar_export_tagged(self.arena(), *d),
             matches!(*d, Declar::Inductive(..)),
+            ex_decl(*self, *d),
         ensures
             exists|c: int| #[trigger] crate::tc::declar_cert_at(*self, *d, c),
+            *d matches Declar::Inductive(i) ==> block_cert(*self, i),
     {
         let ghost a = self.arena();
         // VERUS-REWRITE(tested-input): the inductive type's declared type is
@@ -4433,6 +4499,12 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 }
             }
             if st.is_nested() {
+                // VERUS-REWRITE(tested-input): a block nanoda finds nested is
+                // exported as nested (`is_nested`), so an exported non-nested
+                // block takes the other branch -- what the certificate is
+                // conditioned on (`block_cert`). Never fails on a block Lean
+                // exports.
+                assert!(ind.is_nested, "inductive: a nested block is exported as non-nested");
                 let base_rec_names = tc.ctx.mk_base_rec_names(ind.all_ind_names.as_ref());
                 proof {
                     crate::util_model::ptr_owned_keys(*tc.ctx, base_rec_names@);
@@ -4469,6 +4541,17 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     &specialized_to_unspecialized_rec_names,
                 );
             } else {
+                // VERUS-REWRITE(tested-input): a non-nested block's state holds
+                // exactly the exported inductives (no specialized ones). Never
+                // fails on a block Lean exports.
+                assert!(st.all_inductives_incl_specialized.len() == ind.all_ind_names.len(),
+                    "inductive: a non-nested block has more types than exported");
+                // VERUS-REWRITE(tested-input): a single inductive's block is the
+                // declaration being checked. Never fails on a block Lean exports.
+                if ind.all_ind_names.len() == 1 {
+                    assert!(st.all_inductives_incl_specialized[0].name == ind.info.name,
+                        "inductive: a single block is not the declaration checked");
+                }
                 let rec_names = tc.ctx.rec_names_set(&recursors);
                 tc.ctx.ck_recursor_names_simple(&d.info().name, rec_names);
                 // Do the definitional equality assertions of new/old here.
@@ -4476,10 +4559,15 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 tc.assert_nonnested_ctors_def_eq(&st);
                 tc.assert_nonnested_recursors_def_eq(&st, &recursors);
                 proof {
-                    // in the fragment, nanoda's checks give the canonical shape
+                    // in the fragment, nanoda's checks give the canonical shape,
+                    // and the export's declarations have it (`block_cert`)
                     shape_pre_frame(st_rec, st);
+                    let lm = crate::level_arena_bridge::to_model(st.elim_level->0);
                     if st.all_inductives_incl_specialized@.len() == 1 && fields_admitted(st) {
-                        shape_end(st, *tc.env, crate::level_arena_bridge::to_model(st.elim_level->0));
+                        shape_end(st, *tc.env, lm);
+                    }
+                    if ind.all_ind_names@.len() == 1 && !ind.is_nested {
+                        block_cert_end(*self, *tc.env, st, *ind, recursors@[0], st.rec_uparams->0, lm);
                     }
                 }
             }
@@ -4814,6 +4902,7 @@ pub(crate) proof fn shape_ctor<'t>(st: InductiveCheckState<'t>, j: int)
             && !crate::expr_model::has_fv(sh.fields[j][k])
         &&& forall|q: int| 0 <= q < sh.tss[j].len() ==> crate::expr_model::nlbv(#[trigger] sh.tss[j][q]) <= sh.np + sh.fields[j].len()
             && !crate::expr_model::has_fv(sh.tss[j][q])
+        &&& sh.fields[j].len() + sh.np == crate::rec_canon::tarity(cty)
     }),
 {
     let h = st.all_inductives_incl_specialized@[0];
@@ -5095,6 +5184,228 @@ pub(crate) proof fn shape_end<'x, 't>(st: InductiveCheckState<'t>, env: crate::e
         assert(ctor_old(env, h.ctors@[j], h.name, st.local_params@.len() as nat));
     }
     shape_exists(st, lm);
+}
+
+/// THE CERTIFICATE'S INDUCTIVE AND CONSTRUCTORS: the declared shape, of
+/// the exported declarations (`ind_old`, `ctor_old` through the
+/// environment's view of the export).
+#[verifier::spinoff_prover]
+pub(crate) proof fn block_ind_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, i: InductiveData<'t>)
+    requires
+        env.old_view() == ef.declars_view(),
+        env.old_keys() == ef.declars_keys(),
+        export_ok(ef),
+        shape_pre(st),
+        st.all_inductives_incl_specialized@.len() == 1,
+        st.all_inductives_incl_specialized@[0].name == i.info.name,
+        st.uparams == i.info.uparams,
+        ex_decl(ef, Declar::Inductive(i)),
+        ind_old(env, st.all_inductives_incl_specialized@[0]),
+        forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
+            ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y], st.all_inductives_incl_specialized@[0].name, st.local_params@.len() as nat),
+    ensures ({
+        let sh = decl_shape(st);
+        let ti = crate::expr_arena_bridge::to_model(i.info.ty);
+        &&& sh.ind == crate::level_arena_bridge::name_id(i.info.name)
+        &&& sh.lps == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(i.info.uparams))
+        &&& sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni
+        &&& crate::rec_canon::tbody(ti, sh.np + sh.ni) is Sort
+        &&& ti == crate::rec_canon::binds(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(ti, sh.np + sh.ni))
+        &&& crate::expr_model::nlbv(ti) == 0 && !crate::expr_model::has_fv(ti)
+        &&& forall|k: int| 0 <= k < sh.nmin() ==> #[trigger] ctor_ok_ex(ef, sh, k)
+        &&& crate::twin::shape_nlbv(sh)
+        &&& crate::twin::shape_nofv(sh)
+        &&& forall|k: int| 0 <= k < sh.nmin() ==> sh.fields[k].len() + sh.np
+            == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[0].ctors@[k].ty))
+    }),
+{
+    reveal(shape_pre);
+    ef.declars_views();
+    export_ok_facts(ef);
+    let h = st.all_inductives_incl_specialized@[0];
+    let sh = decl_shape(st);
+    // the inductive: the exported one
+    let od_i = choose|od: Declar<'t>| #[trigger] env_old(env, od) && od is Inductive && crate::env::declar_info(od).name == h.name
+        && crate::expr_arena_bridge::to_model(crate::env::declar_info(od).ty) == crate::expr_arena_bridge::to_model(h.ty)
+        && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(h.ty)) == 0
+        && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(h.ty));
+    assert(od_i == Declar::Inductive(i));
+    shape_ind(st);
+    // the constructors
+    assert forall|j: int| 0 <= j < h.ctors@.len() implies
+        crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(#[trigger] h.ctors@[j].ty)) == 0
+        && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(h.ctors@[j].ty)) by {
+        assert(ctor_old(env, h.ctors@[j], h.name, st.local_params@.len() as nat));
+    }
+    assert forall|k: int| 0 <= k < sh.nmin() implies #[trigger] ctor_ok_ex(ef, sh, k)
+        && sh.fields[k].len() + sh.np == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(h.ctors@[k].ty)) by {
+        assert(ctor_old(env, h.ctors@[k], h.name, st.local_params@.len() as nat));
+        let od_c = choose|od: Declar<'t>| #[trigger] env_old(env, od)
+            && (match od {
+                Declar::Constructor(cd) => crate::level_arena_bridge::name_id(cd.inductive_name) == crate::level_arena_bridge::name_id(h.name)
+                    && cd.num_params as nat == st.local_params@.len() as nat,
+                _ => false,
+            })
+            && crate::env::declar_info(od).name == h.ctors@[k].name
+            && crate::expr_arena_bridge::to_model(crate::env::declar_info(od).ty) == crate::expr_arena_bridge::to_model(h.ctors@[k].ty)
+            && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(h.ctors@[k].ty)) == 0
+            && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(h.ctors@[k].ty));
+        shape_ctor(st, k);
+        let cty = crate::expr_arena_bridge::to_model(h.ctors@[k].ty);
+        let n = crate::rec_canon::tarity(cty);
+        let keys = ef.declars_keys();
+        let idx = choose|idx: int| 0 <= idx < keys.len() && idx < env.visible() && #[trigger] keys[idx] == crate::env::declar_info(od_c).name
+            && env.old_view()[keys[idx]] == od_c;
+        assert(keys.to_set().contains(keys[idx]));
+        assert(ef.declars_view().contains_key(keys[idx]));
+        if let Declar::Constructor(c) = od_c {
+            assert(ex_decl(ef, Declar::Constructor(c)));
+            assert(crate::level_arena_bridge::name_id(c.info.name) == sh.ctors[k]);
+            assert(crate::expr_arena_bridge::to_model(c.info.ty) == cty);
+            assert(ctor_ok_ex(ef, sh, k));
+        }
+    }
+    assert(crate::twin::shape_nlbv(sh)) by {
+        assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+            crate::expr_model::nlbv(#[trigger] sh.fields[j][k]) <= sh.np + k by {
+            shape_ctor(st, j);
+        }
+        assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies
+            crate::expr_model::nlbv(#[trigger] sh.tss[j][q]) <= sh.np + sh.fields[j].len() by {
+            shape_ctor(st, j);
+        }
+        assert forall|j: int| 0 <= j < sh.nmin() implies (#[trigger] sh.tss[j]).len() == sh.ni by {
+            shape_ctor(st, j);
+        }
+    }
+    assert(crate::twin::shape_nofv(sh)) by {
+        assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies
+            !crate::expr_model::has_fv(#[trigger] sh.fields[j][k]) by {
+            shape_ctor(st, j);
+        }
+        assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies
+            !crate::expr_model::has_fv(#[trigger] sh.tss[j][q]) by {
+            shape_ctor(st, j);
+        }
+    }    let ti = crate::expr_arena_bridge::to_model(i.info.ty);
+    assert(sh.ind == crate::level_arena_bridge::name_id(i.info.name));
+    assert(sh.lps == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(i.info.uparams)));
+    assert(sh.pdoms.len() == sh.np && sh.idoms.len() == sh.ni);
+    assert(ti == crate::expr_arena_bridge::to_model(h.ty));
+    assert(crate::rec_canon::tbody(ti, sh.np + sh.ni) is Sort);
+    assert(crate::expr_model::nlbv(ti) == 0 && !crate::expr_model::has_fv(ti));
+    assert forall|k: int| 0 <= k < sh.nmin() implies sh.fields[k].len() + sh.np
+        == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[0].ctors@[k].ty)) by {
+        shape_ctor(st, k);
+    }
+    assert forall|k: int| 0 <= k < sh.nmin() implies #[trigger] ctor_ok_ex(ef, sh, k) by {
+        assert(ctor_ok_ex(ef, sh, k) && sh.fields[k].len() + sh.np == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(h.ctors@[k].ty)));
+    }
+}
+
+/// THE CERTIFICATE'S RECURSOR: the exported recursor nanoda compared with
+/// the generated one (`rec_conv_old`) has the shape's table data, and --
+/// for admitted fields, where the generated type is canonical -- the
+/// shape's major premise.
+#[verifier::spinoff_prover]
+pub(crate) proof fn block_rec_part<'x, 't>(ef: ExportFile<'t>, env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, nd: Declar<'t>,
+    ru: LevelsPtr<'t>, lm: crate::level_model::LevelSpec) -> (od_r: Declar<'t>)
+    requires
+        env.old_view() == ef.declars_view(),
+        env.old_keys() == ef.declars_keys(),
+        export_ok(ef),
+        st.all_inductives_incl_specialized@.len() == 1,
+        decl_shape(st).pdoms.len() == decl_shape(st).np,
+        decl_shape(st).idoms.len() == decl_shape(st).ni,
+        forall|k: int| 0 <= k < decl_shape(st).nmin() ==> decl_shape(st).fields[k].len() + decl_shape(st).np
+            == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[0].ctors@[k].ty)),
+        forall|k: int| 0 <= k < crate::level_arena_bridge::to_model_of_levels(st.uparams).len()
+            ==> (#[trigger] crate::level_arena_bridge::to_model_of_levels(st.uparams)[k]) is Param,
+        rec_conv_old(env, nd, ru, st.uparams),
+        nd matches Declar::Recursor(nr) && {
+            &&& nr.num_params as nat == st.local_params@.len()
+            &&& nr.num_motives == 1
+            &&& nr.num_minors as nat == st.all_inductives_incl_specialized@[0].ctors@.len()
+            &&& nr.num_indices as nat == st.local_indices@[0]@.len()
+            &&& nr.rec_rules@.len() == st.all_inductives_incl_specialized@[0].ctors@.len()
+            &&& forall|k: int| 0 <= k < nr.rec_rules@.len() ==> (#[trigger] nr.rec_rules@[k]).ctor_name == st.all_inductives_incl_specialized@[0].ctors@[k].name
+                && nr.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
+                    == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[k].ty))
+        },
+        fields_admitted(st) ==> crate::expr_arena_bridge::to_model(crate::env::declar_info(nd).ty) == decl_shape(st).rec_ty(lm),
+    ensures
+        rec_ok_ex(ef, decl_shape(st), od_r),
+{
+    ef.declars_views();
+    export_ok_facts(ef);
+    let sh = decl_shape(st);
+    let h = st.all_inductives_incl_specialized@[0];
+    let od = choose|od: Declar<'t>| #[trigger] env_old(env, od) && rec_conv(env, od, nd, ru, st.uparams);
+    let keys = ef.declars_keys();
+    let idx = choose|idx: int| 0 <= idx < keys.len() && idx < env.visible() && #[trigger] keys[idx] == crate::env::declar_info(od).name
+        && env.old_view()[keys[idx]] == od;
+    assert(keys.to_set().contains(keys[idx]));
+    assert(ef.declars_view().contains_key(keys[idx]));
+    assert(ex_decl(ef, od));
+    crate::kgen::plevels_names(crate::level_arena_bridge::to_model_of_levels(st.uparams));
+    assert(sh.us() == crate::level_arena_bridge::to_model_of_levels(st.uparams));
+    if let (Declar::Recursor(r), Declar::Recursor(nr)) = (od, nd) {
+        assert forall|k: int| 0 <= k < sh.nmin() implies crate::level_arena_bridge::name_id((#[trigger] r.rec_rules@[k]).ctor_name) == sh.ctors[k]
+            && r.rec_rules@[k].ctor_telescope_size_wo_params as nat == sh.fields[k].len() by {
+            assert(nr.rec_rules@[k].ctor_name == h.ctors@[k].name);
+            assert(sh.fields[k].len() + sh.np == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(h.ctors@[k].ty)));
+        }
+        if fkind_sh(sh) {
+            assert(fields_admitted(st));
+            crate::twin::rec_ty_major(sh, lm);
+            assert(r.major_idx_spec() == sh.np + 1 + sh.nmin() + sh.ni);
+        }
+    }
+    od
+}
+
+/// THE BLOCK CERTIFICATE from the end of a single non-nested inductive's
+/// check: its shape (`block_ind_part`) and its recursor (`block_rec_part`).
+#[verifier::spinoff_prover]
+pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::Env<'x, 't>, st: InductiveCheckState<'t>, i: InductiveData<'t>,
+    nd: Declar<'t>, ru: LevelsPtr<'t>, lm: crate::level_model::LevelSpec)
+    requires
+        env.old_view() == ef.declars_view(),
+        env.old_keys() == ef.declars_keys(),
+        export_ok(ef),
+        shape_pre(st),
+        st.all_inductives_incl_specialized@.len() == 1,
+        st.all_inductives_incl_specialized@[0].name == i.info.name,
+        st.uparams == i.info.uparams,
+        ex_decl(ef, Declar::Inductive(i)),
+        ind_old(env, st.all_inductives_incl_specialized@[0]),
+        forall|y: int| 0 <= y < st.all_inductives_incl_specialized@[0].ctors@.len()
+            ==> #[trigger] ctor_old(env, st.all_inductives_incl_specialized@[0].ctors@[y], st.all_inductives_incl_specialized@[0].name, st.local_params@.len() as nat),
+        rec_conv_old(env, nd, ru, st.uparams),
+        st.motives@.len() == 1,
+        st.minors@.len() == 1,
+        st.minors@[0]@.len() == st.all_inductives_incl_specialized@[0].ctors@.len(),
+        nd matches Declar::Recursor(nr) && {
+            &&& nr.num_params == st.local_params@.len()
+            &&& nr.num_motives == st.motives@.len()
+            &&& nr.num_minors == flat_ptrs(st.minors@).len()
+            &&& nr.num_indices == st.local_indices@[0]@.len()
+            &&& nr.rec_rules@.len() == st.all_inductives_incl_specialized@[0].ctors@.len()
+            &&& forall|k: int| 0 <= k < nr.rec_rules@.len() ==> (#[trigger] nr.rec_rules@[k]).ctor_name == st.all_inductives_incl_specialized@[0].ctors@[k].name
+                && nr.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
+                    == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[0].ctors@[k].ty))
+        },
+        fields_admitted(st) ==> crate::expr_arena_bridge::to_model(crate::env::declar_info(nd).ty) == decl_shape(st).rec_ty(lm),
+    ensures
+        block_cert(ef, i),
+{
+    block_ind_part(ef, env, st, i);
+    reveal(shape_pre);
+    let ms = st.minors@;
+    assert(ms.drop_last() =~= Seq::<Vec<ExprPtr<'t>>>::empty());
+    assert(flat_ptrs(ms) == flat_ptrs(ms.drop_last()) + ms.last()@);
+    let od_r = block_rec_part(ef, env, st, nd, ru, lm);
+    assert(block_ok(ef, i, decl_shape(st), od_r));
 }
 
 /// A CONSTRUCTOR'S RESULT, CLOSED: past its walk's `n` binders, the

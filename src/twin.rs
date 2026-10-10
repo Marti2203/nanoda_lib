@@ -1260,6 +1260,30 @@ pub proof fn twin_locals(sig: Sig, l2: Map<nat, ExprSpec>)
     assert(twin(s2).ienv.recs =~= twin(sig).ienv.recs);
 }
 
+/// THE CANONICAL RECURSOR TYPE'S MAJOR PREMISE is the inductive, applied.
+pub proof fn rec_ty_major(sh: IndShape, lm: LevelSpec)
+    requires
+        sh.pdoms.len() == sh.np,
+        sh.idoms.len() == sh.ni,
+    ensures ({
+        let k = sh.np + 1 + sh.nmin() + sh.ni;
+        &&& tdoms(sh.rec_ty(lm), k + 1).len() == k + 1
+        &&& spine_head(tdoms(sh.rec_ty(lm), k + 1)[k as int]) == ExprSpec::Const(sh.ind, sh.us())
+    }),
+{
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    let mvs = vars(1 + nmin + ni, np) + vars(0, ni);
+    let major = ind_app(sh.ind, sh.us(), mvs);
+    let body = spine_app(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)));
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert(sh.rec_ty(lm) == binds(BinderKind::Pi, ds, body));
+    crate::kminor::tdoms_binds(ds, body);
+    assert(ds.len() == np + 1 + nmin + ni + 1);
+    assert(ds[ds.len() - 1] == major);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, sh.us()), mvs);
+}
+
 /// THE TWIN'S RECURSOR IS CANONICAL.
 #[verifier::spinoff_prover]
 pub proof fn twin_canon(sig: Sig, rid: u64)

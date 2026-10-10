@@ -1854,6 +1854,21 @@ and eta step is vacuous (about thirty sites use that). Stages:
     every recursor of the export is, by name, some block's generated
     recursor: the link is certifiable (contracts on `recursor_names` and
     `ck_recursor_names_simple`), not a new hypothesis.
+    B6a-3 done: `inductive::block_cert(ef, i)` -- for an exported
+    single, non-nested inductive, the exported inductive, constructors
+    and a recursor have a canonical shape (`block_ok`: types, closedness,
+    bounds, the recursor's counts, rules' constructors and field counts,
+    universe parameters, and, for admitted fields, its major premise).
+    `check_inductive_declar` ensures it (`block_ind_part`,
+    `block_rec_part`, `block_cert_end`), `check_declar` passes it on, and
+    the serial driver collects `export_sound::all_block_certified`.
+    Facts it rests on, beyond the earlier tested checks: the recursor's
+    universe parameters are its inductive's (`rec_uparams_ok`); the
+    exported constructors' inductive and parameter count are the block's;
+    the generated recursor's rules have the constructors' arities
+    (`pi_telescope_size` states the arity); and three checks tying the
+    export's `is_nested`, block size and first type to nanoda's branch.
+    Next: B6a-4, `rec_core` at the export from the certificate.
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.

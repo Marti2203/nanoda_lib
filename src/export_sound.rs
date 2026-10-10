@@ -49,6 +49,12 @@ pub open spec fn all_certified<'p>(ef: crate::util::ExportFile<'p>) -> bool {
         ==> exists|c: int| #[trigger] crate::tc::declar_cert_at(ef, decl_at(ef, i), c)
 }
 
+/// Every inductive's block check returned: its certificate holds.
+pub open spec fn all_block_certified<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    forall|i: int| #![trigger decl_at(ef, i)] 0 <= i < ef.declars_keys().len()
+        ==> (decl_at(ef, i) matches crate::env::Declar::Inductive(ind) ==> crate::inductive::block_cert(ef, ind))
+}
+
 /// The export's built-in names are distinct: a Nat operation is no
 /// quotient eliminator, and the numeral constructors are neither.
 pub open spec fn names_ok(export: nat) -> bool {
