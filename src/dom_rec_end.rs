@@ -326,8 +326,9 @@ pub open spec fn sig_sr(sig: Sig) -> bool {
     &&& crate::dom_proj_sound::proj_sem(sig)
 }
 
-/// `rec_model` without its semantic constants, which the ranks give
-/// (`kclaims::sig_sr_of`): what the model assumes of a recursor.
+/// `rec_model` without its semantic constants, which the ranks give, and
+/// its level facts, which the certificates give (`kclaims::sig_sr_of`):
+/// what the model assumes of a recursor.
 pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
@@ -336,7 +337,6 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     &&& ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
     &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
-    &&& crate::dom_levels::sig_lps(sig)
     &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
@@ -344,14 +344,13 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     &&& crate::dom_code::fields_typed(sig, sh.ind)
 }
 
-/// `rec_model_p` without its semantic constant.
+/// `rec_model_p` without its semantic constant and level facts.
 pub open spec fn rec_model_p_h(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
         ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
     &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip(sig), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
-    &&& crate::dom_levels::sig_lps(sig)
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
 }
 

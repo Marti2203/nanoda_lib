@@ -135,6 +135,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|d: Map<nat, ExprSpec>| #[trigger] ctor_forms(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] ctor_clauses(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_model::consts_ranked(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_levels::sig_lps(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -146,6 +147,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         assert(ctor_forms(s));
         assert(ctor_clauses(s));
         assert(crate::dom_model::consts_ranked(s));
+        assert(crate::dom_levels::sig_lps(s));
         assert forall|c: u64| #[trigger] s.ienv.recs.contains_key(c) implies !s.ienv.ctor_ind.contains_key(c) by {
             assert(s.ienv.ctor_ind == denv.ctor_ind);
             assert(denv.recs.contains_key(c));
@@ -173,12 +175,13 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
 /// them (`sig_sr_h`), the ranks and `iota_ok`'s certified syntactic part
 /// give `sig_sr` -- each recursor, its inductive and constructors, and
 /// each structure and its constructor, are declared constants ranked
-/// above their types.
+/// above their types -- with the certified level facts (`sig_lps`).
 pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
     requires
         crate::dom_rec_end::sig_sr_h(sig),
         crate::dom_model::consts_ranked(sig),
         iota_syn(sig),
+        crate::dom_levels::sig_lps(sig),
         forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
     ensures
         crate::dom_rec_end::sig_sr(sig),

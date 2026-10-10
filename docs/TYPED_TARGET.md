@@ -2079,6 +2079,13 @@ and eta step is vacuous (about thirty sites use that). Stages:
     now drops the locals too: it types closed terms only (rule bodies,
     constructor and recursor types), and its derivations still weaken to
     the full signature. No proof used the stripped signature's locals.
+    THE LEVEL FACTS CERTIFIED: with no locals, `sig_lps` is what the
+    certificates say -- each constant's type and value over its own
+    universe parameters (a twinned recursor's canonical type,
+    `twin::canon_elp_sig`), and no recursor rules to check
+    (`export_sound::lps_at`, cycle-free: it reads the certificates, not
+    the fragment). It left `rec_model_h` and `rec_model_p_h`;
+    `frag_env_of` takes it as an input.
   - **B7** the model's facts (`rec_model_h`, `struct_sem_h`): typed rules,
     fields typed and blind, closed types, from the canonical form and the
     certificates (the semantic constants are done, above).
