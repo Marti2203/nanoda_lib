@@ -1768,6 +1768,9 @@ pub proof fn twin_canon(sig: Sig, rid: u64)
         rec_core(sig, rid),
     ensures
         rec_canon(twin(sig), rid),
+        rec_ind(twin(sig), rid) == rec_ind(sig, rid),
+        shape_of(twin(sig), twin(sig).ienv.recs[rid], rec_ind(sig, rid)) == shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid)),
+        twin(sig).ienv.recs[rid] == (RecDataSpec { rules: canon_rules(sig, rid), ..sig.ienv.recs[rid] }),
 {
     reveal(rec_core);
     let t = twin(sig);

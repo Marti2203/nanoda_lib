@@ -878,14 +878,15 @@ proof fn shape_read(raw: crate::ti_syntax::Sig, rd: crate::expr_arena_bridge::Re
     assert(shr.tss =~= sh.tss);
 }
 
-/// THE CANONICAL RECURSOR, CERTIFIED (B6a-4c): a recursor of the
+/// THE CANONICAL RECURSOR'S BLOCK (B6a-4c): a recursor of the
 /// environment at a cutoff whose block is single and non-nested, with
-/// fields of admitted kinds, is the generated one: `rec_core` holds of it.
+/// fields of admitted kinds, is its block's generated one: `rec_core` holds
+/// of it, with the block certificate's shape `sh` and its inductive at `qi`.
 /// From its block certificate (`inductive::block_cert`), its arm's checks
 /// (`rec_arm_ok`) and the parser's name table; its inductive's type misses
 /// the inductive (typed before it), and the pieces are string-free (`kh_hyp`).
 #[verifier::spinoff_prover]
-pub proof fn rec_core_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
+pub proof fn rec_block_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64) -> (res: (crate::rec_canon::IndShape, int))
     requires
         below_ok(ef, cc),
         all_block_certified(ef),
@@ -894,8 +895,24 @@ pub proof fn rec_core_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
         m_denv(ef, cc).recs.contains_key(rid),
         rec_simple(ef, rid),
         rec_fields_ok(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
-    ensures
-        crate::twin::rec_core(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+    ensures ({
+        let raw = crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty());
+        let (sh, qi) = res;
+        let p = pos_of(ef, rid);
+        &&& crate::twin::rec_core(raw, rid)
+        &&& crate::rec_canon::rec_ind(raw, rid) == sh.ind
+        &&& crate::rec_canon::shape_of(raw, raw.ienv.recs[rid], sh.ind) == sh
+        &&& 0 <= qi < p < cc && p < ef.declars_keys().len()
+        &&& crate::level_arena_bridge::name_id(ef.declars_keys()[p]) == rid
+        &&& crate::level_arena_bridge::name_id(ef.declars_keys()[qi]) == sh.ind
+        &&& forall|j: int| 0 <= j < sh.nmin() ==> #[trigger] ctor_at(ef, cc, sh, j)
+        &&& decl_at(ef, p) matches crate::env::Declar::Recursor(r) && {
+            &&& crate::inductive::rec_arm_ok(ef, r)
+            &&& ef.declars_keys()[qi] == r.all_inductives@[0]
+            &&& decl_at(ef, qi) matches crate::env::Declar::Inductive(ind_d)
+                && crate::inductive::block_ok(ef, ind_d, sh, decl_at(ef, p))
+        }
+    }),
 {
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
@@ -1014,11 +1031,229 @@ pub proof fn rec_core_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
                 crate::dom_iota::tbody_binds(sh.pdoms + sh.fields[j], ia);
             }
             reveal(crate::twin::rec_core);
+            (sh, qi)
         } else {
             assert(false);
+            (arbitrary(), 0)
         }
     } else {
         assert(crate::env_model::rec_entry(d) is Some);
+        (arbitrary(), 0)
+    }
+}
+
+/// THE CANONICAL RECURSOR, CERTIFIED (B6a-4c): `rec_core` of the raw
+/// signature for a recursor whose block is simple (`rec_block_at`).
+pub proof fn rec_core_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
+    requires
+        below_ok(ef, cc),
+        all_block_certified(ef),
+        all_rec_checked(ef),
+        crate::inductive::export_rec_names_ok(ef),
+        m_denv(ef, cc).recs.contains_key(rid),
+        rec_simple(ef, rid),
+        rec_fields_ok(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+    ensures
+        crate::twin::rec_core(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+{
+    rec_block_at(ef, cc, rid);
+}
+
+/// A declaration's type mentions only its own universe parameters, which
+/// are distinct names (its certificate).
+proof fn decl_lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_dty(ef, cc).contains_key(cid),
+    ensures
+        crate::level_inst::elp_in(m_dty(ef, cc)[cid].1, m_dty(ef, cc)[cid].0),
+        forall|i: int, j: int| #![trigger m_dty(ef, cc)[cid].0[i], m_dty(ef, cc)[cid].0[j]]
+            0 <= i < m_dty(ef, cc)[cid].0.len() && 0 <= j < m_dty(ef, cc)[cid].0.len()
+            && m_dty(ef, cc)[cid].0[i] == m_dty(ef, cc)[cid].0[j] ==> i == j,
+{
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    let c = decl_facts(ef, cc, cid);
+    let i = entry_of(ef, cc, cid);
+    assert(pos_of(ef, cid) == i);
+    let d = decl_at(ef, i);
+    assert(m_dty(ef, cc)[cid] == crate::env_model::ty_entry(d)->0);
+    assert(crate::tc::declar_cert_at(ef, d, c));
+    let ls = crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams);
+    let ns = m_dty(ef, cc)[cid].0;
+    assert(ns == crate::level_model::level_names(ls));
+    assert(crate::level_arena_bridge::distinct_params(ls));
+    assert forall|i1: int, j1: int| #![trigger ns[i1], ns[j1]]
+        0 <= i1 < ns.len() && 0 <= j1 < ns.len() && ns[i1] == ns[j1] implies i1 == j1 by {
+        if i1 != j1 {
+            assert(ls[i1] != ls[j1]);
+            assert(ls[i1] is Param && ls[j1] is Param);
+        }
+    }
+}
+
+/// The twin reads a recursor's inductive where the signature does.
+proof fn rec_ind_twin(sig: crate::ti_syntax::Sig, r: u64)
+    requires
+        sig.ienv.recs.contains_key(r),
+        sig.consts.contains_key(r),
+    ensures
+        crate::rec_canon::rec_ind(crate::twin::twin(sig), r) == crate::rec_canon::rec_ind(sig, r),
+        crate::twin::twin(sig).ienv.recs[r].num_motives == sig.ienv.recs[r].num_motives,
+{
+    if crate::twin::rec_core(sig, r) {
+        crate::twin::twin_canon(sig, r);
+    } else {
+        assert(crate::twin::twin(sig).consts[r] == sig.consts[r]);
+        assert(crate::twin::twin(sig).ienv.recs[r] == sig.ienv.recs[r]);
+    }
+}
+
+/// THE ONLY CANONICAL RECURSOR OF ITS INDUCTIVE in the twin: any other
+/// recursor whose major premise the twin reads as the same inductive is
+/// listed under it in the parser's table (its arm's check), whose entry is
+/// this one alone (the block certificate).
+#[verifier::spinoff_prover]
+proof fn twin_unique_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64, r2: u64)
+    requires
+        below_ok(ef, cc),
+        all_block_certified(ef),
+        all_rec_checked(ef),
+        crate::inductive::export_rec_names_ok(ef),
+        m_denv(ef, cc).recs.contains_key(rid),
+        rec_simple(ef, rid),
+        rec_fields_ok(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+        crate::rec_canon::rec_canon(crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty())), r2),
+        crate::rec_canon::rec_ind(crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty())), r2)
+            == crate::rec_canon::rec_ind(crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty())), rid),
+    ensures
+        r2 == rid,
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let t = crate::twin::twin(raw);
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let (sh, qi) = rec_block_at(ef, cc, rid);
+    let p = pos_of(ef, rid);
+    crate::twin::twin_canon(raw, rid);
+    crate::twin::twin_keeps(raw, r2);
+    assert(t.ienv.recs.contains_key(r2));
+    assert(denv.recs.contains_key(r2));
+    rec_ctors(ef, cc, r2);
+    rec_ind_twin(raw, r2);
+    let p2 = entry_of(ef, cc, r2);
+    let d2 = decl_at(ef, p2);
+    assert(keys.to_set().contains(keys[p2]));
+    assert(view.contains_key(keys[p2]));
+    assert(denv.recs[r2] == crate::env_model::rec_entry(d2)->0);
+    assert(dty[r2] == crate::env_model::ty_entry(d2)->0);
+    if let crate::env::Declar::Recursor(r2d) = d2 {
+        if let crate::env::Declar::Recursor(r) = decl_at(ef, p) {
+            if let crate::env::Declar::Inductive(ind_d) = decl_at(ef, qi) {
+                assert(crate::inductive::rec_arm_ok(ef, r2d));
+                assert(r2d.num_motives == 1);
+                let k = choose|k: int| 0 <= k < r2d.all_inductives@.len()
+                    && crate::inductive::rec_major_head(crate::expr_arena_bridge::to_model(r2d.info.ty), r2d.major_idx_spec())
+                        == Some(crate::level_arena_bridge::name_id(#[trigger] r2d.all_inductives@[k]));
+                assert(raw.consts[r2].ty == crate::expr_arena_bridge::to_model(r2d.info.ty));
+                assert(raw.ienv.recs[r2].major_idx == r2d.major_idx_spec());
+                assert(crate::rec_canon::rec_ind(raw, r2) == crate::level_arena_bridge::name_id(r2d.all_inductives@[k]));
+                let (qi2, qr2) = choose|qi2: int, qr2: int| #![trigger keys[qi2], keys[qr2]]
+                    0 <= qi2 < qr2 < keys.len() && keys[qi2] == r2d.all_inductives@[k] && keys[qr2] == r2d.info.name;
+                assert(crate::level_arena_bridge::name_id(keys[qi2]) == crate::level_arena_bridge::name_id(keys[qi]));
+                assert(qi2 == qi);
+                crate::inductive::rec_names_listed(ef, keys[p2]);
+                assert(r2d.info.name == keys[p2]);
+                assert(crate::inductive::rec_names_of(ef, r2d.all_inductives@[k]).contains(r2d.info.name));
+                assert(ind_d.info.name == keys[qi]);
+                assert(r2d.info.name == crate::env::declar_info(decl_at(ef, p)).name);
+                assert(keys.to_set().contains(keys[p]));
+                assert(view.contains_key(keys[p]));
+                assert(crate::env::declar_info(decl_at(ef, p)).name == keys[p]);
+            }
+        }
+    } else {
+        assert(crate::env_model::rec_entry(d2) is Some);
+    }
+}
+
+/// THE TWINNED RECURSOR IS IN SCOPE (B6a-4 (3)): `iota_ok`'s syntactic
+/// part (`rec_frag` but its interpreted clause) for a recursor whose block
+/// is simple -- canonical, its constructors distinct and no recursors, the
+/// only canonical recursor of its inductive, distinct universe parameters,
+/// types over the inductive's levels, rules of the right shape.
+#[verifier::spinoff_prover]
+pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
+    requires
+        below_ok(ef, cc),
+        all_block_certified(ef),
+        all_rec_checked(ef),
+        crate::inductive::export_rec_names_ok(ef),
+        m_denv(ef, cc).recs.contains_key(rid),
+        rec_simple(ef, rid),
+        rec_fields_ok(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()), rid),
+    ensures ({
+        let t = crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()));
+        let sh = crate::dom_rec_ty::rshape(t, rid);
+        &&& crate::dom_rec_ty::rec_scope_g(t, rid)
+        &&& forall|q: int| 0 <= q < sh.nmin() ==> !t.ienv.recs.contains_key(#[trigger] sh.ctors[q])
+        &&& forall|q: int| 0 <= q < sh.nmin() ==> crate::beta_model::rule_rhs_ok(t.ienv, #[trigger] t.ienv.recs[rid].rules[q])
+    }),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let t = crate::twin::twin(raw);
+    let (sh, qi) = rec_block_at(ef, cc, rid);
+    let p = pos_of(ef, rid);
+    let ind = sh.ind;
+    crate::twin::twin_canon(raw, rid);
+    crate::twin::rec_core_basic(raw, rid);
+    reveal(crate::twin::rec_core);
+    let rd = raw.ienv.recs[rid];
+    assert(crate::dom_rec_ty::rshape(t, rid) == sh);
+    let nmin = sh.nmin();
+    // distinct constructors (the block certificate)
+    if let crate::env::Declar::Recursor(r) = decl_at(ef, p) {
+        if let crate::env::Declar::Inductive(ind_d) = decl_at(ef, qi) {
+            assert(crate::inductive::block_ok(ef, ind_d, sh, decl_at(ef, p)));
+        }
+    }
+    // the only canonical recursor of its inductive
+    assert forall|r2: u64| #[trigger] crate::rec_canon::rec_canon(t, r2) && crate::rec_canon::rec_ind(t, r2) == crate::rec_canon::rec_ind(t, rid)
+        implies r2 == rid by {
+        twin_unique_at(ef, cc, rid, r2);
+    }
+    // the inductive is no constructor or recursor
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    pos_find(ef, cc, qi);
+    assert(!denv.ctor_ind.contains_key(ind));
+    crate::twin::twin_keeps(raw, ind);
+    // distinct universe parameters, levels over the inductive's
+    decl_lps_at(ef, cc, rid);
+    decl_lps_at(ef, cc, ind);
+    assert(t.ienv.recs[rid].uparams == rd.uparams);
+    assert(t.consts[ind] == raw.consts[ind]);
+    assert forall|q: int| 0 <= q < nmin implies crate::level_inst::elp_in(t.consts[#[trigger] sh.ctors[q]].ty, t.consts[ind].lps)
+        && !t.ienv.recs.contains_key(sh.ctors[q]) by {
+        assert(ctor_at(ef, cc, sh, q));
+        decl_lps_at(ef, cc, sh.ctors[q]);
+        crate::twin::twin_keeps(raw, sh.ctors[q]);
+    }
+    assert(crate::dom_rec_ty::rec_elp(t, rid)) by {
+        reveal(crate::dom_rec_ty::rec_elp);
+    }
+    // the rules
+    assert forall|q: int| 0 <= q < nmin implies crate::beta_model::rule_rhs_ok(t.ienv, #[trigger] t.ienv.recs[rid].rules[q]) by {
+        crate::twin::rec_core_rule_shape(raw, rid, q);
+        assert(t.ienv.recs[rid].rules[q] == crate::twin::canon_rules(raw, rid)[q]);
+        assert(crate::twin::canon_rules(raw, rid)[q].ctor_id == rd.rules[q].ctor_id);
+        assert(sh.ctors[q] == rd.rules[q].ctor_id);
+        assert(ctor_at(ef, cc, sh, q));
     }
 }
 

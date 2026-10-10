@@ -1912,6 +1912,18 @@ and eta step is vacuous (about thirty sites use that). Stages:
     (`aux_data_ck` compares against the temporary map's last entry);
     Lean's kernel rejects it. The check aligns nanoda with Lean; no Lean
     export is affected (Init: 57424 declarations).
+    B6a-4 (3) done for the syntactic part: `export_sound::twin_scope_at`
+    -- for a recursor at a cutoff whose block is simple, the twin has it
+    in scope (`rec_scope_g`: canonical, distinct constructors, the only
+    canonical recursor of its inductive -- `twin_unique_at`, from the
+    major-head check and the parser's table --, the inductive no
+    constructor or recursor, distinct universe parameters and `rec_elp`
+    from the declarations' certificates), its constructors are no
+    recursors, and its rules are well formed (`rule_rhs_ok`). What
+    `iota_ok`'s `rec_frag` still asks of such a recursor is the
+    interpreted clause (`rec_interp ==> rec_frag_l`: no indices, sort
+    parameters) -- a model fact, B7 -- and nothing of the others, which
+    stay under `ind_ok_hyp` (B8 splits it by `rec_simple`).
   - **B7** the model's facts (`rec_model`, `struct_sem`): typed rules,
     fields typed and blind, semantic constants, from the canonical form
     and the certificates.
