@@ -3854,6 +3854,26 @@ pub open spec fn pi_spine(head: ExprSpec, n: nat) -> Option<ExprSpec>
     }
 }
 
+/// A Pi spine ending at a non-Pi is the whole telescope.
+pub proof fn pi_spine_tarity(head: ExprSpec, n: nat, r: ExprSpec)
+    requires
+        pi_spine(head, n) == Some(r),
+        !(r is Bind && r->Bind_0 == BinderKind::Pi),
+    ensures
+        crate::rec_canon::tarity(head) == n,
+    decreases n,
+{
+    if n > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, _, b) = head {
+            pi_spine_tarity(*b, (n - 1) as nat, r);
+        }
+    } else {
+        if let ExprSpec::Bind(BinderKind::Pi, _, _) = head {
+            assert(r == head);
+        }
+    }
+}
+
 /// Peeling one more Pi binder.
 pub proof fn pi_spine_step(head: ExprSpec, n: nat, t: ExprSpec, b: ExprSpec)
     requires

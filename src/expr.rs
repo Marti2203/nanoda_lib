@@ -1662,29 +1662,45 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 crate::expr_arena_bridge::to_model(e0),
                 result as nat,
             ) is Some,
+            result as nat == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(e0)),
     {
         let mut e = e0;
         let mut size = 0u16;
-        while let Pi { binder_type, body, .. } = self.read_expr(e)
+        // VERUS-REWRITE(while-let-exit): `while let Pi { .. } = self.read_expr(e)`
+        // is the `loop`/`match` it stands for, so the exit knows the cursor
+        // is no Pi.
+        loop
             invariant
                 crate::util_model::owns(*self, e0),
                 crate::util_model::owns(*self, e),
                 crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(e0), size as nat)
                     == Some(crate::expr_arena_bridge::to_model(e)),
+            ensures
+                crate::beta_model::pi_spine(crate::expr_arena_bridge::to_model(e0), size as nat)
+                    == Some(crate::expr_arena_bridge::to_model(e)),
+                !(crate::expr_arena_bridge::to_model(e) is Bind && crate::expr_arena_bridge::to_model(e)->Bind_0 == crate::expr_model::BinderKind::Pi),
         {
-            proof {
-                crate::beta_model::pi_spine_step(
-                    crate::expr_arena_bridge::to_model(e0),
-                    size as nat,
-                    crate::expr_arena_bridge::to_model(binder_type),
-                    crate::expr_arena_bridge::to_model(body),
-                );
+            match self.read_expr(e) {
+                Pi { binder_type, body, .. } => {
+                    proof {
+                        crate::beta_model::pi_spine_step(
+                            crate::expr_arena_bridge::to_model(e0),
+                            size as nat,
+                            crate::expr_arena_bridge::to_model(binder_type),
+                            crate::expr_arena_bridge::to_model(body),
+                        );
+                    }
+                    // VERUS-REWRITE(level-ceiling): `size += 1` panics on `u16`
+                    // overflow (overflow checks are on); the same check, explicit.
+                    assert!(size < u16::MAX, "pi_telescope_size: binder count overflow");
+                    size += 1;
+                    e = body;
+                },
+                _ => break,
             }
-            // VERUS-REWRITE(level-ceiling): `size += 1` panics on `u16`
-            // overflow (overflow checks are on); the same check, explicit.
-            assert!(size < u16::MAX, "pi_telescope_size: binder count overflow");
-            size += 1;
-            e = body;
+        }
+        proof {
+            crate::beta_model::pi_spine_tarity(crate::expr_arena_bridge::to_model(e0), size as nat, crate::expr_arena_bridge::to_model(e));
         }
         size
     }

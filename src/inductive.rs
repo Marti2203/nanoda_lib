@@ -6349,6 +6349,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             result.ctor_name == ctor.name,
+            result.ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(ctor.ty)),
             crate::util_model::owns(*(*final(self)).ctx, result.val),
             crate::inductive_model::telescope_size_spec(BinderKind::Lam, crate::expr_arena_bridge::to_model(result.val))
                 >= st.local_params@.len() + st.motives@.len() + flat_mapped_minors@.len(),
@@ -6476,6 +6477,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 ==> (#[trigger] result@[i])@.len() == st.all_inductives_incl_specialized@[i].ctors@.len(),
             forall|i: int, j: int| 0 <= i < result@.len() && 0 <= j < result@[i]@.len()
                 ==> (#[trigger] result@[i]@[j]).ctor_name == st.all_inductives_incl_specialized@[i].ctors@[j].name
+                    && result@[i]@[j].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty))
                     && crate::util_model::owns(*(*final(self)).ctx, result@[i]@[j].val),
             forall|a: int, b: int| 0 <= a < result@.len() && 0 <= b < result@[a]@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx), *st,
                     crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
@@ -6532,6 +6534,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::expr_arena_bridge::to_model((#[trigger] rec_rules@[a]@[b]).val)),
                 forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
                     ==> (#[trigger] rec_rules@[a]@[j]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[j].name
+                        && rec_rules@[a]@[j].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[j].ty))
                         && crate::util_model::owns(*self.ctx, rec_rules@[a]@[j].val),
             decreases st.all_inductives_incl_specialized@.len() - i,
         {
@@ -6579,6 +6582,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::util::unique_count(*old(self).ctx) as nat <= crate::util::unique_count(*self.ctx) as nat,
                     forall|b: int| 0 <= b < grp@.len()
                         ==> (#[trigger] grp@[b]).ctor_name == ind_ty.ctors@[b].name
+                            && grp@[b].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(ind_ty.ctors@[b].ty))
                             && crate::util_model::owns(*self.ctx, grp@[b].val),
                     forall|b: int| 0 <= b < grp@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx), *st,
                         crate::expr_arena_bridge::to_model(ind_ty.ctors@[b].ty),
@@ -6590,6 +6594,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::expr_arena_bridge::to_model((#[trigger] rec_rules@[a]@[b]).val)),
                     forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len()
                         ==> (#[trigger] rec_rules@[a]@[b]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[b].name
+                            && rec_rules@[a]@[b].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty))
                             && crate::util_model::owns(*self.ctx, rec_rules@[a]@[b].val),
                 decreases ind_ty.ctors@.len() - j,
             {
@@ -6662,6 +6667,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 assert forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len()
                     implies (#[trigger] rec_rules@[a]@[b]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[b].name
+                        && rec_rules@[a]@[b].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty))
                         && crate::util_model::owns(*self.ctx, rec_rules@[a]@[b].val) by {
                     if a < r0.len() { assert(rec_rules@[a] == r0[a]); }
                 }
@@ -6722,6 +6728,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                     &&& r.rec_rules@.len() == rec_rules@.len()
                     &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> (#[trigger] r.rec_rules@[k]).val == rec_rules@[k].val
+                        && r.rec_rules@[k].ctor_name == rec_rules@[k].ctor_name
+                        && r.rec_rules@[k].ctor_telescope_size_wo_params == rec_rules@[k].ctor_telescope_size_wo_params
                     &&& rec_hid(*(*final(self)).ctx, crate::name_arena_bridge::to_model_name(ind_name), crate::level_arena_bridge::name_id(r.info.name))
                     &&& crate::expr_arena_bridge::to_model(r.info.ty) == crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi,
                         local_ids(st.local_params@ + st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major]),
@@ -6862,6 +6870,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     &&& r.num_motives == st.motives@.len()
                     &&& r.num_minors == flat_ptrs(st.minors@).len()
                     &&& r.num_indices == st.local_indices@[i]@.len()
+                    &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> (#[trigger] r.rec_rules@[k]).ctor_name == st.all_inductives_incl_specialized@[i].ctors@[k].name
+                        && r.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
+                            == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[k].ty))
                     &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                         == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                     &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[i].ctors@.len()
@@ -6910,6 +6921,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> crate::util_model::owns(*self.ctx, (#[trigger] rec_rules@[a]@[j]).ctor_name),
                 forall|a: int| 0 <= a < rec_rules@.len()
                     ==> (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
+                forall|a: int, j: int| 0 <= a < rec_rules@.len() && 0 <= j < rec_rules@[a]@.len()
+                    ==> (#[trigger] rec_rules@[a]@[j]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[j].name
+                        && rec_rules@[a]@[j].ctor_telescope_size_wo_params as nat + st.local_params@.len()
+                            == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[j].ty)),
                 i <= st.all_inductives_incl_specialized@.len(),
                 recursors@.len() == i,
                 forall|a: int| 0 <= a < recursors@.len() ==> #[trigger] rec_ty_gen(*st, a, recursors@[a]),
@@ -6933,6 +6948,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         &&& r.num_motives == st.motives@.len()
                         &&& r.num_minors == flat_ptrs(st.minors@).len()
                         &&& r.num_indices == st.local_indices@[a]@.len()
+                        &&& forall|k: int| 0 <= k < r.rec_rules@.len() ==> (#[trigger] r.rec_rules@[k]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[k].name
+                            && r.rec_rules@[k].ctor_telescope_size_wo_params as nat + st.local_params@.len()
+                                == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[k].ty))
                         &&& crate::inductive_model::pi_telescope_size_spec(crate::expr_arena_bridge::to_model(r.info.ty))
                             == r.num_params + r.num_motives + r.num_minors + r.num_indices + 1
                         &&& r.rec_rules@.len() == st.all_inductives_incl_specialized@[a].ctors@.len()
