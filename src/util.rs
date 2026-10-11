@@ -434,16 +434,29 @@ macro_rules! hash64 {
     };
 }
 
+verus! {
+
 /// The implementation of natural number subtraction used in the kernel extension
 /// for nat literals.
 ///
 /// This is different from the subtraction defined for `BigUint` in that we saturate
 /// at zero if y > x
-pub(crate) fn nat_sub(x: BigUint, y: BigUint) -> BigUint {
-    if y > x {
+///
+/// VERUS-REWRITE(bignum-wrappers): `y > x` and `x - y` through the
+/// `nat_lit_model` wrappers (`biguint_gt`, `biguint_sub`) that carry their
+/// specifications; the same operations.
+pub(crate) fn nat_sub(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(result) == if crate::nat_lit_model::to_nat(y) > crate::nat_lit_model::to_nat(x) {
+            0
+        } else {
+            (crate::nat_lit_model::to_nat(x) - crate::nat_lit_model::to_nat(y)) as nat
+        },
+{
+    if crate::nat_lit_model::biguint_gt(&y, &x) {
         BigUint::zero()
     } else {
-        x - y
+        crate::nat_lit_model::biguint_sub(x, y)
     }
 }
 
@@ -452,23 +465,85 @@ pub(crate) fn nat_sub(x: BigUint, y: BigUint) -> BigUint {
 ///
 /// This is different from the division defined for `BigUint` in that division
 /// by zero is an error for `BigUint`, but in Lean, it returns 0.
-pub(crate) fn nat_div(x: BigUint, y: BigUint) -> BigUint {
-    if y.is_zero() {
+///
+/// VERUS-REWRITE(bignum-wrappers): `y.is_zero()` and `x / y` through the
+/// wrappers (`biguint_is_zero`, `biguint_div`).
+pub(crate) fn nat_div(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(result) == if crate::nat_lit_model::to_nat(y) == 0 {
+            0
+        } else {
+            (crate::nat_lit_model::to_nat(x) / crate::nat_lit_model::to_nat(y)) as nat
+        },
+{
+    if crate::nat_lit_model::biguint_is_zero(&y) {
         BigUint::zero()
     } else {
-        x / y
+        crate::nat_lit_model::biguint_div(x, y)
     }
 }
 
 /// The implementation of natural number mod used in the kernel extension
 /// for nat literals.
-pub(crate) fn nat_mod(x: BigUint, y: BigUint) -> BigUint {
-    if y.is_zero() {
+///
+/// VERUS-REWRITE(bignum-wrappers): `y.is_zero()` and `x % y` through the
+/// wrappers (`biguint_is_zero`, `biguint_rem`).
+pub(crate) fn nat_mod(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(result) == if crate::nat_lit_model::to_nat(y) == 0 {
+            crate::nat_lit_model::to_nat(x)
+        } else {
+            (crate::nat_lit_model::to_nat(x) % crate::nat_lit_model::to_nat(y)) as nat
+        },
+{
+    if crate::nat_lit_model::biguint_is_zero(&y) {
         x
     } else {
-        x % y
+        crate::nat_lit_model::biguint_rem(x, y)
     }
 }
+
+/// `2^n` is positive.
+proof fn pow2_pos(n: nat)
+    ensures
+        crate::tc_model::nat_pow(2, n) > 0,
+    decreases n,
+{
+    if n > 0 {
+        pow2_pos((n - 1) as nat);
+    }
+}
+
+/// Two, as `1 + 1`.
+fn two() -> (result: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(result) == 2,
+{
+    crate::nat_lit_model::biguint_add(<BigUint as num_traits::One>::one(), <BigUint as num_traits::One>::one())
+}
+
+/// VERUS-REWRITE(bignum-wrappers): `x * 2^y` with `2` as `1 + 1` and the
+/// product through `biguint_mul`.
+pub(crate) fn nat_shl(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(result) == crate::nat_lit_model::to_nat(x) * crate::tc_model::nat_pow(2, crate::nat_lit_model::to_nat(y)),
+{
+    crate::nat_lit_model::biguint_mul(x, two().pow(y))
+}
+
+/// VERUS-REWRITE(bignum-wrappers): `x / 2^y` with `2` as `1 + 1` and the
+/// quotient through `biguint_div`.
+pub(crate) fn nat_shr(x: BigUint, y: BigUint) -> (result: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(result) == crate::nat_lit_model::to_nat(x) / crate::tc_model::nat_pow(2, crate::nat_lit_model::to_nat(y)),
+{
+    proof {
+        pow2_pos(crate::nat_lit_model::to_nat(y));
+    }
+    crate::nat_lit_model::biguint_div(x, two().pow(y))
+}
+
+} // verus!
 
 pub(crate) fn nat_gcd(x: &BigUint, y: &BigUint) -> BigUint {
     x.gcd(y)
@@ -476,14 +551,6 @@ pub(crate) fn nat_gcd(x: &BigUint, y: &BigUint) -> BigUint {
 
 pub(crate) fn nat_xor(x: &BigUint, y: &BigUint) -> BigUint {
     x ^ y
-}
-
-pub(crate) fn nat_shl(x: BigUint, y: BigUint) -> BigUint {
-    x * BigUint::from(2u8).pow(y)
-}
-
-pub(crate) fn nat_shr(x: BigUint, y: BigUint) -> BigUint {
-    x / BigUint::from(2u8).pow(y)
 }
 
 pub(crate) fn nat_land(x: BigUint, y: BigUint) -> BigUint {

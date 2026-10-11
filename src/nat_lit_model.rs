@@ -282,87 +282,6 @@ pub assume_specification[ biguint_mul ](x: BigUint, y: BigUint) -> (result: BigU
         to_nat(result) == to_nat(x) * to_nat(y),
 ;
 
-/// Real-code counterpart to `util.rs::nat_sub`, built only from the
-/// axiomatized wrappers above, proving Lean's saturating-subtraction
-/// convention is implemented correctly.
-pub fn verified_nat_sub(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == if to_nat(y) > to_nat(x) {
-            0
-        } else {
-            (to_nat(x) - to_nat(y)) as nat
-        },
-{
-    if biguint_gt(&y, &x) {
-        BigUint::zero()
-    } else {
-        biguint_sub(x, y)
-    }
-}
-
-/// Real-code counterpart to `util.rs::nat_div`, proving Lean's
-/// division-by-zero-is-zero convention is implemented correctly.
-pub fn verified_nat_div(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == if to_nat(y) == 0 {
-            0
-        } else {
-            (to_nat(x) / to_nat(y)) as nat
-        },
-{
-    if biguint_is_zero(&y) {
-        BigUint::zero()
-    } else {
-        biguint_div(x, y)
-    }
-}
-
-/// Real-code counterpart to `util.rs::nat_mod`, proving Lean's
-/// mod-by-zero-is-the-dividend convention is implemented correctly.
-pub fn verified_nat_mod(x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == if to_nat(y) == 0 {
-            to_nat(x)
-        } else {
-            (to_nat(x) % to_nat(y)) as nat
-        },
-{
-    if biguint_is_zero(&y) {
-        x
-    } else {
-        biguint_rem(x, y)
-    }
-}
-
-/// Trusted directly, same spirit as `env_model.rs::ReducibilityHint::is_lt`:
-/// `nat_sub`'s real body is `if y > x { zero() } else { x - y }`, a trivial
-/// composition of exactly the primitives already trusted above.
-pub assume_specification[ crate::util::nat_sub ](x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == if to_nat(y) > to_nat(x) {
-            0
-        } else {
-            (to_nat(x) - to_nat(y)) as nat
-        },
-;
-
-pub assume_specification[ crate::util::nat_div ](x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == if to_nat(y) == 0 {
-            0
-        } else {
-            (to_nat(x) / to_nat(y)) as nat
-        },
-;
-
-pub assume_specification[ crate::util::nat_mod ](x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == if to_nat(y) == 0 {
-            to_nat(x)
-        } else {
-            (to_nat(x) % to_nat(y)) as nat
-        },
-;
 
 } // verus!
 #[cfg(test)]
@@ -372,37 +291,31 @@ mod tests {
 
     #[test]
     fn sub_saturates_at_zero() {
-        assert_eq!(verified_nat_sub(BigUint::from(3u8), BigUint::from(10u8)), BigUint::zero());
         assert_eq!(nat_sub(BigUint::from(3u8), BigUint::from(10u8)), BigUint::zero());
     }
 
     #[test]
     fn sub_normal_case() {
-        assert_eq!(verified_nat_sub(BigUint::from(10u8), BigUint::from(3u8)), BigUint::from(7u8));
         assert_eq!(nat_sub(BigUint::from(10u8), BigUint::from(3u8)), BigUint::from(7u8));
     }
 
     #[test]
     fn div_by_zero_is_zero() {
-        assert_eq!(verified_nat_div(BigUint::from(5u8), BigUint::zero()), BigUint::zero());
         assert_eq!(nat_div(BigUint::from(5u8), BigUint::zero()), BigUint::zero());
     }
 
     #[test]
     fn div_normal_case() {
-        assert_eq!(verified_nat_div(BigUint::from(13u8), BigUint::from(4u8)), BigUint::from(3u8));
         assert_eq!(nat_div(BigUint::from(13u8), BigUint::from(4u8)), BigUint::from(3u8));
     }
 
     #[test]
     fn mod_by_zero_is_dividend() {
-        assert_eq!(verified_nat_mod(BigUint::from(5u8), BigUint::zero()), BigUint::from(5u8));
         assert_eq!(nat_mod(BigUint::from(5u8), BigUint::zero()), BigUint::from(5u8));
     }
 
     #[test]
     fn mod_normal_case() {
-        assert_eq!(verified_nat_mod(BigUint::from(13u8), BigUint::from(4u8)), BigUint::from(1u8));
         assert_eq!(nat_mod(BigUint::from(13u8), BigUint::from(4u8)), BigUint::from(1u8));
     }
 }

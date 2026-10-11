@@ -302,6 +302,8 @@ vstd specifications (library trust, docs/TRUST.md "T"):
 - iterators: `copied`, `cloned`, `nth`, `enumerate` (upstream PR #2904)
 - `FromIteratorSpecImpl` for `Arc<[T]>` and `HashSet` (what `collect`
   builds)
+- `Cow<str>`'s `to_string` is its text, as `&str`'s is (`ff73fd8e8`; the
+  parser stores a record's strings this way)
 - `Arc`: `Deref`, `AsRef`, `Clone` (the same value), `From` a slice or a
   `Vec`, and a view for `Arc<[T]>`; `Vec`'s `AsRef<[T]>`
 - hash tables: the key model relativized to the keys involved, tuple keys,

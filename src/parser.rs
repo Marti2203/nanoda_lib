@@ -700,11 +700,6 @@ fn axiom_name<'a>(b: &ExportBuilder<'a>, n: NamePtr<'a>) -> String {
 }
 
 #[verifier::external_body]
-fn message(s: String) -> Box<dyn Error> {
-    Box::from(s)
-}
-
-#[verifier::external_body]
 fn nat_lit_disallowed(line: &str) -> Box<dyn Error> {
     Box::<dyn Error>::from(format!(
         "Nat lit extension disallowed by checker execution config, but export file contains a nat literal {:?}",

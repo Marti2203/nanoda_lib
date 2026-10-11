@@ -431,19 +431,6 @@ pub assume_specification[ <BigUint as num_traits::Pow<BigUint>>::pow ](
         to_nat(result) == nat_pow(to_nat(x), to_nat(y)),
 ;
 
-/// `util.rs::nat_shl`/`nat_shr` (`x * 2^y`/`x / 2^y`) -- trusted directly,
-/// same spirit as `nat_sub`/`nat_div`/`nat_mod` (a trivial composition of
-/// already-trusted primitives, no independent branching to verify).
-pub assume_specification[ crate::util::nat_shl ](x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == to_nat(x) * nat_pow(2, to_nat(y)),
-;
-
-pub assume_specification[ crate::util::nat_shr ](x: BigUint, y: BigUint) -> (result: BigUint)
-    ensures
-        to_nat(result) == to_nat(x) / nat_pow(2, to_nat(y)),
-;
-
 pub assume_specification[ crate::util::nat_gcd ](x: &BigUint, y: &BigUint) -> (result: BigUint)
     ensures
         to_nat(result) == nat_gcd_spec(to_nat(*x), to_nat(*y)),
