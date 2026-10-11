@@ -429,7 +429,6 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     let rd = sig.ienv.recs[c];
     &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
-    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::capp(sig, #[trigger] sh.fields[p][k], sh.ind)
     &&& crate::dom_code::fields_typed_h(sig, sh.ind)

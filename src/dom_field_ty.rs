@@ -403,7 +403,7 @@ pub proof fn const_below_in(tw: crate::ti_syntax::Sig, r: int, g: crate::ti_synt
         crate::ti_syntax::iota_ok(tw),
         crate::dom_levels::sig_lps(tw),
         tw.consts.contains_key(j) && tw.consts[j].val is None,
-        0 <= crate::dom_code::rk(tw, j) < r,
+        0 <= crate::dom_code::rk(tw, j) <= r,
         us.len() == tw.consts[j].lps.len(),
         crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::Jd::Wf(g)),
     ensures

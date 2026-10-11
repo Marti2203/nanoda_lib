@@ -2266,10 +2266,21 @@ The plan:
   from the certificates and the boundary alone; what stays assumed of
   the fields is their shape (`capp`, `pcapp`) and that their heads take
   sorts (`sort_doms`, `psd`).
-- **R3c** (open, deep) `rule_typed`: nanoda never types rule bodies, it
-  converts the declared rules to the ones it generates, so this is the
-  theorem that canonical recursor rules are well typed, not a
-  certificate lift.
+- **R3c** `rule_typed`: nanoda never types rule bodies, it converts the
+  declared rules to the ones it generates, so this is the theorem that
+  canonical recursor rules are well typed, not a certificate lift.
+  R3c-1 (done, interpreted recursors): `dom_rule_ty::rule_typed_of`, from
+  the recursor's and constructors' types below their ranks (R3a) alone,
+  so no new export witness: the rule's binders are well formed (the
+  recursor's head binders, `pi_tele_wf`; each field binder the
+  constructor's, renamed past the motive and minors, `ti_meta::d_ren`),
+  the minor's variable is applied to the field variables and the
+  recursive calls (each the recursor at the binders' variables and the
+  field, `spine_build`), at the identities of the substitution calculus
+  (`fld_dom_id`, `vsub_vars_lift`), and its type is the minor's end
+  (`dom_rec_minor::minor_end`). `rule_typed` leaves `rec_model_h`;
+  `kclaims::sig_sr_of` derives it. Open: R3c-2, `rule_typed_g` for the
+  other recursors (indices), in `rec_model_p_h`.
 
 ## The open fork before S4
 

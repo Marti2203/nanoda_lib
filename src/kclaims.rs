@@ -230,6 +230,13 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
                     crate::dom_model::sem_const_of(sig, c, lv);
                     crate::dom_rec_end::ty_closed_at(sig, c, rr, lv);
                 }
+                assert(crate::dom_rec_end::rec_frag_l(sig, c)) by {
+                    reveal(crate::dom_rec_end::rec_interp);
+                }
+                assert forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
+                    implies #[trigger] crate::dom_rec_end::rule_typed(sig, c, lv, p) by {
+                    crate::dom_rule_ty::rule_typed_of(sig, c, lv, p);
+                }
                 assert forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[ind].lps.len() && 0 <= p < sh.nmin()
                     implies #[trigger] crate::dom_model::sem_const(sig, sh.ctors[p], ls) by {
                     assert(sh.ctors[p] == sh.ctors[p]);
