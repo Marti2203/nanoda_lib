@@ -2101,7 +2101,7 @@ inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
 structure eta at structures outside the `struct_of` slice (dependent
 fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
 
-### Rank-stratified strip (2026-10-10, R1-R3a, R3b-1 done)
+### Rank-stratified strip (2026-10-10, R1-R3a, R3b-1, R3b-2 closed fields done)
 
 FOUND: the model's typing facts (`ty_closed`, `rule_typed`,
 `fields_typed`, `rule_typed_g`) are stated in `ti_strip::strip(sig)`, with
@@ -2239,6 +2239,24 @@ The plan:
   (`dom_canon::field_consts`, `ranked_of`, `fields_typed_of`). The shape
   (an application of constants, none the inductive, a constructor or a
   recursor) stays a fragment-boundary hypothesis.
+  R3b-2 (done for closed fields): `dom_field_ty::simple_rebuild` types a
+  closed simple type nanoda typed inside a constructor's telescope in the
+  empty context below a rank -- head from R3a, arguments by induction,
+  each retyped at its domain's sort by the level equality type
+  uniqueness and sort injectivity give in the certificate's signature
+  (`ti_spine::spine_ty`, `ti_sr::uniq`, `dom_fund::sort_inj_chain`).
+  `jrank`'s choice gains `fields_typed_r` (`dom_canon::fields_ty`),
+  witnessed at the positions (`export_sound::fields_ty_at`:
+  `field_cert` inverts the constructor's certified type to the field,
+  `dom_field_ty::tel_inv`; `field_ty_one` instantiates its levels and
+  rebuilds; `twin_facts`, `cert_sig_facts`). TRADEOFF: the rebuild needs
+  the heads of a closed field's type to take sorts syntactically
+  (`dom_field_ty::sort_doms`), else the sorts' match lives under the
+  telescope's binders and is strengthening again; it replaces the closed
+  fields' typing in the hypothesis (`fields_typed_h`). Lean's type
+  formers (`Prod`, `List`, ...) take sorts. Open: the fields over the
+  parameters (`pfield_ok_h`'s `ptyped`), the same rebuild in the
+  parameters' context.
 - **R3c** (open, deep) `rule_typed`: nanoda never types rule bodies, it
   converts the declared rules to the ones it generates, so this is the
   theorem that canonical recursor rules are well typed, not a

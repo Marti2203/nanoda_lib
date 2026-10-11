@@ -285,6 +285,69 @@ pub proof fn sort_doms_sl(sig: crate::ti_syntax::Sig, e: ExprSpec, ks: Seq<u64>,
     sl_spine_shape(e, ks, vs);
 }
 
+/// Simple types, the boundary and the shapes read only the constants and
+/// tables.
+pub proof fn simple_app_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, ind: u64, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::rec_canon::simple_app(s1, ind, e) == crate::rec_canon::simple_app(s2, ind, e),
+    decreases e, 0int,
+{
+    if let ExprSpec::App(f, x) = e {
+        simple_app_eq(s1, s2, ind, *f);
+        simple_ty_eq(s1, s2, ind, *x);
+    }
+}
+
+pub proof fn simple_ty_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, ind: u64, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+        s1.ienv == s2.ienv,
+    ensures
+        crate::rec_canon::simple_ty(s1, ind, e) == crate::rec_canon::simple_ty(s2, ind, e),
+    decreases e, 1int,
+{
+    simple_app_eq(s1, s2, ind, e);
+}
+
+pub proof fn sd_args_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+    ensures
+        sd_args(s1, e) == sd_args(s2, e),
+    decreases e, 0int,
+{
+    if let ExprSpec::App(f, x) = e {
+        sd_args_eq(s1, s2, *f);
+        sort_doms_eq(s1, s2, *x);
+    }
+}
+
+pub proof fn sort_doms_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, e: ExprSpec)
+    requires
+        s1.consts == s2.consts,
+    ensures
+        sort_doms(s1, e) == sort_doms(s2, e),
+    decreases e, 1int,
+{
+    sd_args_eq(s1, s2, e);
+}
+
+pub proof fn capp_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, e: ExprSpec, ind: u64)
+    requires
+        s1.ienv == s2.ienv,
+    ensures
+        crate::dom_canon::capp(s1, e, ind) == crate::dom_canon::capp(s2, e, ind),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        capp_eq(s1, s2, *f, ind);
+        capp_eq(s1, s2, *x, ind);
+    }
+}
+
 /// A TYPED SPINE'S HEAD is typed at its declared type.
 pub proof fn head_typed(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, e: ExprSpec, t: ExprSpec)
     requires

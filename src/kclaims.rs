@@ -138,6 +138,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_levels::sig_lps(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_rec_end::types_below(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_rec_end::ctors_below(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_canon::fields_ty(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -170,6 +171,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         }
         assert(crate::dom_rec_end::types_below(s));
         assert(crate::dom_rec_end::ctors_below(s));
+        assert(crate::dom_canon::fields_ty(s));
         sig_sr_of(s);
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
     }
@@ -191,6 +193,7 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
         crate::dom_levels::sig_lps(sig),
         crate::dom_rec_end::types_below(sig),
         crate::dom_rec_end::ctors_below(sig),
+        crate::dom_canon::fields_ty(sig),
         forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
     ensures
         crate::dom_rec_end::sig_sr(sig),
@@ -248,6 +251,7 @@ proof fn fields_of(sig: crate::ti_syntax::Sig, c: u64)
     requires
         crate::dom_rec_end::rec_model_h(sig, c),
         crate::dom_rec_end::ctors_below(sig),
+        crate::dom_canon::fields_ty(sig),
         crate::dom_rec_ty::rec_scope_g(sig, c),
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, c);

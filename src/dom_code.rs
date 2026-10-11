@@ -417,16 +417,18 @@ pub open spec fn fields_typed(sig: Sig, ind: u64) -> bool {
         ==> #[trigger] pfield_ok(sig, ind, p, k)
 }
 
-/// `fields_typed` with the fields' shapes in place of their ranks: the
-/// model's hypothesis (`dom_rec_end::rec_model_h`); the ranks are
+/// `fields_typed` with the fields' shapes in place of their ranks and,
+/// for the closed ones, their typings (the boundary: their heads take
+/// sorts, `dom_field_ty::sort_doms`): the model's hypothesis
+/// (`dom_rec_end::rec_model_h`); the ranks and the closed typings are
 /// certified (`dom_canon::fields_typed_of`).
 #[verifier::opaque]
 pub open spec fn fields_typed_h(sig: Sig, ind: u64) -> bool {
     let sh = canon_shape(sig, ind);
-    &&& forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
-        && ls.len() == sig.consts[ind].lps.len() && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+    &&& forall|p: int, k: int| #![trigger sh.fields[p][k]] 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
         && !pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && simple_ty(sig, ind, sh.fields[p][k])
-        ==> #[trigger] ftyped(sig, ind, p, k, ls) && crate::dom_canon::capp(sig, sh.fields[p][k], ind)
+        ==> crate::dom_field_ty::sort_doms(sig, sh.fields[p][k]) && crate::dom_canon::capp(sig, sh.fields[p][k], ind)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
         && !direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
         && !pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && !simple_ty(sig, ind, sh.fields[p][k])

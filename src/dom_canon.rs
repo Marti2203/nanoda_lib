@@ -144,6 +144,27 @@ pub proof fn field_consts(sig: Sig, ind: u64, p: int, k: int)
     assert(ds[sh.np + k] == sh.fields[p][k]);
 }
 
+/// A closed simple field within the boundary.
+pub open spec fn field_in(sig: Sig, ind: u64, p: int, k: int) -> bool {
+    let sh = canon_shape(sig, ind);
+    &&& 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+    &&& !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+    &&& !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
+    &&& simple_ty(sig, ind, sh.fields[p][k])
+    &&& crate::dom_field_ty::sort_doms(sig, sh.fields[p][k])
+    &&& capp(sig, sh.fields[p][k], ind)
+}
+
+/// THE CLOSED FIELDS TYPED (R3b-2; certified at the export from the
+/// constructors' typings, `export_sound::fields_ty_at`): a canonical
+/// inductive's closed simple fields within the boundary are typed below
+/// it, at every level instance.
+pub open spec fn fields_ty(sig: Sig) -> bool {
+    forall|ind: u64, p: int, k: int, ls: Seq<LevelSpec>| #![trigger ftyped(sig, ind, p, k, ls)]
+        has_rec(sig, ind) && field_in(sig, ind, p, k) && ls.len() == sig.consts[ind].lps.len()
+        ==> ftyped(sig, ind, p, k, ls)
+}
+
 /// THE FIELDS' RANKS FROM THE CERTIFICATE: the shapes the hypothesis
 /// gives (`fields_typed_h`) and the constants the export certifies
 /// (`field_consts`) give `fields_typed`.
@@ -151,6 +172,7 @@ pub proof fn fields_typed_of(sig: Sig, ind: u64)
     requires
         has_rec(sig, ind),
         crate::dom_rec_end::ctors_below(sig),
+        fields_ty(sig),
         fields_typed_h(sig, ind),
     ensures
         fields_typed(sig, ind),
@@ -163,8 +185,9 @@ pub proof fn fields_typed_of(sig: Sig, ind: u64)
         && !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && simple_ty(sig, ind, sh.fields[p][k])
         implies #[trigger] ftyped(sig, ind, p, k, ls) && ranked(sig, sh.fields[p][k], rk(sig, ind)) by {
         assert(fields_typed_h(sig, ind));
+        assert(crate::dom_field_ty::sort_doms(sig, sh.fields[p][k]) && capp(sig, sh.fields[p][k], ind));
+        assert(field_in(sig, ind, p, k));
         assert(ftyped(sig, ind, p, k, ls));
-        assert(capp(sig, sh.fields[p][k], ind));
         field_consts(sig, ind, p, k);
         ranked_of(sig, sh.fields[p][k], ind, rk(sig, ind));
     }

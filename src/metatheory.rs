@@ -74,9 +74,17 @@ pub open spec fn ctors_ranked(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec
     crate::dom_rec_end::ctors_below(crate::twin::twin(jsig_r(dty, denv, r)))
 }
 
+/// ... and under which, wherever the recursors are in the fragment, a
+/// canonical inductive's closed fields within the boundary are typed below
+/// it (`dom_canon::fields_ty`).
+pub open spec fn fields_typed_r(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, r: Map<u64, nat>) -> bool {
+    let s = crate::twin::twin(jsig_r(dty, denv, r));
+    crate::ti_syntax::iota_ok(s) ==> crate::dom_canon::fields_ty(s)
+}
+
 pub open spec fn jrank(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> Map<u64, nat> {
     choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r) && types_typed(dty, denv, r)
-        && ctors_ranked(dty, denv, r)
+        && ctors_ranked(dty, denv, r) && fields_typed_r(dty, denv, r)
 }
 
 /// REAL TYPING: the typed judgment types `e` at `t`, in the empty de Bruijn

@@ -41,6 +41,53 @@ pub proof fn sig_lps_at(sig: Sig, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, 0), ks, vs));
 }
 
+/// A SIGNATURE'S OWN LEVEL FACTS from its strips' (`sig_lps`), its
+/// recursors ranked and no locals.
+pub proof fn lp_ok_of_lps(sig: Sig, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lps(sig),
+        ks.len() == vs.len(),
+        sig.locals == Map::<nat, crate::expr_model::ExprSpec>::empty(),
+        forall|k: u64| #[trigger] sig.ienv.recs.contains_key(k) ==> sig.rank.contains_key(k),
+    ensures
+        crate::ti_level::sig_lp_ok(sig, ks, vs),
+{
+    reveal(sig_lps);
+    let s0 = crate::ti_strip::strip_below(sig, 0);
+    assert(crate::ti_level::sig_lp_ok(s0, ks, vs));
+    assert(s0.ienv.defs == sig.ienv.defs && s0.consts == sig.consts);
+    assert forall|id: u64| #[trigger] sig.ienv.defs.contains_key(id) implies crate::level_inst::elp_in(sig.ienv.defs[id].1, sig.ienv.defs[id].0) by {
+        assert(s0.ienv.defs.contains_key(id));
+    }
+    assert forall|id: u64, i: int| #![trigger sig.ienv.recs[id].rules[i]] sig.ienv.recs.contains_key(id) && 0 <= i < sig.ienv.recs[id].rules.len()
+        implies crate::level_inst::elp_in(sig.ienv.recs[id].rules[i].rhs, sig.ienv.recs[id].uparams) by {
+        let r = sig.rank[id] as int + 1;
+        let sb = crate::ti_strip::strip_below(sig, r);
+        assert(crate::ti_level::sig_lp_ok(sb, ks, vs));
+        assert(sb.ienv.recs.contains_key(id) && sb.ienv.recs[id] == sig.ienv.recs[id]);
+    }
+    assert(crate::level_inst::env_lp_ok(sig.ienv));
+}
+
+/// ... and every strip has them back, at any ranks.
+pub proof fn sig_lps_of_lp_ok(sig: Sig)
+    requires
+        forall|ks: Seq<u64>, vs: Seq<LevelSpec>| ks.len() == vs.len() ==> #[trigger] crate::ti_level::sig_lp_ok(sig, ks, vs),
+    ensures
+        sig_lps(sig),
+{
+    reveal(sig_lps);
+    assert forall|r: int, ks: Seq<u64>, vs: Seq<LevelSpec>| ks.len() == vs.len()
+        implies #[trigger] crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, r), ks, vs) by {
+        assert(crate::ti_level::sig_lp_ok(sig, ks, vs));
+        let sb = crate::ti_strip::strip_below(sig, r);
+        assert forall|id: u64, i: int| #![trigger sb.ienv.recs[id].rules[i]] sb.ienv.recs.contains_key(id) && 0 <= i < sb.ienv.recs[id].rules.len()
+            implies crate::level_inst::elp_in(sb.ienv.recs[id].rules[i].rhs, sb.ienv.recs[id].uparams) by {
+            assert(sig.ienv.recs.contains_key(id) && sb.ienv.recs[id] == sig.ienv.recs[id]);
+        }
+    }
+}
+
 /// A strip keeps the level facts.
 pub proof fn sig_lps_strip(sig: Sig, r: int)
     requires
