@@ -2299,6 +2299,19 @@ The plan:
   `jrank` choice conjunct `idx_typed_r` (`dom_rule_g::idx_all`).
   `rule_typed` and `rule_typed_g` are now theorems: the rule typings
   leave the model's hypothesis entirely.
+- **`twin_ok` stays a hypothesis (decision 2026-10-11).** nanoda accepts an
+  exported recursor when its type and rules `def_eq` the generated ones
+  (`inductive::rec_conv_old`), but that conversion is untyped (the
+  exported rules are never typed, so `def_eq_claim`'s typed half `cw`
+  says nothing of them) and runs in the block check's temporary
+  environment, where `kh` is not established. Structural equality is not
+  an option either: Lean's export strips `outParam`/`optParam`/`autoParam`
+  from recursor binders (S6.6b B4c: Init 97 types, 118 rules). The gap
+  to nanoda: an exported rule that is an ill-typed expansion of the
+  generated one passes nanoda's check; the judgment assumes it converts
+  as a typed term. Options declined for now: re-checking (inferring the
+  exported rules, re-running `def_eq`) in the recursor's own
+  environment, or an annotation-aware equality test.
 
 ## The open fork before S4
 
