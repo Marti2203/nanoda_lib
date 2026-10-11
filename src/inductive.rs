@@ -4005,9 +4005,7 @@ impl<'t, 'p: 't> ExportFile<'p> {
     /// `TcCtx` over it); its `return true` returns the same value from here;
     /// VERUS-REWRITE(closure-specialised): the closure given to `find_const`
     /// (`|n| ind.all_ind_names.iter().any(|nn| n == *nn)`) is
-    /// `find_const_named` over `all_ind_names`, the same test with a contract;
-    /// VERUS-REWRITE(index-walk): `for ctor_name in ind.all_ctor_names.iter()`
-    /// is the scan by index it stands for.
+    /// `find_const_named` over `all_ind_names`, the same test with a contract.
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn is_recursive(&self, ind_name: &NamePtr<'t>) -> (result: bool)
         requires
@@ -4031,21 +4029,22 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         export_tagged_owned(ctx, ind.all_ind_names@[k]);
                     }
                 }
-                let mut c: usize = 0;
-                while c < ind.all_ctor_names.len()
+                for ctor_name in it: ind.all_ctor_names.iter()
                     invariant
+                        ind.all_ctor_names.len() == ind.all_ctor_names@.len(),
+                        it.seq().len() == ind.all_ctor_names@.len(),
+                        forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> #[trigger] it.seq()[k] == &ind.all_ctor_names@[k],
                         export_ok(*self),
                         ctx.export_file == self,
                         crate::util_model::ctx_ok(ctx),
                         forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(self.arena(), #[trigger] ind.all_ctor_names@[k]),
                         forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> crate::util_model::owns(ctx, #[trigger] ind.all_ind_names@[k]),
-                    decreases ind.all_ctor_names@.len() - c,
                 {
-                    let ctor_name = &ind.all_ctor_names[c];
+                    let ghost c: int = it.index();
                     proof {
                         broadcast use vstd::std_specs::hash::group_hash_axioms;
                         crate::util_model::build_hasher_default_valid_fx();
-                        assert(crate::util_model::export_tagged(self.arena(), ind.all_ctor_names@[c as int]));
+                        assert(crate::util_model::export_tagged(self.arena(), ind.all_ctor_names@[c]));
                         export_keys_obey_model(self.arena(),
                             crate::indexmap_model::imap_view(&self.declars).dom().insert(*ctor_name));
                     }
@@ -4076,7 +4075,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         }
                         _ => panic!("expected constructor"),
                     }
-                    c += 1;
                 }
                 false
             }
@@ -4237,10 +4235,8 @@ impl<'t, 'p: 't> ExportFile<'p> {
     /// same `new_env` / `Env::new_w_temp_ext`) and `TypeChecker::new` on the same
     /// context, then the closure's body. Same calls, same order.
     /// `tc.check_declar_info(d).unwrap()` is `check_declar_info_unwrap(d)`.
-    /// VERUS-REWRITE(index-walk): the `any` over the block's names (the same
-    /// calls to `is_recursive`, stopping at the first true), and every `for`
-    /// over a slice, `Vec` or map, are the scans by index they stand for;
-    /// `for r in recursors.clone()` clones each element in turn.
+    /// VERUS-REWRITE(index-walk): the `for` over the specialized-name map's
+    /// `values().copied()` is the scan by position (`get_index`) it stands for.
     /// VERUS-REWRITE(flat-map-collect): the recursor names through
     /// `rec_names_set`. VERUS-REWRITE(level-ceiling): `start + size` panics on
     /// overflow (overflow checks are on); the same check, explicit.
@@ -4412,26 +4408,15 @@ impl<'t, 'p: 't> ExportFile<'p> {
                 proof {
                     assert(declar_export_tagged(a, Declar::Inductive(*ind)));
                 }
-                let mut block_is_recursive = false;
-                let mut k: usize = 0;
-                while k < ind.all_ind_names.len()
-                    invariant
-                        export_ok(*self),
-                        a == self.arena(),
-                        forall|j: int| 0 <= j < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ind_names@[j]),
-                    decreases ind.all_ind_names@.len() - k,
-                {
-                    let ind_name = &ind.all_ind_names[k];
-                    proof {
-                        broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
-                        assert(crate::util_model::export_tagged(a, ind.all_ind_names@[k as int]));
-                    }
-                    if self.is_recursive(ind_name) {
-                        block_is_recursive = true;
-                        break;
-                    }
-                    k += 1;
+                proof {
+                    broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                    assert(forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(self.arena(), #[trigger] ind.all_ind_names@[k]));
                 }
+                let block_is_recursive = ind.all_ind_names.iter().any(|ind_name: &NamePtr<'t>| -> (b: bool)
+                    requires
+                        export_ok(*self),
+                        crate::util_model::export_tagged(self.arena(), *ind_name),
+                    { self.is_recursive(ind_name) });
                 assert_eq!(ind.is_recursive, block_is_recursive);
                 {
                     let mut dag = LeanDag::new(&self.config);
@@ -4439,21 +4424,22 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     let nested_pfx = ctx.str1("_nested");
                     proof { export_tagged_owned(ctx, ind.info.ty); }
                     assert!(!ctx.has_nested_pfx(ind.info.ty, nested_pfx));
-                    let mut j: usize = 0;
-                    while j < ind.all_ind_names.len()
+                    for ind_name in it: ind.all_ind_names.iter()
                         invariant
+                            ind.all_ind_names.len() == ind.all_ind_names@.len(),
+                            it.seq().len() == ind.all_ind_names@.len(),
+                            forall|k: int| 0 <= k < ind.all_ind_names@.len() ==> #[trigger] it.seq()[k] == &ind.all_ind_names@[k],
                             export_ok(*self),
                             a == self.arena(),
                             crate::util_model::arena_ids(ctx).1 == a,
                             crate::util_model::owns(ctx, nested_pfx),
                             forall|x: int| 0 <= x < ind.all_ind_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ind_names@[x]),
-                        decreases ind.all_ind_names@.len() - j,
                     {
-                        let ind_name = &ind.all_ind_names[j];
+                        let ghost j: int = it.index();
                         proof {
                             broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
                             crate::util_model::build_hasher_default_valid_fx();
-                            assert(crate::util_model::export_tagged(a, ind.all_ind_names@[j as int]));
+                            assert(crate::util_model::export_tagged(a, ind.all_ind_names@[j]));
                             export_declars_get(*self, *ind_name);
                         }
                         match self.declars.get(ind_name).unwrap() {
@@ -4468,23 +4454,23 @@ impl<'t, 'p: 't> ExportFile<'p> {
                             }
                             _ => panic!("expected inductive declar"),
                         }
-                        j += 1;
                     }
-                    let mut j: usize = 0;
-                    while j < ind.all_ctor_names.len()
+                    for ctor_name in it: ind.all_ctor_names.iter()
                         invariant
+                            ind.all_ctor_names.len() == ind.all_ctor_names@.len(),
+                            it.seq().len() == ind.all_ctor_names@.len(),
+                            forall|k: int| 0 <= k < ind.all_ctor_names@.len() ==> #[trigger] it.seq()[k] == &ind.all_ctor_names@[k],
                             export_ok(*self),
                             a == self.arena(),
                             crate::util_model::arena_ids(ctx).1 == a,
                             crate::util_model::owns(ctx, nested_pfx),
                             forall|x: int| 0 <= x < ind.all_ctor_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] ind.all_ctor_names@[x]),
-                        decreases ind.all_ctor_names@.len() - j,
                     {
-                        let ctor_name = &ind.all_ctor_names[j];
+                        let ghost j: int = it.index();
                         proof {
                             broadcast use vstd::std_specs::hash::group_hash_axioms, vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
                             crate::util_model::build_hasher_default_valid_fx();
-                            assert(crate::util_model::export_tagged(a, ind.all_ctor_names@[j as int]));
+                            assert(crate::util_model::export_tagged(a, ind.all_ctor_names@[j]));
                             export_declars_get(*self, *ctor_name);
                         }
                         match self.declars.get(ctor_name).unwrap() {
@@ -4499,7 +4485,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
                             }
                             _ => panic!("expected constructor"),
                         }
-                        j += 1;
                     }
                 }
 
@@ -4616,9 +4601,11 @@ impl<'t, 'p: 't> ExportFile<'p> {
             let mut tc = TypeChecker::new(&mut ctx, &env, None);
             let ghost fut = mut_ref_future(tc.ctx);
             let ghost c1 = *tc.ctx;
-            let mut x: usize = 0;
-            while x < st.all_inductives_incl_specialized.len()
+            for ind in it: st.all_inductives_incl_specialized.iter()
                 invariant
+                    st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                    it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                    forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len() ==> #[trigger] it.seq()[k] == &st.all_inductives_incl_specialized@[k],
                     mut_ref_future(tc.ctx) == fut,
                     crate::tc::tc_wf(tc),
                     tc.ctx.dbj_level_counter == 0,
@@ -4629,18 +4616,22 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     st.ind_consts@.len() <= st.local_indices@.len(),
                     st.is_zero is Some,
                     st.block_codom is Some,
-                    x <= st.all_inductives_incl_specialized@.len(),
                     crate::kgen::serials_in(crate::util_model::arena_ids(*tc.ctx), st.local_params@, sp0, sp1),
                     sp1 <= crate::util::unique_count(*tc.ctx),
                     forall|i: int, j: int| #![trigger st.all_inductives_incl_specialized@[i].ctors@[j]]
-                        0 <= i < x && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
+                        0 <= i < it.index() && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
                         ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[i].name),
                             crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty)),
             {
-                let ind = &st.all_inductives_incl_specialized[x];
-                let mut y: usize = 0;
-                while y < ind.ctors.len()
+                let ghost x: int = it.index();
+                proof {
+                    assert(0 <= x < st.all_inductives_incl_specialized@.len() && it.seq()[x] == ind);
+                }
+                for ctor in it2: ind.ctors.iter()
                     invariant
+                        ind.ctors.len() == ind.ctors@.len(),
+                        it2.seq().len() == ind.ctors@.len(),
+                        forall|k: int| 0 <= k < ind.ctors@.len() ==> #[trigger] it2.seq()[k] == &ind.ctors@[k],
                         mut_ref_future(tc.ctx) == fut,
                         crate::tc::tc_wf(tc),
                         tc.ctx.dbj_level_counter == 0,
@@ -4651,31 +4642,31 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         st.ind_consts@.len() <= st.local_indices@.len(),
                         st.is_zero is Some,
                         st.block_codom is Some,
-                        x < st.all_inductives_incl_specialized@.len(),
-                        *ind == st.all_inductives_incl_specialized@[x as int],
-                        y <= ind.ctors@.len(),
+                        0 <= x < st.all_inductives_incl_specialized@.len(),
+                        *ind == st.all_inductives_incl_specialized@[x],
                         crate::kgen::serials_in(crate::util_model::arena_ids(*tc.ctx), st.local_params@, sp0, sp1),
                         sp1 <= crate::util::unique_count(*tc.ctx),
                         forall|i: int, j: int| #![trigger st.all_inductives_incl_specialized@[i].ctors@[j]]
                             0 <= i < x && 0 <= j < st.all_inductives_incl_specialized@[i].ctors@.len()
                             ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[i].name),
                                 crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty)),
-                        forall|j: int| #![trigger st.all_inductives_incl_specialized@[x as int].ctors@[j]]
-                            0 <= j < y ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[x as int].name),
-                                crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[x as int].ctors@[j].ty)),
+                        forall|j: int| #![trigger st.all_inductives_incl_specialized@[x].ctors@[j]]
+                            0 <= j < it2.index() ==> ctor_syn(st, crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[x].name),
+                                crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[x].ctors@[j].ty)),
                 {
-                    let ctor = &ind.ctors[y];
+                    let ghost y: int = it2.index();
                     proof {
-                        assert(level_free(*tc.ctx, st.all_inductives_incl_specialized@[x as int].ctors@[y as int].ty));
+                        assert(0 <= y < ind.ctors@.len() && it2.seq()[y] == ctor);
+                    }
+                    proof {
+                        assert(level_free(*tc.ctx, st.all_inductives_incl_specialized@[x].ctors@[y].ty));
                         crate::kgen::serials_distinct(crate::util_model::arena_ids(*tc.ctx), st.local_params@, sp0, sp1);
                     }
                     tc.check_ctor(&st, ind.name, ctor.ty);
                     proof {
                         ctor_syn_of(*tc.env, st, crate::level_arena_bridge::name_id(ind.name), crate::expr_arena_bridge::to_model(ctor.ty));
                     }
-                    y += 1;
                 }
-                x += 1;
             }
         }
 
@@ -4783,24 +4774,24 @@ impl<'t, 'p: 't> ExportFile<'p> {
         // The last temporary environment extension, which also includes the recursors.
         let recursor_extension = {
             let mut out = ctor_extension;
-            let mut i: usize = 0;
-            while i < recursors.len()
+            for r in it: recursors.clone()
                 invariant
+                    it.seq().len() == recursors@.len(),
+                    forall|k: int| 0 <= k < recursors@.len() ==> #[trigger] it.seq()[k] == recursors@[k],
                     crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(ctx), &out),
                     forall|a: int| 0 <= a < recursors@.len() ==> crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), #[trigger] recursors@[a]),
                     forall|a: int| 0 <= a < recursors@.len() ==> crate::env::declar_info(#[trigger] recursors@[a]).uparams == st.rec_uparams->0,
                     levels_all_param(st.rec_uparams->0),
-                decreases recursors@.len() - i,
             {
-                let r = recursors[i].clone();
+                let ghost i: int = it.index();
                 proof {
-                    assert(crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), recursors@[i as int]));
-                    assert(crate::env::declar_info(recursors@[i as int]).uparams == st.rec_uparams->0);
+                    assert(0 <= i < recursors@.len() && it.seq()[i] == r);
+                    assert(crate::env_model::declar_owned_in(crate::util_model::arena_ids(ctx), recursors@[i]));
+                    assert(crate::env::declar_info(recursors@[i]).uparams == st.rec_uparams->0);
                     assert(crate::util_model::owns_in(crate::util_model::arena_ids(ctx), crate::env::declar_info(r).name));
                     imap_owned_insert(crate::util_model::arena_ids(ctx), &out, crate::env::declar_info(r).name, r);
                 }
                 out.insert(r.info().name, r);
-                i += 1;
             }
             out
         };
@@ -7818,8 +7809,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ///
     /// VERUS-REWRITE(tested-closed): the type opened for the parameters, and
     /// every type and constructor type in the final loop (which tested
-    /// `!has_fvars` only), are tested closed through `assert_closed`;
-    /// VERUS-REWRITE(index-walk): the final loop's two `for`s are scans by index.
+    /// `!has_fvars` only), are tested closed through `assert_closed`.
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     fn specialize_nested(
@@ -7915,40 +7905,43 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         self.specialize_nested_aux(&mut st);
 
         // No stray free variables.
-        let mut a: usize = 0;
-        while a < st.all_inductives_incl_specialized.len()
+        for ind in it: st.all_inductives_incl_specialized.iter()
             invariant
+                st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len() ==> #[trigger] it.seq()[k] == &st.all_inductives_incl_specialized@[k],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 nest_ok(*self.ctx, st),
-                a <= st.all_inductives_incl_specialized@.len(),
-                forall|x: int| 0 <= x < a ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ty),
-                forall|x: int, j: int| 0 <= x < a && 0 <= j < st.all_inductives_incl_specialized@[x].ctors@.len()
+                forall|x: int| 0 <= x < it.index() ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ty),
+                forall|x: int, j: int| 0 <= x < it.index() && 0 <= j < st.all_inductives_incl_specialized@[x].ctors@.len()
                     ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ctors@[j].ty),
-            decreases st.all_inductives_incl_specialized@.len() - a,
         {
-            let ind = &st.all_inductives_incl_specialized[a];
+            let ghost a: int = it.index();
+            proof {
+                assert(0 <= a < st.all_inductives_incl_specialized@.len() && it.seq()[a] == ind);
+            }
             self.assert_closed(ind.ty);
-            let mut b: usize = 0;
-            while b < ind.ctors.len()
+            for c in it2: ind.ctors.iter()
                 invariant
+                    ind.ctors.len() == ind.ctors@.len(),
+                    it2.seq().len() == ind.ctors@.len(),
+                    forall|k: int| 0 <= k < ind.ctors@.len() ==> #[trigger] it2.seq()[k] == &ind.ctors@[k],
                     mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     nest_ok(*self.ctx, st),
-                    a < st.all_inductives_incl_specialized@.len(),
-                    *ind == st.all_inductives_incl_specialized@[a as int],
-                    b <= ind.ctors@.len(),
+                    0 <= a < st.all_inductives_incl_specialized@.len(),
+                    *ind == st.all_inductives_incl_specialized@[a],
                     forall|x: int| 0 <= x <= a ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ty),
                     forall|x: int, j: int| 0 <= x < a && 0 <= j < st.all_inductives_incl_specialized@[x].ctors@.len()
                         ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[x].ctors@[j].ty),
-                    forall|j: int| 0 <= j < b ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[a as int].ctors@[j].ty),
-                decreases ind.ctors@.len() - b,
+                    forall|j: int| 0 <= j < it2.index() ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[a].ctors@[j].ty),
             {
+                let ghost b: int = it2.index();
                 proof {
-                    assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[a as int].ctors@[b as int].ty));
+                    assert(0 <= b < ind.ctors@.len() && it2.seq()[b] == c);
+                    assert(crate::util_model::owns(*self.ctx, st.all_inductives_incl_specialized@[a].ctors@[b].ty));
                 }
-                self.assert_closed(ind.ctors[b].ty);
-                b += 1;
+                self.assert_closed(c.ty);
             }
-            a += 1;
         }
         st
     }
@@ -8246,8 +8239,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     ///
     /// VERUS-REWRITE(index-walk): `.iter().find(|(_name, expr)| **expr == i_params)`
     /// over the specialized-type table is the scan by position (`get_index`)
-    /// it stands for, and the two `for` loops over the container's `Arc`
-    /// name lists are scans by index; VERUS-REWRITE(named-temp): the iterators
+    /// it stands for; VERUS-REWRITE(named-temp): the iterators
     /// handed to `foldl_apps`/`abstr_pis` are bound to locals;
     /// VERUS-REWRITE(accessor-swap): the container's and each constructor's
     /// `(uparams, ty)` are read through `env_model::get_declar_info_ty` (the
@@ -8360,9 +8352,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         } else {
             let mut result: Option<ExprPtr> = None;
             // `Array`, `List`, and any mutuals in the appropriate block etc.
-            let mut c: usize = 0;
-            while c < nested_container_ty.all_ind_names.len()
+            for nested_container_name in it: nested_container_ty.all_ind_names.iter().copied()
                 invariant
+                    nested_container_ty.all_ind_names.len() == nested_container_ty.all_ind_names@.len(),
+                    it.seq().len() == nested_container_ty.all_ind_names@.len(),
+                    forall|k: int| 0 <= k < nested_container_ty.all_ind_names@.len() ==> #[trigger] it.seq()[k] == nested_container_ty.all_ind_names@[k],
                     mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
@@ -8387,9 +8381,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     nested_container_ty.num_params as usize <= args@.len(),
                     result matches Some(r) ==> crate::util_model::owns(*self.ctx, r),
             {
-                let nested_container_name = nested_container_ty.all_ind_names[c];
+                let ghost c: int = it.index();
                 proof {
-                    assert(crate::env_model::env_owns(*self.env, nested_container_ty.all_ind_names@[c as int]));
+                    assert(crate::env_model::env_owns(*self.env, nested_container_ty.all_ind_names@[c]));
                 }
                 // The inductive declaration for the container type, like `Array`
                 let InductiveData { all_ctor_names: all_nested_container_ctor_names, .. } =
@@ -8448,9 +8442,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     result = Some(f);
                 }
                 let mut auxj_ctors = Vec::<CtorHeader>::new();
-                let mut d: usize = 0;
-                while d < all_nested_container_ctor_names.len()
+                for j_ctor_name in it2: all_nested_container_ctor_names.iter().copied()
                     invariant
+                        all_nested_container_ctor_names.len() == all_nested_container_ctor_names@.len(),
+                        it2.seq().len() == all_nested_container_ctor_names@.len(),
+                        forall|k: int| 0 <= k < all_nested_container_ctor_names@.len() ==> #[trigger] it2.seq()[k] == all_nested_container_ctor_names@[k],
                         mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                         crate::tc::tc_wf(*self),
                         self.env == old(self).env,
@@ -8479,7 +8475,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         forall|b: int| 0 <= b < auxj_ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] auxj_ctors@[b].name),
                         forall|b: int| 0 <= b < auxj_ctors@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] auxj_ctors@[b].ty),
                 {
-                    let j_ctor_name = all_nested_container_ctor_names[d];
+                    let ghost d: int = it2.index();
                     self.env.get_constructor(&j_ctor_name)?;
                     let (j_ctor_uparams, j_ctor_ty) = crate::env_model::get_declar_info_ty(self.env, &j_ctor_name).unwrap();
                     // Replace `Array.mk` with `_nested.Array_2.mk`
@@ -8508,7 +8504,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             if b < c0.len() { assert(auxj_ctors@[b] == c0[b]); }
                         }
                     }
-                    d += 1;
                 }
                 let ghost a0 = st.all_inductives_incl_specialized@;
                 st.all_inductives_incl_specialized.push(IndTyHeader {
@@ -8527,7 +8522,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         if x < a0.len() { assert(st.all_inductives_incl_specialized@[x] == a0[x]); }
                     }
                 }
-                c += 1;
             }
             result
         }
@@ -8883,9 +8877,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// ```
     ///
     /// Verified in place: an owned name-to-name map.
-    ///
-    /// VERUS-REWRITE(index-walk): `for ind_name in all_ind_names.iter().copied().skip(n)`
-    /// is the scan by index from `n` it stands for.
     #[verifier::exec_allows_no_decreases_clause]
     fn mk_specialized_rec_to_unspecialized_map(
         &mut self,
@@ -8924,25 +8915,27 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         // For every NEW NESTED elem (new, because we skip `n_types`, skipping all of the base mutuals.)
         // For each modified e.g. `_nested..` name
-        let mut k: usize = base_mutuals.len();
-        while k < all_ind_names.len()
+        for ind_name in it: all_ind_names.iter().copied().skip(base_mutuals.len())
             invariant
+                base_mutuals@.len() < all_ind_names@.len() <= usize::MAX,
+                it.seq().len() == all_ind_names@.len() - base_mutuals@.len(),
+                forall|j: int| 0 <= j < it.seq().len() ==> #[trigger] it.seq()[j] == all_ind_names@[base_mutuals@.len() + j],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
-                base_mutuals@.len() <= k <= all_ind_names@.len(),
-                crate::indexmap_model::imap_keys(&specialized_rec_names_to_unspecialized_rec_names).len() <= k - base_mutuals@.len(),
+                crate::indexmap_model::imap_keys(&specialized_rec_names_to_unspecialized_rec_names).len() <= it.index(),
                 forall|b: int| 0 <= b < all_ind_names@.len() ==> crate::env_model::env_owns(*self.env, #[trigger] all_ind_names@[b]),
                 crate::util_model::owns(*self.ctx, main_ind_ty_name),
                 crate::util_model::owns(*self.ctx, rec_str),
                 ptr_map_owned(*self.ctx, &specialized_rec_names_to_unspecialized_rec_names),
-            decreases all_ind_names@.len() - k,
         {
-            let ind_name = all_ind_names[k];
-            proof { assert(crate::env_model::env_owns(*self.env, all_ind_names@[k as int])); }
+            proof {
+                assert(ind_name == all_ind_names@[base_mutuals@.len() + it.index()]);
+                assert(crate::env_model::env_owns(*self.env, all_ind_names@[base_mutuals@.len() + it.index()]));
+            }
             let specialized_rec_name = self.ctx.str(ind_name, rec_str);
             let unspecialized_rec_name = self.ctx.str(main_ind_ty_name, rec_str);
             let unspecialized_rec_name = self.ctx.append_index_after(
@@ -8958,16 +8951,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     specialized_rec_name, unspecialized_rec_name);
             }
             specialized_rec_names_to_unspecialized_rec_names.insert(specialized_rec_name, unspecialized_rec_name);
-            k += 1;
         }
         specialized_rec_names_to_unspecialized_rec_names
     }
 
     /// Verified in place: the recursor of the temporary environment for
     /// `rec_name`, restored to the block's own names; everything owned.
-    ///
-    /// VERUS-REWRITE(index-walk): `for rule in new_env_rec.rec_rules.iter().copied()`
-    /// is the scan by index it stands for.
     #[verifier::exec_allows_no_decreases_clause]
     fn restore_recursor1(
         &mut self,
@@ -9011,9 +9000,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let new_env_rec @ RecursorData { .. } = self.env.get_recursor(&rec_name).cloned().unwrap();
         let restored_ty = self.restore_e(st, new_env_rec.info.ty, specialized_rec_names_to_unspecialized_rec_names);
         let mut rules: Vec<RecRule<'t>> = Vec::new();
-        let mut k: usize = 0;
-        while k < new_env_rec.rec_rules.len()
+        for rule in it: new_env_rec.rec_rules.iter().copied()
             invariant
+                new_env_rec.rec_rules.len() == new_env_rec.rec_rules@.len(),
+                it.seq().len() == new_env_rec.rec_rules@.len(),
+                forall|k: int| 0 <= k < new_env_rec.rec_rules@.len() ==> #[trigger] it.seq()[k] == new_env_rec.rec_rules@[k],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -9025,16 +9016,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::owns(*self.ctx, restored_ty),
                 ptr_map_owned(*self.ctx, &st.nested_to_unspecialized_ty_nofvars),
                 ptr_map_owned(*self.ctx, specialized_rec_names_to_unspecialized_rec_names),
-                k <= new_env_rec.rec_rules@.len(),
-                rules@.len() == k,
+                rules@.len() == it.index(),
                 forall|b: int| 0 <= b < rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] rules@[b].val),
                 forall|b: int| 0 <= b < rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] rules@[b].ctor_name),
-            decreases new_env_rec.rec_rules@.len() - k,
         {
-            let rule = new_env_rec.rec_rules[k];
+            let ghost k: int = it.index();
             proof {
-                assert(crate::env_model::env_owns(*self.env, new_env_rec.rec_rules@[k as int].val));
-                assert(crate::env_model::env_owns(*self.env, new_env_rec.rec_rules@[k as int].ctor_name));
+                assert(crate::env_model::env_owns(*self.env, new_env_rec.rec_rules@[k].val));
+                assert(crate::env_model::env_owns(*self.env, new_env_rec.rec_rules@[k].ctor_name));
             }
             let val = self.restore_e(st, rule.val, specialized_rec_names_to_unspecialized_rec_names);
             let ctor_name =
@@ -9049,7 +9038,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if b < r0.len() { assert(rules@[b] == r0[b]); }
                 }
             }
-            k += 1;
         }
         RecursorData {
             info: DeclarInfo { name: resolved_rec_name, ty: restored_ty, ..new_env_rec.info },
@@ -9258,9 +9246,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Verified in place. VERUS-REWRITE(tested-closed): both types handed to
     /// `assert_def_eq` are tested closed first, as in `check_restored_recursor1`;
     /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`;
-    /// VERUS-REWRITE(index-walk): the two `for` loops over the block's
-    /// inductives and their constructors are the scans by index they stand
-    /// for; VERUS-REWRITE(name-clash): the pattern binding `old` is `old_c`
+    /// VERUS-REWRITE(index-walk): the `for` over each inductive's constructors
+    /// is the scan by index, because the position check below reads the
+    /// index; VERUS-REWRITE(name-clash): the pattern binding `old` is `old_c`
     /// (the contract uses Verus's `old`); VERUS-REWRITE(tested-input): the
     /// constructor the checker built is
     /// the exported one structurally (`model_eq`), not only convertible to it
@@ -9287,9 +9275,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y], y),
     {
         assert!(!st.is_nested());
-        let mut x: usize = 0;
-        while x < st.all_inductives_incl_specialized.len()
+        for inductive in it: st.all_inductives_incl_specialized.iter()
             invariant
+                st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len() ==> #[trigger] it.seq()[k] == &st.all_inductives_incl_specialized@[k],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -9297,14 +9287,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 crate::inductive_model::st_owned(*self.ctx, *st),
-                x <= st.all_inductives_incl_specialized@.len(),
                 forall|x2: int, y: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y]]
-                    0 <= x2 < x && 0 <= y < st.all_inductives_incl_specialized@[x2].ctors@.len()
+                    0 <= x2 < it.index() && 0 <= y < st.all_inductives_incl_specialized@[x2].ctors@.len()
                     ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat)
                         && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y], y),
-            decreases st.all_inductives_incl_specialized@.len() - x,
         {
-            let inductive = &st.all_inductives_incl_specialized[x];
+            let ghost x: int = it.index();
             let mut y: usize = 0;
             while y < inductive.ctors.len()
                 invariant
@@ -9315,16 +9303,16 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                     self.live == old(self).live,
                     crate::inductive_model::st_owned(*self.ctx, *st),
-                    x < st.all_inductives_incl_specialized@.len(),
-                    *inductive == st.all_inductives_incl_specialized@[x as int],
+                    0 <= x < st.all_inductives_incl_specialized@.len(),
+                    *inductive == st.all_inductives_incl_specialized@[x],
                     y <= inductive.ctors@.len(),
                     forall|x2: int, y2: int| #![trigger st.all_inductives_incl_specialized@[x2].ctors@[y2]]
                         0 <= x2 < x && 0 <= y2 < st.all_inductives_incl_specialized@[x2].ctors@.len()
                         ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2], st.all_inductives_incl_specialized@[x2].name, st.local_params@.len() as nat)
                             && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x2].ctors@[y2], y2),
-                    forall|y2: int| #![trigger st.all_inductives_incl_specialized@[x as int].ctors@[y2]]
-                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2], st.all_inductives_incl_specialized@[x as int].name, st.local_params@.len() as nat)
-                            && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x as int].ctors@[y2], y2),
+                    forall|y2: int| #![trigger st.all_inductives_incl_specialized@[x].ctors@[y2]]
+                        0 <= y2 < y ==> ctor_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y2], st.all_inductives_incl_specialized@[x].name, st.local_params@.len() as nat)
+                            && ctor_idx_old(*old(self).env, st.all_inductives_incl_specialized@[x].ctors@[y2], y2),
                 decreases inductive.ctors@.len() - y,
             {
                 let ctor = &inductive.ctors[y];
@@ -9362,7 +9350,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 y += 1;
             }
-            x += 1;
         }
     }
 
@@ -9443,9 +9430,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// export file's -- its type (under the recursor's universe parameters) and
     /// every rule.
     ///
-    /// VERUS-REWRITE(index-walk): `for new_rec in recursors` and the rule
-    /// loop over `old_rec_rules.iter().zip(new_rec_rules.iter())` are the
-    /// scans by index they stand for (`zip` has no specification);
+    /// VERUS-REWRITE(index-walk): `for new_rec in recursors` is the scan by
+    /// index, because the major-head check below reads the index;
     /// VERUS-REWRITE(ptr-eq-wrapper): as in `assert_nonnested_tys_def_eq`;
     /// VERUS-REWRITE(tested-params): the imported recursor's universe
     /// parameters are tested to be distinct parameters (`no_dupes_all_params`,
@@ -9574,9 +9560,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(env_old(*old(self).env, *old_d));
                     }
                     assert_eq!(old_rec_rules.len(), new_rec_rules.len());
-                    let mut j: usize = 0;
-                    while j < old_rec_rules.len()
+                    for (r_old, r_new) in it2: old_rec_rules.iter().zip(new_rec_rules.iter())
                         invariant
+                            old_rec_rules.len() == old_rec_rules@.len(),
+                            it2.seq().len() == old_rec_rules@.len(),
+                            forall|k: int| 0 <= k < old_rec_rules@.len() ==> #[trigger] it2.seq()[k] == (&old_rec_rules@[k], &new_rec_rules@[k]),
                             mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                             crate::tc::tc_wf(*self),
                             self.env == old(self).env,
@@ -9601,8 +9589,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             new_r.rec_rules == *new_rec_rules,
                             old_r.rec_rules == *old_rec_rules,
                             old_rec_rules@.len() == new_rec_rules@.len(),
-                            j <= old_rec_rules@.len(),
-                            ok ==> forall|q: int| 0 <= q < j ==> crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val)
+                            ok ==> forall|q: int| 0 <= q < it2.index() ==> crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val)
                                 == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))
                                 && crate::level_arena_bridge::name_id(old_rec_rules@[q].ctor_name) == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name),
                             env_old(*old(self).env, *old_d),
@@ -9613,13 +9600,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 == Some(crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[n as int].name)),
                             rec_major_head(crate::expr_arena_bridge::to_model(old_r.info.ty), old_r.major_idx_spec())
                                 == rec_major_head(crate::expr_arena_bridge::to_model(new_r.info.ty), old_r.major_idx_spec()),
-                            forall|q: int| 0 <= q < j ==> crate::level_arena_bridge::name_id((#[trigger] old_rec_rules@[q]).ctor_name)
+                            forall|q: int| 0 <= q < it2.index() ==> crate::level_arena_bridge::name_id((#[trigger] old_rec_rules@[q]).ctor_name)
                                 == crate::level_arena_bridge::name_id(new_rec_rules@[q].ctor_name)
                                 && old_rec_rules@[q].ctor_telescope_size_wo_params == new_rec_rules@[q].ctor_telescope_size_wo_params,
                             ok ==> forall|k: int| 0 <= k < n ==> #[trigger] rec_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0),
                             forall|k: int| 0 <= k < n ==> #[trigger] rec_conv_old(*old(self).env, recursors@[k], st.rec_uparams->Some_0, st.uparams,
                     crate::level_arena_bridge::name_id(st.all_inductives_incl_specialized@[k].name)),
-                            forall|q: int| 0 <= q < j ==> crate::tc::def_eq_claim(*old(self).env,
+                            forall|q: int| 0 <= q < it2.index() ==> crate::tc::def_eq_claim(*old(self).env,
                                 crate::expr_arena_bridge::to_model((#[trigger] old_rec_rules@[q]).val),
                                 crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(new_rec_rules@[q].val), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)), crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams))),
                             crate::tc::def_eq_claim(*old(self).env,
@@ -9630,23 +9617,20 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                                 == crate::expr_model::subst_expr_levels(crate::expr_arena_bridge::to_model(crate::env::declar_info(*new).ty),
                                     crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(st.rec_uparams->Some_0)),
                                     crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(*old_d).uparams)),
-                        decreases old_rec_rules@.len() - j,
                     {
-                        let r_old = &old_rec_rules[j];
-                        let r_new = &new_rec_rules[j];
+                        let ghost j: int = it2.index();
                         proof {
-                            assert(crate::env_model::env_owns(*self.env, old_r.rec_rules@[j as int].val));
+                            assert(crate::env_model::env_owns(*self.env, old_r.rec_rules@[j].val));
                             assert(crate::env_model::env_owns(*self.env, old_r.info.uparams));
                             assert(match recursors@[n as int] {
                                 Declar::Recursor(r) => forall|k: int| 0 <= k < r.rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] r.rec_rules@[k].val),
                                 _ => true,
                             });
-                            assert(crate::util_model::owns(*self.ctx, new_r.rec_rules@[j as int].val));
+                            assert(crate::util_model::owns(*self.ctx, new_r.rec_rules@[j].val));
                         }
-                        let ghost jj = j as int;
+                        let ghost jj = j;
                         let rm = self.assert_nonnested_rec_rule_def_eq(st, old_d.info().uparams, r_old, r_new);
                         ok = ok && rm;
-                        j += 1;
                     }
                 }
                 _ => panic!("Expected (Declar::Recursor, Declar::Recursor)"),

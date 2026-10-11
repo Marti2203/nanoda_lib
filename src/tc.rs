@@ -147,8 +147,7 @@ impl<'p> ExportFile<'p> {
     /// then the closure's body; `check_declar_info(d).unwrap()` is
     /// `check_declar_info_unwrap(d)`. VERUS-REWRITE(panic-wrapper): the
     /// recursor arm's formatted rejections are the same `with_ctx` + `panic!`
-    /// behind `recursor_*`. VERUS-REWRITE(index-walk): the `for` over the
-    /// recursor's inductives is the scan by index. VERUS-REWRITE(tested-closed):
+    /// behind `recursor_*`. VERUS-REWRITE(tested-closed):
     /// a definition's value is tested closed before its type is inferred (it
     /// has to be in scope; the export parser does not check it).
     #[verifier::exec_allows_no_decreases_clause]
@@ -464,14 +463,15 @@ impl<'p> ExportFile<'p> {
                     crate::inductive::export_declars_get(*self, recursor_data.info.name);
                 }
                 let recursor_idx = self.declars.get_index_of(&recursor_data.info.name).unwrap();
-                let mut k: usize = 0;
-                while k < recursor_data.all_inductives.len()
+                for ind_name in it: recursor_data.all_inductives.iter()
                     invariant
+                        recursor_data.all_inductives.len() == recursor_data.all_inductives@.len(),
+                        it.seq().len() == recursor_data.all_inductives@.len(),
+                        forall|k: int| 0 <= k < recursor_data.all_inductives@.len() ==> #[trigger] it.seq()[k] == &recursor_data.all_inductives@[k],
                         crate::inductive::export_ok(*self),
                         a == self.arena(),
                         *d == Declar::Recursor(*recursor_data),
                         recursor_data.all_inductives@.len() > 0,
-                        k <= recursor_data.all_inductives@.len(),
                         self.declars_view().contains_key(recursor_data.all_inductives@[0]),
                         self.declars_view()[recursor_data.all_inductives@[0]] is Inductive,
                         keys == self.declars_keys(),
@@ -482,15 +482,14 @@ impl<'p> ExportFile<'p> {
                         recursor_idx < keys.len() && keys[recursor_idx as int] == recursor_data.info.name,
                         forall|q: int| 0 <= q < recursor_data.all_inductives@.len()
                             ==> crate::util_model::export_tagged(a, #[trigger] recursor_data.all_inductives@[q]),
-                        forall|q: int| 0 <= q < k && k <= recursor_data.all_inductives@.len() ==> exists|qi: int, qr: int|
+                        forall|q: int| 0 <= q < it.index() && it.index() <= recursor_data.all_inductives@.len() ==> exists|qi: int, qr: int|
                             #![trigger keys[qi], keys[qr]]
                             0 <= qi < qr < keys.len() && keys[qi] == #[trigger] recursor_data.all_inductives@[q] && keys[qr] == recursor_data.info.name,
-                    decreases recursor_data.all_inductives@.len() - k,
                 {
-                    let ind_name = &recursor_data.all_inductives[k];
+                    let ghost k: int = it.index();
                     proof {
                         broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
-                        assert(*ind_name == recursor_data.all_inductives@[k as int]);
+                        assert(*ind_name == recursor_data.all_inductives@[k]);
                         crate::inductive::export_declars_get(*self, *ind_name);
                     }
                     match self.declars.get_index_of(ind_name) {
@@ -505,7 +504,6 @@ impl<'p> ExportFile<'p> {
                             }
                         }
                     }
-                    k += 1;
                 }
                 proof {
                     assert(crate::inductive::rec_arm_ok(*self, *recursor_data));
@@ -12265,37 +12263,33 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name);
             }
             let ghost names = crate::tc_model::rec_rule_ctor_names(rec_rules@);
-            // VERUS-REWRITE(indexed-scan): was `for r in rec_rules.iter().copied()`;
-            // the same front-to-back scan by index, so the invariant can say
-            // no earlier rule matched.
-            let mut i: usize = 0;
-            while i < rec_rules.len()
+            for r in it: rec_rules.iter().copied()
                 invariant
+                    rec_rules.len() == rec_rules@.len(),
+                    it.seq().len() == rec_rules@.len(),
+                    forall|k: int| 0 <= k < rec_rules@.len() ==> #[trigger] it.seq()[k] == rec_rules@[k],
                     crate::util_model::owns(*self.ctx, major_const),
                     crate::expr_arena_bridge::is_const_shape(major_const),
                     crate::expr_arena_bridge::const_name_of(major_const) == major_ctor_name,
                     names == crate::tc_model::rec_rule_ctor_names(rec_rules@),
-                    i <= rec_rules@.len(),
-                    forall|j: int| 0 <= j < i ==> #[trigger] names[j] != major_ctor_name,
+                    forall|j: int| 0 <= j < it.index() ==> #[trigger] names[j] != major_ctor_name,
                     forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] crate::tc_model::rec_rule_ctor_name_of(rec_rules@[k])),
                     forall|k: int| 0 <= k < rec_rules@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] crate::tc_model::rec_rule_val_of(rec_rules@[k])),
                     crate::util_model::owns(*self.ctx, major_ctor_name),
-                decreases rec_rules.len() - i,
             {
-                let r = rec_rules[i];
+                let ghost i: int = it.index();
                 proof {
-                    assert(crate::tc_model::rec_rule_ctor_name_of(rec_rules@[i as int]) == r.ctor_name);
+                    assert(crate::tc_model::rec_rule_ctor_name_of(rec_rules@[i]) == r.ctor_name);
                     crate::util_model::owned_raw_eq(*self.ctx, r.ctor_name, major_ctor_name);
                 }
                 if r.ctor_name == major_ctor_name {
                     proof {
-                        assert(crate::util_model::owns(*self.ctx, crate::tc_model::rec_rule_val_of(rec_rules@[i as int])));
-                        assert(names[i as int] == major_ctor_name);
-                        crate::util_model::find_index_first(names, major_ctor_name, i as int);
+                        assert(crate::util_model::owns(*self.ctx, crate::tc_model::rec_rule_val_of(rec_rules@[i])));
+                        assert(names[i] == major_ctor_name);
+                        crate::util_model::find_index_first(names, major_ctor_name, i);
                     }
                     return Some(r)
                 }
-                i += 1;
             }
         }
         None
