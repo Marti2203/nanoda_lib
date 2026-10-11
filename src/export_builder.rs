@@ -540,11 +540,25 @@ impl<'a> ExportBuilder<'a> {
     }
 
     /// How many declarations are recorded (an inductive block's start).
-    pub fn declars_len(&self) -> usize
+    pub fn declars_len(&self) -> (result: usize)
         requires
             self.wf(),
+        ensures
+            result == self.keys().len(),
     {
         self.declars.len()
+    }
+
+    /// The declaration keys: distinct, exactly the recorded names, each its
+    /// declaration's name.
+    pub proof fn lemma_keys(self)
+        requires
+            self.wf(),
+        ensures
+            self.keys().no_duplicates(),
+            self.keys().to_set() == self.decls().dom(),
+            forall|k: NamePtr<'a>| #[trigger] self.decls().contains_key(k) ==> crate::env::declar_info(self.decls()[k]).name == k,
+    {
     }
 
     /// Export names, from name indices.

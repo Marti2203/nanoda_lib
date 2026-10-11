@@ -10,6 +10,14 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::io::BufRead;
+#[allow(unused_imports)]
+use vstd::prelude::*;
+#[cfg(verus_only)]
+use crate::export_builder::{at_idxs, expr_at, info_at, level_at, list_at, name_at, text_at};
+#[allow(unused_imports)]
+use crate::expr::Expr;
+#[allow(unused_imports)]
+use crate::level::Level;
 
 fn check_semver<'a>(meta: &FileMeta<'a>) -> Result<(), Box<dyn Error>> {
     const MIN_SEMVER: semver::Version = semver::Version::new(3, 1, 0);
@@ -76,53 +84,6 @@ enum BackRef {
     Il(u32),
     #[serde(alias = "ie")]
     Ie(u32),
-}
-
-impl BackRef {
-    fn assert_in(self, (idx, inserted): (usize, bool)) {
-        if !inserted {
-            panic!("Attempted to insert duplicate Name");
-        }
-        let lhs = u32::try_from(idx).unwrap();
-        if self != BackRef::In(lhs) {
-            eprintln!(
-                "Declined: Name back-reference mismatch, expected {:?}, found {:?}. Back-refs must be continuous.",
-                BackRef::In(lhs),
-                self
-            );
-            std::process::exit(2);
-        }
-    }
-
-    fn assert_il(self, (idx, inserted): (usize, bool)) {
-        if !inserted {
-            panic!("Attempted to insert duplicate Level");
-        }
-        let lhs = u32::try_from(idx).unwrap();
-        if self != BackRef::Il(lhs) {
-            eprintln!(
-                "Declined: Level back-reference mismatch, expected {:?}, found {:?}. Back-refs must be continuous.",
-                BackRef::Il(lhs),
-                self
-            );
-            std::process::exit(2);
-        }
-    }
-
-    fn assert_ie(self, (idx, inserted): (usize, bool)) {
-        if !inserted {
-            panic!("Attempted to insert duplicate Expr");
-        }
-        let lhs = u32::try_from(idx).unwrap();
-        if self != BackRef::Ie(lhs) {
-            eprintln!(
-                "Declined: Expr back-reference mismatch, expected {:?}, found {:?}. Back-refs must be continuous.",
-                BackRef::Ie(lhs),
-                self
-            );
-            std::process::exit(2);
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -365,6 +326,768 @@ enum ExportJsonVal<'a> {
     },
 }
 
+verus! {
+
+// The export format's records, as serde decodes them, made visible to Verus
+// (transparent: the verified dispatch below matches on them).
+#[verifier::external_type_specification]
+pub struct ExExportJsonVal<'a>(ExportJsonVal<'a>);
+#[verifier::external_type_specification]
+pub struct ExBackRef(BackRef);
+#[verifier::external_type_specification]
+pub struct ExFileMeta<'a>(FileMeta<'a>);
+#[verifier::external_type_specification]
+pub struct ExLeanMeta<'a>(LeanMeta<'a>);
+#[verifier::external_type_specification]
+pub struct ExExporterMeta<'a>(ExporterMeta<'a>);
+#[verifier::external_type_specification]
+pub struct ExFormatMeta<'a>(FormatMeta<'a>);
+#[verifier::external_type_specification]
+pub struct ExIndInfo(IndInfo);
+#[verifier::external_type_specification]
+pub struct ExConstructor(Constructor);
+#[verifier::external_type_specification]
+pub struct ExRecursor(Recursor);
+#[verifier::external_type_specification]
+pub struct ExRecursorRule(RecursorRule);
+#[verifier::external_type_specification]
+pub struct ExDefinitionSafety(DefinitionSafety);
+#[verifier::external_type_specification]
+pub struct ExQuotKind(QuotKind);
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExJsonValue(serde_json::Value);
+
+#[verifier::external_trait_specification]
+pub trait ExError: core::fmt::Debug + core::fmt::Display {
+    type ExternalTraitSpecificationFor: core::error::Error;
+}
+
+/// Where a record's content went: the position of its node or of its first
+/// declaration, a skipped axiom, or nowhere (the metadata line).
+pub ghost enum Slot {
+    At(nat),
+    Skipped,
+    Nothing,
+}
+
+/// The declaration at key position `j`.
+pub open spec fn decl_at<'a>(b: ExportBuilder<'a>, j: int) -> Declar<'a> {
+    b.decls()[b.keys()[j]]
+}
+
+/// `b` only added to `b0`: nodes, and declarations after the old ones, the
+/// old ones and their mutual blocks unchanged.
+pub open spec fn grows<'a>(b0: ExportBuilder<'a>, b: ExportBuilder<'a>) -> bool {
+    &&& b.arena() == b0.arena()
+    &&& b0.names_len() <= b.names_len()
+    &&& b0.levels_len() <= b.levels_len()
+    &&& b0.exprs_len() <= b.exprs_len()
+    &&& b0.keys().len() <= b.keys().len()
+    &&& b.keys().subrange(0, b0.keys().len() as int) == b0.keys()
+    &&& forall|k: NamePtr<'a>| #[trigger] b0.decls().contains_key(k) ==> b.decls().contains_key(k) && b.decls()[k] == b0.decls()[k]
+    &&& forall|k: NamePtr<'a>| b0.decls().contains_key(k) && #[trigger] b0.blocks().contains_key(k)
+        ==> b.blocks().contains_key(k) && b.blocks()[k] == b0.blocks()[k]
+}
+
+/// An inductive type record, as the declaration at key position `j` of a
+/// block starting at `start` with `size` declarations.
+spec fn ind_holds<'a>(b: ExportBuilder<'a>, x: IndInfo, j: int, start: nat, size: nat) -> bool {
+    &&& 0 <= j < b.keys().len()
+    &&& ind_decl_ok(b.arena(), decl_at(b, j), x)
+    &&& b.blocks().contains_key(b.keys()[j]) && b.blocks()[b.keys()[j]] == (start as usize, size as usize)
+}
+
+spec fn ind_decl_ok<'a>(a: nat, dl: Declar<'a>, x: IndInfo) -> bool {
+    &&& dl matches Declar::Inductive(d) && info_at(a, d.info, x.name, x.ty, x.uparams@)
+        && d.is_recursive == x.is_rec && d.is_nested == (x.num_nested > 0)
+        && d.num_params == x.num_params && d.num_indices == x.num_indices
+        && at_idxs(d.all_ind_names@, x.all@) && at_idxs(d.all_ctor_names@, x.ctors@)
+}
+
+spec fn ctor_holds<'a>(b: ExportBuilder<'a>, x: Constructor, j: int) -> bool {
+    &&& 0 <= j < b.keys().len()
+    &&& ctor_decl_ok(b.arena(), decl_at(b, j), x)
+}
+
+spec fn ctor_decl_ok<'a>(a: nat, dl: Declar<'a>, x: Constructor) -> bool {
+    &&& dl matches Declar::Constructor(c) && info_at(a, c.info, x.name, x.ty, x.uparams@)
+        && crate::name_arena_bridge::ptr_index(c.inductive_name) == x.induct
+        && c.ctor_idx == x.cidx && c.num_params == x.num_params && c.num_fields == x.num_fields
+}
+
+spec fn rec_holds<'a>(b: ExportBuilder<'a>, x: Recursor, j: int) -> bool {
+    &&& 0 <= j < b.keys().len()
+    &&& rec_decl_ok(b.arena(), decl_at(b, j), x)
+}
+
+spec fn rec_decl_ok<'a>(a: nat, dl: Declar<'a>, x: Recursor) -> bool {
+    &&& dl matches Declar::Recursor(d) && info_at(a, d.info, x.name, x.ty, x.uparams@)
+        && at_idxs(d.all_inductives@, x.all@) && d.num_params == x.num_params && d.num_indices == x.num_indices
+        && d.num_motives == x.num_motives && d.num_minors == x.num_minors && d.is_k == x.k
+        && d.rec_rules@.len() == x.rules@.len()
+        && forall|q: int| 0 <= q < x.rules@.len() ==> crate::name_arena_bridge::ptr_index(#[trigger] d.rec_rules@[q].val) == x.rules@[q].rhs
+            && crate::name_arena_bridge::ptr_index(d.rec_rules@[q].ctor_name) == x.rules@[q].ctor
+            && d.rec_rules@[q].ctor_telescope_size_wo_params == x.rules@[q].nfields
+}
+
+/// WHAT A RECORD STORED, read off the export: the record's node at its
+/// position, with its children at the indices the record gives, or its
+/// declarations from their key position, with every field as the record
+/// gives it. Stated on the arena's history and on declarations that are
+/// never replaced, so it stays true as later records are added (`grows`).
+spec fn holds<'a, 'l>(b: ExportBuilder<'a>, v: ExportJsonVal<'l>, slot: Slot) -> bool {
+    let a = b.arena();
+    match slot {
+        Slot::Nothing => v is Metadata,
+        Slot::Skipped => v is Axiom,
+        Slot::At(s) => {
+            let i = s as int;
+            match v {
+                ExportJsonVal::NameStr { pre, str } => name_at::<'a>(a, i) matches Name::Str(p, t, _)
+                    && crate::name_arena_bridge::ptr_index(p) == pre && text_at(a, t) == str@,
+                ExportJsonVal::NameNum { pre, i: n } => name_at::<'a>(a, i) matches Name::Num(p, m, _)
+                    && crate::name_arena_bridge::ptr_index(p) == pre && m == n as u64,
+                ExportJsonVal::LevelSucc(l) => level_at::<'a>(a, i) matches Level::Succ(x, _) && crate::name_arena_bridge::ptr_index(x) == l,
+                ExportJsonVal::LevelMax(lr) => level_at::<'a>(a, i) matches Level::Max(x, y, _)
+                    && crate::name_arena_bridge::ptr_index(x) == lr@[0] && crate::name_arena_bridge::ptr_index(y) == lr@[1],
+                ExportJsonVal::LevelIMax(lr) => level_at::<'a>(a, i) matches Level::IMax(x, y, _)
+                    && crate::name_arena_bridge::ptr_index(x) == lr@[0] && crate::name_arena_bridge::ptr_index(y) == lr@[1],
+                ExportJsonVal::LevelParam(n) => level_at::<'a>(a, i) matches Level::Param(x, _) && crate::name_arena_bridge::ptr_index(x) == n,
+                ExportJsonVal::NatLit(n) => expr_at::<'a>(a, i) matches Expr::NatLit { ptr, .. }
+                    && crate::expr_arena_bridge::bignum_ptr_value(ptr) == crate::nat_lit_model::to_nat(n),
+                ExportJsonVal::StrLit(t) => expr_at::<'a>(a, i) matches Expr::StringLit { ptr, .. } && text_at(a, ptr) == t@,
+                ExportJsonVal::ExprSort(l) => expr_at::<'a>(a, i) matches Expr::Sort { level, .. } && crate::name_arena_bridge::ptr_index(level) == l,
+                ExportJsonVal::ExprConst { name, levels } => expr_at::<'a>(a, i) matches Expr::Const { name: n, levels: ls, .. }
+                    && crate::name_arena_bridge::ptr_index(n) == name
+                    && at_idxs(list_at::<'a>(a, crate::name_arena_bridge::ptr_index(ls) as int), levels@),
+                ExportJsonVal::ExprApp { fun, arg } => expr_at::<'a>(a, i) matches Expr::App { fun: f, arg: x, .. }
+                    && crate::name_arena_bridge::ptr_index(f) == fun && crate::name_arena_bridge::ptr_index(x) == arg,
+                ExportJsonVal::ExprBVar(d) => expr_at::<'a>(a, i) matches Expr::Var { dbj_idx, .. } && dbj_idx == d,
+                ExportJsonVal::ExprPi { binder_name, binder_type, body, binder_info } =>
+                    expr_at::<'a>(a, i) matches Expr::Pi { binder_name: n, binder_style: st, binder_type: t, body: bd, .. }
+                    && crate::name_arena_bridge::ptr_index(n) == binder_name && st == binder_info
+                    && crate::name_arena_bridge::ptr_index(t) == binder_type && crate::name_arena_bridge::ptr_index(bd) == body,
+                ExportJsonVal::ExprLambda { binder_name, binder_type, body, binder_info } =>
+                    expr_at::<'a>(a, i) matches Expr::Lambda { binder_name: n, binder_style: st, binder_type: t, body: bd, .. }
+                    && crate::name_arena_bridge::ptr_index(n) == binder_name && st == binder_info
+                    && crate::name_arena_bridge::ptr_index(t) == binder_type && crate::name_arena_bridge::ptr_index(bd) == body,
+                ExportJsonVal::ExprLet { name, ty, value, body, nondep } =>
+                    expr_at::<'a>(a, i) matches Expr::Let { binder_name: n, binder_type: t, val: x, body: bd, nondep: nd, .. }
+                    && crate::name_arena_bridge::ptr_index(n) == name && crate::name_arena_bridge::ptr_index(t) == ty
+                    && crate::name_arena_bridge::ptr_index(x) == value && crate::name_arena_bridge::ptr_index(bd) == body && nd == nondep,
+                ExportJsonVal::ExprProj { type_name, idx, structure } =>
+                    expr_at::<'a>(a, i) matches Expr::Proj { ty_name, idx: k, structure: st, .. }
+                    && crate::name_arena_bridge::ptr_index(ty_name) == type_name && k == idx
+                    && crate::name_arena_bridge::ptr_index(st) == structure,
+                ExportJsonVal::Axiom { name, uparams, ty, is_unsafe } => !is_unsafe && 0 <= i < b.keys().len()
+                    && (decl_at(b, i) matches Declar::Axiom { info } && info_at(a, info, name, ty, uparams@)),
+                ExportJsonVal::Thm { name, uparams, ty, value } => 0 <= i < b.keys().len()
+                    && (decl_at(b, i) matches Declar::Theorem { info, val } && info_at(a, info, name, ty, uparams@)
+                    && crate::name_arena_bridge::ptr_index(val) == value),
+                ExportJsonVal::Defn { name, uparams, ty, value, hint, safety } => safety is Safe && 0 <= i < b.keys().len()
+                    && (decl_at(b, i) matches Declar::Definition { info, val, hint: h } && info_at(a, info, name, ty, uparams@)
+                    && crate::name_arena_bridge::ptr_index(val) == value && h == hint),
+                ExportJsonVal::Opaque { name, uparams, ty, value, is_unsafe } => !is_unsafe && 0 <= i < b.keys().len()
+                    && (decl_at(b, i) matches Declar::Opaque { info, val } && info_at(a, info, name, ty, uparams@)
+                    && crate::name_arena_bridge::ptr_index(val) == value),
+                ExportJsonVal::Quot { name, uparams, ty, .. } => 0 <= i < b.keys().len()
+                    && (decl_at(b, i) matches Declar::Quot { info } && info_at(a, info, name, ty, uparams@)),
+                ExportJsonVal::Inductive { ind_vals, ctor_vals, rec_vals } => {
+                    let (ni, nc, nr) = (ind_vals@.len(), ctor_vals@.len(), rec_vals@.len());
+                    &&& forall|q: int| 0 <= q < ni ==> ind_holds(b, #[trigger] ind_vals@[q], i + q, s, ni + nc + nr) && !ind_vals@[q].is_unsafe
+                    &&& forall|q: int| 0 <= q < nc ==> ctor_holds(b, #[trigger] ctor_vals@[q], i + ni + q) && !ctor_vals@[q].is_unsafe
+                    &&& forall|q: int| 0 <= q < nr ==> rec_holds(b, #[trigger] rec_vals@[q], i + ni + nc + q) && !rec_vals@[q].is_unsafe
+                },
+                _ => false,
+            }
+        },
+    }
+}
+
+/// Where a record goes, and what it adds: one node at the end of its kind,
+/// its back-reference naming that position, or its declarations at the
+/// end of the key order (none for a skipped axiom), and nothing else.
+spec fn step<'a, 'l>(b0: ExportBuilder<'a>, b: ExportBuilder<'a>, v: ExportJsonVal<'l>, br: Option<BackRef>, slot: Slot) -> bool {
+    let same_keys = b.keys().len() == b0.keys().len();
+    let n_same = b.names_len() == b0.names_len();
+    let l_same = b.levels_len() == b0.levels_len();
+    let e_same = b.exprs_len() == b0.exprs_len();
+    match v {
+        ExportJsonVal::Metadata(_) => slot == Slot::Nothing && same_keys && n_same && l_same && e_same,
+        ExportJsonVal::NameStr { .. } | ExportJsonVal::NameNum { .. } =>
+            slot == Slot::At(b0.names_len()) && br == Some(BackRef::In(b0.names_len() as u32))
+            && b.names_len() == b0.names_len() + 1 && same_keys && l_same && e_same,
+        ExportJsonVal::LevelSucc(_) | ExportJsonVal::LevelMax(_) | ExportJsonVal::LevelIMax(_) | ExportJsonVal::LevelParam(_) =>
+            slot == Slot::At(b0.levels_len()) && br == Some(BackRef::Il(b0.levels_len() as u32))
+            && b.levels_len() == b0.levels_len() + 1 && same_keys && n_same && e_same,
+        ExportJsonVal::NatLit(_) | ExportJsonVal::StrLit(_) | ExportJsonVal::ExprSort(_) | ExportJsonVal::ExprConst { .. }
+        | ExportJsonVal::ExprApp { .. } | ExportJsonVal::ExprBVar(_) | ExportJsonVal::ExprPi { .. } | ExportJsonVal::ExprLambda { .. }
+        | ExportJsonVal::ExprLet { .. } | ExportJsonVal::ExprProj { .. } =>
+            slot == Slot::At(b0.exprs_len()) && br == Some(BackRef::Ie(b0.exprs_len() as u32))
+            && b.exprs_len() == b0.exprs_len() + 1 && same_keys && n_same && l_same,
+        ExportJsonVal::Axiom { .. } => n_same && l_same && e_same && (
+            (slot == Slot::At(b0.keys().len()) && b.keys().len() == b0.keys().len() + 1)
+            || (slot == Slot::Skipped && same_keys)),
+        ExportJsonVal::Inductive { ind_vals, ctor_vals, rec_vals } => n_same && l_same && e_same
+            && slot == Slot::At(b0.keys().len())
+            && b.keys().len() == b0.keys().len() + ind_vals@.len() + ctor_vals@.len() + rec_vals@.len(),
+        ExportJsonVal::ExprMData { .. } => false,
+        _ => n_same && l_same && e_same && slot == Slot::At(b0.keys().len()) && b.keys().len() == b0.keys().len() + 1,
+    }
+}
+
+/// Declarations at positions the old builder had are kept by `grows`.
+pub proof fn grows_decl<'a>(b0: ExportBuilder<'a>, b: ExportBuilder<'a>, j: int)
+    requires
+        grows(b0, b),
+        0 <= j < b0.keys().len(),
+        b0.wf(),
+    ensures
+        b.keys()[j] == b0.keys()[j],
+        decl_at(b, j) == decl_at(b0, j),
+        b0.blocks().contains_key(b0.keys()[j]) ==> b.blocks().contains_key(b.keys()[j]) && b.blocks()[b.keys()[j]] == b0.blocks()[b0.keys()[j]],
+{
+    assert(b.keys().subrange(0, b0.keys().len() as int)[j] == b.keys()[j]);
+    b0.lemma_keys();
+    assert(b0.keys().to_set().contains(b0.keys()[j]));
+}
+
+pub proof fn grows_trans<'a>(b0: ExportBuilder<'a>, b1: ExportBuilder<'a>, b2: ExportBuilder<'a>)
+    requires
+        grows(b0, b1),
+        grows(b1, b2),
+    ensures
+        grows(b0, b2),
+{
+    assert(b2.keys().subrange(0, b0.keys().len() as int) =~= b1.keys().subrange(0, b0.keys().len() as int)) by {
+        assert forall|k: int| 0 <= k < b0.keys().len() implies b2.keys()[k] == b1.keys()[k] by {
+            assert(b2.keys().subrange(0, b1.keys().len() as int)[k] == b2.keys()[k]);
+        }
+    }
+}
+
+/// A record's content survives growth.
+proof fn holds_grows<'a, 'l>(b0: ExportBuilder<'a>, b: ExportBuilder<'a>, v: ExportJsonVal<'l>, slot: Slot)
+    requires
+        holds(b0, v, slot),
+        grows(b0, b),
+        b0.wf(),
+    ensures
+        holds(b, v, slot),
+{
+    if let Slot::At(s) = slot {
+        let i = s as int;
+        match v {
+            ExportJsonVal::Axiom { .. } | ExportJsonVal::Thm { .. } | ExportJsonVal::Defn { .. }
+            | ExportJsonVal::Opaque { .. } | ExportJsonVal::Quot { .. } => {
+                grows_decl(b0, b, i);
+            },
+            ExportJsonVal::Inductive { ind_vals, ctor_vals, rec_vals } => {
+                let (ni, nc, nr) = (ind_vals@.len(), ctor_vals@.len(), rec_vals@.len());
+                assert forall|q: int| 0 <= q < ni implies ind_holds(b, #[trigger] ind_vals@[q], i + q, s, ni + nc + nr) by {
+                    assert(ind_holds(b0, ind_vals@[q], i + q, s, ni + nc + nr));
+                    grows_decl(b0, b, i + q);
+                    b0.lemma_keys();
+                    assert(b0.keys().to_set().contains(b0.keys()[i + q]));
+                }
+                assert forall|q: int| 0 <= q < nc implies ctor_holds(b, #[trigger] ctor_vals@[q], i + ni + q) by {
+                    assert(ctor_holds(b0, ctor_vals@[q], i + ni + q));
+                    grows_decl(b0, b, i + ni + q);
+                }
+                assert forall|q: int| 0 <= q < nr implies rec_holds(b, #[trigger] rec_vals@[q], i + ni + nc + q) by {
+                    assert(rec_holds(b0, rec_vals@[q], i + ni + nc + q));
+                    grows_decl(b0, b, i + ni + nc + q);
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+/// Only nodes added: `grows`.
+pub proof fn grows_same<'a>(b0: ExportBuilder<'a>, b: ExportBuilder<'a>)
+    requires
+        b.same_decls(b0),
+        b0.names_len() <= b.names_len(),
+        b0.levels_len() <= b.levels_len(),
+        b0.exprs_len() <= b.exprs_len(),
+    ensures
+        grows(b0, b),
+{
+    assert(b.keys().subrange(0, b0.keys().len() as int) =~= b0.keys());
+}
+
+/// One declaration added (and, for an inductive, its block): `grows`, and
+/// the new declaration sits at the old key count.
+pub proof fn grows_adds<'a>(b0: ExportBuilder<'a>, b: ExportBuilder<'a>, bv: (usize, usize))
+    requires
+        b.adds(b0),
+        b.blocks() == b0.blocks() || b.blocks() == b0.blocks().insert(b.keys().last(), bv),
+    ensures
+        grows(b0, b),
+        b.keys()[b0.keys().len() as int] == b.keys().last(),
+        decl_at(b, b0.keys().len() as int) == b.last(),
+{
+    assert(b.keys().subrange(0, b0.keys().len() as int) =~= b0.keys());
+}
+
+/// `Declined: ... back-reference mismatch`, and exit with status 2.
+#[verifier::external_body]
+fn backref_mismatch(expected: BackRef, found: BackRef) -> ! {
+    eprintln!(
+        "Declined: {} back-reference mismatch, expected {:?}, found {:?}. Back-refs must be continuous.",
+        match expected { BackRef::In(_) => "Name", BackRef::Il(_) => "Level", BackRef::Ie(_) => "Expr" },
+        expected,
+        found
+    );
+    std::process::exit(2);
+}
+
+/// The record's back-reference is the position its node was stored at, and
+/// the node is new.
+///
+/// VERUS-REWRITE(parser-backref): `BackRef::assert_in`/`assert_il`/`assert_ie`
+/// as one function over the kind; the comparison by `match` rather than the
+/// derived `!=`. Same panics, message and exit status.
+fn check_backref(br: Option<BackRef>, kind: u8, r: (usize, bool)) -> (out: ())
+    requires
+        kind < 3,
+    ensures
+        r.1,
+        r.0 <= u32::MAX,
+        kind == 0 ==> br == Some(BackRef::In(r.0 as u32)),
+        kind == 1 ==> br == Some(BackRef::Il(r.0 as u32)),
+        kind == 2 ==> br == Some(BackRef::Ie(r.0 as u32)),
+{
+    let found = br.unwrap();
+    let (idx, inserted) = r;
+    if !inserted {
+        if kind == 0 {
+            panic!("Attempted to insert duplicate Name");
+        } else if kind == 1 {
+            panic!("Attempted to insert duplicate Level");
+        } else {
+            panic!("Attempted to insert duplicate Expr");
+        }
+    }
+    let lhs = u32::try_from(idx).unwrap();
+    let expected = if kind == 0 { BackRef::In(lhs) } else if kind == 1 { BackRef::Il(lhs) } else { BackRef::Ie(lhs) };
+    let ok = match (&found, &expected) {
+        (BackRef::In(x), BackRef::In(y)) => *x == *y,
+        (BackRef::Il(x), BackRef::Il(y)) => *x == *y,
+        (BackRef::Ie(x), BackRef::Ie(y)) => *x == *y,
+        _ => false,
+    };
+    if !ok {
+        backref_mismatch(expected, found);
+    }
+}
+
+#[verifier::external_body]
+fn check_meta<'l>(meta: &FileMeta<'l>) -> Result<(), Box<dyn Error>> {
+    check_semver(meta)
+}
+
+#[verifier::external_body]
+fn axiom_permitted<'a>(config: &Config, b: &ExportBuilder<'a>, n: NamePtr<'a>) -> bool {
+    config.unsafe_permit_all_axioms
+        || config.permitted_axioms.as_ref().map(|v| v.contains(&name_to_string(b, n))).unwrap_or(false)
+}
+
+#[verifier::external_body]
+fn axiom_name<'a>(b: &ExportBuilder<'a>, n: NamePtr<'a>) -> String {
+    name_to_string(b, n)
+}
+
+#[verifier::external_body]
+fn message(s: String) -> Box<dyn Error> {
+    Box::from(s)
+}
+
+#[verifier::external_body]
+fn nat_lit_disallowed(line: &str) -> Box<dyn Error> {
+    Box::<dyn Error>::from(format!(
+        "Nat lit extension disallowed by checker execution config, but export file contains a nat literal {:?}",
+        line
+    ))
+}
+
+#[verifier::external_body]
+fn string_lit_disallowed(line: &str) -> Box<dyn Error> {
+    Box::<dyn Error>::from(format!(
+        "String lit extension disallowed by checker execution config, but export file contains a string literal {:?}",
+        line
+    ))
+}
+
+#[verifier::external_body]
+fn unpermitted_axiom(name: String) -> Box<dyn Error> {
+    Box::from(format!("export file declares unpermitted axiom {:?}", name))
+}
+
+/// ONE RECORD INTO THE EXPORT: the builder call the record names, its
+/// back-reference checked against where the node went (`check_backref`).
+/// On success the record's content is stored at its slot (`holds`), the
+/// builder only grew, and by exactly the record (`step`). An `Err` or a
+/// panic rejects the export.
+///
+/// VERUS-REWRITE(parser-apply): `Parser::go1`'s dispatch, after serde's
+/// decoding, as a function of the builder and the flags it reads; `[l, r]`
+/// array patterns as indexing; `matches!` on the safety as a `match`; the
+/// block size by checked addition; the recursor rules by an index loop.
+/// The calls, checks, messages and their order are go1's.
+fn apply<'a, 'l>(
+    b: &mut ExportBuilder<'a>,
+    config: &Config,
+    skipped: &mut Vec<String>,
+    line: &str,
+    nat_extension: bool,
+    string_extension: bool,
+    hard_error: bool,
+    val: ExportJsonVal<'l>,
+    assigned_idx: Option<BackRef>,
+) -> (r: Result<Ghost<Slot>, Box<dyn Error>>)
+    requires
+        old(b).wf(),
+    ensures
+        final(b).wf(),
+        grows(*old(b), *final(b)),
+        r matches Ok(slot) ==> holds(*final(b), val, slot@) && step(*old(b), *final(b), val, assigned_idx, slot@),
+{
+    let ghost b0 = *b;
+    proof {
+        b0.lemma_keys();
+        grows_same(b0, *b);
+    }
+    match val {
+        ExportJsonVal::Metadata(json_val) => {
+            let _ = check_meta(&json_val)?;
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::Nothing))
+        },
+        ExportJsonVal::NameStr { pre, str } => {
+            proof {
+                broadcast use vstd::string::group_string_axioms;
+            }
+            let r = b.add_name_str(pre, str.to_string());
+            check_backref(assigned_idx, 0, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::NameNum { pre, i } => {
+            let r = b.add_name_num(pre, i as u64);
+            check_backref(assigned_idx, 0, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::NatLit(big_uint) => {
+            if !nat_extension {
+                return Err(nat_lit_disallowed(line));
+            }
+            let r = b.add_expr_nat_lit(big_uint).unwrap();
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::StrLit(cow_str) => {
+            if !string_extension {
+                return Err(string_lit_disallowed(line));
+            }
+            proof {
+                broadcast use vstd::string::group_string_axioms;
+            }
+            let r = b.add_expr_str_lit(cow_str.to_string());
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::LevelSucc(l) => {
+            let r = b.add_level_succ(l);
+            check_backref(assigned_idx, 1, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::LevelMax(lr) => {
+            let r = b.add_level_max(lr[0], lr[1]);
+            check_backref(assigned_idx, 1, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::LevelIMax(lr) => {
+            let r = b.add_level_imax(lr[0], lr[1]);
+            check_backref(assigned_idx, 1, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::LevelParam(var_idx) => {
+            let r = b.add_level_param(var_idx);
+            check_backref(assigned_idx, 1, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprSort(level) => {
+            let r = b.add_expr_sort(level);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprMData { .. } => {
+            panic!("Expr.mdata not supported");
+        },
+        ExportJsonVal::ExprConst { name, levels } => {
+            let r = b.add_expr_const(name, &levels);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprApp { fun, arg } => {
+            let r = b.add_expr_app(fun, arg);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprBVar(dbj_idx) => {
+            let r = b.add_expr_var(dbj_idx);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprLambda { binder_name, binder_type, binder_info, body } => {
+            let r = b.add_expr_binder(false, binder_name, binder_type, binder_info, body);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprPi { binder_name, binder_type, binder_info, body } => {
+            let r = b.add_expr_binder(true, binder_name, binder_type, binder_info, body);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprLet { name, ty, value, body, nondep } => {
+            let r = b.add_expr_let(name, ty, value, body, nondep);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::ExprProj { type_name, idx, structure: struct_ } => {
+            let r = b.add_expr_proj(type_name, idx, struct_);
+            check_backref(assigned_idx, 2, r);
+            proof {
+                grows_same(b0, *b);
+            }
+            Ok(Ghost(Slot::At(r.0 as nat)))
+        },
+        ExportJsonVal::Axiom { name, ty, uparams, is_unsafe } => {
+            assert!(!is_unsafe);
+            let name_ptr = b.name_ptr(name);
+            if axiom_permitted(config, b, name_ptr) {
+                b.add_axiom(name, ty, &uparams);
+                proof {
+                    grows_adds(b0, *b, (0, 0));
+                }
+                Ok(Ghost(Slot::At(b0.keys().len())))
+            } else {
+                // the parts are still read, as they were before an axiom was skipped
+                let _ = b.info(name, ty, &uparams);
+                proof {
+                    grows_same(b0, *b);
+                }
+                let name_string = axiom_name(b, name_ptr);
+                if hard_error {
+                    Err(unpermitted_axiom(name_string))
+                } else {
+                    skipped.push(name_string);
+                    Ok(Ghost(Slot::Skipped))
+                }
+            }
+        },
+        ExportJsonVal::Defn { name, ty, uparams, value, hint, safety } => {
+            let bad = match safety {
+                DefinitionSafety::Unsafe | DefinitionSafety::Partial => true,
+                DefinitionSafety::Safe => false,
+            };
+            assert!(!bad);
+            b.add_definition(name, ty, value, &uparams, hint);
+            proof {
+                grows_adds(b0, *b, (0, 0));
+            }
+            Ok(Ghost(Slot::At(b0.keys().len())))
+        },
+        ExportJsonVal::Thm { name, ty, uparams, value } => {
+            b.add_theorem(name, ty, value, &uparams);
+            proof {
+                grows_adds(b0, *b, (0, 0));
+            }
+            Ok(Ghost(Slot::At(b0.keys().len())))
+        },
+        ExportJsonVal::Opaque { name, ty, uparams, value, is_unsafe } => {
+            assert!(!is_unsafe);
+            b.add_opaque(name, ty, value, &uparams);
+            proof {
+                grows_adds(b0, *b, (0, 0));
+            }
+            Ok(Ghost(Slot::At(b0.keys().len())))
+        },
+        ExportJsonVal::Quot { name, ty, uparams, .. } => {
+            b.add_quot(name, ty, &uparams);
+            proof {
+                grows_adds(b0, *b, (0, 0));
+            }
+            Ok(Ghost(Slot::At(b0.keys().len())))
+        },
+        ExportJsonVal::Inductive { ind_vals, ctor_vals, rec_vals } => {
+            let ghost (iv, cv, rv) = (ind_vals@, ctor_vals@, rec_vals@);
+            let block_start = b.declars_len();
+            let block_size = ind_vals.len().checked_add(ctor_vals.len()).unwrap().checked_add(rec_vals.len()).unwrap();
+            let ghost s = b0.keys().len();
+            let ghost size = (iv.len() + cv.len() + rv.len()) as nat;
+            for IndInfo { name, ty, uparams, all, ctors, is_rec, num_nested, num_params, num_indices, is_unsafe, .. } in it: ind_vals
+                invariant
+                    b.wf(),
+                    grows(b0, *b),
+                    it.seq() == iv,
+                    block_start == s,
+                    block_size == size,
+                    b.keys().len() == s + it.index(),
+                    b.names_len() == b0.names_len() && b.levels_len() == b0.levels_len() && b.exprs_len() == b0.exprs_len(),
+                    forall|q: int| 0 <= q < it.index() ==> ind_holds(*b, #[trigger] iv[q], s + q, s, size) && !iv[q].is_unsafe,
+            {
+                let ghost q = it.index();
+                let ghost bq = *b;
+                assert!(!is_unsafe);
+                b.add_inductive(name, ty, &uparams, is_rec, num_nested > 0, num_params, num_indices, &all, &ctors, block_start, block_size);
+                proof {
+                    grows_adds(bq, *b, (block_start, block_size));
+                    assert(iv[q] == it.seq()[q]);
+                    bq.lemma_keys();
+                    b.lemma_keys();
+                    assert forall|j: int| 0 <= j < q implies ind_holds(*b, #[trigger] iv[j], s + j, s, size) && !iv[j].is_unsafe by {
+                        assert(ind_holds(bq, iv[j], s + j, s, size));
+                        grows_decl(bq, *b, s + j);
+                        assert(bq.keys().to_set().contains(bq.keys()[s + j]));
+                    }
+                    grows_trans(b0, bq, *b);
+                }
+            }
+            for Constructor { name, uparams, ty, is_unsafe, induct, cidx, num_params, num_fields, .. } in it: ctor_vals
+                invariant
+                    b.wf(),
+                    grows(b0, *b),
+                    it.seq() == cv,
+                    b.keys().len() == s + iv.len() + it.index(),
+                    b.names_len() == b0.names_len() && b.levels_len() == b0.levels_len() && b.exprs_len() == b0.exprs_len(),
+                    forall|q: int| 0 <= q < iv.len() ==> ind_holds(*b, #[trigger] iv[q], s + q, s, size) && !iv[q].is_unsafe,
+                    forall|q: int| 0 <= q < it.index() ==> ctor_holds(*b, #[trigger] cv[q], s + iv.len() + q) && !cv[q].is_unsafe,
+            {
+                let ghost q = it.index();
+                let ghost bq = *b;
+                assert!(!is_unsafe);
+                b.add_constructor(name, ty, &uparams, induct, cidx, num_params, num_fields);
+                proof {
+                    grows_adds(bq, *b, (0, 0));
+                    assert(cv[q] == it.seq()[q]);
+                    bq.lemma_keys();
+                    assert forall|j: int| 0 <= j < iv.len() implies ind_holds(*b, #[trigger] iv[j], s + j, s, size) && !iv[j].is_unsafe by {
+                        assert(ind_holds(bq, iv[j], s + j, s, size));
+                        grows_decl(bq, *b, s + j);
+                        assert(bq.keys().to_set().contains(bq.keys()[s + j]));
+                    }
+                    assert forall|j: int| 0 <= j < q implies ctor_holds(*b, #[trigger] cv[j], s + iv.len() + j) && !cv[j].is_unsafe by {
+                        assert(ctor_holds(bq, cv[j], s + iv.len() + j));
+                        grows_decl(bq, *b, s + iv.len() + j);
+                    }
+                    grows_trans(b0, bq, *b);
+                }
+            }
+            for Recursor { name, uparams, ty, rules, is_unsafe, num_params, num_indices, num_motives, num_minors, k, all, .. } in it: rec_vals
+                invariant
+                    b.wf(),
+                    grows(b0, *b),
+                    it.seq() == rv,
+                    b.keys().len() == s + iv.len() + cv.len() + it.index(),
+                    b.names_len() == b0.names_len() && b.levels_len() == b0.levels_len() && b.exprs_len() == b0.exprs_len(),
+                    forall|q: int| 0 <= q < iv.len() ==> ind_holds(*b, #[trigger] iv[q], s + q, s, size) && !iv[q].is_unsafe,
+                    forall|q: int| 0 <= q < cv.len() ==> ctor_holds(*b, #[trigger] cv[q], s + iv.len() + q) && !cv[q].is_unsafe,
+                    forall|q: int| 0 <= q < it.index() ==> rec_holds(*b, #[trigger] rv[q], s + iv.len() + cv.len() + q) && !rv[q].is_unsafe,
+            {
+                let ghost q = it.index();
+                let ghost bq = *b;
+                assert!(!is_unsafe);
+                let mut triples: Vec<(u32, u32, u16)> = Vec::new();
+                let mut m: usize = 0;
+                while m < rules.len()
+                    invariant
+                        m <= rules@.len(),
+                        triples@.len() == m,
+                        forall|j: int| 0 <= j < m ==> #[trigger] triples@[j] == (rules@[j].rhs, rules@[j].ctor, rules@[j].nfields),
+                    decreases rules@.len() - m,
+                {
+                    let RecursorRule { rhs, ctor, nfields } = rules[m];
+                    triples.push((rhs, ctor, nfields));
+                    m = m + 1;
+                }
+                b.add_recursor(name, ty, &uparams, &triples, &all, num_params, num_indices, num_motives, num_minors, k);
+                proof {
+                    grows_adds(bq, *b, (0, 0));
+                    assert(rv[q] == it.seq()[q]);
+                    bq.lemma_keys();
+                    assert forall|j: int| 0 <= j < iv.len() implies ind_holds(*b, #[trigger] iv[j], s + j, s, size) && !iv[j].is_unsafe by {
+                        assert(ind_holds(bq, iv[j], s + j, s, size));
+                        grows_decl(bq, *b, s + j);
+                        assert(bq.keys().to_set().contains(bq.keys()[s + j]));
+                    }
+                    assert forall|j: int| 0 <= j < cv.len() implies ctor_holds(*b, #[trigger] cv[j], s + iv.len() + j) && !cv[j].is_unsafe by {
+                        assert(ctor_holds(bq, cv[j], s + iv.len() + j));
+                        grows_decl(bq, *b, s + iv.len() + j);
+                    }
+                    assert forall|j: int| 0 <= j < q implies rec_holds(*b, #[trigger] rv[j], s + iv.len() + cv.len() + j) && !rv[j].is_unsafe by {
+                        assert(rec_holds(bq, rv[j], s + iv.len() + cv.len() + j));
+                        grows_decl(bq, *b, s + iv.len() + cv.len() + j);
+                    }
+                    grows_trans(b0, bq, *b);
+                }
+            }
+            Ok(Ghost(Slot::At(s)))
+        },
+    }
+}
+
+} // verus!
+
 pub(crate) fn parse_export_file<'p, R: BufRead>(
     buf_reader: R,
     config: Config,
@@ -432,199 +1155,39 @@ impl<'a, R: BufRead> Parser<'a, R> {
         Self { buf_reader, line_num: 0usize, builder, notations: new_fx_hash_map(), config, skipped: Vec::new() }
     }
 
-    fn axiom_permitted(&self, n: NamePtr<'a>) -> bool {
-        self.config.unsafe_permit_all_axioms
-            || self.config.permitted_axioms.as_ref().map(|v| v.contains(&self.name_to_string(n))).unwrap_or(false)
-    }
-
     // Used for the axiom whitelist feature.
     fn name_to_string(&self, n: NamePtr<'a>) -> String {
-        let dag = self.builder.dag();
-        match dag.names.get_index(n.idx()).copied().unwrap() {
-            Name::Anon => String::new(),
-            Name::Str(pfx, sfx, _) => {
-                let mut s = self.name_to_string(pfx);
-                if !s.is_empty() {
-                    s.push('.');
-                }
-                s + dag.strings.get_index(sfx.idx()).unwrap()
-            }
-            Name::Num(pfx, sfx, _) => {
-                let mut s = self.name_to_string(pfx);
-                if !s.is_empty() {
-                    s.push('.');
-                }
-                s + format!("{}", sfx).as_str()
-            }
-        }
+        name_to_string(&self.builder, n)
     }
 
     fn go1(&mut self, line: &str) -> Result<(), Box<dyn Error>> {
-        use ExportJsonVal::*;
         let ExportJsonObject { val, i: assigned_idx } = serde_json::from_str::<ExportJsonObject>(line)?;
-        let b = &mut self.builder;
-        match val {
-            Metadata(json_val) => {
-                let _ = check_semver(&json_val)?;
-            }
-            NameStr { pre, str } => {
-                let r = b.add_name_str(pre, str.to_string());
-                assigned_idx.unwrap().assert_in(r);
-            }
-            NameNum { pre, i } => {
-                let r = b.add_name_num(pre, i as u64);
-                assigned_idx.unwrap().assert_in(r);
-            }
-            NatLit(big_uint) => {
-                if !self.config.nat_extension {
-                    return Err(Box::<dyn Error>::from(
-                        format!("Nat lit extension disallowed by checker execution config, but export file contains a nat literal {:?}", line)
-                    ));
-                }
-                let r = b.add_expr_nat_lit(big_uint).unwrap();
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            StrLit(cow_str) => {
-                if !self.config.string_extension {
-                    return Err(Box::<dyn Error>::from(
-                        format!("String lit extension disallowed by checker execution config, but export file contains a string literal {:?}", line)
-                    ));
-                }
-                let r = b.add_expr_str_lit(cow_str.to_string());
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            LevelSucc(l) => {
-                let r = b.add_level_succ(l);
-                assigned_idx.unwrap().assert_il(r);
-            }
-            LevelMax([l, r]) => {
-                let r = b.add_level_max(l, r);
-                assigned_idx.unwrap().assert_il(r);
-            }
-            LevelIMax([l, r]) => {
-                let r = b.add_level_imax(l, r);
-                assigned_idx.unwrap().assert_il(r);
-            }
-            LevelParam(var_idx) => {
-                let r = b.add_level_param(var_idx);
-                assigned_idx.unwrap().assert_il(r);
-            }
-            ExprSort(level) => {
-                let r = b.add_expr_sort(level);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprMData { .. } => {
-                panic!("Expr.mdata not supported");
-            }
-            ExprConst { name, levels } => {
-                let r = b.add_expr_const(name, &levels);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprApp { fun, arg } => {
-                let r = b.add_expr_app(fun, arg);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprBVar(dbj_idx) => {
-                let r = b.add_expr_var(dbj_idx);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprLambda { binder_name, binder_type, binder_info, body } => {
-                let r = b.add_expr_binder(false, binder_name, binder_type, binder_info, body);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprPi { binder_name, binder_type, binder_info, body } => {
-                let r = b.add_expr_binder(true, binder_name, binder_type, binder_info, body);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprLet { name, ty, value, body, nondep } => {
-                let r = b.add_expr_let(name, ty, value, body, nondep);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            ExprProj { type_name, idx, structure: struct_ } => {
-                let r = b.add_expr_proj(type_name, idx, struct_);
-                assigned_idx.unwrap().assert_ie(r);
-            }
-            Axiom { name, ty, uparams, is_unsafe } => {
-                assert!(!is_unsafe);
-                let name_ptr = self.builder.name_ptr(name);
-                if self.axiom_permitted(name_ptr) {
-                    self.builder.add_axiom(name, ty, &uparams);
-                } else {
-                    // the parts are still read, as they were before an axiom was skipped
-                    let _ = self.builder.info(name, ty, &uparams);
-                    let name_string = self.name_to_string(name_ptr);
-                    if self.config.unpermitted_axiom_hard_error {
-                        return Err(Box::from(format!("export file declares unpermitted axiom {:?}", name_string)));
-                    } else {
-                        self.skipped.push(name_string)
-                    }
-                }
-            }
-            Defn { name, ty, uparams, value, hint, safety } => {
-                assert!(!matches!(safety, DefinitionSafety::Unsafe | DefinitionSafety::Partial));
-                b.add_definition(name, ty, value, &uparams, hint);
-            }
-            Thm { name, ty, uparams, value } => {
-                b.add_theorem(name, ty, value, &uparams);
-            }
-            Opaque { name, ty, uparams, value, is_unsafe } => {
-                assert!(!is_unsafe);
-                b.add_opaque(name, ty, value, &uparams);
-            }
-            Quot { name, ty, uparams, .. } => {
-                b.add_quot(name, ty, &uparams);
-            }
-            Inductive { ind_vals, ctor_vals, rec_vals } => {
-                let block_start = b.declars_len();
-                let block_size = ind_vals.len() + ctor_vals.len() + rec_vals.len();
-                for IndInfo { name, ty, uparams, all, ctors, is_rec, num_nested, num_params, num_indices, is_unsafe, .. } in
-                    ind_vals
-                {
-                    assert!(!is_unsafe);
-                    b.add_inductive(
-                        name,
-                        ty,
-                        &uparams,
-                        is_rec,
-                        num_nested > 0,
-                        num_params,
-                        num_indices,
-                        &all,
-                        &ctors,
-                        block_start,
-                        block_size,
-                    );
-                }
-                for Constructor { name, uparams, ty, is_unsafe, induct, cidx, num_params, num_fields, .. } in ctor_vals
-                {
-                    assert!(!is_unsafe);
-                    b.add_constructor(name, ty, &uparams, induct, cidx, num_params, num_fields);
-                }
-                for Recursor {
-                    name,
-                    uparams,
-                    ty,
-                    rules,
-                    is_unsafe,
-                    num_params,
-                    num_indices,
-                    num_motives,
-                    num_minors,
-                    k,
-                    all,
-                    ..
-                } in rec_vals
-                {
-                    assert!(!is_unsafe);
-                    let rules = rules
-                        .into_iter()
-                        .map(|RecursorRule { rhs, ctor, nfields }| (rhs, ctor, nfields))
-                        .collect::<Vec<_>>();
-                    b.add_recursor(name, ty, &uparams, &rules, &all, num_params, num_indices, num_motives, num_minors, k);
-                }
-            }
-        }
+        let (nat_extension, string_extension, hard_error) =
+            (self.config.nat_extension, self.config.string_extension, self.config.unpermitted_axiom_hard_error);
+        apply(&mut self.builder, &self.config, &mut self.skipped, line, nat_extension, string_extension, hard_error, val, assigned_idx)?;
         Ok(())
+    }
+}
+
+/// A name's text, components joined by dots.
+fn name_to_string<'a>(b: &ExportBuilder<'a>, n: NamePtr<'a>) -> String {
+    let dag = b.dag();
+    match dag.names.get_index(n.idx()).copied().unwrap() {
+        Name::Anon => String::new(),
+        Name::Str(pfx, sfx, _) => {
+            let mut s = name_to_string(b, pfx);
+            if !s.is_empty() {
+                s.push('.');
+            }
+            s + dag.strings.get_index(sfx.idx()).unwrap()
+        }
+        Name::Num(pfx, sfx, _) => {
+            let mut s = name_to_string(b, pfx);
+            if !s.is_empty() {
+                s.push('.');
+            }
+            s + format!("{}", sfx).as_str()
+        }
     }
 }
 

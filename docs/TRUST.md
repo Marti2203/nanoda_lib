@@ -48,17 +48,34 @@ indices the record gives (`name_at`, `level_at`, `expr_at`, `text_at`,
 under a name not recorded before (`adds`, `info_at`); `finish` hands the
 declarations and mutual blocks to the `ExportFile` unchanged.
 
-What is trusted is **fidelity**: that the declarations the builder ends up
-holding are the ones the file states. A misreading would make nanoda check
-a different export, soundly. One deliberate difference: with
-`unpermitted_axiom_hard_error: false`, an axiom not in `permitted_axioms` is
-left out (its parts are still read); every declaration that uses it then
-fails to check, so this can only reject more. `serde_json` and `semver`
-decode the line format and version (library trust, as in T).
+Each decoded record goes through the verified `parser::apply`: the
+builder call the record names, its back-reference checked against the
+position the node went to. On success the record's content is stored at
+its slot (`holds`: its node, children at the record's indices; or its
+declarations from their key position, every field as the record gives
+it), the builder only grew (`grows`, so earlier records' content stays),
+and by exactly that record (`step`: one node at the end of its kind, or
+its declarations at the end of the key order). `apply`'s code is `go1`'s
+dispatch, rewritten only where Verus needs it (VERUS-REWRITE markers
+`parser-apply`, `parser-backref`); the Core and Init corpora give the same
+results.
 
-Verifying the parser would need a formal specification of the export
-format; it would prove fidelity, not change what the theorem says about
-the declarations checked.
+What is still trusted:
+
+- **Decoding**: `serde_json` turning a line into a record, and `semver`
+  reading the version (library trust, as in T). Nat literals are decoded
+  by nanoda's own `parse_decimal_fast`, called by serde; not yet verified.
+- **The read loop** (`parse_export_file`): reading lines and calling
+  `go1` once per line, then the `pp_declars` and constructor checks (which
+  can only reject) and `finish`. Not yet verified: the per-record facts
+  are not yet assembled into one statement about the whole file.
+- **The axiom whitelist**: whether an axiom is permitted is decided by
+  comparing its name's text (`name_to_string`) with `permitted_axioms`.
+  With `unpermitted_axiom_hard_error: false` an axiom not permitted is
+  left out (its parts are still read); every declaration that uses it
+  then fails to check, so this can only reject more. A wrongly permitted
+  axiom is a policy error, not a misreading: it is stored exactly as the
+  file states it.
 
 ## D. The parallel driver (`ExportFile::check_all_declars_par`, `src/tc.rs`)
 
