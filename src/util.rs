@@ -1492,8 +1492,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     /// Verified: the pointer's stored node is the one given, so it denotes it
     /// (a `Local`, `Free` of the pointer) and its payload projections are its
-    /// fields. A `Unique` local is refused: `mk_unique` numbers those, and
-    /// `unique_serial_injective` rests on nothing else storing one.
+    /// fields. A `Unique` local is stored only with a serial at least the
+    /// dag's bound and below the counter (`mk_unique` gives the counter's
+    /// value), so it is the first with that serial (`unique_canon`).
     /// VERUS-REWRITE(arena-tokens): as in
     /// `alloc_name`. VERUS-REWRITE(stored-child-check): children in this
     /// context's own tier are TESTED to be already stored, as in `alloc_name`.
