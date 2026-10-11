@@ -2101,7 +2101,7 @@ inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
 structure eta at structures outside the `struct_of` slice (dependent
 fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
 
-### Rank-stratified strip (2026-10-10, R1-R3a done)
+### Rank-stratified strip (2026-10-10, R1-R3a, R3b-1 done)
 
 FOUND: the model's typing facts (`ty_closed`, `rule_typed`,
 `fields_typed`, `rule_typed_g`) are stated in `ti_strip::strip(sig)`, with
@@ -2214,8 +2214,31 @@ The plan:
   then in scope (it comes with the inductive's declaration,
   `env_model::struct_ctor_entry`). `kstruct::canon_scope` returns the larger of
   the two ranks; `struct_cx_typed` lifts at the constructor's.
-- **R3b** (open) `fields_typed`, from the constructor's typing by Pi
-  inversion.
+- **R3b** the fields. Two findings. (1) No strengthening: nanoda
+  types each field on its own (`inductive::ctor_cert_ok`,
+  `kinfer_claim` of the binder type), with the parameters and earlier
+  fields as locals; the model wants a closed field typed in the empty
+  context. Plan (R3b-2): rebuild that derivation structurally (head
+  from R3a, arguments by induction, sort matches by type uniqueness and
+  sort injectivity in the certified typing), no consumer rework.
+  (2) Ranks: the model evaluates a field's code at its inductive's rank,
+  so its constants must rank below the inductive. nanoda checks
+  constructors with only the block's inductives added, but over a block
+  bound the parser supplies (`mutual_block_sizes`), and a constructor's
+  own certificate is at its own position, after the earlier
+  constructors -- nothing certified it. TRADEOFF (user's choice): a
+  tested-input check, `check_inductive_declar` tests each constructor
+  against the environment before its inductive (`TcCtx::consts_known`;
+  a single block's own name, `inductive::block_names`), never failing
+  on Lean exports (Init.Core, Init). R3b-1 (done): certified as
+  `inductive::ctors_known` inside `block_cert`; `jrank`'s choice gains
+  `ctors_ranked` (`dom_rec_end::ctors_below`), witnessed at the
+  positions (`export_sound::ctors_below_at`, `ctor_known_at`); the
+  hypothesis keeps only the fields' shapes (`dom_canon::capp`, `pcapp`;
+  `dom_code::fields_typed_h`), and `kclaims::fields_of` gives the ranks
+  (`dom_canon::field_consts`, `ranked_of`, `fields_typed_of`). The shape
+  (an application of constants, none the inductive, a constructor or a
+  recursor) stays a fragment-boundary hypothesis.
 - **R3c** (open, deep) `rule_typed`: nanoda never types rule bodies, it
   converts the declared rules to the ones it generates, so this is the
   theorem that canonical recursor rules are well typed, not a

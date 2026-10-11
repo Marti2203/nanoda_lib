@@ -391,6 +391,204 @@ proof fn typed_below_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
 }
 
+/// A declaration at a cutoff is positioned before it.
+proof fn pos_before<'p>(ef: crate::util::ExportFile<'p>, c: int, id: u64)
+    requires
+        crate::inductive::export_ok(ef),
+        m_dty(ef, c).contains_key(id),
+    ensures
+        0 <= pos_of(ef, id) < c,
+{
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    let (view, keys) = (ef.declars_view(), ef.declars_keys());
+    assert(crate::env::find_at(view, keys, c, id) is Some);
+    let i = entry_of(ef, c, id);
+    assert(pos_of(ef, id) == i);
+}
+
+/// THE CONSTRUCTORS BELOW THEIR INDUCTIVE: in the position-ranked twin, a
+/// canonical recursor's constructors mention only its inductive and
+/// constants declared before it (its block's tested-input check,
+/// `inductive::ctors_known`).
+#[verifier::spinoff_prover]
+proof fn ctors_below_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        crate::metatheory::ctors_ranked(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let r = rmap(ef, cc);
+    let (view, keys) = (ef.declars_view(), ef.declars_keys());
+    let raw0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let sr = crate::metatheory::jsig_r(dty, denv, r);
+    assert(sr == (crate::ti_syntax::Sig { rank: r, ..raw0 }));
+    crate::twin::twin_rank(raw0, r);
+    let t = crate::twin::twin(raw0);
+    let tw = crate::twin::twin(sr);
+    assert(tw == (crate::ti_syntax::Sig { rank: r, ..t }));
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    assert forall|rid: u64, p: int| #![trigger crate::dom_rec_ty::rshape(tw, rid).ctors[p]]
+        tw.ienv.recs.contains_key(rid) && crate::rec_canon::rec_canon(tw, rid) && 0 <= p < crate::dom_rec_ty::rshape(tw, rid).nmin()
+        implies crate::ti_level::all_consts(tw.consts[crate::dom_rec_ty::rshape(tw, rid).ctors[p]].ty,
+            crate::dom_rec_end::below(tw, crate::dom_code::rk(tw, crate::dom_rec_ty::rshape(tw, rid).ind)).insert(crate::dom_rec_ty::rshape(tw, rid).ind)) by {
+        ctors_below_one(ef, cc, rid, p);
+    }
+}
+
+/// One constructor of `ctors_below_at`.
+#[verifier::spinoff_prover]
+proof fn ctors_below_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64, p: int)
+    requires
+        below_ok(ef, cc),
+        m_denv(ef, cc).recs.contains_key(rid),
+        0 <= p < crate::dom_rec_ty::rshape(crate::twin::twin(crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty())), rid).nmin(),
+    ensures ({
+        let tw = crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)));
+        let sh = crate::dom_rec_ty::rshape(tw, rid);
+        crate::ti_level::all_consts(tw.consts[sh.ctors[p]].ty, crate::dom_rec_end::below(tw, crate::dom_code::rk(tw, sh.ind)).insert(sh.ind))
+    }),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let r = rmap(ef, cc);
+    let keys = ef.declars_keys();
+    let raw0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let sr = crate::metatheory::jsig_r(dty, denv, r);
+    assert(sr == (crate::ti_syntax::Sig { rank: r, ..raw0 }));
+    crate::twin::twin_rank(raw0, r);
+    let t = crate::twin::twin(raw0);
+    let tw = crate::twin::twin(sr);
+    assert(tw == (crate::ti_syntax::Sig { rank: r, ..t }));
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    // the recursor's block
+    let p0 = entry_of(ef, cc, rid);
+    assert(pos_of(ef, rid) == p0);
+    assert(keys.to_set().contains(keys[p0]));
+    assert(denv.recs[rid] == crate::env_model::rec_entry(decl_at(ef, p0))->0);
+    assert(decl_at(ef, p0) is Recursor);
+    assert(rec_simple(ef, rid));
+    assert(kh_hyp(dty, denv));
+    assert(rec_fields_ok(raw0, rid));
+    let (sh, qi) = rec_block_at(ef, cc, rid);
+    crate::twin::twin_canon(raw0, rid);
+    crate::twin::rec_core_basic(raw0, rid);
+    reveal(crate::twin::rec_core);
+    assert(crate::dom_rec_ty::rshape(t, rid) == sh);
+    assert(crate::dom_rec_ty::rshape(tw, rid) == sh);
+    let c = sh.ctors[p];
+    assert(ctor_at(ef, cc, sh, p));
+    let ind = sh.ind;
+    pos_find(ef, cc, qi);
+    assert(pos_of(ef, ind) == qi);
+    assert(dty.contains_key(ind));
+    assert(crate::dom_code::rk(tw, ind) == qi);
+    crate::twin::twin_keeps(raw0, c);
+    assert(tw.consts[c].ty == dty[c].1);
+    ctor_known_at(ef, cc, rid, sh, qi, p);
+    let known = m_dty(ef, qi).dom().insert(ind);
+    let target = crate::dom_rec_end::below(tw, qi).insert(ind);
+    assert forall|k: u64| #[trigger] known.contains(k) implies target.contains(k) by {
+        if k != ind {
+            pos_before(ef, qi, k);
+            crate::env_model::env_le_at(ef.arena(), ef.declars_view(), keys, qi, cc);
+            assert(dty.contains_key(k));
+        }
+    }
+    crate::twin::all_consts_mono(dty[c].1, known, target);
+}
+
+/// THE BLOCK'S CHECK of a canonical recursor's constructor (`ctors_known`):
+/// it mentions only declarations before the inductive, and the inductive.
+#[verifier::spinoff_prover]
+proof fn ctor_known_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64, sh: crate::rec_canon::IndShape, qi: int, p: int)
+    requires
+        below_ok(ef, cc),
+        0 <= p < sh.nmin(),
+        ctor_at(ef, cc, sh, p),
+        0 <= qi < pos_of(ef, rid) < cc && pos_of(ef, rid) < ef.declars_keys().len(),
+        rec_simple(ef, rid),
+        crate::level_arena_bridge::name_id(ef.declars_keys()[qi]) == sh.ind,
+        decl_at(ef, pos_of(ef, rid)) matches crate::env::Declar::Recursor(r) && {
+            &&& ef.declars_keys()[qi] == r.all_inductives@[0]
+            &&& decl_at(ef, qi) matches crate::env::Declar::Inductive(ind_d)
+                && crate::inductive::block_ok(ef, ind_d, sh, decl_at(ef, pos_of(ef, rid)))
+        },
+    ensures
+        crate::ti_level::all_consts(m_dty(ef, cc)[sh.ctors[p]].1, m_dty(ef, qi).dom().insert(sh.ind)),
+{
+    let dty = m_dty(ef, cc);
+    let (view, keys) = (ef.declars_view(), ef.declars_keys());
+    let ind = sh.ind;
+    let c = sh.ctors[p];
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let p0 = pos_of(ef, rid);
+    if let crate::env::Declar::Recursor(rr) = decl_at(ef, p0) {
+        if let crate::env::Declar::Inductive(ind_d) = decl_at(ef, qi) {
+            assert(crate::inductive::ctor_ok_ex(ef, sh, p));
+            let cd = choose|cd: crate::env::ConstructorData<'p>| #[trigger] crate::inductive::ex_decl(ef, crate::env::Declar::Constructor(cd))
+                && crate::level_arena_bridge::name_id(cd.info.name) == sh.ctors[p]
+                && crate::level_arena_bridge::name_id(cd.inductive_name) == sh.ind
+                && cd.num_params as nat == sh.np
+                && crate::expr_arena_bridge::to_model(cd.info.ty) == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[p],
+                    crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[p].len(), sh.np) + sh.tss[p]))
+                && crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(cd.info.ty)) == 0
+                && !crate::expr_model::has_fv(crate::expr_arena_bridge::to_model(cd.info.ty));
+            assert(dty[c].1 == crate::expr_arena_bridge::to_model(cd.info.ty));
+            // the constructor is listed under its inductive
+            assert(keys.to_set().contains(cd.info.name));
+            let ic = choose|ic: int| 0 <= ic < keys.len() && keys[ic] == cd.info.name;
+            assert(decl_at(ef, ic) == crate::env::Declar::Constructor(cd));
+            assert(crate::inductive::ctor_listed(ef, cd));
+            assert(view.contains_key(keys[qi]));
+            crate::inductive::key_id_inj(ef, cd.inductive_name, keys[qi]);
+            assert(view[keys[qi]] == decl_at(ef, qi));
+            let ids = crate::expr::name_ids(ind_d.all_ctor_names@);
+            assert(ids[cd.ctor_idx as int] == crate::level_arena_bridge::name_id(cd.info.name));
+            assert(ids.contains(crate::level_arena_bridge::name_id(cd.info.name)));
+            // its block's check
+            assert(crate::inductive::block_cert(ef, ind_d));
+            let cc0 = choose|cc0: int| #[trigger] crate::env::limit_cutoff_ok_vk(view, keys, crate::env::EnvLimit::ByName(ind_d.info.name), cc0)
+                && forall|c2: crate::env::ConstructorData<'p>| #[trigger] crate::inductive::ex_decl(ef, crate::env::Declar::Constructor(c2))
+                    && crate::expr::name_ids(ind_d.all_ctor_names@).contains(crate::level_arena_bridge::name_id(c2.info.name))
+                    ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c2.info.ty),
+                        crate::env_model::dty_at(view, keys, cc0).dom().union(crate::expr::name_ids(crate::inductive::block_names(ind_d)).to_set()));
+            let known = crate::env_model::dty_at(view, keys, cc0).dom().union(crate::expr::name_ids(crate::inductive::block_names(ind_d)).to_set());
+            assert(crate::ti_level::all_consts(dty[c].1, known));
+            // a single block: its own name
+            assert(ind_d.info.name == keys[qi]);
+            assert(ind_d.all_ind_names@.len() == 1);
+            crate::inductive::export_tagged_key(ef, qi);
+            crate::inductive::export_declars_get(ef, keys[qi]);
+            assert(crate::expr::name_ids(crate::inductive::block_names(ind_d)) =~= seq![ind]);
+            let target = m_dty(ef, qi).dom().insert(ind);
+            assert forall|k: u64| #[trigger] known.contains(k) implies target.contains(k) by {
+                if k != ind {
+                    if seq![ind].to_set().contains(k) {
+                        assert(seq![ind].contains(k));
+                    }
+                    assert(crate::env_model::dty_at(view, keys, cc0).contains_key(k));
+                    if cc0 == 0 {
+                        pos_before(ef, 0, k);
+                    }
+                    assert(cc0 == qi) by {
+                        if cc0 != 0 {
+                            assert(keys[cc0] == keys[qi]);
+                        }
+                    }
+                }
+            }
+            crate::twin::all_consts_mono(dty[c].1, known, target);
+        }
+    }
+}
+
 /// THE RANKS: a definition's value mentions only earlier declarations.
 #[verifier::spinoff_prover]
 proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
@@ -402,6 +600,7 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         crate::dom_model::consts_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
         crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty()))
             ==> crate::dom_rec_end::types_below(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
+        crate::dom_rec_end::ctors_below(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
 {
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let r = rmap(ef, cc);
@@ -453,9 +652,10 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
     assert(crate::metatheory::rank_ok(dty, denv, r));
     typed_below_at(ef, cc);
+    ctors_below_at(ef, cc);
     let jr = crate::metatheory::jrank(dty, denv);
     assert(crate::metatheory::rank_ok(dty, denv, jr) && crate::metatheory::types_ranked(dty, denv, jr)
-        && crate::metatheory::types_typed(dty, denv, jr));
+        && crate::metatheory::types_typed(dty, denv, jr) && crate::metatheory::ctors_ranked(dty, denv, jr));
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     assert(raw == crate::metatheory::jsig_r(dty, denv, jr));
     let s = crate::metatheory::jsig(dty, denv, Map::empty());
@@ -676,6 +876,7 @@ proof fn frag_at<'p>(ef: crate::util::ExportFile<'p>, c: int)
     ranks_at(ef, c);
     lps_at(ef, c);
     typed_at(ef, c);
+    ctors_all_at(ef, c);
     crate::kclaims::frag_env_of(m_dty(ef, c), m_denv(ef, c));
 }
 
@@ -1870,6 +2071,23 @@ proof fn typed_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             crate::ti_strip::strip_below_locals(s0, d, crate::dom_code::rk(s0, c));
             assert(s0.consts.contains_key(c));
         }
+    }
+}
+
+/// THE CONSTRUCTORS BELOW THEIR INDUCTIVE, at every cutoff and any locals.
+#[verifier::spinoff_prover]
+proof fn ctors_all_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
+    requires
+        below_ok(ef, cc),
+    ensures
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_rec_end::ctors_below(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), d)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    ranked_at(ef, cc);
+    let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    assert forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_rec_end::ctors_below(crate::metatheory::jsig(dty, denv, d)) by {
+        crate::jkernel::jsig_locals(dty, denv, d);
+        crate::dom_rec_end::ctors_below_locals(s0, d);
     }
 }
 

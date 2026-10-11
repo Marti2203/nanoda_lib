@@ -250,6 +250,40 @@ pub open spec fn types_below(sig: Sig) -> bool {
         ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), sig.consts[c].ty)
 }
 
+/// The constants ranked below `n`.
+pub open spec fn below(sig: Sig, n: int) -> Set<u64> {
+    sig.rank.dom().filter(|k: u64| (sig.rank[k] as int) < n)
+}
+
+/// A CANONICAL RECURSOR'S CONSTRUCTORS MENTION ONLY ITS INDUCTIVE AND
+/// CONSTANTS RANKED BELOW IT (the export's tested-input check,
+/// `inductive::ctors_known`).
+pub open spec fn ctors_below(sig: Sig) -> bool {
+    forall|rid: u64, p: int| #![trigger crate::dom_rec_ty::rshape(sig, rid).ctors[p]]
+        sig.ienv.recs.contains_key(rid) && crate::rec_canon::rec_canon(sig, rid) && 0 <= p < crate::dom_rec_ty::rshape(sig, rid).nmin() ==>
+        crate::ti_level::all_consts(sig.consts[crate::dom_rec_ty::rshape(sig, rid).ctors[p]].ty,
+            below(sig, crate::dom_code::rk(sig, crate::dom_rec_ty::rshape(sig, rid).ind)).insert(crate::dom_rec_ty::rshape(sig, rid).ind))
+}
+
+/// The locals change nothing of it.
+pub proof fn ctors_below_locals(sig: Sig, d: Map<nat, ExprSpec>)
+    requires
+        ctors_below(sig),
+    ensures
+        ctors_below(Sig { locals: d, ..sig }),
+{
+    let sd = Sig { locals: d, ..sig };
+    assert forall|rid: u64, p: int| #![trigger crate::dom_rec_ty::rshape(sd, rid).ctors[p]]
+        sd.ienv.recs.contains_key(rid) && crate::rec_canon::rec_canon(sd, rid) && 0 <= p < crate::dom_rec_ty::rshape(sd, rid).nmin()
+        implies crate::ti_level::all_consts(sd.consts[crate::dom_rec_ty::rshape(sd, rid).ctors[p]].ty,
+            below(sd, crate::dom_code::rk(sd, crate::dom_rec_ty::rshape(sd, rid).ind)).insert(crate::dom_rec_ty::rshape(sd, rid).ind)) by {
+        assert(crate::dom_rec_ty::rshape(sd, rid) == crate::dom_rec_ty::rshape(sig, rid));
+        canon_congr(sd, sig, rid);
+        assert(below(sd, crate::dom_code::rk(sd, crate::dom_rec_ty::rshape(sd, rid).ind))
+            == below(sig, crate::dom_code::rk(sig, crate::dom_rec_ty::rshape(sig, rid).ind)));
+    }
+}
+
 /// A closed type below a rank is one below any higher rank.
 pub proof fn ty_closed_up(sig: Sig, r1: int, r2: int, t: ExprSpec)
     requires
@@ -397,8 +431,8 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
-        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
-    &&& crate::dom_code::fields_typed(sig, sh.ind)
+        crate::dom_canon::capp(sig, #[trigger] sh.fields[p][k], sh.ind)
+    &&& crate::dom_code::fields_typed_h(sig, sh.ind)
 }
 
 /// `rec_model_p` without its semantic constant and level facts.

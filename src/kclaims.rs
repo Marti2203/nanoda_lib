@@ -137,6 +137,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_model::consts_ranked(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_levels::sig_lps(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_rec_end::types_below(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_rec_end::ctors_below(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -168,6 +169,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
             }
         }
         assert(crate::dom_rec_end::types_below(s));
+        assert(crate::dom_rec_end::ctors_below(s));
         sig_sr_of(s);
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
     }
@@ -188,6 +190,7 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
         crate::ti_syntax::iota_ok(sig),
         crate::dom_levels::sig_lps(sig),
         crate::dom_rec_end::types_below(sig),
+        crate::dom_rec_end::ctors_below(sig),
         forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
     ensures
         crate::dom_rec_end::sig_sr(sig),
@@ -214,6 +217,8 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
                 crate::dom_rec_end::ty_closed_at(sig, sh.ctors[p], rr, Seq::empty());
             }
             if crate::dom_rec_end::rec_interp(sig, c) {
+                crate::ti_syntax::frag_of(sig, c);
+                fields_of(sig, c);
                 crate::dom_rec_minor::ind_below_rec_g(sig, c);
                 crate::dom_rec_end::ty_closed_at(sig, ind, rr, Seq::empty());
                 assert forall|lv: Seq<LevelSpec>| lv.len() == rd.uparams.len() implies
@@ -233,6 +238,37 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
     assert forall|s: u64| #[trigger] crate::ti_syntax::struct_of(sig, s) implies crate::dom_proj_sound::struct_sem(sig, s) by {
         assert(crate::dom_proj_sound::struct_sem_h(sig, s));
         struct_sem_of(sig, s);
+    }
+}
+
+/// An interpreted recursor's fields: ranked below its inductive, and typed,
+/// from their shapes (`rec_model_h`) and the certified constants
+/// (`dom_rec_end::ctors_below`).
+proof fn fields_of(sig: crate::ti_syntax::Sig, c: u64)
+    requires
+        crate::dom_rec_end::rec_model_h(sig, c),
+        crate::dom_rec_end::ctors_below(sig),
+        crate::dom_rec_ty::rec_scope_g(sig, c),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, c);
+        &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
+            crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+        &&& crate::dom_code::fields_typed(sig, sh.ind)
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let ind = sh.ind;
+    assert(crate::dom_code::has_rec(sig, ind));
+    crate::dom_code::canon_shape_rec(sig, ind);
+    let rid = crate::dom_code::canon_rec(sig, ind);
+    assert(rid == c);
+    assert(crate::dom_code::canon_shape(sig, ind) == sh);
+    crate::dom_canon::fields_typed_of(sig, ind);
+    assert forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) implies
+        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, ind)) by {
+        assert(crate::dom_canon::capp(sig, sh.fields[p][k], ind));
+        crate::dom_canon::field_consts(sig, ind, p, k);
+        crate::dom_canon::ranked_of(sig, sh.fields[p][k], ind, crate::dom_code::rk(sig, ind));
     }
 }
 

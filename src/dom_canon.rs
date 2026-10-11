@@ -48,6 +48,136 @@ pub open spec fn pranked(sig: Sig, e: ExprSpec, r: int) -> bool
     }
 }
 
+/// `ranked`'s shape without its ranks: an application of constants, none
+/// the inductive `ind`, a constructor or a recursor (the fragment's
+/// boundary; the ranks are certified, `dom_rec_end::ctors_below`).
+pub open spec fn capp(sig: Sig, e: ExprSpec, ind: u64) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => capp(sig, *f, ind) && capp(sig, *x, ind),
+        ExprSpec::Const(j, _) => j != ind && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
+        _ => false,
+    }
+}
+
+/// `pranked`'s shape: `capp`, a parameter's variable allowed.
+pub open spec fn pcapp(sig: Sig, e: ExprSpec, ind: u64) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => pcapp(sig, *f, ind) && pcapp(sig, *x, ind),
+        ExprSpec::Const(j, _) => j != ind && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
+        ExprSpec::Var(_) => true,
+        _ => false,
+    }
+}
+
+/// The shape and the constants below `r`, beside `ind`, rank a term.
+pub proof fn ranked_of(sig: Sig, e: ExprSpec, ind: u64, r: int)
+    requires
+        capp(sig, e, ind),
+        crate::ti_level::all_consts(e, crate::dom_rec_end::below(sig, r).insert(ind)),
+    ensures
+        ranked(sig, e, r),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        ranked_of(sig, *f, ind, r);
+        ranked_of(sig, *x, ind, r);
+    }
+}
+
+pub proof fn pranked_of(sig: Sig, e: ExprSpec, ind: u64, r: int)
+    requires
+        pcapp(sig, e, ind),
+        crate::ti_level::all_consts(e, crate::dom_rec_end::below(sig, r).insert(ind)),
+    ensures
+        pranked(sig, e, r),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        pranked_of(sig, *f, ind, r);
+        pranked_of(sig, *x, ind, r);
+    }
+}
+
+/// A telescope's domains have its constants.
+pub proof fn all_consts_binds(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, ids: Set<u64>, i: int)
+    requires
+        crate::ti_level::all_consts(crate::rec_canon::binds(bk, ds, b), ids),
+        0 <= i < ds.len(),
+    ensures
+        crate::ti_level::all_consts(ds[i], ids),
+    decreases ds.len(),
+{
+    if i > 0 {
+        all_consts_binds(bk, ds.drop_first(), b, ids, i - 1);
+    }
+}
+
+/// A CANONICAL INDUCTIVE'S FIELDS mention only it and constants ranked
+/// below it (`dom_rec_end::ctors_below`).
+pub proof fn field_consts(sig: Sig, ind: u64, p: int, k: int)
+    requires
+        has_rec(sig, ind),
+        crate::dom_rec_end::ctors_below(sig),
+        0 <= p < canon_shape(sig, ind).nmin(),
+        0 <= k < canon_shape(sig, ind).fields[p].len(),
+    ensures
+        crate::ti_level::all_consts(canon_shape(sig, ind).fields[p][k], crate::dom_rec_end::below(sig, rk(sig, ind)).insert(ind)),
+{
+    let sh = canon_shape(sig, ind);
+    canon_shape_rec(sig, ind);
+    let rid = canon_rec(sig, ind);
+    assert(crate::dom_rec_ty::rshape(sig, rid) == sh);
+    assert(sh.ind == ind) by {
+        crate::dom_code::canon_side(sig, ind);
+        reveal(crate::dom_code::ind_side);
+    }
+    crate::dom_ctor_bound::ctor_shape(sig, ind, p);
+    let t = sig.consts[sh.ctors[p]].ty;
+    let ids = crate::dom_rec_end::below(sig, rk(sig, ind)).insert(ind);
+    assert(crate::ti_level::all_consts(t, ids));
+    let ds = sh.pdoms + sh.fields[p];
+    all_consts_binds(BinderKind::Pi, ds, crate::rec_canon::tbody(t, sh.np + sh.fields[p].len()), ids, sh.np + k);
+    assert(ds[sh.np + k] == sh.fields[p][k]);
+}
+
+/// THE FIELDS' RANKS FROM THE CERTIFICATE: the shapes the hypothesis
+/// gives (`fields_typed_h`) and the constants the export certifies
+/// (`field_consts`) give `fields_typed`.
+pub proof fn fields_typed_of(sig: Sig, ind: u64)
+    requires
+        has_rec(sig, ind),
+        crate::dom_rec_end::ctors_below(sig),
+        fields_typed_h(sig, ind),
+    ensures
+        fields_typed(sig, ind),
+{
+    reveal(fields_typed_h);
+    reveal(fields_typed);
+    let sh = canon_shape(sig, ind);
+    assert forall|p: int, k: int, ls: Seq<LevelSpec>| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        && ls.len() == sig.consts[ind].lps.len() && !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+        && !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && simple_ty(sig, ind, sh.fields[p][k])
+        implies #[trigger] ftyped(sig, ind, p, k, ls) && ranked(sig, sh.fields[p][k], rk(sig, ind)) by {
+        assert(fields_typed_h(sig, ind));
+        assert(ftyped(sig, ind, p, k, ls));
+        assert(capp(sig, sh.fields[p][k], ind));
+        field_consts(sig, ind, p, k);
+        ranked_of(sig, sh.fields[p][k], ind, rk(sig, ind));
+    }
+    assert forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        && !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+        && !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && !simple_ty(sig, ind, sh.fields[p][k])
+        implies #[trigger] pfield_ok(sig, ind, p, k) by {
+        assert(pfield_ok_h(sig, ind, p, k));
+        field_consts(sig, ind, p, k);
+        pranked_of(sig, sh.fields[p][k], ind, rk(sig, ind));
+    }
+}
+
 /// LEVEL SUBSTITUTION KEEPS THE FIELD KINDS: the same constants in the
 /// same shape.
 pub proof fn sl_kinds(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec, r: int, ks: Seq<u64>, vs: Seq<LevelSpec>)

@@ -2242,20 +2242,33 @@ pub open spec fn block_ok<'p>(ef: ExportFile<'p>, i: InductiveData<'p>, sh: crat
         0 <= j1 < sh.nmin() && 0 <= j2 < sh.nmin() && sh.ctors[j1] == sh.ctors[j2] ==> j1 == j2
 }
 
+/// The inductives a block's constructors may mention: a single block's
+/// own, else the block's.
+pub open spec fn block_names<'p>(i: InductiveData<'p>) -> Seq<NamePtr<'p>> {
+    if i.all_ind_names@.len() == 1 { seq![i.info.name] } else { i.all_ind_names@ }
+}
+
 /// A BLOCK'S CONSTRUCTORS MENTION ONLY EARLIER CONSTANTS (R3b's
 /// tested-input check): every exported constructor of the block mentions
 /// only constants declared before its inductive, or the block's
-/// inductives.
+/// inductives (a single block's: the inductive itself).
 pub open spec fn ctors_known<'p>(ef: ExportFile<'p>, i: InductiveData<'p>) -> bool {
     exists|cc: int| #[trigger] crate::env::limit_cutoff_ok_vk(ef.declars_view(), ef.declars_keys(), crate::env::EnvLimit::ByName(i.info.name), cc)
-        && forall|c: ConstructorData<'p>| #[trigger] ex_decl(ef, Declar::Constructor(c)) && i.all_ctor_names@.contains(c.info.name)
+        && forall|c: ConstructorData<'p>| #[trigger] ex_decl(ef, Declar::Constructor(c))
+            && crate::expr::name_ids(i.all_ctor_names@).contains(crate::level_arena_bridge::name_id(c.info.name))
             ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c.info.ty),
-                crate::env_model::dty_at(ef.declars_view(), ef.declars_keys(), cc).dom().union(crate::expr::name_ids(i.all_ind_names@).to_set()))
+                crate::env_model::dty_at(ef.declars_view(), ef.declars_keys(), cc).dom().union(crate::expr::name_ids(block_names(i)).to_set()))
 }
 
 /// THE BLOCK CERTIFICATE (B6a-3): an exported single, non-nested inductive
-/// whose check returned has its canonical shape and recursor.
+/// whose check returned has its canonical shape and recursor; and any
+/// block's constructors mention only earlier constants (`ctors_known`).
 pub open spec fn block_cert<'p>(ef: ExportFile<'p>, i: InductiveData<'p>) -> bool {
+    block_shape_cert(ef, i) && ctors_known(ef, i)
+}
+
+/// Its shape part.
+pub open spec fn block_shape_cert<'p>(ef: ExportFile<'p>, i: InductiveData<'p>) -> bool {
     i.all_ind_names@.len() == 1 && !i.is_nested ==>
         exists|sh: crate::rec_canon::IndShape, od_r: Declar<'p>| #[trigger] block_ok(ef, i, sh, od_r)
 }
@@ -3780,6 +3793,41 @@ pub(crate) proof fn export_blocks_ok_intro<'p>(ef: ExportFile<'p>)
 }
 
 /// The export's keys have distinct name ids.
+/// Two declared names of one id are one name.
+pub(crate) proof fn key_id_inj<'p>(ef: ExportFile<'p>, n1: NamePtr<'p>, n2: NamePtr<'p>)
+    requires
+        export_ok(ef),
+        ef.declars_view().contains_key(n1),
+        ef.declars_view().contains_key(n2),
+        crate::level_arena_bridge::name_id(n1) == crate::level_arena_bridge::name_id(n2),
+    ensures
+        n1 == n2,
+{
+    export_keys_ids_inj(ef);
+    export_ok_facts(ef);
+    ef.declars_views();
+    let keys = ef.declars_keys();
+    assert(keys.to_set().contains(n1) && keys.to_set().contains(n2));
+    let i1 = choose|i: int| 0 <= i < keys.len() && keys[i] == n1;
+    let i2 = choose|i: int| 0 <= i < keys.len() && keys[i] == n2;
+    assert(crate::level_arena_bridge::name_id(keys[i1]) == crate::level_arena_bridge::name_id(keys[i2]));
+}
+
+/// A declared name is tagged with the export's arena.
+pub(crate) proof fn export_tagged_key<'p>(ef: ExportFile<'p>, i: int)
+    requires
+        export_ok(ef),
+        0 <= i < ef.declars_keys().len(),
+    ensures
+        crate::util_model::export_tagged(ef.arena(), ef.declars_keys()[i]),
+{
+    ef.declars_views();
+    let keys = crate::indexmap_model::imap_keys(&ef.declars);
+    let view = crate::indexmap_model::imap_view(&ef.declars);
+    assert(keys.to_set().contains(keys[i]));
+    assert(view.contains_key(keys[i]));
+}
+
 pub(crate) proof fn export_keys_ids_inj<'p>(ef: ExportFile<'p>)
     requires
         export_ok(ef),
@@ -4262,7 +4310,6 @@ impl<'t, 'p: 't> ExportFile<'p> {
         ensures
             exists|c: int| #[trigger] crate::tc::declar_cert_at(*self, *d, c),
             *d matches Declar::Inductive(i) ==> block_cert(*self, i),
-            *d matches Declar::Inductive(i) ==> ctors_known(*self, i),
     {
         let ghost a = self.arena();
         // VERUS-REWRITE(tested-input): the inductive type's declared type is
@@ -4323,7 +4370,18 @@ impl<'t, 'p: 't> ExportFile<'p> {
             // block Lean exports: nanoda checks the constructors with only
             // the block's inductives added.
             if let Declar::Inductive(i0) = d {
-                let ghost known = crate::expr::known_ids(env0, crate::expr::name_ids(i0.all_ind_names@));
+                // a single block's constructors may mention only the
+                // inductive itself (Lean's single blocks list just it)
+                let own = [i0.info.name];
+                let names: &[NamePtr<'t>] = if i0.all_ind_names.len() == 1 { &own } else { &i0.all_ind_names };
+                let ghost known = crate::expr::known_ids(env0, crate::expr::name_ids(block_names(*i0)));
+                proof {
+                    broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
+                    if i0.all_ind_names@.len() == 1 {
+                        assert(own@ =~= seq![i0.info.name]);
+                    }
+                    assert(names@ == block_names(*i0));
+                }
                 proof {
                     broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
                     assert(declar_export_tagged(a, Declar::Inductive(*i0)));
@@ -4336,10 +4394,12 @@ impl<'t, 'p: 't> ExportFile<'p> {
                         crate::env_model::env_matches(env0, *tc0.ctx),
                         crate::util_model::ctx_ok(*tc0.ctx),
                         crate::util_model::arena_ids(*tc0.ctx).1 == a,
-                        known == crate::expr::known_ids(env0, crate::expr::name_ids(i0.all_ind_names@)),
+                        known == crate::expr::known_ids(env0, crate::expr::name_ids(block_names(*i0))),
+                        names@ == block_names(*i0),
                         forall|x: int| 0 <= x < i0.all_ctor_names@.len() ==> crate::util_model::export_tagged(a, #[trigger] i0.all_ctor_names@[x]),
                         forall|c: ConstructorData<'t>, x: int| #![trigger ex_decl(*self, Declar::Constructor(c)), i0.all_ctor_names@[x]]
-                            0 <= x < j && ex_decl(*self, Declar::Constructor(c)) && c.info.name == i0.all_ctor_names@[x]
+                            0 <= x < j && ex_decl(*self, Declar::Constructor(c))
+                            && crate::level_arena_bridge::name_id(c.info.name) == crate::level_arena_bridge::name_id(i0.all_ctor_names@[x])
                             ==> crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c.info.ty), known),
                     decreases i0.all_ctor_names@.len() - j,
                 {
@@ -4359,13 +4419,15 @@ impl<'t, 'p: 't> ExportFile<'p> {
                                 export_tagged_owned(*tc0.ctx, c.info.ty);
                                 self.declars_views();
                             }
-                            assert!(tc0.ctx.consts_known(c.info.ty, &env0, &i0.all_ind_names),
+                            assert!(tc0.ctx.consts_known(c.info.ty, &env0, names),
                                 "inductive: a constructor mentions a constant declared after its inductive");
                             proof {
                                 assert forall|c2: ConstructorData<'t>, x: int| #![trigger ex_decl(*self, Declar::Constructor(c2)), i0.all_ctor_names@[x]]
-                                    0 <= x < j + 1 && ex_decl(*self, Declar::Constructor(c2)) && c2.info.name == i0.all_ctor_names@[x]
+                                    0 <= x < j + 1 && ex_decl(*self, Declar::Constructor(c2))
+                                    && crate::level_arena_bridge::name_id(c2.info.name) == crate::level_arena_bridge::name_id(i0.all_ctor_names@[x])
                                     implies crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c2.info.ty), known) by {
                                     if x == j {
+                                        key_id_inj(*self, c2.info.name, cn);
                                         assert(Declar::Constructor(c2) == Declar::Constructor(*c));
                                     }
                                 }
@@ -4379,10 +4441,12 @@ impl<'t, 'p: 't> ExportFile<'p> {
                     crate::env_model::env_model_at(env0);
                     assert(ctors_known(*self, *i0)) by {
                         assert forall|c2: ConstructorData<'t>| #[trigger] ex_decl(*self, Declar::Constructor(c2))
-                            && i0.all_ctor_names@.contains(c2.info.name) implies crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c2.info.ty),
-                                crate::env_model::dty_at(self.declars_view(), self.declars_keys(), env0.visible()).dom().union(crate::expr::name_ids(i0.all_ind_names@).to_set())) by {
-                            let x = choose|x: int| 0 <= x < i0.all_ctor_names@.len() && i0.all_ctor_names@[x] == c2.info.name;
-                            assert(ex_decl(*self, Declar::Constructor(c2)) && i0.all_ctor_names@[x] == c2.info.name);
+                            && crate::expr::name_ids(i0.all_ctor_names@).contains(crate::level_arena_bridge::name_id(c2.info.name)) implies crate::ti_level::all_consts(crate::expr_arena_bridge::to_model(c2.info.ty),
+                                crate::env_model::dty_at(self.declars_view(), self.declars_keys(), env0.visible()).dom().union(crate::expr::name_ids(block_names(*i0)).to_set())) by {
+                            let ids = crate::expr::name_ids(i0.all_ctor_names@);
+                            let x = choose|x: int| 0 <= x < ids.len() && ids[x] == crate::level_arena_bridge::name_id(c2.info.name);
+                            assert(ex_decl(*self, Declar::Constructor(c2))
+                                && crate::level_arena_bridge::name_id(c2.info.name) == crate::level_arena_bridge::name_id(i0.all_ctor_names@[x]));
                         }
                     }
                 }
@@ -5727,7 +5791,7 @@ pub(crate) proof fn block_cert_end<'x, 't>(ef: ExportFile<'t>, env: crate::env::
         },
         forall|n: NamePtr<'t>| #[trigger] rec_names_of(ef, i.info.name).contains(n) ==> n == crate::env::declar_info(nd).name,
     ensures
-        block_cert(ef, i),
+        block_shape_cert(ef, i),
 {
     block_ind_part(ef, env, st, i);
     reveal(shape_pre);
@@ -10820,6 +10884,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             assert(locs =~= local_ids(st.local_params@) + local_ids(fls)) by {
                 assert forall|k: int| 0 <= k < locs.len() implies locs[k] == (local_ids(st.local_params@) + local_ids(fls))[k] by {}
+            }
+            assert forall|k: int| 0 <= k < st.local_params@.len() implies #[trigger] locs[k] == crate::expr_arena_bridge::expr_id(st.local_params@[k])
+                && crate::tc::kconv(env, bts[k], crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])))
+                && bts[k] == crate::expr_arena_bridge::to_model(crate::expr_arena_bridge::local_binder_type_of(st.local_params@[k])) by {
+                reveal(params_conv);
+                assert(params_conv(env, *st, locs, bts, locs.len() as int));
             }
         }
         // Non-param constructor args.
