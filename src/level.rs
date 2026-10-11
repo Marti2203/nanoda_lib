@@ -119,16 +119,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     {
         let mut set = crate::util::new_fx_hash_set();
         let ghost m = to_model_of_levels(ls);
-        // VERUS-REWRITE(for-temporary): the `read_levels` result is bound to a
-        // local before the loop; Verus's `for` desugaring drops a temporary in
-        // the iterator expression too early (E0716). Same call, same loop.
-        let rl = self.read_levels(ls);
-        for l in it: rl.iter().copied()
+        for l in it: self.read_levels(ls).iter().copied()
             invariant
                 *self == *old(self),
                 crate::util_model::owns(*self, ls),
                 crate::util_model::owns_all(*self, it.seq()),
-                it.seq() == rl@,
                 it.seq().len() == m.len(),
                 m == to_model_of_levels(ls),
                 forall|j: int| 0 <= j < it.seq().len() ==> #[trigger] to_model(it.seq()[j]) == m[j],

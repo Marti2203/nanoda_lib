@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **211 marked rewrites across 121 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **208 marked rewrites across 119 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -137,17 +137,20 @@ to `v@` for an iterator it can name. Inlining it back loses the fact
 
 ---
 
-### A temporary in a `for` loop's iterator expression — 1 rewrite
+### A temporary in a `for` loop's iterator expression — 0 rewrites, CLOSED (2026-10-11)
 
-`for l in self.read_levels(ls).iter().copied()` is rejected with E0716: Verus's
-`for` desugaring drops the temporary `Arc` while the iterator still borrows it.
-Binding the call to a local first is behaviour-identical.
+`for l in self.read_levels(ls).iter().copied()` was rejected with E0716:
+Verus's `for` desugaring bound the iterable with a `let`, which drops the
+temporary `Arc` at the end of that statement while the iterator still
+borrows it. Fixed on the fork (`e66265835`): the iterable is bound by a
+one-arm `match`, as Rust's own desugaring does, so temporaries live for the
+whole loop (Verus's loop-isolation check accepts the extra `match`; its
+loop and iterator test suites pass, with a regression test added).
+`no_dupes_all_params` and `specialize_nested_aux`'s
+`for adjusted_ctor in (st.all_inductives_incl_specialized[i].clone()).ctors.iter()`
+are the kernel's again.
 
-| function | file |
-|---|---|
-| `no_dupes_all_params` | `src/level.rs` |
-
-### `flat_map` / `collect` — 4 rewrites
+### `flat_map` / `collect` — 2 rewrites
 
 `.map(|x| x.name).collect()` is the kernel's again where it stood alone
 (2026-10-11): `mk_ind_tys_env_ext`'s two name lists (into `Arc<[NamePtr]>`)
@@ -155,17 +158,21 @@ and `mk_recursor_aux`'s `all_inductives` (into a `Vec`, then `Arc::from`).
 The closure is annotated (`|x: &IndTyHeader| -> (n: NamePtr) ensures n == x.name { x.name }`),
 which is what lets `collect` state its elements; collecting into `Arc<[T]>`
 needed a `FromIteratorSpecImpl` for `Arc<[T]>`, added on the fork.
-`ctor_names` is gone.
+`ctor_names` is gone, and so is `rec_names_set`: `check_inductive_declar`
+hands `recursors.iter().map(|x| x.info().name).collect()` to
+`ck_recursor_names_simple` as the kernel does, through a fork
+`FromIteratorSpecImpl` for `HashSet` (the collected set is the items' set,
+for keys that obey the model -- which the proof gets for every set of
+owned pointers from `ptr_owned_keys`).
 
 What remains is `flat_map`, which vstd does not specify at all
-(`core::iter::FlatMap` is unsupported), and two places where the list feeds a
+(`core::iter::FlatMap` is unsupported), and one place where the list feeds a
 closure that captures `&mut self`:
 
 | function | file |
 |---|---|
 | `flatten_minors` (`st.minors.iter().flat_map(|v| v.iter().copied()).collect()`), called by `mk_rec_rules`, `mk_recursors`, `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` |
 | `ind_names` (the block's names, read out for `is_nested_ind_app`'s `find_const` closure; its body is the kernel's `map` + `collect`) | `src/inductive.rs` |
-| `rec_names_set`, called by `check_inductive_declar` (the recursor-name set) | `src/inductive.rs` |
 
 ### `Box<dyn Error>` — 1 rewrite
 
@@ -330,7 +337,7 @@ needed a different shape.
 | `check_positivity1` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `large_elim_test_aux` | `src/inductive.rs` | parameters `mut ctor_type_cursor, mut rem_params` → `ctor_type_in, rem_params_in` with `let mut` copies (the claim names the entry values); the iterator and the result of the final `all` bound to `it`/`r`, so the proof can name what `all` saw |
 | `abstr_pis` | `src/expr.rs` | parameters `mut binders, mut body` → `binders_in, body_in` with `let mut` copies (the claim names the entry values); the `IterSpec` bound `foldl_apps` already carries |
-| `specialize_nested_aux` | `src/inductive.rs` | the `for` over a clone of header `i`'s constructors and `for (n, e) in map.iter()` over the specialized-type table → scans by index / by position (`get_index`); the clone of header `i` is bound to a local (a temporary in a `for` iterator is rejected); `get_mut(i)` + `mem::replace(&mut old.ctors, ..)` → `set(i, ..)` of the same header with the new constructors (`i` is in range, so the kernel's `None => panic!` arm cannot fire); the iterator handed to `abstr_pis` bound to a local |
+| `specialize_nested_aux` | `src/inductive.rs` | `for (n, e) in map.iter()` over the specialized-type table → the scan by position (`get_index`); `get_mut(i)` + `mem::replace(&mut old.ctors, ..)` → `set(i, ..)` of the same header with the new constructors (`i` is in range, so the kernel's `None => panic!` arm cannot fire); the iterator handed to `abstr_pis` bound to a local |
 | `replace_if_nested` | `src/inductive.rs` | `.iter().find(..)` over the specialized-type table → the scan by position it stands for; iterators handed to `foldl_apps`/`abstr_pis` bound to locals; the container's and each constructor's `(uparams, ty)` read through `env_model::get_declar_info_ty` (the same `info`, carrying the claim that the uparams are `Param`s; the `get_inductive`/`get_constructor` reads and their `?` rejections stay); the universe-arity test `subst_expr_levels` panics on made one frame earlier, as in `infer_const` |
 | `replace_f` | `src/inductive.rs` | the iterators handed to `foldl_apps` (`.iter().copied()`, `.skip(np)`) bound to locals so the proof can name their elements |
 | `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | `for new_rec in recursors` → the scan by index, because the major-head check (section 4) reads the recursor's position |
@@ -488,11 +495,12 @@ specifications, so the fork's copies were dropped):
 | `enumerate`'s element/index pairing does not reach the proof | false — it does, with the loop's `it.seq()` named in the invariant |
 | a tuple pattern in `for` is rejected | false |
 | a `for` over `.copied()` does not discharge its invariants | false |
-| `collect` cannot go through a `map` closure | false for an annotated closure into a `Vec`; into `Arc<[T]>` it needed a fork `FromIteratorSpecImpl` |
+| `collect` cannot go through a `map` closure | false for an annotated closure into a `Vec`; into `Arc<[T]>` and `HashSet` it needed fork `FromIteratorSpecImpl`s |
 | an iterator argument can be inlined | still false — the proof cannot name it |
 | a `for` over an unnamed set iterator (`base_rec_names.iter().copied()`) can be tied to the set | still false (the same naming gap); `for r in recursors.clone()` over a `Vec` does work |
 | `Iterator::any` with a closure calling a `&self` method | works (`check_inductive_declar`'s `is_recursive` scan) |
-| `flat_map`, slice patterns, closures capturing `&mut self`, `&T` as `*const T`, E0716 in a `for` | still unsupported |
+| a temporary in a `for`'s iterable (E0716) | fixed on the fork (the iterable bound by `match`, as in Rust) |
+| `flat_map`, slice patterns, closures capturing `&mut self`, `&T` as `*const T` | still unsupported |
 
 **Retest before relying on a reason, and prefer a probe to a comment.** The
 cheapest probe is a three-line function using the construct in isolation,
