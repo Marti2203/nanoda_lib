@@ -2101,7 +2101,7 @@ inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
 structure eta at structures outside the `struct_of` slice (dependent
 fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
 
-### Rank-stratified strip (2026-10-10, R1-R3b done)
+### Rank-stratified strip (2026-10-10, R1-R3 done)
 
 FOUND: the model's typing facts (`ty_closed`, `rule_typed`,
 `fields_typed`, `rule_typed_g`) are stated in `ti_strip::strip(sig)`, with
@@ -2279,7 +2279,7 @@ The plan:
   field, `spine_build`), at the identities of the substitution calculus
   (`fld_dom_id`, `vsub_vars_lift`), and its type is the minor's end
   (`dom_rec_minor::minor_end`). `rule_typed` leaves `rec_model_h`;
-  `kclaims::sig_sr_of` derives it. Open: R3c-2, `rule_typed_g` for the
+  `kclaims::sig_sr_of` derives it. R3c-2 (done): `rule_typed_g` for the
   other recursors (indices), in `rec_model_p_h`. The R3c-1 construction
   carries over except at the recursive calls' index arguments: arbitrary
   terms (not simple types, so not rebuilt as in R3b) to be typed at the
@@ -2291,7 +2291,14 @@ The plan:
   constructor precedes the recursor), certify as a further `jrank`
   choice conjunct (R3b's pattern), and generalise `dom_rule_ty` over
   the indices (general analogues of `dom_rec_minor::minor_split`,
-  `minor_end`, `msds_ih`).
+  `minor_end`, `msds_ih`). Done as planned: `dom_rule_g::rule_typed_g_of`
+  given `idx_typed`; `idx_typed_of_ctor` from the constructor-side fact
+  (`ctor_ctx_to_rule`: `ren_field`'s renaming, then weakening past the
+  later fields; `idx_dom_id`); certified at the positions
+  (`export_sound::ctor_field_s0`, `ctor_idx_s0`, `ctor_idx_cert`) as the
+  `jrank` choice conjunct `idx_typed_r` (`dom_rule_g::idx_all`).
+  `rule_typed` and `rule_typed_g` are now theorems: the rule typings
+  leave the model's hypothesis entirely.
 
 ## The open fork before S4
 

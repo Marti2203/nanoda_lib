@@ -139,6 +139,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_rec_end::types_below(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| #[trigger] crate::dom_rec_end::ctors_below(jsig(dty, denv, d)),
         forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_canon::fields_ty(jsig(dty, denv, d)),
+        forall|d: Map<nat, ExprSpec>| crate::ti_syntax::iota_ok(#[trigger] jsig(dty, denv, d)) ==> crate::dom_rule_g::idx_all(jsig(dty, denv, d)),
     ensures
         frag_env(dty, denv),
 {
@@ -172,6 +173,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         assert(crate::dom_rec_end::types_below(s));
         assert(crate::dom_rec_end::ctors_below(s));
         assert(crate::dom_canon::fields_ty(s));
+        assert(crate::dom_rule_g::idx_all(s));
         sig_sr_of(s);
         assert(s.ienv.ctor_np == denv.ctor_np && s.ienv.ctor_ind == denv.ctor_ind && s.ienv.ctor_nf == denv.ctor_nf);
     }
@@ -194,6 +196,7 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
         crate::dom_rec_end::types_below(sig),
         crate::dom_rec_end::ctors_below(sig),
         crate::dom_canon::fields_ty(sig),
+        crate::dom_rule_g::idx_all(sig),
         forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> !sig.ienv.ctor_ind.contains_key(c),
     ensures
         crate::dom_rec_end::sig_sr(sig),
@@ -241,6 +244,13 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
                     implies #[trigger] crate::dom_model::sem_const(sig, sh.ctors[p], ls) by {
                     assert(sh.ctors[p] == sh.ctors[p]);
                     crate::dom_model::sem_const_of(sig, sh.ctors[p], ls);
+                }
+            } else {
+                crate::ti_syntax::frag_of(sig, c);
+                assert forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
+                    implies #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p) by {
+                    assert forall|r: int| 0 <= r < sh.rposj(p).len() implies #[trigger] crate::dom_rule_g::idx_typed(sig, c, lv, p, r) by {}
+                    crate::dom_rule_g::rule_typed_g_of(sig, c, lv, p);
                 }
             }
         }

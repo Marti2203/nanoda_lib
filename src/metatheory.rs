@@ -82,9 +82,17 @@ pub open spec fn fields_typed_r(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSp
     crate::ti_syntax::iota_ok(s) ==> crate::dom_canon::fields_ty(s)
 }
 
+/// ... and under which, wherever the recursors are in the fragment, the
+/// canonical rules' recursive calls' index arguments are typed
+/// (`dom_rule_g::idx_all`).
+pub open spec fn idx_typed_r(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, r: Map<u64, nat>) -> bool {
+    let s = crate::twin::twin(jsig_r(dty, denv, r));
+    crate::ti_syntax::iota_ok(s) ==> crate::dom_rule_g::idx_all(s)
+}
+
 pub open spec fn jrank(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> Map<u64, nat> {
     choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r) && types_typed(dty, denv, r)
-        && ctors_ranked(dty, denv, r) && fields_typed_r(dty, denv, r)
+        && ctors_ranked(dty, denv, r) && fields_typed_r(dty, denv, r) && idx_typed_r(dty, denv, r)
 }
 
 /// REAL TYPING: the typed judgment types `e` at `t`, in the empty de Bruijn

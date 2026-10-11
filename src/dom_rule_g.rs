@@ -816,4 +816,297 @@ pub proof fn rule_typed_g_of(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSp
     crate::dom_rule_ty::binds_scope(ctx, bt, 0);
 }
 
+/// THE INDEX DOMAINS' IDENTITY: the recursor's index domain `q` (the
+/// inductive's, lifted past the motive and minors) at the recursive call's
+/// arguments before it is the inductive's index domain at the recursive
+/// field's arguments (over the constructor's parameters and the `k`
+/// fields before it), lifted into the rule's binders.
+pub proof fn idx_dom_id(x: ExprSpec, np: nat, nmin: nat, nf: nat, k: nat, q: nat, args: Seq<ExprSpec>, xs: Seq<ExprSpec>)
+    requires
+        k < nf,
+        crate::expr_model::nlbv(x) <= np + q,
+        args.len() == np + q,
+        forall|t: int| 0 <= t < np ==> #[trigger] args[t] == ExprSpec::Var((k + np - 1 - t) as nat),
+        xs.len() == np + 1 + nmin + q,
+        forall|t: int| 0 <= t < np ==> #[trigger] xs[t] == ExprSpec::Var((nf + np + nmin - t) as nat),
+        forall|s: int| 0 <= s < q ==> #[trigger] xs[np + 1 + nmin + s]
+            == crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, args[np + s])),
+    ensures
+        crate::ti_spine::vsub(crate::subst_algebra::lift(1 + nmin, q, x), xs)
+        == crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, crate::ti_spine::vsub(x, args))),
+{
+    use crate::ti_subst::{psub, rn, lr, comp_ss, psub_psub, lift_is_rn};
+    let lx = crate::subst_algebra::lift(1 + nmin, q, x);
+    crate::ti_beta::vsub_tsub(lx, xs);
+    lift_is_rn(1 + nmin, q, x);
+    let t2 = crate::ti_beta::tsub(xs, xs.len());
+    psub_psub(x, rn(lr(1 + nmin, q)), t2);
+    let lhs = comp_ss(rn(lr(1 + nmin, q)), t2);
+    let va = crate::ti_spine::vsub(x, args);
+    crate::ti_beta::vsub_tsub(x, args);
+    let t1 = crate::ti_beta::tsub(args, args.len());
+    let a1 = crate::subst_algebra::lift(1 + nmin, k, va);
+    lift_is_rn(1 + nmin, k, va);
+    lift_is_rn((nf - k) as nat, 0, a1);
+    psub_psub(x, t1, rn(lr(1 + nmin, k)));
+    let s1 = comp_ss(t1, rn(lr(1 + nmin, k)));
+    psub_psub(x, s1, rn(lr((nf - k) as nat, 0)));
+    let rhs = comp_ss(s1, rn(lr((nf - k) as nat, 0)));
+    assert forall|v: nat| v < np + q implies #[trigger] lhs(v) == rhs(v) by {
+        crate::ti_beta::tsub_at(args, args.len(), v);
+        if v < q {
+            crate::ti_beta::tsub_at(xs, xs.len(), v);
+            let s = (q - 1 - v) as int;
+            assert(xs[xs.len() - 1 - v] == xs[np + 1 + nmin + s]);
+            assert(args[args.len() - 1 - v] == args[np + s]);
+            lift_is_rn(1 + nmin, k, args[np + s]);
+            lift_is_rn((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, args[np + s]));
+            crate::ti_subst::psub_psub(args[np + s], rn(lr(1 + nmin, k)), rn(lr((nf - k) as nat, 0)));
+        } else {
+            crate::ti_beta::tsub_at(xs, xs.len(), v + 1 + nmin);
+            let t = (np + q - 1 - v) as int;
+            assert(xs[xs.len() - 1 - (v + 1 + nmin)] == xs[t]);
+            assert(args[args.len() - 1 - v] == args[t]);
+        }
+    }
+    crate::dom_rule_ty::psub_ext_below(x, lhs, rhs, np + q);
+}
+
+/// WEAKENING past further binders at the end.
+pub proof fn wk_end(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, ext: crate::ti_syntax::Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, m, n, t)),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::Jd::Wf(g + ext)),
+    ensures
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g + ext, crate::subst_algebra::lift(ext.len(), 0, m),
+            crate::subst_algebra::lift(ext.len(), 0, n), crate::subst_algebra::lift(ext.len(), 0, t))),
+{
+    use crate::ti_subst::{rn, lr, lift_is_rn};
+    let d = crate::ti_sub::get(sig, crate::ti_syntax::eq(g, m, n, t));
+    let w = crate::ti_sub::get(sig, crate::ti_syntax::Jd::Wf(g + ext));
+    let tg = g + ext;
+    let e = ext.len();
+    let r = lr(e, 0);
+    assert forall|j: nat| j < g.len() implies r(j) < tg.len()
+        && #[trigger] crate::ti_syntax::var_ty(tg, r(j)) == crate::ti_subst::psub(crate::ti_syntax::var_ty(g, j), rn(r)) by {
+        assert(tg[tg.len() - 1 - (j + e)] == g[g.len() - 1 - j]);
+        let y = g[g.len() - 1 - j];
+        lift_is_rn(e, 0, crate::subst_algebra::lift(j + 1, 0, y));
+        crate::subst_algebra::lift_lift(e, j + 1, 0, 0, y);
+    }
+    let dr = crate::ti_meta::d_ren(sig, d, w, tg, r);
+    crate::ti_meta::mk_d(sig, dr);
+    lift_is_rn(e, 0, m);
+    lift_is_rn(e, 0, n);
+    lift_is_rn(e, 0, t);
+}
+
+/// FROM THE CONSTRUCTOR'S TELESCOPE TO THE RULE'S BINDERS: a judgment in
+/// the constructor's binders before field `k` (at the recursor's
+/// instance), below the recursor's rank, holds in the rule's binders,
+/// renamed past the motive and minors and weakened past the later fields.
+#[verifier::spinoff_prover]
+pub proof fn ctor_ctx_to_rule(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, k: int, m: ExprSpec, t: ExprSpec)
+    requires
+        crate::dom_rule_ty::rule_pre_g(sig, c, lv),
+        0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin(),
+        0 <= k < crate::dom_rec_ty::rshape(sig, c).fields[p].len(),
+        ({
+            let sh = crate::dom_rec_ty::rshape(sig, c);
+            let xs = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[p], sh.lps, crate::dom_rec_ty::rinst(sig, c, lv));
+            crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)),
+                crate::ti_syntax::eq(xs.subrange(0, sh.np + k), m, m, t))
+        }),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, c);
+        let (nmin, nf) = (sh.nmin(), sh.fields[p].len());
+        let lm = |e: ExprSpec| crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k as nat, e));
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)),
+            crate::ti_syntax::eq(crate::dom_rule_ty::rctx(sig, c, lv, p), lm(m), lm(m), lm(t)))
+    }),
+{
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c));
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let (np, nmin, nf) = (sh.np, sh.nmin(), sh.fields[p].len());
+    let us = crate::dom_rec_ty::rinst(sig, c, lv);
+    let xs = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[p], sh.lps, us);
+    let src = xs.subrange(0, np + k);
+    let h = crate::dom_rule_ty::rhead(sig, c, lv);
+    let ff = crate::dom_iota::ftds(sig, c, lv, p);
+    let tgt = h + ff.subrange(0, k);
+    crate::dom_rule_ty::rule_ctx_wf(sig, c, lv, p, k);
+    let d = crate::ti_sub::get(ss, crate::ti_syntax::eq(src, m, m, t));
+    let w = crate::ti_sub::get(ss, crate::ti_syntax::Jd::Wf(tgt));
+    let r = crate::ti_subst::lr((1 + nmin) as nat, k as nat);
+    crate::dom_rule_ty::rhead_len(sig, c, lv);
+    crate::dom_rec_ty::scope_ctor_ind(sig, c);
+    crate::dom_ctor_bound::ctor_shape(sig, sh.ind, p);
+    assert forall|j: nat| j < src.len() implies r(j) < tgt.len()
+        && #[trigger] crate::ti_syntax::var_ty(tgt, r(j)) == crate::ti_subst::psub(crate::ti_syntax::var_ty(src, j), crate::ti_subst::rn(r)) by {
+        crate::dom_rule_ty::ren_field(sig, c, lv, p, k, j);
+    }
+    let dr = crate::ti_meta::d_ren(ss, d, w, tgt, r);
+    crate::ti_meta::mk_d(ss, dr);
+    crate::ti_subst::lift_is_rn((1 + nmin) as nat, k as nat, m);
+    crate::ti_subst::lift_is_rn((1 + nmin) as nat, k as nat, t);
+    let m1 = crate::subst_algebra::lift((1 + nmin) as nat, k as nat, m);
+    let t1 = crate::subst_algebra::lift((1 + nmin) as nat, k as nat, t);
+    crate::dom_rule_ty::rule_ctx_wf(sig, c, lv, p, nf as int);
+    let ext = ff.subrange(k, nf as int);
+    assert(tgt + ext =~= crate::dom_rule_ty::rctx(sig, c, lv, p));
+    assert(ff.subrange(0, nf as int) =~= ff);
+    wk_end(ss, tgt, ext, m1, m1, t1);
+}
+
+/// The inductive's index domains are scoped in its telescope (its type is
+/// typed below its rank, R3a).
+pub proof fn idoms_scoped(sig: crate::ti_syntax::Sig, c: u64)
+    requires
+        crate::dom_rec_ty::rec_scope_g(sig, c),
+        crate::dom_rec_end::types_below(sig),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, c);
+        forall|q: int| 0 <= q < sh.ni ==> crate::expr_model::nlbv(#[trigger] sh.idoms[q]) <= sh.np + q
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    crate::dom_rec_ty::scope_ctor_ind(sig, c);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    let ti = sig.consts[sh.ind].ty;
+    let st = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, sh.ind));
+    assert(crate::dom_rec_end::ty_closed(st, ti));
+    let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(st, crate::ti_syntax::eq(Seq::empty(), ti, ti, crate::ti_syntax::sort(l)));
+    let xs = sh.pdoms + sh.idoms;
+    crate::jkernel::wf_nil(st);
+    let _lb = crate::ti_beta::pi_tele_wf(st, Seq::empty(), xs, crate::rec_canon::tbody(ti, sh.np + sh.ni), l);
+    assert(Seq::<ExprSpec>::empty() + xs =~= xs);
+    let w = crate::ti_sub::get(st, crate::ti_syntax::Jd::Wf(xs));
+    crate::ti_scope::d_scope(st, w);
+    assert forall|q: int| 0 <= q < sh.ni implies crate::expr_model::nlbv(#[trigger] sh.idoms[q]) <= sh.np + q by {
+        assert(xs[sh.np + q] == sh.idoms[q]);
+    }
+}
+
+/// The constructor-side fact: a recursive field's index terms (at the
+/// recursor's instance), each at the inductive's index domain at the
+/// field's arguments before it, in the constructor's binders before the
+/// field, below the recursor's rank.
+pub open spec fn ctor_idx_typed(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, r: int) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c));
+    let us = crate::dom_rec_ty::rinst(sig, c, lv);
+    let k = sh.rposj(p)[r];
+    let xs = crate::dom_rec_shape::sls(sh.pdoms + sh.fields[p], sh.lps, us);
+    let sidx = crate::dom_rec_shape::sls(crate::rec_canon::occ_idx(sh.fields[p][k as int], sh.np, sh.ni), sh.lps, us);
+    let args = crate::rec_canon::vars(k, sh.np) + sidx;
+    forall|q: int| 0 <= q < sh.ni ==> crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(xs.subrange(0, (sh.np + k) as int),
+        #[trigger] sidx[q], sidx[q], crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(sh.idoms[q], sh.lps, us), args.subrange(0, sh.np + q))))
+}
+
+/// FROM THE CONSTRUCTOR'S BINDERS TO THE RULE'S: the index arguments typed.
+#[verifier::spinoff_prover]
+pub proof fn idx_typed_of_ctor(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, r: int)
+    requires
+        crate::dom_rule_ty::rule_pre_g(sig, c, lv),
+        0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin(),
+        0 <= r < crate::dom_rec_ty::rshape(sig, c).rposj(p).len(),
+        ctor_idx_typed(sig, c, lv, p, r),
+    ensures
+        idx_typed(sig, c, lv, p, r),
+{
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c));
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let (np, nmin, nf, ni) = (sh.np, sh.nmin(), sh.fields[p].len(), sh.ni);
+    let up = sig.ienv.recs[c].uparams;
+    let us = crate::dom_rec_ty::rinst(sig, c, lv);
+    let k = sh.rposj(p)[r];
+    let f = sh.fields[p][k as int];
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[p], sh.ind, sh.us(), np, ni, nf);
+    direct_form(f, sh.ind, sh.us(), np, ni, k);
+    let idx = crate::rec_canon::occ_idx(f, np, ni);
+    let sidx = crate::dom_rec_shape::sls(idx, sh.lps, us);
+    let args = crate::rec_canon::vars(k, np) + sidx;
+    let tt = crate::ti_syntax::dty_at(sig, c, lv);
+    let xi = ih_args_g(sig, c, lv, p, r);
+    let ia = idx_args(sig, c, lv, p, r);
+    let pre = (np + 1 + nmin) as int;
+    let tds = crate::iota_gen::rtds_g(sig, c, lv);
+    crate::iota_gen::rec_ty_split_g(sig, c, lv);
+    crate::dom_rec_ty::rec_elp_parts(sig, c, p);
+    elp_spine_args(ExprSpec::Const(sh.ind, sh.us()), crate::rec_canon::vars(k, np) + idx, sh.lps);
+    crate::dom_rec_ty::scope_ctor_ind(sig, c);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    idoms_scoped(sig, c);
+    // the index domains mention only the inductive's level parameters
+    crate::dom_levels::sig_lps_below(sig, 0, Seq::<u64>::empty(), Seq::<LevelSpec>::empty());
+    assert(crate::ti_strip::strip_below(sig, 0).consts.contains_key(sh.ind));
+    crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.idoms, crate::rec_canon::tbody(sig.consts[sh.ind].ty, np + ni), sh.lps);
+    assert forall|q: int| 0 <= q < ni implies crate::level_inst::elp_in(#[trigger] sh.idoms[q], sh.lps) by {
+        assert((sh.pdoms + sh.idoms)[np + q] == sh.idoms[q]);
+    }
+    // the index arguments, from the constructor's binders
+    assert forall|s: int| 0 <= s < ni implies #[trigger] ia[s]
+        == crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, sidx[s])) by {
+        assert((crate::rec_canon::vars(k, np) + idx)[np + s] == idx[s]);
+        crate::dom_rec_ty::rinst_id(sig, c, lv, idx[s]);
+    }
+    assert forall|q: int| 0 <= q < ni implies crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(crate::dom_rule_ty::rctx(sig, c, lv, p),
+        #[trigger] xi[pre + q], xi[pre + q], crate::ti_spine::sdom(tt, xi, pre + q))) by {
+        let x0 = sh.idoms[q];
+        let x = crate::expr_model::subst_expr_levels(x0, sh.lps, us);
+        let tq = crate::ti_spine::vsub(x, args.subrange(0, np + q));
+        assert(crate::ti_syntax::derivable(ss, crate::ti_syntax::eq((crate::dom_rec_shape::sls(sh.pdoms + sh.fields[p], sh.lps, us)).subrange(0, (np + k) as int),
+            sidx[q], sidx[q], tq)));
+        ctor_ctx_to_rule(sig, c, lv, p, k as int, sidx[q], tq);
+        // the type: the recursor's index domain at the arguments before it
+        crate::ti_spine::tel_next(tds, crate::iota_gen::rbody_g(sig, c), xi, pre + q);
+        crate::dom_rec_ty::rinst_id(sig, c, lv, x0);
+        crate::ti_level::ls_lift(1 + nmin, q as nat, x0, up, lv);
+        crate::dom_rec_shape::nlbv_sl(x0, sh.lps, us);
+        assert(tds[pre + q] == crate::subst_algebra::lift(1 + nmin, q as nat, x));
+        let ap = args.subrange(0, np + q);
+        let xp = xi.subrange(0, pre + q);
+        assert forall|t: int| 0 <= t < np implies #[trigger] ap[t] == ExprSpec::Var((k + np - 1 - t) as nat) by {}
+        assert forall|t: int| 0 <= t < np implies #[trigger] xp[t] == ExprSpec::Var((nf + np + nmin - t) as nat) by {}
+        assert forall|s: int| 0 <= s < q implies #[trigger] xp[np + 1 + nmin + s]
+            == crate::subst_algebra::lift((nf - k) as nat, 0, crate::subst_algebra::lift(1 + nmin, k, ap[np + s])) by {
+            assert(xp[np + 1 + nmin + s] == ia[s]);
+            assert(ap[np + s] == sidx[s]);
+        }
+        idx_dom_id(x, np, nmin, nf, k, q as nat, ap, xp);
+        assert(xi[pre + q] == ia[q]);
+    }
+}
+
+/// THE INDEX ARGUMENTS TYPED, for every canonical recursor of the
+/// signature (certified at the export, R3c-2).
+pub open spec fn idx_all(sig: crate::ti_syntax::Sig) -> bool {
+    forall|c: u64, lv: Seq<LevelSpec>, p: int, r: int| #![trigger idx_typed(sig, c, lv, p, r)]
+        sig.ienv.recs.contains_key(c) && crate::dom_rec_ty::rec_scope_g(sig, c) && lv.len() == sig.ienv.recs[c].uparams.len()
+        && 0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin() && 0 <= r < crate::dom_rec_ty::rshape(sig, c).rposj(p).len()
+        ==> idx_typed(sig, c, lv, p, r)
+}
+
+/// The locals change nothing of it.
+pub proof fn idx_all_locals(sig: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>)
+    requires
+        idx_all(sig),
+    ensures
+        idx_all(crate::ti_syntax::Sig { locals: d, ..sig }),
+{
+    let sd = crate::ti_syntax::Sig { locals: d, ..sig };
+    assert forall|c: u64, lv: Seq<LevelSpec>, p: int, r: int| #![trigger idx_typed(sd, c, lv, p, r)]
+        sd.ienv.recs.contains_key(c) && crate::dom_rec_ty::rec_scope_g(sd, c) && lv.len() == sd.ienv.recs[c].uparams.len()
+        && 0 <= p < crate::dom_rec_ty::rshape(sd, c).nmin() && 0 <= r < crate::dom_rec_ty::rshape(sd, c).rposj(p).len()
+        implies idx_typed(sd, c, lv, p, r) by {
+        crate::dom_rec_end::scope_dir(sd, sig, c);
+        assert(crate::dom_rec_ty::rshape(sd, c) == crate::dom_rec_ty::rshape(sig, c));
+        assert(idx_typed(sig, c, lv, p, r));
+        crate::ti_strip::strip_below_locals(sig, d, crate::dom_code::rk(sig, c));
+        assert(crate::dom_rule_ty::rctx(sd, c, lv, p) == crate::dom_rule_ty::rctx(sig, c, lv, p));
+        assert(ih_args_g(sd, c, lv, p, r) == ih_args_g(sig, c, lv, p, r));
+        assert(crate::ti_syntax::dty_at(sd, c, lv) == crate::ti_syntax::dty_at(sig, c, lv));
+    }
+}
+
 } // verus!

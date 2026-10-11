@@ -250,7 +250,7 @@ pub proof fn field_bind_typed(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelS
 }
 
 /// `field_bind_typed`'s renaming, one variable at a time.
-proof fn ren_field(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, i: int, j: nat)
+pub proof fn ren_field(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, i: int, j: nat)
     requires
         rule_pre_g(sig, c, lv),
         0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin(),

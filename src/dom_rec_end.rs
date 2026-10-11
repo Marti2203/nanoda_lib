@@ -437,10 +437,7 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
 /// `rec_model_p` without its semantic constant and level facts.
 pub open spec fn rec_model_p_h(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
-    let rd = sig.ienv.recs[c];
-    &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
-        ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
-    &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
+    sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind)
 }
 
 #[verifier::opaque]
