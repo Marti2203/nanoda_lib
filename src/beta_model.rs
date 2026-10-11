@@ -239,47 +239,84 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
     }
 }
 
-/// `StringLit(len)`'s own unfolding target: `String.ofList` applied to the
-/// `List.cons(Char.ofNat _, ...)` chain the real `str_lit_to_constructor`
-/// builds, one layer per character. Unlike `NatLit`'s target (a small,
-/// FIXED-shape `Const`/`App` composition fully spelled out in `pstep`'s own
-/// definition), this construction's shape genuinely depends on `len` many
-/// nested layers -- modeling it structurally would mean either tracking a
-/// `Seq<nat>` of character codes on `ExprSpec::StringLit` itself (this
-/// whole arc's established choice is the OPPOSITE: string CONTENT is never
-/// modeled, only LENGTH, see `expr_arena_bridge.rs::string_len`'s own doc
-/// comment) or building a recursive spec fn over that content, neither of
-/// which this session attempts. Instead, `string_lit_expand_model` is a
-/// single OPAQUE function of `len` alone, in the same spirit as `const_
-/// expr_no_levels` (an uninterpreted stand-in letting `pstep`'s rule pin
-/// `e2` down via `==` rather than a relation) but pushed one level
-/// further: the WHOLE target is opaque, not just one `Const` leaf, since
-/// there's no shape here that needs exposing structurally for anything
-/// downstream -- only its `nlbv`/`max_var_below`/`depth`/`size` BOUNDS are
-/// ever needed (by the `pstep`-family growth lemmas), never its shape.
-/// Fully sufficient for `pstep_diamond`'s determinism argument too: two
-/// steps out of the SAME `StringLit(len)` both equal `string_lit_expand_
-/// model(len)`, the SAME call with the SAME argument, so they're equal by
-/// pure reflexivity -- no case analysis needed at all, simpler even than
-/// `NatLit`'s own (which needed one `if n.0@ == 0` split).
-/// Per export file: the expansion is built from that export's `String`/`Char`
-/// constructors.
-pub uninterp spec fn string_lit_expand_model(export: nat, chars: Seq<nat>) -> ExprSpec;
+/// The names a string literal's expansion is built from, in an export (by
+/// name id): `Char`, `Char.ofNat`, `List.nil`, `List.cons`, `String.ofList`.
+pub uninterp spec fn string_names(export: nat) -> (u64, u64, u64, u64, u64);
 
-/// What the opaque expansion's clients need: it mentions no free variable,
-/// no loose bound variable and no universe parameter. True by construction -- the kernel builds it
-/// from `String.ofList`, `List.cons`/`List.nil` at `Char` (levels `[zero]`),
-/// `Char.ofNat` and numeral literals (no levels), and nothing else
-/// (`expr.rs::str_lit_to_constructor`) -- but the target is deliberately
-/// uninterpreted (see above), so it has to be said. Stated about the MODEL
-/// function once, rather than added to each exec claim that produces it.
-#[verifier::external_body]
+/// `chars` as a `List Char`: `@List.cons.{0} Char (Char.ofNat c) rest` per
+/// character, ending in `@List.nil.{0} Char`.
+pub open spec fn char_list_model(export: nat, chars: Seq<nat>) -> ExprSpec
+    decreases chars.len(),
+{
+    if chars.len() == 0 {
+        ExprSpec::App(
+            Box::new(ExprSpec::Const(string_names(export).2, seq![crate::level_model::LevelSpec::Zero])),
+            Box::new(ExprSpec::Const(string_names(export).0, Seq::empty())),
+        )
+    } else {
+        ExprSpec::App(
+            Box::new(ExprSpec::App(
+                Box::new(ExprSpec::App(
+                    Box::new(ExprSpec::Const(string_names(export).3, seq![crate::level_model::LevelSpec::Zero])),
+                    Box::new(ExprSpec::Const(string_names(export).0, Seq::empty())),
+                )),
+                Box::new(ExprSpec::App(
+                    Box::new(ExprSpec::Const(string_names(export).1, Seq::empty())),
+                    Box::new(ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(chars[0])))),
+                )),
+            )),
+            Box::new(char_list_model(export, chars.drop_first())),
+        )
+    }
+}
+
+/// `StringLit(chars)`'s unfolding target: `String.ofList` applied to the
+/// character list, as `expr.rs::str_lit_to_constructor` builds it. The
+/// names are the export's (`string_names`).
+#[verifier::opaque]
+pub open spec fn string_lit_expand_model(export: nat, chars: Seq<nat>) -> ExprSpec {
+    ExprSpec::App(
+        Box::new(ExprSpec::Const(string_names(export).4, Seq::empty())),
+        Box::new(char_list_model(export, chars)),
+    )
+}
+
+proof fn char_list_facts(export: nat, chars: Seq<nat>)
+    ensures
+        !crate::expr_model::has_fv(char_list_model(export, chars)),
+        crate::expr_model::nlbv(char_list_model(export, chars)) == 0,
+        crate::level_inst::elp_in(char_list_model(export, chars), Seq::empty()),
+        depth(char_list_model(export, chars)) == if chars.len() == 0 { 1 } else { chars.len() + 2 },
+    decreases chars.len(),
+{
+    let zero = seq![crate::level_model::LevelSpec::Zero];
+    assert(zero[0] == crate::level_model::LevelSpec::Zero);
+    assert(forall|i: int| 0 <= i < zero.len() ==> crate::level_inst::lp_in(#[trigger] zero[i], Seq::empty()));
+    if chars.len() > 0 {
+        char_list_facts(export, chars.drop_first());
+    }
+    reveal_with_fuel(crate::expr_model::has_fv, 5);
+    reveal_with_fuel(crate::expr_model::nlbv, 5);
+    reveal_with_fuel(crate::level_inst::elp_in, 5);
+    reveal_with_fuel(crate::expr_model::depth, 5);
+}
+
+/// What the expansion's clients need: it mentions no free variable, no
+/// loose bound variable and no universe parameter, and its depth is the
+/// length plus three at most (what `str_lit_to_constructor`'s contract states).
 pub proof fn string_lit_expand_no_fv(export: nat, chars: Seq<nat>)
     ensures
         !crate::expr_model::has_fv(string_lit_expand_model(export, chars)),
         crate::expr_model::nlbv(string_lit_expand_model(export, chars)) == 0,
         crate::level_inst::elp_in(string_lit_expand_model(export, chars), Seq::empty()),
+        depth(string_lit_expand_model(export, chars)) <= chars.len() + 3,
 {
+    reveal(string_lit_expand_model);
+    char_list_facts(export, chars);
+    reveal_with_fuel(crate::expr_model::has_fv, 2);
+    reveal_with_fuel(crate::expr_model::nlbv, 2);
+    reveal_with_fuel(crate::level_inst::elp_in, 2);
+    reveal_with_fuel(crate::expr_model::depth, 2);
 }
 
 pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool

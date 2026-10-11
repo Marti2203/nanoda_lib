@@ -31,10 +31,14 @@ the like, which promise nothing). The vstd specifications come from the
 Verus fork nanoda builds against (Cargo.toml's `vstd` path); its additions
 are listed in docs/VSTD_GAPS.md, "The fork today".
 
-On 2026-10-11: 61 claiming items and 32 claim-free. The kernel's
+On 2026-10-11: 60 claiming items and 32 claim-free. The kernel's
 `nat_sub`, `nat_div`, `nat_mod`, `nat_shl` and `nat_shr` are verified in
 place (they were five claims); verifying the parser's decimal reader
 added two library ones (`BigUint::parse_bytes`, `&BigUint * &BigUint`).
+A string literal's expansion (`beta_model::string_lit_expand_model`) is
+defined now, `String.ofList` of the character list over the export's
+names, so its having no free variables, loose bound variables or universe
+parameters is proved (`string_lit_expand_no_fv` was assumed).
 The parser's boundary with the libraries (reading a line, serde's
 decoding, the formatted messages, the axiom whitelist's name text) is
 claim-free helpers, so it promises nothing the proofs use.
