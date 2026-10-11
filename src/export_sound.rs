@@ -7,8 +7,10 @@
 //! universe level they and a recursor's rules mention is the declaration's
 //! own.
 //!
-//! When every declaration is certified, `kh` holds at every cutoff given
-//! only its named hypotheses (`kh_hyp`): the syntactic parts come straight
+//! When every declaration is certified, `kh` holds at a cutoff given only
+//! the named hypotheses (`kh_hyp`) at it and the cutoffs before it -- so a
+//! prefix of an export inside the fragment is covered even when a later
+//! declaration leaves it (`export_kh`): the syntactic parts come straight
 //! from each declaration's certificate, the typed ones from the certificate
 //! at its earlier cutoff -- where the induction already gives `kh` -- lifted
 //! to the later environment (`env_model::env_le_at`, `env_weaken`).
@@ -203,7 +205,7 @@ pub open spec fn below_ok<'p>(ef: crate::util::ExportFile<'p>, cc: int) -> bool 
     &&& twin_types(ef)
     &&& all_certified(ef)
     &&& ex_bound(ef)
-    &&& forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c))
+    &&& forall|c: int| 0 <= c <= cc ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c))
     &&& 0 <= cc <= ef.declars_keys().len()
     &&& forall|c: int| 0 <= c < cc ==> #[trigger] crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c))
 }
@@ -1741,7 +1743,7 @@ pub proof fn export_kh<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     requires
         crate::inductive::export_ok(ef),
         all_certified(ef),
-        forall|c: int| 0 <= c <= ef.declars_keys().len() ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c)),
+        forall|c: int| 0 <= c <= cc ==> #[trigger] kh_hyp(m_dty(ef, c), m_denv(ef, c)),
         twin_types(ef),
         ex_bound(ef),
         0 <= cc <= ef.declars_keys().len(),
