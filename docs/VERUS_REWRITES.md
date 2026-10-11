@@ -8,7 +8,7 @@ file is a derived index. `scripts/rewrite-register-audit.sh` checks that every
 marked function appears here. It cannot check that the *reasons* are still
 true — see "Retesting" at the end, which is the more important discipline.
 
-Current: **197 marked rewrites across 118 functions** (counted by `scripts/rewrite-register-audit.sh`).
+Current: **217 marked rewrites across 124 functions** (counted by `scripts/rewrite-register-audit.sh`).
 
 ---
 
@@ -17,18 +17,13 @@ Current: **197 marked rewrites across 118 functions** (counted by `scripts/rewri
 These are not decisions. Each exists because something is missing upstream, and
 each would revert if that were supplied.
 
-### Match guards with mutation in the arm — 2 rewrites (reopened 2026-09-25)
+### Match guards with mutation in the arm — 0 rewrites, CLOSED (2026-10-11)
 
-`check_positivity1` (`src/inductive.rs`): the guard itself calls a `&mut self`
-method (`_any if !self.has_ind_occ(..)`), so it is the `if` before the match on
-the same read.
-
-`large_elim_test_aux` (`src/inductive.rs`): a guarded arm inside a `loop`
-(`Pi { .. } if rem_params != 0 => ..`) loses the loop invariant at the `_ =>
-break` arm, although the same facts hold at the loop head. It looks like the
-same resolution gap as below, surfacing at a `break` instead of a postcondition;
-it needs a minimal repro and a fork fix. The guard is the `if` at the top of the
-arm meanwhile.
+Both are back to the kernel's guards: `check_positivity1`'s
+`_any if !self.has_ind_occ(..) => return` and `large_elim_test_aux`'s
+`Pi { .. } if rem_params != 0 => ..` inside its `loop`. Retested on the fork
+merged with upstream 2026-10-11 and they verify unchanged; the loop-invariant
+loss at the `break` recorded 2026-09-25 no longer reproduces.
 
 Earlier history:
 
@@ -74,62 +69,65 @@ assert(IteratorSpec::remaining(&it0)[i] == ls@[i]);
 `inductive_model` consumes the false direction, and a one-directional version
 verifies locally while breaking two proofs there.
 
-### `Iterator::zip` — 2 rewrites
+### `Iterator::zip` — 1 rewrite
 
 | function | file | why, precisely |
 |---|---|---|
 | `eq_antisymm_many` | `src/level.rs` | its closure captures `&mut self` — rejected outright, see above |
-| `ctor_app_params_ok` | `src/inductive.rs` | see below |
 
-`zip` itself has a full spec upstream (#2858), so "no spec" is the wrong
-reason for either.
+`ctor_app_params_ok` is back to the kernel's
+`for (app, param) in ctor_apps.iter().copied().zip(local_params.iter().copied())`
+(2026-10-11). Both earlier blockers are gone: a tuple pattern in a `for` is
+accepted now, and the bidirectional postcondition goes through once the
+loop's own sequence is stated as the zipped pairs,
 
-`ctor_app_params_ok`'s original is
-`for (app, param) in ctor_apps.iter().copied().zip(local_params.iter().copied())`.
-Two separate things block it, and only one is about `zip`:
+```ignore
+forall|k: int| 0 <= k < local_params@.len() ==> #[trigger] it.seq()[k] == (ctor_apps@[k], local_params@[k]),
+```
 
-1. the **tuple pattern** `(app, param)` in the `for` — "only variables are
-   supported here, not general patterns". Destructuring inside the body
-   instead (`for pair in ..` then `let (app, param) = pair;`) clears this, and
-   the function then compiles;
-2. what is left is the **postcondition**, which is bidirectional
-   (`result == (.. && forall i ..)`) and so needs each loop step related back
-   to a slice INDEX. A `for` over a `Zip` gives an iterator-shaped invariant,
-   and bridging that to `ctor_apps@[k]` is the same missing link as `any`'s.
+together with `local_params.len() == local_params@.len()`: the spec-mode
+`len()` is a `usize`, which is what lets the `usize` positions the iterator
+reports stand for `int` indices.
 
-So the index walk stays. The `any` sites turned out NOT to need a new lemma —
-an annotated closure plus naming the trigger term was enough (see above) — but
-that technique does not transfer here, because a `for` over a `Zip` gives an
-iterator-shaped invariant rather than an `ensures` to instantiate. Rewriting it
-with `enumerate` was tried and is worse: `Iterator::enumerate` has no spec
-either, and it changes the kernel's line more, not less.
+### `Iterator::enumerate` — 0 rewrites, CLOSED (2026-10-11)
 
-### `Iterator::enumerate` — 6 rewrites
+`mk_majors`, `which_valid_ind_app`, `mk_recursors`, `mk_ind_tys_env_ext`,
+`mk_minors1group` and `handle_rec_args_minor` are back to the kernel's
+`for (i, x) in v.iter()[.copied()].enumerate()`. The fork's specification
+(`d5d5e80fa`, upstream PR #2904) was enough all along; what the 2026-09-25
+attempt lacked was the loop invariant naming the iterator's sequence,
 
-| function | file | missing |
-|---|---|---|
-| `mk_majors` | `src/inductive.rs` | `enumerate` |
-| `which_valid_ind_app` | `src/inductive.rs` | `enumerate`: with the fork's specification the loop body still cannot show `ind_const == st.ind_consts@[i]` (tried 2026-09-25) |
-| `mk_recursors` | `src/inductive.rs` | `enumerate` over the block inductives |
-| `mk_ind_tys_env_ext` | `src/inductive.rs` | `enumerate` over the block inductives |
-| `mk_minors1group` | `src/inductive.rs` | `enumerate` over the constructors; also the iterators handed to `foldl_apps`/`abstr_pis` bound to locals so the proof can name their elements (same calls) |
-| `handle_rec_args_minor` | `src/inductive.rs` | `enumerate` over `rec_args`; also the reversed index iterator and the two `xs` iterators bound to locals so the proof can name their elements (same calls) |
-| `mk_rec_rule_val` | `src/inductive.rs` | the two iterators handed to `foldl_apps` (constructor arguments, induction hypotheses) are bound to locals so the proof can name their elements (same calls) |
-| `mk_recursor_ty` | `src/inductive.rs` | the index iterator handed to `foldl_apps` is bound to a local so the proof can name its elements (same call) |
+```ignore
+v.len() == v@.len(),
+it.seq().len() == v@.len(),
+forall|k: int| 0 <= k < v@.len() ==> #[trigger] it.seq()[k] == (k as usize, v@[k]),
+```
 
-All three of `nth`, `position` and `enumerate` have now been **specified on the
-fork** (`d5d5e80fa`) — they genuinely had none, checked directly rather than
-taken from the comments.
+after which the body knows `(i, x) == it.seq()[it.index()]`. `mk_majors`'s
+explicit length test went with its rewrite: the function requires
+`ind_consts.len() <= local_indices.len()`, so the kernel's
+`st.local_indices[idx]` is proven in bounds.
 
-Two of the three reverted on the strength of it. `inst_aux`'s `Var` arm is back
-to the kernel's
+`nth` and `position` are specified too (`position` is upstream's #2849 now,
+which also checks the closure's precondition on every element):
+`inst_aux`'s `Var` arm is the kernel's
 `substs.iter().rev().nth((dbj_idx - offset) as usize).copied().unwrap_or(e)`,
 and `abstr_aux`'s `Local` arm has its `position(|x| *x == e)` back — only the
 `.map` is still rewritten, because *that* closure captures `&mut self` (it is
 counted under the `&mut self` heading above, not here).
 
-`mk_majors` keeps its rewrite regardless: it also has an unguarded index worth
-guarding.
+### An iterator handed to a call, bound to a local first
+
+`let it = v.iter().copied(); self.ctx.foldl_apps(f, it)` instead of
+`self.ctx.foldl_apps(f, v.iter().copied())`: the callee's postcondition is
+stated over the iterator's `remaining()`, and a proof can only connect that
+to `v@` for an iterator it can name. Inlining it back loses the fact
+(retested on `mk_majors`, 2026-10-11). Same calls, same order.
+
+| function | file |
+|---|---|
+| `mk_majors`, `mk_minors1group`, `handle_rec_args_minor`, `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` |
+| `mk_rec_rule_val` (constructor arguments, induction hypotheses), `mk_recursor_ty` (the indices) | `src/inductive.rs` |
 
 ### An unspecified `alloc` variant — 2 rewrites
 
@@ -149,24 +147,25 @@ Binding the call to a local first is behaviour-identical.
 |---|---|
 | `no_dupes_all_params` | `src/level.rs` |
 
-### `flat_map` / `map` + `collect` — 8 rewrites
+### `flat_map` / `collect` — 4 rewrites
 
-`st.minors.iter().flat_map(|v| v.iter().copied()).collect::<Vec<ExprPtr>>()`
-and `hs.iter().map(|x| x.name).collect::<Vec<_>>()`: vstd specifies neither
-`flat_map` nor `collect` through a closure adapter (`collect` instantiates its
-postcondition at the adapter's unresolved `Item` projection). They are the
-verified free functions `flatten_minors` (result `flat_ptrs(minors@)`),
-`ind_names` and `ctor_names` (`src/inductive.rs`), the scans they stand for;
-same elements, same order.
+`.map(|x| x.name).collect()` is the kernel's again where it stood alone
+(2026-10-11): `mk_ind_tys_env_ext`'s two name lists (into `Arc<[NamePtr]>`)
+and `mk_recursor_aux`'s `all_inductives` (into a `Vec`, then `Arc::from`).
+The closure is annotated (`|x: &IndTyHeader| -> (n: NamePtr) ensures n == x.name { x.name }`),
+which is what lets `collect` state its elements; collecting into `Arc<[T]>`
+needed a `FromIteratorSpecImpl` for `Arc<[T]>`, added on the fork.
+`ctor_names` is gone.
+
+What remains is `flat_map`, which vstd does not specify at all
+(`core::iter::FlatMap` is unsupported), and two places where the list feeds a
+closure that captures `&mut self`:
 
 | function | file |
 |---|---|
-| `flatten_minors`, `ind_names`, `ctor_names`, `rec_names_set` (the definitions) | `src/inductive.rs` |
-| `check_inductive_declar` (the recursor-name set through `rec_names_set`) | `src/inductive.rs` |
-| `mk_rec_rules`, `mk_recursors`, `mk_ind_tys_env_ext` | `src/inductive.rs` |
-
-`handle_rec_ctor_args_rec_rule` and `mk_recursor_aux` call them too (their
-markers are under `index-walk` / `rec-ty-split`).
+| `flatten_minors` (`st.minors.iter().flat_map(|v| v.iter().copied()).collect()`), called by `mk_rec_rules`, `mk_recursors`, `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` |
+| `ind_names` (the block's names, read out for `is_nested_ind_app`'s `find_const` closure; its body is the kernel's `map` + `collect`) | `src/inductive.rs` |
+| `rec_names_set`, called by `check_inductive_declar` (the recursor-name set) | `src/inductive.rs` |
 
 ### `Box<dyn Error>` — 1 rewrite
 
@@ -332,8 +331,6 @@ needed a different shape.
 | `check_positivity1` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `large_elim_test_aux` | `src/inductive.rs` | parameters `mut ctor_type_cursor, mut rem_params` → `ctor_type_in, rem_params_in` with `let mut` copies (the claim names the entry values); the iterator and the result of the final `all` bound to `it`/`r`, so the proof can name what `all` saw |
 | `abstr_pis` | `src/expr.rs` | parameters `mut binders, mut body` → `binders_in, body_in` with `let mut` copies (the claim names the entry values); the `IterSpec` bound `foldl_apps` already carries |
-| `mk_ctors_env_ext` | `src/inductive.rs` | the two `for` loops (the inner over `.iter().copied().enumerate()`) → front-to-back scans by index |
-| `mk_minors`, `mk_rec_rules`, `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` | `for x in v.iter()` / `.iter().copied()` → the same front-to-back scan by index, so the invariant can say which element produced each output (and, in `mk_rec_rules`, where the constructor's minor sits in the flattened list); `handle_rec_ctor_args_rec_rule` also binds the iterators handed to `foldl_apps` to locals, and uses `flatten_minors` |
 | `specialize_nested`, `specialize_nested_aux` | `src/inductive.rs` | the `for` loops (over the block's headers, over a clone of header `i`'s constructors, and `for (n, e) in map.iter()` over the specialized-type table) → scans by index / by position (`get_index`); the clone of header `i` is bound to a local (a temporary in a `for` iterator is rejected); `get_mut(i)` + `mem::replace(&mut old.ctors, ..)` → `set(i, ..)` of the same header with the new constructors (`i` is in range, so the kernel's `None => panic!` arm cannot fire); the iterator handed to `abstr_pis` bound to a local |
 | `replace_if_nested` | `src/inductive.rs` | `.iter().find(..)` over the specialized-type table → the scan by position it stands for; the two `for`s over the container's `Arc` name lists → scans by index; iterators handed to `foldl_apps`/`abstr_pis` bound to locals; the container's and each constructor's `(uparams, ty)` read through `env_model::get_declar_info_ty` (the same `info`, carrying the claim that the uparams are `Param`s; the `get_inductive`/`get_constructor` reads and their `?` rejections stay); the universe-arity test `subst_expr_levels` panics on made one frame earlier, as in `infer_const` |
 | `replace_f` | `src/inductive.rs` | the iterators handed to `foldl_apps` (`.iter().copied()`, `.skip(np)`) bound to locals so the proof can name their elements |
@@ -352,7 +349,7 @@ needed a different shape.
 | `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
 | `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
 | `mk_rec_rule1` | `src/inductive.rs` | the rule's value is built by the verified `mk_rec_rule_val` (the same calls, same order), which proves its binder arity is params + motives + minors + constructor arguments; `mk_rec_rule1` itself is verified in place and assembles the `RecRule` |
-| `mk_recursor_aux` | `src/inductive.rs` | the recursor's type is built by the verified `mk_recursor_ty` (the same calls, same order), which proves its binder arity; `mk_recursor_aux` itself is verified in place and proves the recorded counts are those lengths, so the arity is the counts plus one. The fork specifies `Arc::<[T]>::from` (slice and `Vec`); the name list goes through `ind_names` |
+| `mk_recursor_aux` | `src/inductive.rs` | the recursor's type is built by the verified `mk_recursor_ty` (the same calls, same order), which proves its binder arity; `mk_recursor_aux` itself is verified in place and proves the recorded counts are those lengths, so the arity is the counts plus one. The fork specifies `Arc::<[T]>::from` (slice and `Vec`) |
 | `check_quot`, `check_eq` | `src/quot.rs` | the expected types are built by the verified `quot_expected_type` / `eq_expected_type` / `eq_refl_expected_type` (the same constructions, same order within each); the shells keep the name lookups, the choice of declaration, the environments and the `assert_def_eq` calls, and are themselves verified in place: the environment through `env_model::ctx_env` (`new_env` with option A's trusted match), `match .. .as_ref() { &[x] => .. }` as the length test and index it stands for, formatted panics behind claim-free helpers (`eq_malformed`, `eq_uparam_count`, `eq_ctor_count`, `invalid_quot`), and both sides of each `assert_def_eq` tested closed (`assert_closed`) |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 | `ExportFile` (field `ind_name_to_recursor_names`) | `src/util.rs` | `pub` → `pub(crate)` (nothing outside the crate reads it). Verus refuses a type invariant on a struct whose fields are all public outside the crate, and `ExportFile` now carries one: its name cache's arena is its dag's (docs/ARENA_STORAGE.md, stage 2) |
@@ -420,7 +417,6 @@ still a rejection — but each is an improvement.
 | `reduce_rec` | `src/tc.rs` | the recursor's parameters, motives and minor premises are TESTED to precede its major premise (declines otherwise) — true of every well-formed recursor, and the rule instance's argument prefix assumes it |
 | `reduce_rec` | `src/tc.rs` | a recursor rule's right-hand side with loose de Bruijn indices was used as is; it is now TESTED closed (`num_loose_bvars == 0`, beside the existing `has_fvars` test) and declined otherwise — a well-formed rule is closed |
 | `expand_eta_struct_aux` | `src/tc.rs` | an unguarded index |
-| `mk_majors` | `src/inductive.rs` | `st.local_indices[idx]` unguarded |
 | `mk_majors` | `src/inductive.rs` | a major premise's type is TESTED closed (`num_loose_bvars == 0`) before `mk_unique`, which now requires it, as `alloc_expr` requires every stored local's type closed. The type is the inductive applied to locals, so the check never fails on a well-formed declaration |
 | `infer_const` | `src/tc.rs` | the declaration's type is TESTED closed (`!has_fvars`, `num_loose_bvars == 0`; `kernel_check`) — the export parser does not check it, and `get_declar_info_ty`'s specification used to claim it, which a malformed export refutes. Never fails on a well-formed export |
 | `infer_proj` | `src/tc.rs` | the same closedness test on the structure constructor's type |
@@ -481,6 +477,21 @@ them removed 15 rewrites:
 | returning out of a `for` leaves the ghost iterator mid-flight | false, for range *and* iterator loops |
 | the `?` operator is unusable | false |
 | `assert_eq!` is uncompilable | it was *unspecified*; fixed in fork `79263cd85` |
+
+Retested again 2026-10-11, after merging upstream into the fork (37
+commits; upstream now carries the fork's `HashMap`/`HashSet` `with_hasher`,
+`Option::copied`, `<[T]>::reverse`, `<[T]>::contains` and `position`
+specifications, so the fork's copies were dropped):
+
+| claim | verdict |
+|---|---|
+| a `&mut self` call in a match guard breaks the postcondition | false — both guard rewrites reverted |
+| `enumerate`'s element/index pairing does not reach the proof | false — it does, with the loop's `it.seq()` named in the invariant |
+| a tuple pattern in `for` is rejected | false |
+| a `for` over `.copied()` does not discharge its invariants | false |
+| `collect` cannot go through a `map` closure | false for an annotated closure into a `Vec`; into `Arc<[T]>` it needed a fork `FromIteratorSpecImpl` |
+| an iterator argument can be inlined | still false — the proof cannot name it |
+| `flat_map`, slice patterns, closures capturing `&mut self`, `&T` as `*const T`, E0716 in a `for` | still unsupported |
 
 **Retest before relying on a reason, and prefer a probe to a comment.** The
 cheapest probe is a three-line function using the construct in isolation,

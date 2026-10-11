@@ -134,12 +134,6 @@ broadcast use crate::util::ptr_eta;
 ///     {A : Sort u}
 ///     for `@eq.refl A a a`
 ///     unfolds as (Const(eq, [u]), [A, a, a])
-///
-/// VERUS-REWRITE(zip-for): the original walks
-/// `ctor_apps.iter().copied().zip(local_params.iter().copied())` in a `for`
-/// with a `return false` inside. Neither `Iterator::zip` nor a `return` out of
-/// a `for` is usable here (register entries 14 and 7), so it is the index walk
-/// the zip desugars to. Same pairs, same order, same early exit.
 fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>]) -> (result: bool)
     ensures
         // compared by index, as the kernel's `==` does
@@ -149,20 +143,18 @@ fn ctor_app_params_ok<'a>(ctor_apps: &[ExprPtr<'a>], local_params: &[ExprPtr<'a>
     if ctor_apps.len() < local_params.len() {
         return false
     }
-    let n = local_params.len();
-    let mut i: usize = 0;
-    while i < n
+
+    for (app, param) in it: ctor_apps.iter().copied().zip(local_params.iter().copied())
         invariant
-            0 <= i <= n,
-            n == local_params@.len(),
-            n <= ctor_apps@.len(),
-            forall|k: int| 0 <= k < i ==> #[trigger] crate::util_model::ptr_raw(ctor_apps@[k]) == crate::util_model::ptr_raw(local_params@[k]),
-        decreases n - i,
+            local_params@.len() <= ctor_apps@.len(),
+            local_params.len() == local_params@.len(),
+            it.seq().len() == local_params@.len(),
+            forall|k: int| 0 <= k < local_params@.len() ==> #[trigger] it.seq()[k] == (ctor_apps@[k], local_params@[k]),
+            forall|k: int| 0 <= k < it.index() ==> #[trigger] crate::util_model::ptr_raw(ctor_apps@[k]) == crate::util_model::ptr_raw(local_params@[k]),
     {
-        if ctor_apps[i] != local_params[i] {
+        if app != param {
             return false
         }
-        i += 1;
     }
     true
 }
@@ -3351,60 +3343,20 @@ pub proof fn flat_ptrs_prefix<'t>(s: Seq<Vec<ExprPtr<'t>>>, i: int)
     }
 }
 
-/// VERUS-REWRITE(flat-map-collect): `hs.iter().map(|x| x.name).collect::<Vec<_>>()`
-/// is this scan; vstd cannot specify `collect` through a `map` closure.
-/// Same elements, same order.
+/// VERUS-REWRITE(flat-map-collect): `st.all_inductives_incl_specialized.iter().map(|x| x.name)`
+/// read out as a `Vec` before `is_nested_ind_app`'s `find_const` closure,
+/// which tests membership in it (`find_const_named`). Same elements, same order.
 fn ind_names<'t>(hs: &Vec<IndTyHeader<'t>>) -> (result: Vec<NamePtr<'t>>)
     ensures
         result@.len() == hs@.len(),
         forall|i: int| 0 <= i < hs@.len() ==> #[trigger] result@[i] == hs@[i].name,
 {
-    let mut out = Vec::new();
-    let mut i: usize = 0;
-    while i < hs.len()
-        invariant
-            i <= hs@.len(),
-            out@.len() == i,
-            forall|k: int| 0 <= k < i ==> #[trigger] out@[k] == hs@[k].name,
-        decreases hs@.len() - i,
-    {
-        out.push(hs[i].name);
-        i += 1;
-    }
-    out
-}
-
-/// VERUS-REWRITE(flat-map-collect): `ctors.iter().map(|x| x.name).collect()`
-/// is this scan (into a `Vec`, then `Arc::from`); vstd cannot specify
-/// `collect` through a `map` closure. Same elements, same order.
-fn ctor_names<'t>(cs: &Vec<CtorHeader<'t>>) -> (result: Vec<NamePtr<'t>>)
-    ensures
-        result@.len() == cs@.len(),
-        forall|i: int| 0 <= i < cs@.len() ==> #[trigger] result@[i] == cs@[i].name,
-{
-    let mut out = Vec::new();
-    let mut i: usize = 0;
-    while i < cs.len()
-        invariant
-            i <= cs@.len(),
-            out@.len() == i,
-            forall|k: int| 0 <= k < i ==> #[trigger] out@[k] == cs@[k].name,
-        decreases cs@.len() - i,
-    {
-        out.push(cs[i].name);
-        i += 1;
-    }
-    out
+    hs.iter().map(|x: &IndTyHeader<'t>| -> (n: NamePtr<'t>) ensures n == x.name { x.name }).collect::<Vec<_>>()
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place: the first temporary environment extension, one
     /// inductive declaration per block type (specialized ones included).
-    ///
-    /// VERUS-REWRITE(flat-map-collect): the two `.map(|x| x.name).collect()`
-    /// name lists through `ind_names` / `ctor_names` and `Arc::from`;
-    /// VERUS-REWRITE(enumerate): `for (idx, inductive) in ...iter().enumerate()`
-    /// is the index walk it stands for. Same elements, same order.
     #[verifier::exec_allows_no_decreases_clause]
     fn mk_ind_tys_env_ext(&mut self, st: &InductiveCheckState<'t>) -> (result: DeclarMap<'t>)
         requires
@@ -3420,8 +3372,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         // This will be different from the export file's list if this is a nested.
         let is_nested = !st.nested_to_unspecialized_ty_nofvars.is_empty();
         let ghost ids = crate::util_model::arena_ids(*self);
-        let names_v = ind_names(&st.all_inductives_incl_specialized);
-        let all_ind_names: Arc<[NamePtr]> = Arc::from(names_v);
+        let all_ind_names: Arc<[NamePtr]> = st.all_inductives_incl_specialized.iter().map(
+            |x: &IndTyHeader<'t>| -> (n: NamePtr<'t>) ensures n == x.name { x.name },
+        ).collect();
         proof {
             broadcast use vstd::std_specs::smart_ptrs::axiom_arc_contents_view;
             assert forall|k: int| 0 <= k < all_ind_names@.len() implies crate::util_model::owns_in(ids, #[trigger] all_ind_names@[k]) by {
@@ -3429,19 +3382,19 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             }
         }
         let mut env_extension = crate::util::new_fx_index_map();
-        let mut idx: usize = 0;
-        while idx < st.all_inductives_incl_specialized.len()
+        for (idx, inductive) in it: st.all_inductives_incl_specialized.iter().enumerate()
             invariant
                 st.all_inductives_incl_specialized@.len() <= st.local_indices@.len(),
-                idx <= st.all_inductives_incl_specialized@.len(),
+                st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len()
+                    ==> #[trigger] it.seq()[k] == (k as usize, &st.all_inductives_incl_specialized@[k]),
                 crate::inductive_model::st_owned(*self, *st),
                 crate::util_model::arena_ids(*self) == ids,
                 forall|k: int| 0 <= k < all_ind_names@.len() ==> crate::util_model::owns_in(ids, #[trigger] all_ind_names@[k]),
                 crate::env_model::declar_map_owned_in(ids, &env_extension),
                 levels_all_param(st.uparams),
-            decreases st.all_inductives_incl_specialized@.len() - idx,
         {
-            let inductive = &st.all_inductives_incl_specialized[idx];
             let t = Declar::Inductive(InductiveData {
                 info: DeclarInfo { name: inductive.name, ty: inductive.ty, uparams: st.uparams },
                 is_nested,
@@ -3449,7 +3402,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 num_params: u16::try_from(st.local_params.len()).unwrap(),
                 num_indices: u16::try_from((st.local_indices[idx]).len()).unwrap(),
                 all_ind_names: all_ind_names.clone(),
-                all_ctor_names: Arc::from(ctor_names(&inductive.ctors)),
+                all_ctor_names: inductive.ctors.iter().map(
+                    |x: &CtorHeader<'t>| -> (n: NamePtr<'t>) ensures n == x.name { x.name },
+                ).collect(),
             });
             let ghost tg = t;
             proof {
@@ -3468,7 +3423,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 imap_owned_insert(ids, &env_extension, inductive.name, t);
             }
             env_extension.insert(inductive.name, t);
-            idx += 1;
         }
         env_extension
     }
@@ -3476,8 +3430,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place: the second temporary environment extension, which
     /// adds one constructor declaration per constructor.
     ///
-    /// VERUS-REWRITE(index-walk): the two `for` loops (the inner one over
-    /// `.iter().copied().enumerate()`) are the front-to-back scans by index;
     /// VERUS-REWRITE(level-ceiling): `pi_telescope_size(..) - num_params`
     /// panics on `u16` underflow (overflow checks are on); the same check,
     /// explicit, on the size bound to `tele`.
@@ -3494,36 +3446,36 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*final(self)), &result),
     {
         // This will be different from the export file's list if this is a nested.
-        let mut i: usize = 0;
-        while i < nest_st.all_inductives_incl_specialized.len()
+        for inductive in it: nest_st.all_inductives_incl_specialized.iter()
             invariant
+                nest_st.all_inductives_incl_specialized.len() == nest_st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == nest_st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < nest_st.all_inductives_incl_specialized@.len()
+                    ==> #[trigger] it.seq()[k] == &nest_st.all_inductives_incl_specialized@[k],
                 crate::inductive_model::st_owned(*self, *nest_st),
                 self.dbj_level_counter == old(self).dbj_level_counter,
                 crate::util_model::same_arenas(*old(self), *self),
                 self.expr_cache == old(self).expr_cache,
                 crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*self), &env_ext),
-                i <= nest_st.all_inductives_incl_specialized@.len(),
                 levels_all_param(nest_st.uparams),
-            decreases nest_st.all_inductives_incl_specialized@.len() - i,
         {
-            let inductive = &nest_st.all_inductives_incl_specialized[i];
-            let mut idx: usize = 0;
-            while idx < inductive.ctors.len()
+            let ghost i = it.index();
+            for (idx, ctor) in it2: inductive.ctors.iter().copied().enumerate()
                 invariant
+                    inductive.ctors.len() == inductive.ctors@.len(),
+                    it2.seq().len() == inductive.ctors@.len(),
+                    forall|k: int| 0 <= k < inductive.ctors@.len() ==> #[trigger] it2.seq()[k] == (k as usize, inductive.ctors@[k]),
                     crate::inductive_model::st_owned(*self, *nest_st),
                     self.dbj_level_counter == old(self).dbj_level_counter,
                     crate::util_model::same_arenas(*old(self), *self),
                     self.expr_cache == old(self).expr_cache,
                     crate::env_model::declar_map_owned_in(crate::util_model::arena_ids(*self), &env_ext),
-                    i < nest_st.all_inductives_incl_specialized@.len(),
-                    *inductive == nest_st.all_inductives_incl_specialized@[i as int],
-                    idx <= inductive.ctors@.len(),
+                    0 <= i < nest_st.all_inductives_incl_specialized@.len(),
+                    *inductive == nest_st.all_inductives_incl_specialized@[i],
                     levels_all_param(nest_st.uparams),
-                decreases inductive.ctors@.len() - idx,
             {
-                let ctor = inductive.ctors[idx];
                 proof {
-                    assert(crate::util_model::owns(*self, nest_st.all_inductives_incl_specialized@[i as int].ctors@[idx as int].ty));
+                    assert(crate::util_model::owns(*self, nest_st.all_inductives_incl_specialized@[i].ctors@[idx as int].ty));
                 }
                 let info = DeclarInfo { name: ctor.name, ty: ctor.ty, uparams: nest_st.uparams };
                 let num_params = u16::try_from(nest_st.local_params.len()).unwrap();
@@ -3538,16 +3490,14 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     num_fields,
                 });
                 proof {
-                    let h = nest_st.all_inductives_incl_specialized@[i as int];
+                    let h = nest_st.all_inductives_incl_specialized@[i];
                     assert(crate::util_model::owns(*self, h.name));
                     assert(crate::util_model::owns(*self, h.ctors@[idx as int].name));
                     assert(crate::env_model::declar_owned_in(crate::util_model::arena_ids(*self), d));
                     imap_owned_insert(crate::util_model::arena_ids(*self), &env_ext, ctor.name, d);
                 }
                 env_ext.insert(ctor.name, d);
-                idx += 1;
             }
-            i += 1;
         }
         env_ext
     }
@@ -6169,9 +6119,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     /// Verified in place: one inductive-hypothesis local per recursive
     /// argument, each with a closed type (`Pi xs, motive indices (u xs)`).
-    ///
-    /// VERUS-REWRITE(enumerate): `for (i, rec_arg) in rec_args.iter().copied().enumerate()`
-    /// is the index walk it stands for. Same elements, same order.
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     fn handle_rec_args_minor(
@@ -6209,9 +6156,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let ghost aids = crate::util_model::arena_ids(*self.ctx);
         let ghost c_lo = crate::util::unique_count(*self.ctx) as nat;
         let mut out = Vec::new();
-        let mut i: usize = 0;
-        while i < rec_args.len()
+        for (i, rec_arg) in it: rec_args.iter().copied().enumerate()
             invariant
+                rec_args.len() == rec_args@.len(),
+                it.seq().len() == rec_args@.len(),
+                forall|k: int| 0 <= k < rec_args@.len() ==> #[trigger] it.seq()[k] == (k as usize, rec_args@[k]),
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -6223,8 +6172,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 st.ind_consts@.len() <= st.local_indices@.len(),
                 forall|k: int| 0 <= k < out@.len() ==> major_ok(*self.ctx, #[trigger] out@[k]),
-                i <= rec_args@.len(),
-                out@.len() == i,
+                out@.len() == it.index(),
                 crate::util_model::arena_ids(*self.ctx) == aids,
                 aids == crate::util_model::arena_ids(*old(self).ctx),
                 c_lo == crate::util::unique_count(*old(self).ctx) as nat,
@@ -6236,9 +6184,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     && crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(rec_args@[k]), c_lo),
                 forall|k: int| 0 <= k < st.motives@.len() ==> crate::kgen::fv_below(aids,
                     crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), c_lo),
-            decreases rec_args@.len() - i,
         {
-            let rec_arg = rec_args[i];
             proof {
                 assert(level_free_local(*self.ctx, rec_args@[i as int]));
             }
@@ -6362,7 +6308,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if k < o0.len() { assert(out@[k] == o0[k]); }
                 }
             }
-            i += 1;
         }
         out
     }
@@ -6370,10 +6315,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Verified in place: one minor premise per constructor, each a local with
     /// a closed type (`Pi args, Pi ihs, motive indices (C params args)`).
     ///
-    /// VERUS-REWRITE(enumerate): `for (ctor_idx, ctor) in ctors.iter().copied().enumerate()`
-    /// is the index walk it stands for; and VERUS-REWRITE(named-temp): the
-    /// iterators handed to `foldl_apps`/`abstr_pis` are bound to locals so the
-    /// proof can name their elements. Same calls, same order.
+    /// VERUS-REWRITE(named-temp): the iterators handed to `foldl_apps`/`abstr_pis`
+    /// are bound to locals so the proof can name their elements. Same calls,
+    /// same order.
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     fn mk_minors1group(&mut self, st: &InductiveCheckState<'t>, ctors: &[CtorHeader<'t>]) -> (result: Vec<ExprPtr<'t>>)
@@ -6410,9 +6354,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util::unique_count(*(*old(self)).ctx) as nat, crate::util::unique_count(*(*final(self)).ctx) as nat),
     {
         let mut out = Vec::new();
-        let mut ctor_idx: usize = 0;
-        while ctor_idx < ctors.len()
+        for (ctor_idx, ctor) in it: ctors.iter().copied().enumerate()
             invariant
+                ctors.len() == ctors@.len(),
+                it.seq().len() == ctors@.len(),
+                forall|k: int| 0 <= k < ctors@.len() ==> #[trigger] it.seq()[k] == (k as usize, ctors@[k]),
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -6425,7 +6371,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|i: int| 0 <= i < st.motives@.len() ==> major_ok(*self.ctx, #[trigger] st.motives@[i]),
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 st.ind_consts@.len() <= st.local_indices@.len(),
-                out@.len() == ctor_idx,
+                out@.len() == it.index(),
                 forall|k: int| 0 <= k < out@.len() ==> major_ok(*self.ctx, #[trigger] out@[k]),
                 forall|k: int| 0 <= k < out@.len() ==> minor_some(crate::util_model::arena_ids(*old(self).ctx), *st,
                     crate::expr_arena_bridge::to_model(ctors@[k].ty), crate::level_arena_bridge::name_id(ctors@[k].name), #[trigger] out@[k],
@@ -6443,10 +6389,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|k: int| 0 <= k < st.motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
                 crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
 
-                ctor_idx <= ctors@.len(),
-            decreases ctors@.len() - ctor_idx,
         {
-            let ctor = ctors[ctor_idx];
             proof {
                 assert(level_free(*self.ctx, ctors@[ctor_idx as int].ty));
             }
@@ -6596,17 +6539,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if k < o0.len() { assert(out@[k] == o0[k]); }
                 }
             }
-            ctor_idx += 1;
         }
         out
     }
 
     /// Verified in place: one group of minor premises per block inductive,
     /// appended to `st.minors`, each a local with a closed type.
-    ///
-    /// VERUS-REWRITE(index-walk): `for ind_ty in st.all_inductives_incl_specialized.iter()`
-    /// is the front-to-back scan by index it stands for, so the invariant can
-    /// name which inductive's group was pushed. Same elements, same order.
     #[verifier::exec_allows_no_decreases_clause]
     fn mk_minors(&mut self, st: &mut InductiveCheckState<'t>)
         requires
@@ -6652,9 +6590,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         let ghost st0 = *st;
         assert_eq!(st.all_inductives_incl_specialized.len(), st.ind_consts.len());
-        let mut i: usize = 0;
-        while i < st.all_inductives_incl_specialized.len()
+        for ind_ty in it: st.all_inductives_incl_specialized.iter()
             invariant
+                st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len() ==> #[trigger] it.seq()[k] == &st0.all_inductives_incl_specialized@[k],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -6669,7 +6609,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|k: int| 0 <= k < st0.motives@.len() ==> major_ok(*self.ctx, #[trigger] st0.motives@[k]),
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 st0.ind_consts@.len() <= st0.local_indices@.len(),
-                i <= st0.all_inductives_incl_specialized@.len(),
                 crate::util_model::arena_ids(*self.ctx) == crate::util_model::arena_ids(*old(self).ctx),
                 crate::util::unique_count(*old(self).ctx) <= crate::util::unique_count(*self.ctx),
                 forall|i: int, j: int| 0 <= i < st0.all_inductives_incl_specialized@.len()
@@ -6681,7 +6620,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|k: int| 0 <= k < st0.motives@.len() ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx),
                     crate::expr_arena_bridge::to_model(#[trigger] st0.motives@[k]), crate::util::unique_count(*old(self).ctx) as nat),
 
-                st.minors@.len() == st0.minors@.len() + i,
+                st.minors@.len() == st0.minors@.len() + it.index(),
                 forall|k: int| 0 <= k < st0.minors@.len() ==> #[trigger] st.minors@[k] == st0.minors@[k],
                 forall|k: int, j: int| st0.minors@.len() <= k < st.minors@.len() && 0 <= j < st.minors@[k]@.len()
                     ==> major_ok(*self.ctx, #[trigger] st.minors@[k]@[j]),
@@ -6694,22 +6633,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         #[trigger] st.minors@[k]@[j], st.minors@[k]@.subrange(0, j)),
                 forall|k: int| st0.minors@.len() <= k < st.minors@.len() ==> crate::kgen::serials_in(crate::util_model::arena_ids(*old(self).ctx),
                     (#[trigger] st.minors@[k])@, crate::util::unique_count(*old(self).ctx) as nat, crate::util::unique_count(*self.ctx) as nat),
-            decreases st0.all_inductives_incl_specialized@.len() - i,
         {
-            let ind_ty = &st.all_inductives_incl_specialized[i];
+            let ghost i: int = it.index();
             proof {
-                let h = st0.all_inductives_incl_specialized@[i as int];
+                let h = st0.all_inductives_incl_specialized@[i];
                 assert(crate::util_model::owns(*self.ctx, h.name));
                 assert forall|j: int| 0 <= j < ind_ty.ctors@.len() implies level_free(*self.ctx, #[trigger] ind_ty.ctors@[j].ty)
                     && crate::util_model::owns(*self.ctx, ind_ty.ctors@[j].name) by {
-                    assert(level_free(*self.ctx, st0.all_inductives_incl_specialized@[i as int].ctors@[j].ty));
+                    assert(level_free(*self.ctx, st0.all_inductives_incl_specialized@[i].ctors@[j].ty));
                 }
             }
             proof {
                 let c = crate::util::unique_count(*self.ctx) as nat;
                 assert forall|j: int| 0 <= j < ind_ty.ctors@.len() implies crate::kgen::fv_below(crate::util_model::arena_ids(*self.ctx),
                     crate::expr_arena_bridge::to_model(#[trigger] ind_ty.ctors@[j].ty), 0) by {
-                    assert(ind_ty.ctors@[j] == st0.all_inductives_incl_specialized@[i as int].ctors@[j]);
+                    assert(ind_ty.ctors@[j] == st0.all_inductives_incl_specialized@[i].ctors@[j]);
                 }
                 assert forall|k: int| 0 <= k < st.motives@.len() implies crate::kgen::fv_below(crate::util_model::arena_ids(*self.ctx),
                     crate::expr_arena_bridge::to_model(#[trigger] st.motives@[k]), c) by {
@@ -6736,7 +6674,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if k < st.minors@.len() - 1 {
                         assert(st.minors@[k] == ms0[k]);
                     } else {
-                        assert(ind_ty.ctors@[j] == st0.all_inductives_incl_specialized@[i as int].ctors@[j]);
+                        assert(ind_ty.ctors@[j] == st0.all_inductives_incl_specialized@[i].ctors@[j]);
                         assert(minor_some(aids, stc, crate::expr_arena_bridge::to_model(ind_ty.ctors@[j].ty),
                             crate::level_arena_bridge::name_id(ind_ty.ctors@[j].name), g@[j], g@.subrange(0, j)));
                         minor_some_minors(aids, stc, st0, crate::expr_arena_bridge::to_model(ind_ty.ctors@[j].ty),
@@ -6774,17 +6712,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }
                 }
             }
-            i += 1;
         }
     }
 
     /// Verified in place: for each recursive constructor argument, the
     /// recursor applied to it (under its own binders), owned.
     ///
-    /// VERUS-REWRITE(index-walk): `for rec_ctor_arg in rec_ctor_args.iter().copied()`
-    /// is the front-to-back scan by index; VERUS-REWRITE(named-temp): the
-    /// iterators handed to `foldl_apps` are bound to locals so the proof can
-    /// name their elements. Same calls, same order.
+    /// VERUS-REWRITE(named-temp): the iterators handed to `foldl_apps` are bound
+    /// to locals so the proof can name their elements. Same calls, same order.
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     fn handle_rec_ctor_args_rec_rule(
@@ -6831,9 +6766,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             flat_ptrs_major_ok(*self.ctx, st.minors@);
         }
-        let mut i: usize = 0;
-        while i < rec_ctor_args.len()
+        for rec_ctor_arg in it: rec_ctor_args.iter().copied()
             invariant
+                rec_ctor_args.len() == rec_ctor_args@.len(),
+                it.seq().len() == rec_ctor_args@.len(),
+                forall|k: int| 0 <= k < rec_ctor_args@.len() ==> #[trigger] it.seq()[k] == rec_ctor_args@[k],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -6846,8 +6783,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 st.ind_consts@.len() <= st.local_indices@.len(),
                 crate::util_model::owns(*self.ctx, rec_str_ptr),
                 crate::util_model::owns_all(*self.ctx, out@),
-                i <= rec_ctor_args@.len(),
-                out@.len() == i,
+                out@.len() == it.index(),
                 flat_mapped_minors@ == flat_ptrs(st.minors@),
                 crate::util_model::arena_ids(*self.ctx) == aids,
                 aids == crate::util_model::arena_ids(*old(self).ctx),
@@ -6867,13 +6803,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     && crate::kgen::fv_below(aids, crate::expr_arena_bridge::to_model(rec_ctor_args@[k]), c_lo),
                 forall|k: int| 0 <= k < rule_pre(*st).len() ==> crate::expr_model::nlbv(#[trigger] rule_pre(*st)[k]) == 0
                     && crate::kgen::fv_below(aids, rule_pre(*st)[k], c_lo),
-            decreases rec_ctor_args@.len() - i,
         {
+            let ghost i: int = it.index();
             let ghost c_it = *self.ctx;
             let ghost had = out@.len() > 0;
-            let rec_ctor_arg = rec_ctor_args[i];
             proof {
-                assert(level_free_local(*self.ctx, rec_ctor_args@[i as int]));
+                assert(level_free_local(*self.ctx, rec_ctor_args@[i]));
             }
             self.tc_cache.clear();
             proof {
@@ -7016,7 +6951,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     rec_step(c_it, c_str, *self.ctx, rec_str_ptr, crate::name_arena_bridge::to_model_name(st.all_inductives_incl_specialized@[0].name), rec_name);
                 }
             }
-            i += 1;
         }
         proof {
             if st.ind_consts@.len() == 1 {
@@ -7154,10 +7088,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Verified in place: one group of recursor rules per block inductive,
     /// one rule per constructor, each for that constructor.
     ///
-    /// VERUS-REWRITE(index-walk): the two `for` loops over
-    /// `st.all_inductives_incl_specialized.iter()` and `ind_ty.ctors.iter().copied()`
-    /// are the front-to-back scans by index; VERUS-REWRITE(flat-map-collect):
-    /// the flattened minors through `flatten_minors`. Same elements, same order.
+    /// VERUS-REWRITE(flat-map-collect): the flattened minors through
+    /// `flatten_minors`. Same elements, same order.
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     fn mk_rec_rules(&mut self, st: &InductiveCheckState<'t>) -> (result: Vec<Vec<RecRule<'t>>>)
@@ -7209,9 +7141,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             flat_ptrs_major_ok(*self.ctx, st.minors@);
         }
         let mut overall_ctor_idx: usize = 0;
-        let mut i: usize = 0;
-        while i < st.all_inductives_incl_specialized.len()
+        for ind_ty in it: st.all_inductives_incl_specialized.iter()
             invariant
+                st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len() ==> #[trigger] it.seq()[k] == &st.all_inductives_incl_specialized@[k],
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -7232,9 +7166,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> (#[trigger] st.minors@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len(),
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 st.ind_consts@.len() <= st.local_indices@.len(),
-                i <= st.all_inductives_incl_specialized@.len(),
-                overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, i as int)).len(),
-                rec_rules@.len() == i,
+                overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, it.index() as int)).len(),
+                rec_rules@.len() == it.index(),
                 forall|a: int, b: int| 0 <= a < st.all_inductives_incl_specialized@.len()
                     && 0 <= b < st.all_inductives_incl_specialized@[a].ctors@.len()
                     ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[a].ctors@[b].ty), 0),
@@ -7255,25 +7188,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> (#[trigger] rec_rules@[a]@[j]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[j].name
                         && rec_rules@[a]@[j].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[j].ty))
                         && crate::util_model::owns(*self.ctx, rec_rules@[a]@[j].val),
-            decreases st.all_inductives_incl_specialized@.len() - i,
         {
-            let ind_ty = &st.all_inductives_incl_specialized[i];
+            let ghost i: int = it.index();
             proof {
-                flat_ptrs_prefix(st.minors@, i as int);
-                assert(st.minors@[i as int]@.len() == ind_ty.ctors@.len());
+                flat_ptrs_prefix(st.minors@, i);
+                assert(st.minors@[i]@.len() == ind_ty.ctors@.len());
             }
             let mut grp: Vec<RecRule<'t>> = Vec::new();
-            let mut j: usize = 0;
-            while j < ind_ty.ctors.len()
+            for ctor in it2: ind_ty.ctors.iter().copied()
                 invariant
+                    ind_ty.ctors.len() == ind_ty.ctors@.len(),
+                    it2.seq().len() == ind_ty.ctors@.len(),
+                    forall|k: int| 0 <= k < ind_ty.ctors@.len() ==> #[trigger] it2.seq()[k] == ind_ty.ctors@[k],
                     mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                     crate::tc::tc_wf(*self),
                     self.env == old(self).env,
                     self.ctx.dbj_level_counter == 0,
                     crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                     self.live == old(self).live,
-                    i < st.all_inductives_incl_specialized@.len(),
-                    *ind_ty == st.all_inductives_incl_specialized@[i as int],
+                    0 <= i < st.all_inductives_incl_specialized@.len(),
+                    *ind_ty == st.all_inductives_incl_specialized@[i],
                     forall|a: int, b: int| 0 <= a < st.all_inductives_incl_specialized@.len()
                         && 0 <= b < st.all_inductives_incl_specialized@[a].ctors@.len()
                         ==> level_free(*self.ctx, #[trigger] st.all_inductives_incl_specialized@[a].ctors@[b].ty),
@@ -7284,11 +7218,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     forall|k: int| 0 <= k < minors@.len() ==> major_ok(*self.ctx, #[trigger] minors@[k]),
                     crate::inductive_model::st_owned(*self.ctx, *st),
                     st.ind_consts@.len() <= st.local_indices@.len(),
-                    j <= ind_ty.ctors@.len(),
-                    overall_ctor_idx + ind_ty.ctors@.len() - j <= minors@.len(),
-                    overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, i as int)).len() + j,
+                    overall_ctor_idx + ind_ty.ctors@.len() - it2.index() <= minors@.len(),
+                    overall_ctor_idx == flat_ptrs(st.minors@.subrange(0, i)).len() + it2.index(),
                     minors@ == flat_ptrs(st.minors@),
-                    grp@.len() == j,
+                    grp@.len() == it2.index(),
                     forall|a: int, b: int| 0 <= a < st.all_inductives_incl_specialized@.len()
                         && 0 <= b < st.all_inductives_incl_specialized@[a].ctors@.len()
                         ==> crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(#[trigger] st.all_inductives_incl_specialized@[a].ctors@[b].ty), 0),
@@ -7305,7 +7238,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             && crate::util_model::owns(*self.ctx, grp@[b].val),
                     forall|b: int| 0 <= b < grp@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx), *st,
                         crate::expr_arena_bridge::to_model(ind_ty.ctors@[b].ty),
-                        flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, i as int)).len() + b], flat_ptrs(st.minors@),
+                        flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, i)).len() + b], flat_ptrs(st.minors@),
                         crate::expr_arena_bridge::to_model((#[trigger] grp@[b]).val)),
                     forall|a: int, b: int| 0 <= a < rec_rules@.len() && 0 <= b < rec_rules@[a]@.len() ==> rule_some(crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx), *st,
                     crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty),
@@ -7315,18 +7248,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         ==> (#[trigger] rec_rules@[a]@[b]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[b].name
                             && rec_rules@[a]@[b].ctor_telescope_size_wo_params as nat + st.local_params@.len() == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[b].ty))
                             && crate::util_model::owns(*self.ctx, rec_rules@[a]@[b].val),
-                decreases ind_ty.ctors@.len() - j,
             {
-                let ctor = ind_ty.ctors[j];
+                let ghost j: int = it2.index();
+                proof {
+                    assert(0 <= j < ind_ty.ctors@.len());
+                    assert(it2.seq()[j] == ctor);
+                }
                 let this_minor = minors[overall_ctor_idx];
                 proof {
-                    assert(level_free(*self.ctx, st.all_inductives_incl_specialized@[i as int].ctors@[j as int].ty));
+                    assert(level_free(*self.ctx, st.all_inductives_incl_specialized@[i].ctors@[j].ty));
                     assert(major_ok(*self.ctx, minors@[overall_ctor_idx as int]));
                     assert(minors.len() == minors@.len());
                 }
                 proof {
                     let c = crate::util::unique_count(*self.ctx) as nat;
-                    assert(crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i as int].ctors@[j as int].ty), 0));
+                    assert(crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[i].ctors@[j].ty), 0));
                     assert forall|k: int| 0 <= k < rule_pre(*st).len() implies crate::expr_model::nlbv(#[trigger] rule_pre(*st)[k]) == 0
                         && crate::kgen::fv_below(crate::util_model::arena_ids(*old(self).ctx), rule_pre(*st)[k], c) by {
                         crate::kgen::fv_below_mono(crate::util_model::arena_ids(*old(self).ctx), rule_pre(*st)[k], crate::util::unique_count(*old(self).ctx) as nat, c);
@@ -7349,13 +7285,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     assert forall|b: int| 0 <= b < grp@.len() implies rule_some(crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx), *st,
                         crate::expr_arena_bridge::to_model(ind_ty.ctors@[b].ty),
-                        flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, i as int)).len() + b], flat_ptrs(st.minors@),
+                        flat_ptrs(st.minors@)[flat_ptrs(st.minors@.subrange(0, i)).len() + b], flat_ptrs(st.minors@),
                         crate::expr_arena_bridge::to_model((#[trigger] grp@[b]).val)) by {
                         if b < g0.len() {
                             assert(grp@[b] == g0[b]);
                         } else {
                             assert(this_minor == minors@[oci]);
-                            assert(oci == flat_ptrs(st.minors@.subrange(0, i as int)).len() + b);
+                            assert(oci == flat_ptrs(st.minors@.subrange(0, i)).len() + b);
                             assert(ctor == ind_ty.ctors@[b]);
                         }
                     }
@@ -7364,7 +7300,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         if b < g0.len() { assert(grp@[b] == g0[b]); }
                     }
                 }
-                j += 1;
             }
             let ghost r0 = rec_rules@;
             rec_rules.push(grp);
@@ -7379,7 +7314,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(*ind_ty == st.all_inductives_incl_specialized@[a]);
                     }
                 }
-                assert(st.minors@[i as int]@.len() == ind_ty.ctors@.len());
+                assert(st.minors@[i]@.len() == ind_ty.ctors@.len());
                 assert forall|a: int| 0 <= a < rec_rules@.len()
                     implies (#[trigger] rec_rules@[a])@.len() == st.all_inductives_incl_specialized@[a].ctors@.len() by {
                     if a < r0.len() { assert(rec_rules@[a] == r0[a]); }
@@ -7391,7 +7326,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if a < r0.len() { assert(rec_rules@[a] == r0[a]); }
                 }
             }
-            i += 1;
         }
         rec_rules
     }
@@ -7496,7 +7430,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 uparams: st.rec_uparams.unwrap(),
                 ty: rec_ty,
             },
-            all_inductives: Arc::from(ind_names(&st.all_inductives_incl_specialized)),
+            all_inductives: Arc::from(st.all_inductives_incl_specialized.iter().map(
+                |x: &IndTyHeader<'t>| -> (n: NamePtr<'t>) ensures n == x.name { x.name },
+            ).collect::<Vec<_>>()),
             num_params: u16::try_from(st.local_params.len()).unwrap(),
             num_indices: u16::try_from(local_indices.len()).unwrap(),
             num_motives: u16::try_from(st.motives.len()).unwrap(),
@@ -7536,9 +7472,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Verified in place: one recursor per block inductive, each with its
     /// counts and binder spine in agreement (see `mk_recursor_aux`).
     ///
-    /// VERUS-REWRITE(enumerate): `for (i, ind) in st.all_inductives_incl_specialized.iter().enumerate()`
-    /// is the index walk it stands for; VERUS-REWRITE(flat-map-collect): the
-    /// flattened minors through `flatten_minors`. Same elements, same order.
+    /// VERUS-REWRITE(flat-map-collect): the flattened minors through
+    /// `flatten_minors`. Same elements, same order.
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     pub(crate) fn mk_recursors(&mut self, st: &InductiveCheckState<'t>) -> (result: Vec<Declar<'t>>)
@@ -7614,9 +7549,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
         }
         let mut recursors: Vec<Declar<'t>> = Vec::new();
-        let mut i: usize = 0;
-        while i < st.all_inductives_incl_specialized.len()
+        for (i, ind) in it: st.all_inductives_incl_specialized.iter().enumerate()
             invariant
+                st.all_inductives_incl_specialized.len() == st.all_inductives_incl_specialized@.len(),
+                it.seq().len() == st.all_inductives_incl_specialized@.len(),
+                forall|k: int| 0 <= k < st.all_inductives_incl_specialized@.len() ==> #[trigger] it.seq()[k] == (k as usize, &st.all_inductives_incl_specialized@[k]),
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::tc::tc_wf(*self),
                 self.env == old(self).env,
@@ -7644,8 +7581,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     ==> (#[trigger] rec_rules@[a]@[j]).ctor_name == st.all_inductives_incl_specialized@[a].ctors@[j].name
                         && rec_rules@[a]@[j].ctor_telescope_size_wo_params as nat + st.local_params@.len()
                             == crate::rec_canon::tarity(crate::expr_arena_bridge::to_model(st.all_inductives_incl_specialized@[a].ctors@[j].ty)),
-                i <= st.all_inductives_incl_specialized@.len(),
-                recursors@.len() == i,
+                recursors@.len() == it.index(),
                 forall|a: int| 0 <= a < recursors@.len() ==> #[trigger] rec_ty_gen(*st, a, recursors@[a]),
                 forall|a: int| 0 <= a < recursors@.len() ==> #[trigger] rec_rules_gen(crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx), *st, a, recursors@[a]),
                 forall|a: int| 0 <= a < recursors@.len() ==> rec_hid_k(Seq::<NamePtr<'t>>::empty(), crate::util_model::arena_ids(*old(self).ctx), rec_key(*old(self).ctx),
@@ -7676,9 +7612,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     },
                     _ => false,
                 },
-            decreases st.all_inductives_incl_specialized@.len() - i,
         {
-            let ind = &st.all_inductives_incl_specialized[i];
             let motive = st.motives[i];
             let major = st.majors[i];
             let local_indices = st.local_indices.get(i).unwrap();
@@ -7756,7 +7690,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if a < r0.len() { assert(recursors@[a] == r0[a]); }
                 }
             }
-            i += 1;
         }
         recursors
     }
@@ -11135,13 +11068,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::expr_arena_bridge::const_id(st.ind_consts@[i as int]), crate::expr_arena_bridge::to_model(u_i_ty)),
     {
         // For every inductive type in the block...
-        //
-        // VERUS-REWRITE(enumerate): `for (i, ind_const) in
-        // st.ind_consts.iter().copied().enumerate()` is the index walk it
-        // stands for (the element/index pairing does not reach the proof through
-        // `enumerate`'s specification). Same elements, same order, same return.
-        let mut i: usize = 0;
-        while i < st.ind_consts.len()
+        for (i, ind_const) in it: st.ind_consts.iter().copied().enumerate()
             invariant
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 self.env == old(self).env,
@@ -11152,28 +11079,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::util_model::owns(*self.ctx, u_i_ty),
                 crate::inductive_model::st_owned(*self.ctx, *st),
                 st.ind_consts@.len() <= st.local_indices@.len(),
-                i <= st.ind_consts@.len(),
-            decreases st.ind_consts@.len() - i,
+                st.ind_consts.len() == st.ind_consts@.len(),
+                it.seq().len() == st.ind_consts@.len(),
+                forall|k: int| 0 <= k < st.ind_consts@.len() ==> #[trigger] it.seq()[k] == (k as usize, st.ind_consts@[k]),
         {
-            let ind_const = st.ind_consts[i];
             let ind_name = match self.ctx.read_expr(ind_const) {
                 Const { name, .. } => name,
                 _ => panic!(),
             };
             if self.is_valid_ind_app(st, ind_name, u_i_ty) {
-                return Some(i);
+                return Some(i)
             }
-            i += 1;
         }
         None
     }
 
     /// Verified in place: the argument type is strictly positive in the block's
     /// inductives (`positive_ok`), or this panics.
-    ///
-    /// VERUS-REWRITE(guard-in-body): the `_any if !self.has_ind_occ(..)` guard
-    /// (a `&mut self` call in a match guard) is the `if` before the match on the
-    /// same read, in the same order.
     ///
     /// VERUS-REWRITE(entry-params): parameter `mut ctor_type_cursor` ->
     /// `ctor_type_in` with a `let mut` copy; the claim names the entry value.
@@ -11234,15 +11156,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 level_free_pres(*self.ctx, pre, ctor_type_cursor);
                 ws = ws.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
             }
-            let el = self.ctx.read_expr(ctor_type_cursor);
-            if !self.has_ind_occ(ctor_type_cursor, st.ind_consts.as_ref()) {
-                proof {
-                    let c = PosCert { cursors: cs, ws, bts, bodies, locals: locs };
-                    assert(pos_cert_ok(env, *st, crate::expr_arena_bridge::to_model(ctor_type_in), c));
+            match self.ctx.read_expr(ctor_type_cursor) {
+                _any if !self.has_ind_occ(ctor_type_cursor, st.ind_consts.as_ref()) => {
+                    proof {
+                        let c = PosCert { cursors: cs, ws, bts, bodies, locals: locs };
+                        assert(pos_cert_ok(env, *st, crate::expr_arena_bridge::to_model(ctor_type_in), c));
+                    }
+                    return
                 }
-                return;
-            }
-            match el {
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
                     if self.has_ind_occ(binder_type, st.ind_consts.as_ref()) {
                         panic!("non-positive occurrence");
@@ -11320,6 +11241,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             _ => return false,
         };
         let ghost ctx0 = *self.ctx;
+        proof {
+            assert(st.ind_consts.len() == st.ind_consts@.len());
+            assert(forall|k: int| 0 <= k < st.ind_consts@.len() ==> crate::util_model::owns(ctx0, #[trigger] st.ind_consts@[k]));
+        }
         let ind_name_pos = st
             .ind_consts
             .iter()
@@ -11688,76 +11613,72 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     || non_prop_ctor_telescope_elems@.contains(#[trigger] lptrs[k]),
                 forall|j: int| 0 <= j < non_prop_ctor_telescope_elems@.len() ==> crate::util_model::owns(*self.ctx, #[trigger] non_prop_ctor_telescope_elems@[j]),
         {
-            // VERUS-REWRITE(guard-in-body): the `if rem_params != 0` match guard
-            // is the `if` at the top of the one `Pi` arm; with the guard, the
-            // loop's facts do not survive to the `break`. Same test, same order.
             match self.ctx.read_expr(ctor_type_cursor) {
+                Pi { binder_name, binder_style, binder_type, body, .. } if rem_params != 0 => {
+                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                    proof {
+                        assert(level_free(*self.ctx, binder_type));
+                        crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                    }
+                    ctor_type_cursor = self.ctx.inst(body, &[local]);
+                    proof {
+                        let aids = crate::util_model::arena_ids(*self.ctx);
+                        assert([local]@ =~= seq![local]);
+                        assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                        crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                        crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                        let lid = crate::expr_arena_bridge::expr_id(local);
+                        bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                        bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                        cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                        locs = locs.push(lid);
+                        lptrs = lptrs.push(local);
+                        sorts = sorts.push(LevelSpec::Zero);
+                    }
+                    rem_params -= 1;
+                }
                 Pi { binder_name, binder_style, binder_type, body, .. } => {
-                    if rem_params != 0 {
-                        let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                        proof {
-                            assert(level_free(*self.ctx, binder_type));
-                            crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
-                        }
-                        ctor_type_cursor = self.ctx.inst(body, &[local]);
-                        proof {
-                            let aids = crate::util_model::arena_ids(*self.ctx);
-                            assert([local]@ =~= seq![local]);
-                            assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
-                            crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
-                            crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
-                            let lid = crate::expr_arena_bridge::expr_id(local);
-                            bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
-                            bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
-                            cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
-                            locs = locs.push(lid);
-                            lptrs = lptrs.push(local);
-                            sorts = sorts.push(LevelSpec::Zero);
-                        }
-                        rem_params -= 1;
-                    } else {
-                            let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
-                            proof {
-                                assert(level_free(*self.ctx, binder_type));
-                                crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
-                            }
-                            ctor_type_cursor = self.ctx.inst(body, &[local]);
-                            proof {
-                                let aids = crate::util_model::arena_ids(*self.ctx);
-                                assert([local]@ =~= seq![local]);
-                                assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
-                                crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
-                                crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
-                                level_free_in_scope(*self, binder_type);
-                            }
-                            let binder_type_level = self.ensure_infers_as_sort(binder_type);
-                            // If the binder type is NOT in sort 0, add it to the list
-                            // of constructor args that need to be checked
-                            let ghost elems0 = non_prop_ctor_telescope_elems@;
-                            let z = self.ctx.is_zero(binder_type_level);
-                            if !z {
-                                non_prop_ctor_telescope_elems.push(local);
-                            }
-                            proof {
-                                let lid = crate::expr_arena_bridge::expr_id(local);
-                                bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
-                                bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
-                                cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
-                                locs = locs.push(lid);
-                                lptrs = lptrs.push(local);
-                                sorts = sorts.push(crate::level_arena_bridge::to_model(binder_type_level));
-                                assert forall|k: int| np0 <= k < locs.len() implies (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0)
-                                    || non_prop_ctor_telescope_elems@.contains(#[trigger] lptrs[k]) by {
-                                    if k < locs.len() - 1 {
-                                        if !(forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0) {
-                                            let j = choose|j: int| 0 <= j < elems0.len() && elems0[j] == lptrs[k];
-                                            assert(non_prop_ctor_telescope_elems@[j] == lptrs[k]);
-                                        }
-                                    } else if !z {
-                                        assert(non_prop_ctor_telescope_elems@.last() == lptrs[k]);
-                                    }
+                    let local = self.ctx.mk_unique(binder_name, binder_style, binder_type);
+                    proof {
+                        assert(level_free(*self.ctx, binder_type));
+                        crate::quot_model::mk_unique_deep(*self.ctx, local, binder_type);
+                    }
+                    ctor_type_cursor = self.ctx.inst(body, &[local]);
+                    proof {
+                        let aids = crate::util_model::arena_ids(*self.ctx);
+                        assert([local]@ =~= seq![local]);
+                        assert(crate::expr_arena_bridge::ptr_models(seq![local]) =~= seq![crate::expr_arena_bridge::to_model(local)]);
+                        crate::tc::inst_deep_in(aids, body, seq![local], vstd::iset::ISet::empty(), 0);
+                        crate::beta_model::subst_full_nlbv_bound(crate::expr_arena_bridge::to_model(body), crate::expr_arena_bridge::to_model(local), 0);
+                        level_free_in_scope(*self, binder_type);
+                    }
+                    let binder_type_level = self.ensure_infers_as_sort(binder_type);
+                    // If the binder type is NOT in sort 0, add it to the list
+                    // of constructor args that need to be checked
+                    let ghost elems0 = non_prop_ctor_telescope_elems@;
+                    let z = self.ctx.is_zero(binder_type_level);
+                    if !z {
+                        non_prop_ctor_telescope_elems.push(local);
+                    }
+                    proof {
+                        let lid = crate::expr_arena_bridge::expr_id(local);
+                        bts = bts.push(crate::expr_arena_bridge::to_model(binder_type));
+                        bodies = bodies.push(crate::expr_arena_bridge::to_model(body));
+                        cs = cs.push(crate::expr_arena_bridge::to_model(ctor_type_cursor));
+                        locs = locs.push(lid);
+                        lptrs = lptrs.push(local);
+                        sorts = sorts.push(crate::level_arena_bridge::to_model(binder_type_level));
+                        assert forall|k: int| np0 <= k < locs.len() implies (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0)
+                            || non_prop_ctor_telescope_elems@.contains(#[trigger] lptrs[k]) by {
+                            if k < locs.len() - 1 {
+                                if !(forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(sorts[k], rho) == 0) {
+                                    let j = choose|j: int| 0 <= j < elems0.len() && elems0[j] == lptrs[k];
+                                    assert(non_prop_ctor_telescope_elems@[j] == lptrs[k]);
                                 }
+                            } else if !z {
+                                assert(non_prop_ctor_telescope_elems@.last() == lptrs[k]);
                             }
+                        }
                     }
                 }
                 _ => break,
@@ -12552,12 +12473,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
     }
 
-    /// VERUS-REWRITE(enumerate-for, unchecked-index): the `for (idx, _) in
-    /// ..enumerate()` is the index walk it desugars to -- `Iterator::enumerate`
-    /// has no vstd spec -- and `st.local_indices[idx]` was unguarded. The two
-    /// vectors are built in step by the caller, so they match; nothing in the
-    /// code says so, and this is a `()`-returning function with nothing to
-    /// decline to, so the mismatch aborts rather than silently skipping.
+    /// VERUS-REWRITE(named-temp): the iterators handed to `foldl_apps` are
+    /// bound to locals so the proof can name their elements. Same calls.
     fn mk_majors(&mut self, st: &mut InductiveCheckState<'t>)
         requires
             crate::inductive_model::st_owned(*(*old(self)).ctx, *old(st)),
@@ -12586,28 +12503,23 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             assert(st.majors@.subrange(st0.majors@.len() as int, st.majors@.len() as int) =~= Seq::<ExprPtr<'t>>::empty());
         }
-        let n = st.ind_consts.len();
-        if st.local_indices.len() < n {
-            panic!("mk_majors: local_indices is shorter than ind_consts");
-            return
-        }
-        let mut idx: usize = 0;
-        while idx < n
+        for (idx, ind_const) in it: st.ind_consts.iter().copied().enumerate()
             invariant
+                st.ind_consts.len() == st.ind_consts@.len(),
+                it.seq().len() == st0.ind_consts@.len(),
+                forall|k: int| 0 <= k < st0.ind_consts@.len() ==> #[trigger] it.seq()[k] == (k as usize, st0.ind_consts@[k]),
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, st.local_params@),
                 crate::util_model::owns_all(*self.ctx, st.ind_consts@),
                 forall|i: int| 0 <= i < st.local_indices@.len() ==> crate::util_model::owns_all(*self.ctx, #[trigger] st.local_indices@[i]@),
-                n == st.ind_consts@.len(),
-                n <= st.local_indices@.len(),
-                idx <= n,
+                st.ind_consts@.len() <= st.local_indices@.len(),
                 self.env == old(self).env,
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
                 crate::util_model::same_arenas(*old(self).ctx, *self.ctx),
                 self.live == old(self).live,
                 crate::tc::tc_wf(*old(self)) ==> crate::tc::tc_wf(*self),
                 *st == (InductiveCheckState { majors: st.majors, ..st0 }),
-                st.majors@.len() == st0.majors@.len() + idx,
+                st.majors@.len() == st0.majors@.len() + it.index(),
                 forall|i: int| 0 <= i < st0.majors@.len() ==> #[trigger] st.majors@[i] == st0.majors@[i],
                 forall|i: int| st0.majors@.len() <= i < st.majors@.len() ==> major_ok(*self.ctx, #[trigger] st.majors@[i]),
                 crate::util_model::arena_ids(*self.ctx) == aids,
@@ -12617,9 +12529,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|k: int| st0.majors@.len() <= k < st.majors@.len() ==> crate::quot_model::local_type(#[trigger] st.majors@[k])
                     == crate::beta_model::spine_app(crate::expr_arena_bridge::to_model(st0.ind_consts@[k - st0.majors@.len()]),
                         crate::expr_arena_bridge::ptr_models(st0.local_params@) + crate::expr_arena_bridge::ptr_models(st0.local_indices@[k - st0.majors@.len()]@)),
-            decreases n - idx,
         {
-            let ind_const = st.ind_consts[idx];
             let ps_it = st.local_params.iter().copied();
             proof {
                 broadcast use vstd::std_specs::iter::copied_postcondition;
@@ -12667,7 +12577,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     }
                 }
             }
-            idx = idx + 1;
         }
     }
 }
