@@ -55,20 +55,28 @@ its slot (`holds`: its node, children at the record's indices; or its
 declarations from their key position, every field as the record gives
 it), the builder only grew (`grows`, so earlier records' content stays),
 and by exactly that record (`step`: one node at the end of its kind, or
-its declarations at the end of the key order). `apply`'s code is `go1`'s
-dispatch, rewritten only where Verus needs it (VERUS-REWRITE markers
+its declarations at the end of the key order). `apply`'s code is the
+dispatch nanoda's `Parser::go1` did, rewritten only where Verus needs it (VERUS-REWRITE markers
 `parser-apply`, `parser-backref`); the Core and Init corpora give the same
 results.
 
+The read loop is verified too (`parser::read_export`): on success the
+builder holds exactly the file's records (`file_ok`). Every record's
+content is at its slot, and every name, level, expression and declaration
+added is some record's (the trace's `name_of`, `level_of`, `expr_of`,
+`decl_of` name it). `finish` then hands the declarations, their order and
+the mutual blocks to the `ExportFile` unchanged.
+
 What is still trusted:
 
-- **Decoding**: `serde_json` turning a line into a record, and `semver`
-  reading the version (library trust, as in T). Nat literals are decoded
-  by nanoda's own `parse_decimal_fast`, called by serde; not yet verified.
-- **The read loop** (`parse_export_file`): reading lines and calling
-  `go1` once per line, then the `pp_declars` and constructor checks (which
-  can only reject) and `finish`. Not yet verified: the per-record facts
-  are not yet assembled into one statement about the whole file.
+- **Reading and decoding**: `BufRead::read_line` splitting the file into
+  lines (`next_line`), `serde_json` turning a line into a record
+  (`decode`), and `semver` reading the version (library trust, as in T).
+  Nat literals are decoded by nanoda's own `parse_decimal_fast`, called
+  by serde; not yet verified.
+- **The checks after the loop** in `parse_export_file` (`pp_declars`
+  present, each constructor listed by its inductive): unverified, but they
+  can only reject.
 - **The axiom whitelist**: whether an axiom is permitted is decided by
   comparing its name's text (`name_to_string`) with `permitted_axioms`.
   With `unpermitted_axiom_hard_error: false` an axiom not permitted is

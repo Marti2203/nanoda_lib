@@ -40,7 +40,6 @@ fn check_semver<'a>(meta: &FileMeta<'a>) -> Result<(), Box<dyn Error>> {
 
 pub struct Parser<'a, R: BufRead> {
     buf_reader: R,
-    line_num: usize,
     /// VERUS-REWRITE(verified-builder): the dag, the declarations and the
     /// mutual-block table live in the verified `ExportBuilder`, which makes
     /// every pointer and stores every node; this parser only decodes lines.
@@ -1086,6 +1085,227 @@ fn apply<'a, 'l>(
     }
 }
 
+
+#[verifier::external_type_specification]
+pub struct ExExportJsonObject<'a>(ExportJsonObject<'a>);
+
+#[verifier::external_trait_specification]
+pub trait ExRead {
+    type ExternalTraitSpecificationFor: std::io::Read;
+}
+
+#[verifier::external_trait_specification]
+pub trait ExBufRead: std::io::Read {
+    type ExternalTraitSpecificationFor: std::io::BufRead;
+}
+
+/// The next line of the export file into `buf` (emptied first); its
+/// length, 0 at the end.
+#[verifier::external_body]
+fn next_line<R: BufRead>(r: &mut R, buf: &mut String) -> Result<usize, Box<dyn Error>> {
+    buf.clear();
+    Ok(r.read_line(buf)?)
+}
+
+/// serde's reading of one line.
+#[verifier::external_body]
+fn decode<'l>(line: &'l str) -> Result<ExportJsonObject<'l>, Box<dyn Error>> {
+    Ok(serde_json::from_str::<ExportJsonObject>(line)?)
+}
+
+/// How many declarations a record adds at its slot.
+spec fn ndecls<'l>(v: ExportJsonVal<'l>) -> nat {
+    match v {
+        ExportJsonVal::Axiom { .. } | ExportJsonVal::Defn { .. } | ExportJsonVal::Thm { .. }
+        | ExportJsonVal::Opaque { .. } | ExportJsonVal::Quot { .. } => 1,
+        ExportJsonVal::Inductive { ind_vals, ctor_vals, rec_vals } => ind_vals@.len() + ctor_vals@.len() + rec_vals@.len(),
+        _ => 0,
+    }
+}
+
+spec fn is_name_rec<'l>(v: ExportJsonVal<'l>) -> bool {
+    v is NameStr || v is NameNum
+}
+
+spec fn is_level_rec<'l>(v: ExportJsonVal<'l>) -> bool {
+    v is LevelSucc || v is LevelMax || v is LevelIMax || v is LevelParam
+}
+
+spec fn is_expr_rec<'l>(v: ExportJsonVal<'l>) -> bool {
+    v is NatLit || v is StrLit || v is ExprSort || v is ExprConst || v is ExprApp || v is ExprBVar
+        || v is ExprPi || v is ExprLambda || v is ExprLet || v is ExprProj
+}
+
+/// THE EXPORT IS ITS RECORDS. `recs` are the lines as decoded, in order,
+/// `slots` where each went. Every record's content is stored at its slot
+/// (`holds`); and every name, level, expression and declaration added to
+/// `b0` is some record's: the `*_of` maps give, for each position past
+/// `b0`'s, the record that put it there.
+spec fn file_ok<'a, 'l>(
+    b0: ExportBuilder<'a>,
+    b: ExportBuilder<'a>,
+    recs: Seq<ExportJsonVal<'l>>,
+    slots: Seq<Slot>,
+    name_of: Seq<int>,
+    level_of: Seq<int>,
+    expr_of: Seq<int>,
+    decl_of: Seq<int>,
+) -> bool {
+    &&& recs.len() == slots.len()
+    &&& forall|k: int| 0 <= k < recs.len() ==> holds(b, #[trigger] recs[k], slots[k])
+    &&& b.names_len() == b0.names_len() + name_of.len()
+    &&& b.levels_len() == b0.levels_len() + level_of.len()
+    &&& b.exprs_len() == b0.exprs_len() + expr_of.len()
+    &&& b.keys().len() == b0.keys().len() + decl_of.len()
+    &&& forall|p: int| 0 <= p < name_of.len() ==> 0 <= #[trigger] name_of[p] < recs.len()
+        && is_name_rec(recs[name_of[p]]) && slots[name_of[p]] == Slot::At((b0.names_len() + p) as nat)
+    &&& forall|p: int| 0 <= p < level_of.len() ==> 0 <= #[trigger] level_of[p] < recs.len()
+        && is_level_rec(recs[level_of[p]]) && slots[level_of[p]] == Slot::At((b0.levels_len() + p) as nat)
+    &&& forall|p: int| 0 <= p < expr_of.len() ==> 0 <= #[trigger] expr_of[p] < recs.len()
+        && is_expr_rec(recs[expr_of[p]]) && slots[expr_of[p]] == Slot::At((b0.exprs_len() + p) as nat)
+    &&& forall|p: int| 0 <= p < decl_of.len() ==> 0 <= #[trigger] decl_of[p] < recs.len()
+        && slots[decl_of[p]] is At
+        && slots[decl_of[p]]->At_0 <= b0.keys().len() + p < slots[decl_of[p]]->At_0 + ndecls(recs[decl_of[p]])
+}
+
+/// What `read_export` returns: the records and where each went, and which
+/// record put each new position there.
+pub ghost struct FileTrace<'l> {
+    pub recs: Seq<ExportJsonVal<'l>>,
+    pub slots: Seq<Slot>,
+    pub name_of: Seq<int>,
+    pub level_of: Seq<int>,
+    pub expr_of: Seq<int>,
+    pub decl_of: Seq<int>,
+}
+
+/// THE READ LOOP: every line of the export file into the builder, through
+/// `apply`. On success the builder holds exactly the file's records
+/// (`file_ok`).
+///
+/// VERUS-REWRITE(parser-apply): `parse_export_file`'s loop as a function of
+/// the reader, the builder and the flags; the line buffer emptied before
+/// each read rather than after each line (the same lines are read); the
+/// line count, which nothing read, is not kept.
+#[verifier::exec_allows_no_decreases_clause]
+fn read_export<'a, R: BufRead>(
+    reader: &mut R,
+    b: &mut ExportBuilder<'a>,
+    config: &Config,
+    skipped: &mut Vec<String>,
+    nat_extension: bool,
+    string_extension: bool,
+    hard_error: bool,
+) -> (r: Result<Ghost<FileTrace<'static>>, Box<dyn Error>>)
+    requires
+        old(b).wf(),
+    ensures
+        final(b).wf(),
+        grows(*old(b), *final(b)),
+        r matches Ok(t) ==> file_ok(*old(b), *final(b), t@.recs, t@.slots, t@.name_of, t@.level_of, t@.expr_of, t@.decl_of),
+{
+    let ghost b0 = *b;
+    let ghost mut recs: Seq<ExportJsonVal<'static>> = Seq::empty();
+    let ghost mut slots: Seq<Slot> = Seq::empty();
+    let ghost mut name_of: Seq<int> = Seq::empty();
+    let ghost mut level_of: Seq<int> = Seq::empty();
+    let ghost mut expr_of: Seq<int> = Seq::empty();
+    let ghost mut decl_of: Seq<int> = Seq::empty();
+    proof {
+        grows_same(b0, *b);
+        assert(b.keys().len() == b0.keys().len());
+    }
+    let mut line_buffer = String::new();
+    loop
+        invariant_except_break
+            b0 == *old(b),
+            b.wf(),
+            grows(b0, *b),
+            file_ok(b0, *b, recs, slots, name_of, level_of, expr_of, decl_of),
+        ensures
+            b0 == *old(b),
+            b.wf(),
+            grows(b0, *b),
+            file_ok(b0, *b, recs, slots, name_of, level_of, expr_of, decl_of),
+    {
+        let amt = match next_line(reader, &mut line_buffer) {
+            Ok(n) => n,
+            Err(e) => return Err(e),
+        };
+        if amt == 0 {
+            break;
+        }
+        let ExportJsonObject { val, i: assigned_idx } = match decode(line_buffer.as_str()) {
+            Ok(o) => o,
+            Err(e) => return Err(e),
+        };
+        let ghost bk = *b;
+        let ghost v: ExportJsonVal<'static> = val;
+        let ghost br = assigned_idx;
+        let slot = match apply(b, config, skipped, line_buffer.as_str(), nat_extension, string_extension, hard_error, val, assigned_idx) {
+            Ok(g) => g,
+            Err(e) => {
+                proof {
+                    grows_trans(b0, bk, *b);
+                }
+                return Err(e);
+            },
+        };
+        proof {
+            bk.lemma_keys();
+            let k = recs.len() as int;
+            let recs2 = recs.push(v);
+            let slots2 = slots.push(slot@);
+            assert forall|j: int| 0 <= j < recs2.len() implies holds(*b, #[trigger] recs2[j], slots2[j]) by {
+                if j < k {
+                    assert(holds(bk, recs[j], slots[j]));
+                    holds_grows(bk, *b, recs[j], slots[j]);
+                    assert(recs2[j] == recs[j] && slots2[j] == slots[j]);
+                }
+            }
+            let (no, lo, eo, dd) = (name_of, level_of, expr_of, decl_of);
+            if is_name_rec(v) {
+                name_of = name_of.push(k);
+            } else if is_level_rec(v) {
+                level_of = level_of.push(k);
+            } else if is_expr_rec(v) {
+                expr_of = expr_of.push(k);
+            } else if slot@ is At {
+                decl_of = decl_of + Seq::new(ndecls(v), |_q: int| k);
+            }
+            assert forall|p: int| 0 <= p < name_of.len() implies 0 <= #[trigger] name_of[p] < recs2.len()
+                && is_name_rec(recs2[name_of[p]]) && slots2[name_of[p]] == Slot::At((b0.names_len() + p) as nat) by {
+                if p < no.len() {
+                    assert(name_of[p] == no[p]);
+                }
+            }
+            assert forall|p: int| 0 <= p < level_of.len() implies 0 <= #[trigger] level_of[p] < recs2.len()
+                && is_level_rec(recs2[level_of[p]]) && slots2[level_of[p]] == Slot::At((b0.levels_len() + p) as nat) by {
+                if p < lo.len() {
+                    assert(level_of[p] == lo[p]);
+                }
+            }
+            assert forall|p: int| 0 <= p < expr_of.len() implies 0 <= #[trigger] expr_of[p] < recs2.len()
+                && is_expr_rec(recs2[expr_of[p]]) && slots2[expr_of[p]] == Slot::At((b0.exprs_len() + p) as nat) by {
+                if p < eo.len() {
+                    assert(expr_of[p] == eo[p]);
+                }
+            }
+            assert forall|p: int| 0 <= p < decl_of.len() implies 0 <= #[trigger] decl_of[p] < recs2.len()
+                && slots2[decl_of[p]] is At
+                && slots2[decl_of[p]]->At_0 <= b0.keys().len() + p < slots2[decl_of[p]]->At_0 + ndecls(recs2[decl_of[p]]) by {
+                if p < dd.len() {
+                    assert(decl_of[p] == dd[p]);
+                }
+            }
+            recs = recs2;
+            slots = slots2;
+            grows_trans(b0, bk, *b);
+        }
+    }
+    Ok(Ghost(FileTrace { recs, slots, name_of, level_of, expr_of, decl_of }))
+}
+
 } // verus!
 
 pub(crate) fn parse_export_file<'p, R: BufRead>(
@@ -1093,17 +1313,17 @@ pub(crate) fn parse_export_file<'p, R: BufRead>(
     config: Config,
 ) -> Result<(crate::util::ExportFile<'p>, Vec<String>), Box<dyn Error>> {
     let mut parser = Parser::new(buf_reader, config);
-    let mut line_buffer = String::new();
-
-    loop {
-        let amt = parser.buf_reader.read_line(&mut line_buffer)?;
-        if amt == 0 {
-            break;
-        }
-        parser.go1(line_buffer.as_str())?;
-        parser.line_num += 1;
-        line_buffer.clear();
-    }
+    let (nat_extension, string_extension, hard_error) =
+        (parser.config.nat_extension, parser.config.string_extension, parser.config.unpermitted_axiom_hard_error);
+    let _ = read_export(
+        &mut parser.buf_reader,
+        &mut parser.builder,
+        &parser.config,
+        &mut parser.skipped,
+        nat_extension,
+        string_extension,
+        hard_error,
+    )?;
 
     // If the execution config has `unknown_pp_declar_hard_error: true`, and a `pp_declars`
     // that includes `foo`, then we return early with an error if no `foo` declaration is present
@@ -1152,20 +1372,12 @@ impl<'a, R: BufRead> Parser<'a, R> {
     /// as the 0th element of their kind without declaring them.
     pub fn new(buf_reader: R, config: Config) -> Self {
         let builder = ExportBuilder::new(&config);
-        Self { buf_reader, line_num: 0usize, builder, notations: new_fx_hash_map(), config, skipped: Vec::new() }
+        Self { buf_reader, builder, notations: new_fx_hash_map(), config, skipped: Vec::new() }
     }
 
     // Used for the axiom whitelist feature.
     fn name_to_string(&self, n: NamePtr<'a>) -> String {
         name_to_string(&self.builder, n)
-    }
-
-    fn go1(&mut self, line: &str) -> Result<(), Box<dyn Error>> {
-        let ExportJsonObject { val, i: assigned_idx } = serde_json::from_str::<ExportJsonObject>(line)?;
-        let (nat_extension, string_extension, hard_error) =
-            (self.config.nat_extension, self.config.string_extension, self.config.unpermitted_axiom_hard_error);
-        apply(&mut self.builder, &self.config, &mut self.skipped, line, nat_extension, string_extension, hard_error, val, assigned_idx)?;
-        Ok(())
     }
 }
 
