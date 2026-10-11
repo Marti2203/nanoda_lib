@@ -2101,7 +2101,7 @@ inductives at non-Prop instances (`Eq.rec` into Type) and the kernel's
 structure eta at structures outside the `struct_of` slice (dependent
 fields: `Sigma`, `Subtype`); the slice's widening is its own arc.
 
-### Rank-stratified strip (2026-10-10, R1-R3a, R3b-1, R3b-2 closed fields done)
+### Rank-stratified strip (2026-10-10, R1-R3b done)
 
 FOUND: the model's typing facts (`ty_closed`, `rule_typed`,
 `fields_typed`, `rule_typed_g`) are stated in `ti_strip::strip(sig)`, with
@@ -2254,9 +2254,18 @@ The plan:
   (`dom_field_ty::sort_doms`), else the sorts' match lives under the
   telescope's binders and is strengthening again; it replaces the closed
   fields' typing in the hypothesis (`fields_typed_h`). Lean's type
-  formers (`Prod`, `List`, ...) take sorts. Open: the fields over the
-  parameters (`pfield_ok_h`'s `ptyped`), the same rebuild in the
-  parameters' context.
+  formers (`Prod`, `List`, ...) take sorts. R3b-2c (done): the fields
+  over the parameters, the same rebuild in the parameters' context
+  (`dom_field_ty::prebuild`: the parameters' variables are leaves typed
+  at their sorts, the field lowered past the earlier fields,
+  `rec_canon::plow`; the context well formed from the inductive's type
+  below its rank, `ti_beta::pi_tele_wf`), certified at the positions
+  (`export_sound::pfield_ty_one`) as `fields_ty`'s second clause
+  (`dom_canon::pftyped`); the boundary over the parameters is
+  `dom_field_ty::psd`. `fields_typed` now holds of a canonical inductive
+  from the certificates and the boundary alone; what stays assumed of
+  the fields is their shape (`capp`, `pcapp`) and that their heads take
+  sorts (`sort_doms`, `psd`).
 - **R3c** (open, deep) `rule_typed`: nanoda never types rule bodies, it
   converts the declared rules to the ones it generates, so this is the
   theorem that canonical recursor rules are well typed, not a

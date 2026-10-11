@@ -160,9 +160,29 @@ pub open spec fn field_in(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// inductive's closed simple fields within the boundary are typed below
 /// it, at every level instance.
 pub open spec fn fields_ty(sig: Sig) -> bool {
-    forall|ind: u64, p: int, k: int, ls: Seq<LevelSpec>| #![trigger ftyped(sig, ind, p, k, ls)]
+    &&& forall|ind: u64, p: int, k: int, ls: Seq<LevelSpec>| #![trigger ftyped(sig, ind, p, k, ls)]
         has_rec(sig, ind) && field_in(sig, ind, p, k) && ls.len() == sig.consts[ind].lps.len()
         ==> ftyped(sig, ind, p, k, ls)
+    &&& forall|ind: u64, p: int, k: int| #![trigger pftyped(sig, ind, p, k)]
+        has_rec(sig, ind) && pfield_in(sig, ind, p, k) ==> pftyped(sig, ind, p, k)
+}
+
+/// A field over the parameters within the boundary.
+pub open spec fn pfield_in(sig: Sig, ind: u64, p: int, k: int) -> bool {
+    let sh = canon_shape(sig, ind);
+    &&& 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+    &&& !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
+    &&& !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
+    &&& !simple_ty(sig, ind, sh.fields[p][k])
+    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& crate::dom_field_ty::psd(sig, sh.fields[p][k])
+    &&& pcapp(sig, sh.fields[p][k], ind)
+}
+
+/// It typed in the parameters' context below its inductive.
+pub open spec fn pftyped(sig: Sig, ind: u64, p: int, k: int) -> bool {
+    let sh = canon_shape(sig, ind);
+    crate::dom_psimple::ptyped(sig, rk(sig, ind), sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
 }
 
 /// THE FIELDS' RANKS FROM THE CERTIFICATE: the shapes the hypothesis
@@ -196,6 +216,8 @@ pub proof fn fields_typed_of(sig: Sig, ind: u64)
         && !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k]) && !simple_ty(sig, ind, sh.fields[p][k])
         implies #[trigger] pfield_ok(sig, ind, p, k) by {
         assert(pfield_ok_h(sig, ind, p, k));
+        assert(pfield_in(sig, ind, p, k));
+        assert(pftyped(sig, ind, p, k));
         field_consts(sig, ind, p, k);
         pranked_of(sig, sh.fields[p][k], ind, rk(sig, ind));
     }

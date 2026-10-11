@@ -435,11 +435,12 @@ pub open spec fn fields_typed_h(sig: Sig, ind: u64) -> bool {
         ==> #[trigger] pfield_ok_h(sig, ind, p, k)
 }
 
-/// `pfield_ok` with the field's shape in place of its rank.
+/// `pfield_ok` with the field's shape in place of its rank, and the
+/// boundary (its heads take sorts) in place of its typing.
 pub open spec fn pfield_ok_h(sig: Sig, ind: u64, p: int, k: int) -> bool {
     let sh = canon_shape(sig, ind);
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
-    &&& crate::dom_psimple::ptyped(sig, rk(sig, ind), sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
+    &&& crate::dom_field_ty::psd(sig, sh.fields[p][k])
     &&& crate::dom_canon::pcapp(sig, sh.fields[p][k], ind)
 }
 

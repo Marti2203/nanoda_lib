@@ -780,6 +780,54 @@ proof fn field_ty_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, ind: u64, p:
     let _l = crate::dom_field_ty::simple_rebuild(s, g2, tw, r, ind, f2, crate::ti_syntax::sort(li2));
 }
 
+/// ONE FIELD OVER THE PARAMETERS TYPED BELOW ITS INDUCTIVE, in their
+/// context: nanoda's typing of its constructor, inverted to the field and
+/// rebuilt (`dom_field_ty::prebuild`).
+#[verifier::spinoff_prover]
+proof fn pfield_ty_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, ind: u64, p: int, k: int)
+    requires
+        below_ok(ef, cc),
+        crate::metatheory::rank_ok(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)),
+        crate::ti_syntax::iota_ok(crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)))),
+        crate::dom_code::has_rec(crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc))), ind),
+        crate::dom_canon::pfield_in(crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc))), ind, p, k),
+    ensures
+        crate::dom_canon::pftyped(crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc))), ind, p, k),
+{
+    let tw = crate::twin::twin(crate::metatheory::jsig_r(m_dty(ef, cc), m_denv(ef, cc), rmap(ef, cc)));
+    let sh = crate::dom_code::canon_shape(tw, ind);
+    let f = sh.fields[p][k];
+    let r = crate::dom_code::rk(tw, ind);
+    let tt = crate::ti_strip::strip_below(tw, r);
+    let (c0, li) = field_cert(ef, cc, ind, p, k);
+    cert_sig_facts(ef, cc, c0);
+    let s = crate::metatheory::jsig(m_dty(ef, c0), m_denv(ef, c0), Map::empty());
+    let g = (sh.pdoms + sh.fields[p]).subrange(0, sh.np + k);
+    twin_facts(ef, cc);
+    crate::dom_ctor_bound::ctor_shape_ind(tw, ind);
+    // the field in the certificate's signature
+    let d = crate::ti_sub::get(s, crate::ti_syntax::eq(g, f, f, crate::ti_syntax::sort(li)));
+    crate::ti_level::d_consts(s, d);
+    crate::dom_canon::canon_fields(tw, ind, p, k);
+    crate::dom_field_ty::psimple_down(tw, s, ind, sh.pdoms, sh.np, k as nat, f);
+    crate::dom_field_ty::psd_down(tw, s, f);
+    // its rank
+    crate::dom_canon::field_consts(tw, ind, p, k);
+    crate::dom_canon::pranked_of(tw, f, ind, r);
+    // the parameters' context, from the inductive's type below its rank
+    assert(tw.consts.contains_key(ind));
+    let ti = tw.consts[ind].ty;
+    let lt = choose|l: crate::level_model::LevelSpec| #[trigger] crate::ti_syntax::derivable(tt, crate::ti_syntax::eq(Seq::empty(), ti, ti, crate::ti_syntax::sort(l)));
+    let xs = sh.pdoms + sh.idoms;
+    crate::jkernel::wf_nil(tt);
+    let _lb = crate::ti_beta::pi_tele_wf(tt, Seq::empty(), xs, crate::rec_canon::tbody(ti, sh.np + sh.ni), lt);
+    assert(Seq::<ExprSpec>::empty() + xs =~= xs);
+    crate::ti_beta::wf_prefix(tt, xs, sh.np as int);
+    assert(xs.subrange(0, sh.np as int) =~= sh.pdoms);
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies g[q] == #[trigger] sh.pdoms[q] && sh.pdoms[q] is Sort by {}
+    let _l = crate::dom_field_ty::prebuild(s, g, tw, r, ind, sh.pdoms, k as nat, f, crate::ti_syntax::sort(li));
+}
+
 /// THE CLOSED FIELDS TYPED BELOW THEIR INDUCTIVE (R3b-2): in the
 /// position-ranked twin, with its recursors in the fragment, from nanoda's
 /// typings of the constructors.
@@ -797,6 +845,11 @@ proof fn fields_ty_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             crate::dom_code::has_rec(tw, ind) && crate::dom_canon::field_in(tw, ind, p, k) && ls.len() == tw.consts[ind].lps.len()
             implies crate::dom_code::ftyped(tw, ind, p, k, ls) by {
             field_ty_one(ef, cc, ind, p, k, ls);
+        }
+        assert forall|ind: u64, p: int, k: int| #![trigger crate::dom_canon::pftyped(tw, ind, p, k)]
+            crate::dom_code::has_rec(tw, ind) && crate::dom_canon::pfield_in(tw, ind, p, k)
+            implies crate::dom_canon::pftyped(tw, ind, p, k) by {
+            pfield_ty_one(ef, cc, ind, p, k);
         }
     }
 }
@@ -859,6 +912,55 @@ proof fn fields_ty_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>)
         assert(crate::dom_canon::field_in(s0, ind, p, k));
         assert(crate::dom_code::ftyped(s0, ind, p, k, ls));
         styped_locals(s0, d, crate::dom_code::rk(s0, ind), crate::expr_model::subst_expr_levels(f, s0.consts[ind].lps, ls));
+    }
+    assert forall|ind: u64, p: int, k: int| #![trigger crate::dom_canon::pftyped(s1, ind, p, k)]
+        crate::dom_code::has_rec(s1, ind) && crate::dom_canon::pfield_in(s1, ind, p, k)
+        implies crate::dom_canon::pftyped(s1, ind, p, k) by {
+        let r1 = choose|rid: u64| crate::rec_canon::rec_canon(s1, rid) && crate::rec_canon::rec_ind(s1, rid) == ind;
+        crate::dom_rec_end::canon_congr(s0, s1, r1);
+        assert(crate::rec_canon::rec_ind(s0, r1) == ind);
+        assert(crate::dom_code::has_rec(s0, ind));
+        canon_locals(s0, s1, ind);
+        let sh = crate::dom_code::canon_shape(s1, ind);
+        let f = sh.fields[p][k];
+        crate::dom_field_ty::simple_ty_eq(s0, s1, ind, f);
+        crate::dom_field_ty::psd_eq(s0, s1, f);
+        crate::dom_field_ty::pcapp_eq(s0, s1, f, ind);
+        assert(crate::dom_canon::pfield_in(s0, ind, p, k));
+        assert(crate::dom_canon::pftyped(s0, ind, p, k));
+        ptyped_locals(s0, d, crate::dom_code::rk(s0, ind), sh.pdoms, crate::rec_canon::plow(f, k as nat));
+    }
+}
+
+/// `styped_locals` in a context.
+proof fn ptyped_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec)
+    requires
+        crate::kclaims::iota_syn(s0),
+        crate::dom_psimple::ptyped(s0, r, dl, e),
+    ensures
+        crate::dom_psimple::ptyped(crate::ti_syntax::Sig { locals: d, ..s0 }, r, dl, e),
+    decreases e, 1int,
+{
+    let s1 = crate::ti_syntax::Sig { locals: d, ..s0 };
+    crate::ti_strip::strip_below_locals(s0, d, r);
+    pargs_locals(s0, d, r, dl, e);
+    let h = crate::beta_model::spine_head(e);
+    if h is Const {
+        canon_locals(s0, s1, h->Const_0);
+    }
+}
+
+proof fn pargs_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec)
+    requires
+        crate::kclaims::iota_syn(s0),
+        crate::dom_psimple::pargs_typed(s0, r, dl, e),
+    ensures
+        crate::dom_psimple::pargs_typed(crate::ti_syntax::Sig { locals: d, ..s0 }, r, dl, e),
+    decreases e, 0int,
+{
+    if let ExprSpec::App(f, x) = e {
+        pargs_locals(s0, d, r, dl, *f);
+        ptyped_locals(s0, d, r, dl, *x);
     }
 }
 
@@ -2524,11 +2626,46 @@ proof fn defs_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         && dty.contains_key(cid) && dty[cid].0 == denv.defs[cid].0
         && exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, em, denv.defs[cid].1, t2)
             && crate::metatheory::tconv(dty, denv, em, t2, dty[cid].1) by {
+        def_one(ef, cc, cid);
+    }
+}
+
+/// One definition's value of `defs_at`.
+#[verifier::spinoff_prover]
+proof fn def_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
+    requires
+        below_ok(ef, cc),
+        m_denv(ef, cc).defs.contains_key(cid),
+        crate::env_weaken::defs_ranked(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
+        crate::ti_syntax::iota_ok(crate::metatheory::jsig(m_dty(ef, cc), m_denv(ef, cc), Map::empty())),
+    ensures ({
+        let dty = m_dty(ef, cc);
+        let denv = m_denv(ef, cc);
+        let em = Map::<nat, ExprSpec>::empty();
+        crate::expr_model::nlbv(denv.defs[cid].1) == 0
+        && !crate::expr_model::has_fv(denv.defs[cid].1)
+        && crate::level_inst::elp_in(denv.defs[cid].1, denv.defs[cid].0)
+        && dty.contains_key(cid) && dty[cid].0 == denv.defs[cid].0
+        && exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, em, denv.defs[cid].1, t2)
+            && crate::metatheory::tconv(dty, denv, em, t2, dty[cid].1)
+    }),
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let a = ef.arena();
+    let dty = m_dty(ef, cc);
+    let denv = m_denv(ef, cc);
+    let em = Map::<nat, ExprSpec>::empty();
+    crate::inductive::export_keys_ids_inj(ef);
+    ef.declars_views();
+    assert(kh_hyp(dty, denv));
+    {
         let i = entry_of(ef, cc, cid);
-        let c = cert_of(ef, i);
-        let d = decl_at(ef, i);
-        assert(crate::tc::declar_value(d) is Some);
-        assert(crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)));
+        assert(m_dty(ef, cc).contains_key(cid)) by {
+            let d = decl_at(ef, i);
+            assert(crate::tc::declar_value(d) is Some);
+        }
+        let c = decl_facts(ef, cc, cid);
         crate::env_model::env_le_at(a, view, keys, c, cc);
         crate::env_model::defs_stable_at(a, view, keys, c, cc);
         let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
