@@ -574,7 +574,8 @@ impl<'p> ExportFile<'p> {
 
 impl<'p> ExportFile<'p> {
     /// Check all declarations in this export file, spawning `num_threads` as
-    /// checkers.
+    /// checkers. Not verified (Verus has no scoped threads); why it certifies
+    /// every declaration as the serial driver does: docs/TRUST.md, "D".
     fn check_all_declars_par(&self, num_threads: usize) {
         use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
         use std::thread;

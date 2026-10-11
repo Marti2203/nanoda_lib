@@ -274,3 +274,36 @@ a second change that has since landed independently — #2904 included an
 `impl IteratorSpecImpl for &mut I` that is now upstream, and keeping it gives
 `E0119 conflicting implementations`.
 
+
+## The fork today (2026-10-11)
+
+nanoda builds against `~/verus-fork`, branch `verus-update-2026-10-11`:
+upstream as of 2026-10-11 plus the commits below (`git log --no-merges
+upstream/main..HEAD`). Upstream has since adopted the fork's
+`HashMap::{capacity, with_hasher}`, `HashSet::with_hasher`,
+`Option::copied`, `<[T]>::reverse`, `<[T]>::contains` and
+`Iterator::position` specifications, so the fork's copies were dropped in
+the merge.
+
+Changes to Verus itself, each with a regression test:
+
+- resolution inference forwards resolutions out of `MatchIntermediate`
+  blocks (match guards calling `&mut self` methods; `8f4061822`)
+- `allow_panic`: a panic is a way of not returning (`4d9e23468`)
+- `for` loops bind their iterable by `match`, as Rust's desugaring does, so
+  temporaries in it live for the loop (E0716; `e66265835`)
+- `for` loops carry `obeys_prophetic_iter_laws()` into the invariant
+  (`e6edc30a6`); trait candidates selected on the normalized bound
+  (`f929f7f05`); the `AssocTypeImpl` trigger gap for reference-shaped
+  targets (`0d927b1c4`)
+
+vstd specifications (library trust, docs/TRUST.md "T"):
+
+- iterators: `copied`, `cloned`, `nth`, `enumerate` (upstream PR #2904)
+- `FromIteratorSpecImpl` for `Arc<[T]>` and `HashSet` (what `collect`
+  builds)
+- `Arc`: `Deref`, `AsRef`, `Clone` (the same value), `From` a slice or a
+  `Vec`, and a view for `Arc<[T]>`; `Vec`'s `AsRef<[T]>`
+- hash tables: the key model relativized to the keys involved, tuple keys,
+  `HashSet`'s `Clone` and `PartialEq`
+- `core::panicking::assert_failed` (so `assert_eq!` can be used)
