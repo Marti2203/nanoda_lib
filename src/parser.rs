@@ -13,6 +13,8 @@ use std::io::BufRead;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(verus_only)]
+use vstd::string::StringSliceAdditionalSpecFns;
+#[cfg(verus_only)]
 use crate::export_builder::{at_idxs, expr_at, info_at, level_at, list_at, name_at, text_at};
 #[allow(unused_imports)]
 use crate::expr::Expr;
@@ -1398,43 +1400,292 @@ fn name_to_string<'a>(b: &ExportBuilder<'a>, n: NamePtr<'a>) -> String {
     }
 }
 
+/// `x * y` on borrowed numbers (`num_bigint`'s `&BigUint * &BigUint`).
+fn biguint_mul_ref(x: &BigUint, y: &BigUint) -> BigUint {
+    x * y
+}
+
+verus! {
+
+/// The number a string of decimal digits denotes.
+pub open spec fn dec_val(b: Seq<u8>) -> nat
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        0
+    } else {
+        dec_val(b.drop_last()) * 10 + (b.last() - 48) as nat
+    }
+}
+
+/// Every byte is an ASCII digit.
+pub open spec fn digits(b: Seq<u8>) -> bool {
+    forall|i: int| 0 <= i < b.len() ==> 48 <= #[trigger] b[i] <= 57
+}
+
+pub open spec fn pow10(n: nat) -> nat {
+    crate::tc_model::nat_pow(10, n)
+}
+
+pub open spec fn pow2(n: nat) -> nat {
+    crate::tc_model::nat_pow(2, n)
+}
+
+/// `num_bigint`'s parser: decimal digits, not empty, denote their number.
+pub assume_specification[ BigUint::parse_bytes ](buf: &[u8], radix: u32) -> (r: Option<BigUint>)
+    ensures
+        radix == 10 && buf@.len() > 0 && digits(buf@) ==> (r matches Some(v) && crate::nat_lit_model::to_nat(v) == dec_val(buf@)),
+;
+
+pub assume_specification[ biguint_mul_ref ](x: &BigUint, y: &BigUint) -> (r: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(r) == crate::nat_lit_model::to_nat(*x) * crate::nat_lit_model::to_nat(*y),
+;
+
+proof fn pow_add(a: nat, x: nat, y: nat)
+    ensures
+        crate::tc_model::nat_pow(a, x + y) == crate::tc_model::nat_pow(a, x) * crate::tc_model::nat_pow(a, y),
+    decreases y,
+{
+    if y == 0 {
+        assert(x + y == x);
+        assert(crate::tc_model::nat_pow(a, 0) == 1);
+    } else {
+        let y1 = (y - 1) as nat;
+        pow_add(a, x, y1);
+        let px = crate::tc_model::nat_pow(a, x);
+        let py1 = crate::tc_model::nat_pow(a, y1);
+        assert(x + y1 == (x + y - 1) as nat);
+        assert(crate::tc_model::nat_pow(a, x + y1) == px * py1);
+        assert(crate::tc_model::nat_pow(a, x + y) == a * crate::tc_model::nat_pow(a, x + y1));
+        assert(crate::tc_model::nat_pow(a, y) == a * py1);
+        assert(a * (px * py1) == px * (a * py1)) by (nonlinear_arith);
+    }
+}
+
+/// `dec(a ++ b) = dec(a) * 10^|b| + dec(b)`.
+proof fn dec_concat(a: Seq<u8>, b: Seq<u8>)
+    ensures
+        dec_val(a + b) == dec_val(a) * pow10(b.len()) + dec_val(b),
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        assert(a + b =~= a);
+        assert(pow10(0) == 1);
+    } else {
+        let b1 = b.drop_last();
+        dec_concat(a, b1);
+        assert((a + b).drop_last() =~= a + b1);
+        assert((a + b).last() == b.last());
+        let d = (b.last() - 48) as nat;
+        assert(b1.len() == (b.len() - 1) as nat);
+        assert(crate::tc_model::nat_pow(10, b.len()) == 10 * crate::tc_model::nat_pow(10, (b.len() - 1) as nat));
+        assert(pow10(b.len()) == 10 * pow10(b1.len()));
+        assert(dec_val(a + b) == (dec_val(a) * pow10(b1.len()) + dec_val(b1)) * 10 + d);
+        assert((dec_val(a) * pow10(b1.len()) + dec_val(b1)) * 10 + d
+            == dec_val(a) * (10 * pow10(b1.len())) + (dec_val(b1) * 10 + d)) by (nonlinear_arith);
+    }
+}
+
+/// A run of zeros denotes 0.
+proof fn dec_zeros(b: Seq<u8>)
+    requires
+        forall|i: int| 0 <= i < b.len() ==> #[trigger] b[i] == 48,
+    ensures
+        dec_val(b) == 0,
+    decreases b.len(),
+{
+    if b.len() > 0 {
+        dec_zeros(b.drop_last());
+    }
+}
+
+/// `pows[k]` is `10^(2048 * 2^k)`.
+pub open spec fn pows_ok(p: Seq<BigUint>) -> bool {
+    forall|k: int| 0 <= k < p.len() ==> crate::nat_lit_model::to_nat(#[trigger] p[k]) == pow10(2048 * pow2(k as nat))
+}
+
+/// `10^2048`, as eleven squarings of 10.
+fn ten_pow_2048() -> (r: BigUint)
+    ensures
+        crate::nat_lit_model::to_nat(r) == pow10(2048),
+{
+    let digits_10: [u8; 2] = [49u8, 48u8];
+    proof {
+        assert(digits_10@.drop_last() =~= seq![49u8]);
+        assert(seq![49u8].drop_last() =~= Seq::<u8>::empty());
+        assert(dec_val(digits_10@) == 10) by {
+            reveal_with_fuel(dec_val, 3);
+        }
+    }
+    let mut x = BigUint::parse_bytes(&digits_10, 10).unwrap();
+    let mut i: usize = 0;
+    proof {
+        assert(pow2(0) == 1);
+        assert(pow10(1) == 10) by {
+            reveal_with_fuel(crate::tc_model::nat_pow, 2);
+        }
+    }
+    while i < 11
+        invariant
+            i <= 11,
+            crate::nat_lit_model::to_nat(x) == pow10(pow2(i as nat)),
+        decreases 11 - i,
+    {
+        let y = biguint_mul_ref(&x, &x);
+        proof {
+            pow_add(10, pow2(i as nat), pow2(i as nat));
+            assert(pow2((i + 1) as nat) == 2 * pow2(i as nat));
+        }
+        x = y;
+        i = i + 1;
+    }
+    proof {
+        assert(pow2(11) == 2048) by {
+            reveal_with_fuel(crate::tc_model::nat_pow, 12);
+        }
+    }
+    x
+}
+
+/// The recursion: a digit string of more than `2 * 2048` digits splits
+/// into a high part and a low part of `2048 * 2^j` digits, the low part's
+/// power of ten coming from `pows`, extended as needed.
+///
+/// VERUS-REWRITE(decimal-parse): `parse_decimal_fast`'s inner `go`, over
+/// bytes: `BigUint::from_str` → `BigUint::parse_bytes(.., 10)` (the same
+/// digits), `split_at` → slices, `BASE_DIGITS << j` tracked as `m` doubling
+/// (`2 * m < len` written `m < len - m`), the first power as squarings of 10,
+/// the products through `biguint_mul_ref`/`biguint_add`.
+fn decimal_go(s: &[u8], pows: &mut Vec<BigUint>) -> (r: BigUint)
+    requires
+        s@.len() > 0,
+        digits(s@),
+        pows_ok(old(pows)@),
+    ensures
+        crate::nat_lit_model::to_nat(r) == dec_val(s@),
+        pows_ok(final(pows)@),
+        final(pows)@.len() >= old(pows)@.len(),
+    decreases s@.len(),
+{
+    const BASE_DIGITS: usize = 2048;
+    if s.len() <= 2 * BASE_DIGITS {
+        return BigUint::parse_bytes(s, 10).expect("validated nonempty ASCII digits");
+    }
+    // largest j with BASE_DIGITS * 2^j < s.len()
+    let mut j: usize = 0;
+    let mut m: usize = BASE_DIGITS;
+    proof {
+        assert(pow2(0) == 1);
+    }
+    while m < s.len() - m
+        invariant
+            0 < m < s@.len(),
+            m == 2048 * pow2(j as nat),
+            j < m,
+        decreases s@.len() - m,
+    {
+        proof {
+            assert(pow2((j + 1) as nat) == 2 * pow2(j as nat));
+        }
+        m = 2 * m;
+        j = j + 1;
+    }
+    while pows.len() <= j
+        invariant
+            pows_ok(pows@),
+            pows@.len() >= old(pows)@.len(),
+            0 < m < s@.len(),
+            m == 2048 * pow2(j as nat),
+        decreases j + 1 - pows@.len(),
+    {
+        let next = if pows.len() == 0 {
+            ten_pow_2048()
+        } else {
+            let last = &pows[pows.len() - 1];
+            let n = biguint_mul_ref(last, last);
+            proof {
+                let k = (pows@.len() - 1) as nat;
+                pow_add(10, 2048 * pow2(k), 2048 * pow2(k));
+                assert(pow2(k + 1) == 2 * pow2(k));
+                assert(2048 * pow2(k + 1) == 2048 * pow2(k) + 2048 * pow2(k));
+            }
+            n
+        };
+        proof {
+            assert(pows@.len() == 0 ==> pow2(0) == 1);
+        }
+        pows.push(next);
+    }
+    let cut = s.len() - m;
+    let hi = &s[0..cut];
+    let lo = &s[cut..s.len()];
+    proof {
+        assert(hi@ =~= s@.subrange(0, cut as int));
+        assert(lo@ =~= s@.subrange(cut as int, s@.len() as int));
+        assert(s@ =~= hi@ + lo@);
+    }
+    let hi_v = decimal_go(hi, pows);
+    let lo_v = decimal_go(lo, pows);
+    proof {
+        dec_concat(hi@, lo@);
+        assert(crate::nat_lit_model::to_nat(pows@[j as int]) == pow10(m as nat));
+    }
+    crate::nat_lit_model::biguint_add(biguint_mul_ref(&hi_v, &pows[j]), lo_v)
+}
+
 /// Decimal string -> BigUint in sub-quadratic time. `BigUint::from_str` is quadratic in the digit count,
 /// which makes nat literals with millions of digits (as in large `decide`/`norm_num` proofs) take days.
 /// This splits the digit string by 10^(BASE_DIGITS * 2^j) and combines with big multiplications
 /// (Karatsuba/Toom-3), so cost is that of multiplication times a log factor. Same value as `from_str`.
-pub(crate) fn parse_decimal_fast(s: &str) -> Result<BigUint, String> {
-    use std::str::FromStr;
-    const BASE_DIGITS: usize = 2048;
-    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+///
+/// VERUS-REWRITE(decimal-parse): over `s.as_bytes()`: the digit test and the
+/// leading-zero trim as loops, `BigUint::ZERO` as `zero()`.
+pub(crate) fn parse_decimal_fast(s: &str) -> (r: Result<BigUint, String>)
+    ensures
+        r matches Ok(v) ==> digits(s.spec_bytes()) && crate::nat_lit_model::to_nat(v) == dec_val(s.spec_bytes()),
+{
+    let b = s.as_bytes();
+    let mut ok = b.len() > 0;
+    let mut i: usize = 0;
+    while i < b.len()
+        invariant
+            i <= b@.len(),
+            ok ==> forall|k: int| 0 <= k < i ==> 48 <= #[trigger] b@[k] <= 57,
+        decreases b@.len() - i,
+    {
+        if !(b'0' <= b[i] && b[i] <= b'9') {
+            ok = false;
+        }
+        i = i + 1;
+    }
+    if !ok {
         return Err("expected a non-empty string of ASCII digits".to_string());
     }
-    let s = s.trim_start_matches('0');
-    if s.is_empty() {
-        return Ok(BigUint::ZERO);
+    let mut z: usize = 0;
+    while z < b.len() && b[z] == b'0'
+        invariant
+            z <= b@.len(),
+            forall|k: int| 0 <= k < z ==> #[trigger] b@[k] == 48,
+        decreases b@.len() - z,
+    {
+        z = z + 1;
     }
-    fn go(s: &str, pows: &mut Vec<BigUint>) -> BigUint {
-        if s.len() <= 2 * BASE_DIGITS {
-            return BigUint::from_str(s).expect("validated nonempty ASCII digits");
-        }
-        // largest j with BASE_DIGITS * 2^j < s.len()
-        let mut j = 0usize;
-        while BASE_DIGITS << (j + 1) < s.len() { j += 1; }
-        while pows.len() <= j {
-            let next = match pows.last() {
-                None => num_traits::pow::pow(BigUint::from(10u8), BASE_DIGITS),
-                Some(last) => last * last,
-            };
-            pows.push(next);
-        }
-        let m = BASE_DIGITS << j;
-        let (hi, lo) = s.split_at(s.len() - m);
-        let hi_v = go(hi, pows);
-        let lo_v = go(lo, pows);
-        hi_v * &pows[j] + lo_v
+    let t = &b[z..b.len()];
+    proof {
+        assert(t@ =~= b@.subrange(z as int, b@.len() as int));
+        assert(b@ =~= b@.subrange(0, z as int) + t@);
+        dec_concat(b@.subrange(0, z as int), t@);
+        dec_zeros(b@.subrange(0, z as int));
+    }
+    if t.len() == 0 {
+        return Ok(<BigUint as num_traits::Zero>::zero());
     }
     let mut pows: Vec<BigUint> = Vec::new();
-    Ok(go(s, &mut pows))
+    Ok(decimal_go(t, &mut pows))
 }
+
+} // verus!
 
 #[cfg(test)]
 mod parse_decimal_fast_tests {

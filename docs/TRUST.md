@@ -31,12 +31,13 @@ the like, which promise nothing). The vstd specifications come from the
 Verus fork nanoda builds against (Cargo.toml's `vstd` path); its additions
 are listed in docs/VSTD_GAPS.md, "The fork today".
 
-On 2026-10-11: 59 claiming items and 32 claim-free. The kernel's
+On 2026-10-11: 61 claiming items and 32 claim-free. The kernel's
 `nat_sub`, `nat_div`, `nat_mod`, `nat_shl` and `nat_shr` are verified in
-place (they were five claims). The parser's boundary with the libraries
-(reading a line, serde's decoding, the formatted messages, the axiom
-whitelist's name text) is claim-free helpers, so it promises nothing the
-proofs use.
+place (they were five claims); verifying the parser's decimal reader
+added two library ones (`BigUint::parse_bytes`, `&BigUint * &BigUint`).
+The parser's boundary with the libraries (reading a line, serde's
+decoding, the formatted messages, the axiom whitelist's name text) is
+claim-free helpers, so it promises nothing the proofs use.
 
 ## P. The parser (`src/parser.rs`)
 
@@ -79,8 +80,10 @@ What is still trusted:
 - **Reading and decoding**: `BufRead::read_line` splitting the file into
   lines (`next_line`), `serde_json` turning a line into a record
   (`decode`), and `semver` reading the version (library trust, as in T).
-  Nat literals are decoded by nanoda's own `parse_decimal_fast`, called
-  by serde; not yet verified.
+  Nat literals go through nanoda's own `parse_decimal_fast`, which serde
+  calls; that function is verified (a successful parse is the digits'
+  number, `dec_val`), resting on `num_bigint`'s `parse_bytes` and
+  multiplication (two library specifications).
 - **The checks after the loop** in `parse_export_file` (`pp_declars`
   present, each constructor listed by its inductive): unverified, but they
   can only reject.
