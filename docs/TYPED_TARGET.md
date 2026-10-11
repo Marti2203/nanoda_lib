@@ -2336,3 +2336,44 @@ the port total but needs the model extension.
   `swap_typed`, `subst_typed`, `subst_conv`, `level_typed`, `env_weaken`);
   `metatheory.rs`'s conditional theorem; `hyps_all`, `h_sr`, `h_sr_leaf`
   as stated.
+
+### Widening to real exports: projections first (planned 2026-10-11)
+
+MEASURED: Lean's Core export leaves the fragment at its 13th declaration
+(`MonadReaderOf.read`: a projection in its value), then `Eq` (indexed,
+`rec_small`) at 16 and `Quot` (built-ins, `frag_hyp`) at 41. `export_kh`
+now concludes at a cutoff from the hypotheses at the cutoffs up to it
+(538d755), so a prefix inside the fragment is covered; widening the
+fragment is what extends it. Order chosen: projections, then indexed
+families with Prop large elimination, then `Nat`/literals/`Quot`.
+
+Projections need three steps; `MonadReaderOf.read` (`m ρ` with
+`m : Type u → Type v`) needs all three, because its recursor already leaves
+the fragment (`m` is not Sort-typed: `rec_small`, `rec_frag_l`,
+`pfield_ok`; `m ρ` is no `field_kind`, so no `rec_canon`, so no `iota_ok`).
+
+- **K, the kernel step (on today's slice) -- DONE.** `frag_term` admits
+  `Proj(i, x)` for a fragment `x`; `proj_reg::cc_proj` (empty until now,
+  since the claim was vacuous) is proved by typing the projection with
+  `kstruct::struct_proj_typed` and reusing `ci_proj` for the kernel's
+  field type. Projections of structures outside the slice stay out
+  through `ind_ok_hyp`'s structure clause, not through `frag_term`.
+  Originally: `Proj` leaves `frag_term`'s
+  exclusions; `infer_proj`'s `kcc` (now vacuous) is derived: the subject's
+  `cc` by induction, its type converted to `S.{us} ps`, the structure
+  clause gives `struct_of`, the field walk gives `proj_ty`, `never_prop`
+  gives `!proj_prop`, then a `ProjCong` node (`kiota::proj_cong_d`).
+- **Slice 1: closed and `psimple` structure fields.** `struct_of` asks
+  `psimple` instead of `pvar_field`. New: `ceval_mem` (a field type's code
+  at typed parameter codes is a member of its denotation; via
+  `dom_canon::tf_step`, `dom_adeq::mem_app_intro`), the ⊇ inversion (a
+  member of `F[ps]` at some typed parameter codes) for `proj_iota_sup`,
+  and field types independent of earlier projections (from `plow_vsub`).
+  Re-proofs in dom_proj_sound, dom_adeq_proj, ti_sr, kstruct.
+- **Slice 2: parameters that are not sorts, fields headed by a parameter
+  (`m ρ`).** `ceval` gains the applied-variable case, `psimple`/
+  `field_kind` the applied parameter, the Sort-only gates go, and the
+  logical relation relates Pi-typed parameters. On both the recursor and
+  structure sides.
+- **Later: dependent fields** (`Sigma.snd`, `Subtype.property`): table
+  entries that depend on earlier fields (Σ-codes).

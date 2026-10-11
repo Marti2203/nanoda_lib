@@ -603,6 +603,43 @@ pub proof fn cc_proj(
     ensures
         crate::kclaims::cc(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
 {
+    let p = ExprSpec::Proj(idx, Box::new(s));
+    if kh(dty, denv) && crate::kclaims::frag_term(p) {
+        let ety = spine_app(ExprSpec::Const(ind, ls), am);
+        ci_proj(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm);
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, p), d)
+            implies #[trigger] crate::kclaims::cc_at(dty, denv, d, p, btm) by {
+            let sig = crate::metatheory::jsig(dty, denv, d);
+            let g0 = Seq::<ExprSpec>::empty();
+            crate::jkernel::kh_at(dty, denv, d);
+            assert(crate::kclaims::ind_ok(sig));
+            rctx_mono(g, s, p);
+            crate::kclaims::sub_trans(rctx(g, s), rctx(g, p), d);
+            // the subject checks, so it is typed, at the structure's type
+            crate::kclaims::cc_use(dty, denv, g, d, s, ety);
+            crate::kclaims::ci_use(dty, denv, g, d, s, ety);
+            let (s0, l) = choose|s0: ExprSpec, l: LevelSpec| #![trigger crate::metatheory::typed(dty, denv, d, ety, s0), crate::metatheory::tconv(dty, denv, d, s0, ExprSpec::Sort(l))]
+                crate::metatheory::typed(dty, denv, d, ety, s0) && crate::metatheory::tconv(dty, denv, d, s0, ExprSpec::Sort(l));
+            crate::ti_chain::conv_chain(sig, g0, ety, ety, s0, crate::ti_syntax::sort(l));
+            // the structure is smashed, with `cid` its constructor and `idx` a field
+            crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), am);
+            assert(sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.struct_ctor[ind] == cid);
+            assert(crate::dom_code::smash(sig, ind));
+            crate::kstruct::struct_facts(sig, ind);
+            crate::dom_ctor_bound::ctor_shape(sig, ind, 0);
+            let sh = crate::dom_code::canon_shape(sig, ind);
+            assert(sh.ctors[0] == cid);
+            assert(sig.ienv.ctor_ind[cid] == ind);
+            assert(sh.fields[0].len() == sig.ienv.ctor_nf[cid] as nat);
+            // so the projection is typed
+            let q = crate::kstruct::struct_proj_typed(sig, g0, ety, l, s, idx as int);
+            assert(crate::metatheory::typed(dty, denv, d, p, crate::beta_model::spine_args(ety)[q]));
+            assert(rtyped(dty, denv, d, p));
+            // and at the kernel's field type
+            assert(crate::kclaims::ci_at(dty, denv, d, p, btm));
+            crate::kclaims::tconv_refl(dty, denv, d, btm);
+        }
+    }
 }
 
 } // verus!

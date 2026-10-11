@@ -51,10 +51,11 @@ pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool 
 }
 
 /// THE FRAGMENT: recursors the model interprets (so iota on typed terms
-/// is the judgment's), no kernel structures (so no projections, structure
-/// or unit eta), and the built-in Nat operations, Nat constructors and
-/// quotient eliminators undeclared (so no literal folding, literal
-/// unfolding or quotient steps on typed terms).
+/// is the judgment's), structures the model smashes (`ind_ok_hyp`'s
+/// structure clause: their projections and eta are the judgment's), and
+/// the built-in Nat operations, Nat constructors and quotient eliminators
+/// undeclared (so no literal folding, literal unfolding or quotient steps
+/// on typed terms).
 pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& frag_hyp(dty, denv)
     &&& tables_ok(dty, denv)
@@ -816,8 +817,9 @@ pub open spec fn ci_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
 
 /// THE CHECK CLAIM (kernel `Check` mode): in every admissible context `e`
 /// is really typed, at a type convertible to `t`. What `ci` assumes of `e`,
-/// `Check` mode establishes. Literals and projections are outside the
-/// fragment's judgment, so the claim is about the fragment's terms.
+/// `Check` mode establishes. Literals are outside the fragment's
+/// judgment, so the claim is about the fragment's terms; a projection's
+/// structure is one the model smashes (`proj_reg::cc_proj`).
 pub open spec fn cc(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
     kh(dty, denv) && frag_term(e) ==> forall|d: Map<nat, ExprSpec>| #![trigger cc_at(dty, denv, d, e, t)]
         lctx_wf(dty, denv, d) && sub(rctx(g, e), d) ==> cc_at(dty, denv, d, e, t)
@@ -2813,12 +2815,13 @@ pub proof fn app_jconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
     crate::jkernel::app_cong_d(sig, g0, f1, f2, a1, a2, pa, pb, k1, k2);
 }
 
-/// A term the fragment can type: no literal and no projection.
+/// A term the fragment can type: no literal.
 pub open spec fn frag_term(e: ExprSpec) -> bool
     decreases e,
 {
     match e {
-        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Proj(_, _) | ExprSpec::Closed => false,
+        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) | ExprSpec::Closed => false,
+        ExprSpec::Proj(_, x) => frag_term(*x),
         ExprSpec::App(f, a) => frag_term(*f) && frag_term(*a),
         ExprSpec::Bind(_, t, b) => frag_term(*t) && frag_term(*b),
         ExprSpec::Let(t, v, b) => frag_term(*t) && frag_term(*v) && frag_term(*b),
@@ -2838,6 +2841,7 @@ pub proof fn frag_term_sf(e: ExprSpec)
         ExprSpec::App(f, a) => { frag_term_sf(*f); frag_term_sf(*a); },
         ExprSpec::Bind(_, t, b) => { frag_term_sf(*t); frag_term_sf(*b); },
         ExprSpec::Let(t, v, b) => { frag_term_sf(*t); frag_term_sf(*v); frag_term_sf(*b); },
+        ExprSpec::Proj(_, x) => { frag_term_sf(*x); },
         _ => {},
     }
 }
@@ -2946,6 +2950,7 @@ pub proof fn frag_term_subst(b: ExprSpec, v: ExprSpec, off: nat)
         ExprSpec::App(f, x) => { frag_term_subst(*f, v, off); frag_term_subst(*x, v, off); },
         ExprSpec::Bind(_, t, bd) => { frag_term_subst(*t, v, off); frag_term_subst(*bd, v, off + 1); },
         ExprSpec::Let(t, x, bd) => { frag_term_subst(*t, v, off); frag_term_subst(*x, v, off); frag_term_subst(*bd, v, off + 1); },
+        ExprSpec::Proj(_, x) => { frag_term_subst(*x, v, off); },
         _ => {},
     }
 }
