@@ -2280,7 +2280,18 @@ The plan:
   (`fld_dom_id`, `vsub_vars_lift`), and its type is the minor's end
   (`dom_rec_minor::minor_end`). `rule_typed` leaves `rec_model_h`;
   `kclaims::sig_sr_of` derives it. Open: R3c-2, `rule_typed_g` for the
-  other recursors (indices), in `rec_model_p_h`.
+  other recursors (indices), in `rec_model_p_h`. The R3c-1 construction
+  carries over except at the recursive calls' index arguments: arbitrary
+  terms (not simple types, so not rebuilt as in R3b) to be typed at the
+  recursor's index domains, which needs inversion of the recursive
+  field's type (`ti_spine::spine_ty`), hence `sig_sr` -- held at the
+  constructor's certificate's cutoff (its `kh`), not below the
+  recursor's rank. Plan: invert there, extend into the position-ranked
+  twin below the recursor's position (`export_sound::cut_ext`; the
+  constructor precedes the recursor), certify as a further `jrank`
+  choice conjunct (R3b's pattern), and generalise `dom_rule_ty` over
+  the indices (general analogues of `dom_rec_minor::minor_split`,
+  `minor_end`, `msds_ih`).
 
 ## The open fork before S4
 

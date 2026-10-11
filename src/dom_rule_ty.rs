@@ -108,6 +108,55 @@ pub open spec fn rule_pre(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>
     &&& lv.len() == sig.ienv.recs[c].uparams.len()
 }
 
+/// `rule_pre` for any canonical recursor (indices allowed).
+pub open spec fn rule_pre_g(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>) -> bool {
+    &&& crate::dom_rec_ty::rec_scope_g(sig, c)
+    &&& crate::dom_rec_end::types_below(sig)
+    &&& crate::ti_syntax::iota_ok(sig)
+    &&& crate::dom_levels::sig_lps(sig)
+    &&& crate::dom_model::consts_ranked(sig)
+    &&& lv.len() == sig.ienv.recs[c].uparams.len()
+}
+
+/// The head binders' count.
+pub proof fn rhead_len(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>)
+    requires
+        crate::dom_rec_ty::rec_scope_g(sig, c),
+    ensures
+        rhead(sig, c, lv).len() == crate::dom_rec_ty::rshape(sig, c).np + 1 + crate::dom_rec_ty::rshape(sig, c).nmin(),
+        crate::dom_rec_ty::rtds(sig, c, lv).len() == crate::dom_rec_ty::rshape(sig, c).np + 1 + crate::dom_rec_ty::rshape(sig, c).nmin() + 1,
+{
+    crate::dom_rec_ty::scope_ctor_ind(sig, c);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, crate::dom_rec_ty::rshape(sig, c).ind);
+}
+
+/// THE RULE'S HEAD CONTEXT, for any canonical recursor: the general
+/// recursor type's head binders (`iota_gen::rtds_prefix`).
+pub proof fn rhead_wf_g(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>)
+    requires
+        rule_pre_g(sig, c, lv),
+    ensures
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)),
+            crate::ti_syntax::Jd::Wf(crate::iota_gen::rtds_g(sig, c, lv))),
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::Jd::Wf(rhead(sig, c, lv))),
+{
+    let ss = crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c));
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let tds = crate::iota_gen::rtds_g(sig, c, lv);
+    crate::dom_rec_end::ty_closed_at(sig, c, crate::dom_code::rk(sig, c), lv);
+    crate::iota_gen::rec_ty_split_g(sig, c, lv);
+    let t = crate::ti_syntax::dty_at(sig, c, lv);
+    let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(Seq::empty(), t, t, crate::ti_syntax::sort(l)));
+    crate::jkernel::wf_nil(ss);
+    let _lb = crate::ti_beta::pi_tele_wf(ss, Seq::empty(), tds, crate::iota_gen::rbody_g(sig, c), l);
+    assert(Seq::<ExprSpec>::empty() + tds =~= tds);
+    let pre = (sh.np + 1 + sh.nmin()) as int;
+    crate::ti_beta::wf_prefix(ss, tds, pre);
+    crate::iota_gen::rtds_prefix(sig, c, lv);
+    rhead_len(sig, c, lv);
+    assert(crate::dom_rec_ty::rtds(sig, c, lv).subrange(0, pre) == rhead(sig, c, lv));
+}
+
 /// THE RULE'S HEAD CONTEXT is well formed below the recursor's rank: the
 /// recursor's type is typed there (R3a).
 pub proof fn rule_head_wf(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>)
@@ -140,7 +189,7 @@ pub proof fn rule_head_wf(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>
 #[verifier::spinoff_prover]
 pub proof fn field_bind_typed(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, i: int) -> (l: LevelSpec)
     requires
-        rule_pre(sig, c, lv),
+        rule_pre_g(sig, c, lv),
         0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin(),
         0 <= i < crate::dom_rec_ty::rshape(sig, c).fields[p].len(),
         crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)),
@@ -185,9 +234,7 @@ pub proof fn field_bind_typed(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelS
     let w = crate::ti_sub::get(ss, crate::ti_syntax::Jd::Wf(tgt));
     // the renaming past the motive and minors
     let r = crate::ti_subst::lr((1 + nmin) as nat, i as nat);
-    assert(h.len() == np + 1 + nmin) by {
-        crate::dom_iota::major_form(sig, c, lv);
-    }
+    rhead_len(sig, c, lv);
     assert forall|j: nat| j < src.len() implies r(j) < tgt.len()
         && #[trigger] crate::ti_syntax::var_ty(tgt, r(j)) == crate::ti_subst::psub(crate::ti_syntax::var_ty(src, j), crate::ti_subst::rn(r)) by {
         ren_field(sig, c, lv, p, i, j);
@@ -205,7 +252,7 @@ pub proof fn field_bind_typed(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelS
 /// `field_bind_typed`'s renaming, one variable at a time.
 proof fn ren_field(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, i: int, j: nat)
     requires
-        rule_pre(sig, c, lv),
+        rule_pre_g(sig, c, lv),
         0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin(),
         0 <= i < crate::dom_rec_ty::rshape(sig, c).fields[p].len(),
         j < crate::dom_rec_ty::rshape(sig, c).np + i,
@@ -234,9 +281,7 @@ proof fn ren_field(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: in
     crate::dom_rec_ty::scope_ctor_ind(sig, c);
     crate::dom_ctor_bound::ctor_shape(sig, sh.ind, p);
     crate::dom_rec_ty::rec_elp_parts(sig, c, p);
-    assert(h.len() == np + 1 + nmin) by {
-        crate::dom_iota::major_form(sig, c, lv);
-    }
+    rhead_len(sig, c, lv);
     let e = src[src.len() - 1 - j];
     crate::ti_subst::lift_is_rn((1 + nmin) as nat, i as nat, crate::subst_algebra::lift(j + 1, 0, e));
     if j < i {
@@ -263,7 +308,7 @@ proof fn ren_field(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: in
 /// The recursor's binders at its instance begin with its parameters'.
 pub proof fn rtds_param(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, q: int)
     requires
-        crate::dom_rec_ty::rec_scope(sig, c),
+        crate::dom_rec_ty::rec_scope_g(sig, c),
         0 <= q < crate::dom_rec_ty::rshape(sig, c).np,
     ensures
         crate::dom_rec_ty::rtds(sig, c, lv)[q]
@@ -280,7 +325,7 @@ pub proof fn rtds_param(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, 
 /// its first `i` fields.
 pub proof fn rule_ctx_wf(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>, p: int, i: int)
     requires
-        rule_pre(sig, c, lv),
+        rule_pre_g(sig, c, lv),
         0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin(),
         0 <= i <= crate::dom_rec_ty::rshape(sig, c).fields[p].len(),
     ensures
@@ -292,7 +337,7 @@ pub proof fn rule_ctx_wf(sig: crate::ti_syntax::Sig, c: u64, lv: Seq<LevelSpec>,
     let h = rhead(sig, c, lv);
     let ff = crate::dom_iota::ftds(sig, c, lv, p);
     if i == 0 {
-        rule_head_wf(sig, c, lv);
+        rhead_wf_g(sig, c, lv);
         assert(h + ff.subrange(0, 0) =~= h);
     } else {
         rule_ctx_wf(sig, c, lv, p, i - 1);

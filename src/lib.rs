@@ -126,6 +126,7 @@ pub mod dom_psimple;
 pub mod dom_ctor_bound;
 pub mod dom_field_ty;
 pub mod dom_rule_ty;
+pub mod dom_rule_g;
 pub mod ti_meta;
 pub mod ti_sub;
 pub mod ti_subst;
