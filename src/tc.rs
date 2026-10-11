@@ -10096,6 +10096,11 @@ pub proof fn live_local_unique<'x, 't, 'p>(
     if crate::expr_arena_bridge::dbj_serial(aids, a) is None {
         // two uniques with one serial: the same local
         assert(crate::expr_model::dbj_deep_in(aids, to_model_expr(x), live_set(tc), tc.ctx.dbj_level_counter));
+        assert(crate::expr_model::dbj_deep_in(aids, to_model_expr(y), live_set(tc), tc.ctx.dbj_level_counter));
+        let n1 = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(a), n);
+        let n2 = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(b), n);
+        assert(crate::expr_arena_bridge::unique_canon(aids, a));
+        assert(crate::expr_arena_bridge::unique_canon(aids, b));
         crate::expr_arena_bridge::unique_serial_injective(aids, a, b);
         return;
     }

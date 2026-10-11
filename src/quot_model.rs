@@ -41,30 +41,6 @@ pub open spec fn local_type<'a>(ptr: ExprPtr<'a>) -> ExprSpec {
     to_model(local_binder_type_of(ptr))
 }
 
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::mk_unique ](
-    ctx: &mut TcCtx<'t, 'p>,
-    binder_name: NamePtr<'t>,
-    binder_style: BinderStyle,
-    binder_type: ExprPtr<'t>,
-) -> (result: ExprPtr<'t>) where 'p: 't
-    requires
-        crate::util_model::owns(*old(ctx), binder_name),
-        crate::util_model::owns(*old(ctx), binder_type),
-        crate::expr_model::nlbv(to_model(binder_type)) == 0,
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        to_model(result) == ExprSpec::Free(expr_id(result)),
-        local_binder_type_of(result) == binder_type,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        // the counter goes up by one (overflow panics), and the new local
-        // carries the old value as its serial
-        crate::util::unique_count(*final(ctx)) == crate::util::unique_count(*old(ctx)) + 1,
-        crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*final(ctx)), expr_id(result))
-            == Some(crate::util::unique_count(*old(ctx))),
-        crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*final(ctx)), expr_id(result)) is None,
-        final(ctx).expr_cache == old(ctx).expr_cache,
-;
 
 // `TcCtx::abstr_pi` and `TcCtx::apply_lambda` are verified in place now
 // (`expr.rs`); they used to be assumed here. Their old doc comments argued the
@@ -86,6 +62,7 @@ pub proof fn mk_unique_deep<'t, 'p>(c: TcCtx<'t, 'p>, l: ExprPtr<'t>, ty: ExprPt
         crate::expr_model::nlbv(to_model(ty)) == 0,
         crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(c), expr_id(l)) is Some,
         crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(c), expr_id(l)) is None,
+        crate::expr_arena_bridge::unique_canon(crate::util_model::arena_ids(c), expr_id(l)),
         crate::expr_model::dbj_deep_in(crate::util_model::arena_ids(c), to_model(ty), vstd::iset::ISet::empty(), 0),
     ensures
         crate::expr_model::unique_deep(crate::util_model::arena_ids(c), expr_id(l)),

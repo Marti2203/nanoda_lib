@@ -473,6 +473,7 @@ pub open spec fn ctx_ok<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> bool {
     &&& c.dag.is_tc() && c.dag.partner() == c.export_file.arena()
     &&& c.dag.pnames() == c.export_file.names_view()
     &&& c.dag.plevels() == c.export_file.levels_view()
+    &&& c.dag.ubound() <= crate::util::unique_count(c) as nat
 }
 
 /// Two pointers one context owns are equal exactly when their indices are:
@@ -529,6 +530,7 @@ pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::ut
     &&& a.dag.n_levels() <= b.dag.n_levels()
     &&& a.dag.pnames() == b.dag.pnames()
     &&& a.dag.plevels() == b.dag.plevels()
+    &&& a.dag.ubound() <= crate::util::unique_count(a) as nat ==> b.dag.ubound() <= crate::util::unique_count(b) as nat
     &&& a.export_file == b.export_file
     &&& a.dag.is_tc() == b.dag.is_tc()
     &&& a.dag.partner() == b.dag.partner()

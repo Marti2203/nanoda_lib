@@ -896,6 +896,7 @@ impl<'p> ExportFile<'p> {
         &&& crate::indexmap_model::iset_keys(&self.dag.names)[0] == Name::Anon
         &&& crate::indexmap_model::iset_keys(&self.dag.levels).len() >= 1
         &&& crate::indexmap_model::iset_keys(&self.dag.levels)[0] == Level::Zero
+        &&& self.dag.ubound() == 0
     }
 
     /// The export tier's arena: the tag its name cache carries. Closed,
@@ -958,6 +959,7 @@ impl<'p> ExportFile<'p> {
             crate::indexmap_model::iset_keys(&dag.names)[0] == Name::Anon,
             crate::indexmap_model::iset_keys(&dag.levels).len() >= 1,
             crate::indexmap_model::iset_keys(&dag.levels)[0] == Level::Zero,
+            dag.ubound() == 0,
         ensures
             result.arena() == dag.id(),
             result.declars == declars,
@@ -1500,10 +1502,13 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::ctx_ok(*old(self)),
             crate::expr_arena_bridge::expr_children_owned(*old(self), e),
             crate::expr_arena_bridge::node_cache_ok(e),
-            e matches Expr::Local { id, .. } ==> id is DbjLevel,
+            e matches Expr::Local { id: FVarId::Unique(k), .. } ==> old(self).dag.ubound() <= k as nat && (k as nat) < unique_count(*old(self)) as nat,
         ensures
             crate::util_model::owns(*final(self), result),
             crate::expr_arena_bridge::expr_node_at(result) == Some(e),
+            e matches Expr::Local { id: FVarId::Unique(_), .. } ==> crate::expr_arena_bridge::unique_canon(
+                crate::util_model::arena_ids(*final(self)), crate::expr_arena_bridge::expr_id(result)),
+            unique_count(*final(self)) == unique_count(*old(self)),
             !(e is Local) ==> crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::to_model_of_expr(e),
             e is Local ==> crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(result)),
             e matches Expr::Const { name, levels, .. } ==> crate::expr_arena_bridge::const_name_of(result) == name
@@ -1554,6 +1559,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 panic!("alloc_expr: a child that is not stored");
             }
             let ghost tk = crate::indexmap_model::iset_keys(&self.dag.exprs);
+            let ghost ub0 = self.dag.ubound();
             proof {
                 assert forall|m: Expr<'t>| #[trigger] tk.to_set().insert(e).contains(m)
                     implies crate::expr_arena_bridge::expr_parts_owned_in(ids, m) by {
@@ -1564,11 +1570,37 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 }
                 crate::expr_arena_bridge::owned_exprs_keys_obey_model(ids, tk.to_set().insert(e));
                 assert(crate::expr_arena_bridge::expr_node_ok(e, tk.len() as nat, true, self.dag.id(), self.dag.partner()));
+                if let Expr::Local { id: FVarId::Unique(k), .. } = e {
+                    // a new serial: no stored local has it
+                    assert(!tk.contains(e)) by {
+                        if tk.contains(e) {
+                            let i = choose|i: int| 0 <= i < tk.len() && tk[i] == e;
+                            assert(serial_below(tk[i], ub0));
+                        }
+                    }
+                    self.dag.toks.borrow_mut().ubound = (k + 1) as nat;
+                }
             }
             let (idx, _) = crate::arena_history::arena_insert(&mut self.dag.exprs, Tracked(&mut self.dag.toks.borrow_mut().exprs), e);
-            proof { use_type_invariant(&*self.dag); }
+            proof {
+                use_type_invariant(&*self.dag);
+                self.dag.lemma_hist();
+            }
             let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
-            proof { crate::expr_arena_bridge::to_model_at(r); }
+            proof {
+                crate::expr_arena_bridge::to_model_at(r);
+                if let Expr::Local { id: FVarId::Unique(k), .. } = e {
+                    let rid = crate::expr_arena_bridge::expr_id(r);
+                    crate::util_model::ptr_is_tc_agree(r);
+                    crate::expr_arena_bridge::tc_raw_index(crate::util_model::ptr_raw(r));
+                    crate::expr_arena_bridge::serials_at(ids, r);
+                    assert(idx == tk.len());
+                    assert forall|j: int| 0 <= j < rid - 0x8000_0000 implies !#[trigger] crate::expr_arena_bridge::unique_at(ids.0, j, k) by {
+                        assert(tk[j] == crate::arena_history::arena_hist::<Expr<'t>>(self.dag.id())[j]);
+                        assert(serial_below(tk[j], ub0));
+                    }
+                }
+            }
             r
         }
     }
@@ -1602,6 +1634,55 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         let level = self.dbj_level_counter;
         self.dbj_level_counter += 1;
         let id = FVarId::DbjLevel(level);
+        let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
+        // VERUS-REWRITE(local-closed-check): a local's type must be closed
+        // (`alloc_expr` requires it of every local it stores).
+        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
+        let r = self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash });
+        proof { crate::expr_arena_bridge::serials_at(crate::util_model::arena_ids(*self), r); }
+        r
+    }
+
+    /// Construct a free variable with a unique ID, incrementing the monotonic counter
+    /// for unique free variable identifiers.
+    ///
+    /// Verified in place (it was an `assume_specification`): the counter's
+    /// old value is the new local's serial, every stored serial is below
+    /// it, so the local is stated once (`expr_arena_bridge::unique_canon`).
+    pub fn mk_unique(
+        &mut self,
+        binder_name: NamePtr<'t>,
+        binder_style: BinderStyle,
+        binder_type: ExprPtr<'t>,
+    ) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), binder_name),
+            crate::util_model::owns(*old(self), binder_type),
+            crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(binder_type)) == 0,
+        ensures
+            crate::util_model::owns(*final(self), result),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Free(crate::expr_arena_bridge::expr_id(result)),
+            crate::expr_arena_bridge::local_binder_type_of(result) == binder_type,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            // the counter goes up by one (overflow panics), and the new local
+            // carries the old value as its serial
+            crate::util::unique_count(*final(self)) == crate::util::unique_count(*old(self)) + 1,
+            crate::expr_arena_bridge::unique_serial(crate::util_model::arena_ids(*final(self)), crate::expr_arena_bridge::expr_id(result))
+            == Some(crate::util::unique_count(*old(self))),
+            crate::expr_arena_bridge::dbj_serial(crate::util_model::arena_ids(*final(self)), crate::expr_arena_bridge::expr_id(result)) is None,
+            final(self).expr_cache == old(self).expr_cache,
+            crate::expr_arena_bridge::unique_canon(crate::util_model::arena_ids(*final(self)), crate::expr_arena_bridge::expr_id(result)),
+    {
+        let unique_id = self.unique_counter.n;
+        // VERUS-REWRITE(unique-counter-overflow): `+= 1` wraps in a release
+        // build, after which two locals could share an id; overflow is a
+        // rejection now. The counter is a private-valued `UniqueCounter`.
+        self.unique_counter.n = match self.unique_counter.n.checked_add(1) {
+            Some(n) => n,
+            None => panic!("unique local counter overflow"),
+        };
+        let id = FVarId::Unique(unique_id);
         let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
         // VERUS-REWRITE(local-closed-check): a local's type must be closed
         // (`alloc_expr` requires it of every local it stores).
@@ -1918,6 +1999,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             tdag.toks.borrow_mut().partner = export_file.arena();
             tdag.toks.borrow_mut().pnames = crate::indexmap_model::iset_keys(&export_file.dag.names);
             tdag.toks.borrow_mut().plevels = crate::indexmap_model::iset_keys(&export_file.dag.levels);
+            tdag.toks.borrow_mut().ubound = 0;
         }
         Self {
             export_file,
@@ -2043,29 +2125,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
     }
 
-    /// Construct a free variable with a unique ID, incrementing the monotonic counter
-    /// for unique free variable identifiers.
-    pub fn mk_unique(
-        &mut self,
-        binder_name: NamePtr<'t>,
-        binder_style: BinderStyle,
-        binder_type: ExprPtr<'t>,
-    ) -> ExprPtr<'t> {
-        let unique_id = self.unique_counter.n;
-        // VERUS-REWRITE(unique-counter-overflow): `+= 1` wraps in a release
-        // build, after which two locals could share an id; overflow is a
-        // rejection now. The counter is a private-valued `UniqueCounter`.
-        self.unique_counter.n = match self.unique_counter.n.checked_add(1) {
-            Some(n) => n,
-            None => panic!("unique local counter overflow"),
-        };
-        let id = FVarId::Unique(unique_id);
-        let hash = hash64!(crate::expr::LOCAL_HASH, binder_name, binder_style, binder_type, id);
-        // VERUS-REWRITE(local-closed-check): a local's type must be closed
-        // (`alloc_expr` requires it of every local it stores).
-        assert!(self.num_loose_bvars(binder_type) == 0, "a local's type must be closed");
-        self.alloc_expr(Expr::Local { binder_name, binder_style, binder_type, id, hash })
-    }
 
 }
 
@@ -2154,6 +2213,14 @@ pub tracked struct DagToks<'a> {
     /// names point into the export file only at what it stores.
     pub ghost pnames: Seq<Name<'a>>,
     pub ghost plevels: Seq<Level<'a>>,
+    /// Every stored `Unique` local's serial is below this (0 for an export
+    /// file's dag: it stores none; for a checker's, at most its counter).
+    pub ghost ubound: nat,
+}
+
+/// A `Unique` local's serial is below `b` (other nodes: nothing).
+pub open spec fn serial_below<'a>(e: Expr<'a>, b: nat) -> bool {
+    e matches Expr::Local { id: FVarId::Unique(k), .. } ==> (k as nat) < b
 }
 
 /// A level list's element is stored: in its own tier among the first
@@ -2201,6 +2268,8 @@ impl<'a> LeanDag<'a> {
                 && name_export_kids_in(crate::indexmap_model::iset_keys(&self.names)[i], t.pnames.len())
         &&& t.is_tc ==> forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
             ==> !t.plevels.contains(#[trigger] crate::indexmap_model::iset_keys(&self.levels)[i])
+        &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.exprs).len()
+            ==> serial_below(#[trigger] crate::indexmap_model::iset_keys(&self.exprs)[i], t.ubound)
         &&& forall|i: int, j: int| 0 <= i < crate::indexmap_model::iset_keys(&self.uparams).len()
             && 0 <= j < crate::indexmap_model::iset_keys(&self.uparams)[i]@.len()
             ==> level_kid_in(#[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i]@[j], crate::indexmap_model::iset_keys(&self.levels).len(),
@@ -2214,6 +2283,10 @@ impl<'a> LeanDag<'a> {
 
     pub closed spec fn plevels(self) -> Seq<Level<'a>> {
         self.toks@.plevels
+    }
+
+    pub closed spec fn ubound(self) -> nat {
+        self.toks@.ubound
     }
 
     /// How many names and levels the dag stores.
@@ -2416,10 +2489,12 @@ impl<'a> LeanDag<'a> {
             crate::indexmap_model::iset_keys(&result.exprs).len() == 0,
             crate::indexmap_model::iset_keys(&result.uparams).len() == 0,
             crate::indexmap_model::iset_keys(&result.strings).len() == 0,
+            result.ubound() == 0,
     {
         let mut dag = LeanDag::new(config);
         proof {
             use_type_invariant(&dag);
+            dag.toks.borrow_mut().ubound = 0;
             dag.toks.borrow_mut().is_tc = false;
             dag.toks.borrow_mut().partner = dag.toks@.names.id();
         }
@@ -2454,6 +2529,7 @@ impl<'a> LeanDag<'a> {
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
+            final(self).ubound() == old(self).ubound(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2501,6 +2577,7 @@ impl<'a> LeanDag<'a> {
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
+            final(self).ubound() == old(self).ubound(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2533,6 +2610,7 @@ impl<'a> LeanDag<'a> {
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
+            final(self).ubound() == old(self).ubound(),
             result matches Some(i) ==> forall|p: BigUintPtr<'a>| arena_of(p) == final(self).id() && crate::name_arena_bridge::ptr_index(p) == i
                 ==> #[trigger] crate::expr_arena_bridge::bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
             final(self).id() == old(self).id(),
@@ -2601,12 +2679,14 @@ impl<'a> LeanDag<'a> {
     /// Store an expression in an export file's dag.
     pub(crate) fn insert_export_expr(&mut self, e: Expr<'a>) -> (result: (usize, bool))
         requires
+            serial_below(e, old(self).ubound()),
             !old(self).is_tc(),
             old(self).partner() == old(self).id(),
             crate::expr_arena_bridge::expr_node_ok(e, crate::indexmap_model::iset_keys(&old(self).exprs).len(), false, old(self).id(), old(self).id()),
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
+            final(self).ubound() == old(self).ubound(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2701,6 +2781,7 @@ impl<'a> LeanDag<'a> {
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
+            final(self).ubound() == old(self).ubound(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2756,6 +2837,7 @@ impl<'a> LeanDag<'a> {
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
+            final(self).ubound() == old(self).ubound(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),

@@ -593,6 +593,7 @@ pub open spec fn unique_ty_deep(aids: (nat, nat), e: ExprSpec, n: nat) -> bool
 {
     match e {
         ExprSpec::Free(id) => n > 0 && crate::expr_arena_bridge::unique_serial(aids, id) is Some
+            && crate::expr_arena_bridge::unique_canon(aids, id)
             && crate::expr_arena_bridge::dbj_serial(aids, id) is None
             && nlbv(crate::expr_arena_bridge::arena_lctx(aids)[id]) <= 0
             && unique_ty_deep(aids, crate::expr_arena_bridge::arena_lctx(aids)[id], (n - 1) as nat),

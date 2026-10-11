@@ -31,7 +31,7 @@ the like, which promise nothing). The vstd specifications come from the
 Verus fork nanoda builds against (Cargo.toml's `vstd` path); its additions
 are listed in docs/VSTD_GAPS.md, "The fork today".
 
-On 2026-10-11: 57 claiming items and 32 claim-free. The kernel's
+On 2026-10-11: 55 claiming items and 32 claim-free. The kernel's
 `nat_sub`, `nat_div`, `nat_mod`, `nat_shl` and `nat_shr` are verified in
 place (they were five claims); verifying the parser's decimal reader
 added two library ones (`BigUint::parse_bytes`, `&BigUint * &BigUint`).
@@ -46,6 +46,11 @@ owns are one pointer exactly when they denote one name
 verified in place. The checker's dag keeps a ghost copy of the export
 file's names and levels, and its invariant says it never stores one of
 them again and points into the export only at what is stored there.
+Unique locals are verified the same way: `mk_unique` is verified in
+place, every stored `Unique` local's serial is below a ghost bound no
+greater than the counter, so a new local is the first with its serial
+(`expr_arena_bridge::unique_canon`), and two such locals with one serial
+are one (`unique_serial_injective`, a lemma now).
 The parser's boundary with the libraries (reading a line, serde's
 decoding, the formatted messages, the axiom whitelist's name text) is
 claim-free helpers, so it promises nothing the proofs use.

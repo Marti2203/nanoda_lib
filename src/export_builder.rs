@@ -88,6 +88,7 @@ impl<'a> ExportBuilder<'a> {
         &&& crate::indexmap_model::iset_keys(&self.dag.names)[0] == Name::Anon
         &&& crate::indexmap_model::iset_keys(&self.dag.levels).len() >= 1
         &&& crate::indexmap_model::iset_keys(&self.dag.levels)[0] == Level::Zero
+        &&& self.dag.ubound() == 0
         &&& crate::indexmap_model::imap_wf(&self.declars)
         &&& forall|k: NamePtr<'a>| #[trigger] view.contains_key(k)
             ==> crate::util_model::export_tagged(a, k)
@@ -237,6 +238,7 @@ impl<'a> ExportBuilder<'a> {
     fn insert_expr(&mut self, e: Expr<'a>) -> (result: (usize, bool))
         requires
             old(self).wf(),
+            !(e is Local),
             crate::expr_arena_bridge::expr_node_ok(e, old(self).exprs_len(), false, old(self).arena(), old(self).arena()),
         ensures
             final(self).wf(),

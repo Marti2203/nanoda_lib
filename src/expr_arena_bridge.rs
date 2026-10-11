@@ -741,20 +741,52 @@ pub open spec fn fvar_unique_serial(id: FVarId) -> Option<u32> {
     }
 }
 
-/// `mk_unique` is the only constructor of a `Unique` fvar id and allocates each
-/// counter value once per context (the counter is checked, and never goes
-/// back -- `same_arenas`), so a serial names one local. Verified code cannot
-/// store a local any other way (`alloc_expr` refuses one). The pretty
-/// printer's `swap_local_binding_name` renames a local under the same id, in
-/// its own context after checking; no checker context holds such a pair.
-#[verifier::external_body]
+/// Position `j` of arena `a` holds a `Unique` local with serial `k`.
+pub open spec fn unique_at(a: nat, j: int, k: u32) -> bool {
+    crate::arena_history::arena_hist::<Expr<'static>>(a)[j] matches Expr::Local { id: FVarId::Unique(k2), .. } && k2 == k
+}
+
+/// A `UNIQUE LOCAL STATED ONCE`: `id` is a `Unique` local of the checker's
+/// tier, and no earlier position of that arena holds a local with its
+/// serial. `mk_unique` (through `alloc_expr`) gives it at creation: the
+/// serial is the counter, and every stored serial is below it. It never
+/// changes, so two such locals with one serial are one
+/// (`unique_serial_injective`).
+pub open spec fn unique_canon(aids: (nat, nat), id: nat) -> bool {
+    &&& 0x8000_0000 <= id < 0x1_0000_0000
+    &&& unique_serial(aids, id) is Some
+    &&& forall|j: int| 0 <= j < id - 0x8000_0000 ==> !#[trigger] unique_at(aids.0, j, unique_serial(aids, id)->Some_0)
+}
+
+/// A checker-tier raw index is its position plus the tier bit.
+pub proof fn tc_raw_index(r: u32)
+    requires
+        r >= 0x8000_0000u32,
+    ensures
+        (r & 0x7FFF_FFFFu32) as int == r as int - 0x8000_0000,
+{
+    assert((r & 0x7FFF_FFFFu32) as int == r as int - 0x8000_0000) by (bit_vector)
+        requires r >= 0x8000_0000u32;
+}
+
+/// Two locals stated once (`unique_canon`) with one serial are one.
 pub proof fn unique_serial_injective(aids: (nat, nat), x: nat, y: nat)
     requires
-        unique_serial(aids, x) is Some,
+        unique_canon(aids, x),
+        unique_canon(aids, y),
         unique_serial(aids, x) == unique_serial(aids, y),
     ensures
         x == y,
 {
+    tc_raw_index(x as u32);
+    tc_raw_index(y as u32);
+    let k = unique_serial(aids, x)->Some_0;
+    let (ix, iy) = (x - 0x8000_0000, y - 0x8000_0000);
+    if ix < iy {
+        assert(unique_at(aids.0, ix, k));
+    } else if iy < ix {
+        assert(unique_at(aids.0, iy, k));
+    }
 }
 
 /// The memo caches are sound: every entry maps its key to a pointer denoting
