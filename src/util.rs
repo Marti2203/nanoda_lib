@@ -581,10 +581,16 @@ impl<'p> ExportFile<'p> {
         crate::indexmap_model::imap_keys(&self.declars)
     }
 
+    /// Each inductive's mutual block, closed for the same reason.
+    pub closed spec fn blocks_view(self) -> vstd::map::Map<NamePtr<'p>, (usize, usize)> {
+        self.mutual_block_sizes@
+    }
+
     pub(crate) proof fn declars_views(self)
         ensures
             self.declars_view() == crate::indexmap_model::imap_view(&self.declars),
             self.declars_keys() == crate::indexmap_model::imap_keys(&self.declars),
+            self.blocks_view() == self.mutual_block_sizes@,
     {
     }
 
@@ -1671,6 +1677,23 @@ impl<'a> LeanDag<'a> {
         self.toks@.names.id()
     }
 
+    /// Every stored node is its arena history's node at its position.
+    pub(crate) proof fn lemma_hist(tracked &self)
+        ensures
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.names)[i] == crate::arena_history::arena_hist::<Name<'a>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.levels)[i] == crate::arena_history::arena_hist::<Level<'a>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.exprs).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.exprs)[i] == crate::arena_history::arena_hist::<Expr<'a>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.uparams).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i] == crate::arena_history::arena_hist::<Arc<[LevelPtr<'a>]>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.strings).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.strings)[i] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[i],
+    {
+        use_type_invariant(self);
+    }
+
     /// How many strings the dag stores.
     pub closed spec fn n_strings(self) -> nat {
         crate::indexmap_model::iset_keys(&self.strings).len()
@@ -1853,6 +1876,8 @@ impl<'a> LeanDag<'a> {
                 crate::indexmap_model::iset_keys(&old(self).names).push(n)
             },
             result.0 < crate::indexmap_model::iset_keys(&final(self).names).len(),
+            result.1 == !crate::indexmap_model::iset_keys(&old(self).names).contains(n),
+            result.1 ==> result.0 == crate::indexmap_model::iset_keys(&old(self).names).len(),
             crate::indexmap_model::iset_keys(&final(self).names)[result.0 as int] == n,
             crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
             crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),
@@ -1998,6 +2023,8 @@ impl<'a> LeanDag<'a> {
                 crate::indexmap_model::iset_keys(&old(self).exprs).push(e)
             },
             result.0 < crate::indexmap_model::iset_keys(&final(self).exprs).len(),
+            result.1 == !crate::indexmap_model::iset_keys(&old(self).exprs).contains(e),
+            result.1 ==> result.0 == crate::indexmap_model::iset_keys(&old(self).exprs).len(),
             crate::indexmap_model::iset_keys(&final(self).exprs)[result.0 as int] == e,
             crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
             crate::indexmap_model::iset_keys(&final(self).levels) == crate::indexmap_model::iset_keys(&old(self).levels),
@@ -2081,6 +2108,8 @@ impl<'a> LeanDag<'a> {
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
+            result < crate::indexmap_model::iset_keys(&final(self).uparams).len(),
+            crate::indexmap_model::iset_keys(&final(self).uparams)[result as int] == a,
             forall|p: LevelsPtr<'a>| arena_of(p) == final(self).id() && crate::name_arena_bridge::ptr_index(p) == result
                 ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(p).len() == a@.len()
                     && forall|j: int| 0 <= j < a@.len() ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(p)[j] == crate::level_arena_bridge::to_model(a@[j]),
@@ -2138,6 +2167,8 @@ impl<'a> LeanDag<'a> {
                 crate::indexmap_model::iset_keys(&old(self).levels).push(l)
             },
             result.0 < crate::indexmap_model::iset_keys(&final(self).levels).len(),
+            result.1 == !crate::indexmap_model::iset_keys(&old(self).levels).contains(l),
+            result.1 ==> result.0 == crate::indexmap_model::iset_keys(&old(self).levels).len(),
             crate::indexmap_model::iset_keys(&final(self).levels)[result.0 as int] == l,
             crate::indexmap_model::iset_keys(&final(self).names) == crate::indexmap_model::iset_keys(&old(self).names),
             crate::indexmap_model::iset_keys(&final(self).exprs) == crate::indexmap_model::iset_keys(&old(self).exprs),

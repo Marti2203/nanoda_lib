@@ -88,6 +88,8 @@ pub fn arena_insert<K: core::hash::Hash + Eq, S: core::hash::BuildHasher>(
         },
         r.0 < iset_keys(final(set)).len(),
         iset_keys(final(set))[r.0 as int] == k,
+        r.1 == !iset_keys(old(set)).contains(k),
+        r.1 ==> r.0 == iset_keys(old(set)).len(),
     no_unwind
 {
     let ghost keys0 = iset_keys(set);

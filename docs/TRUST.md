@@ -40,7 +40,13 @@ export's well-formedness (`inductive::export_ok`, `export_rec_names_ok`,
 `export_blocks_ok`), which is all the theorem assumes of the export. Every
 public builder method requires only the builder's own invariant (`wf`),
 which each of them maintains, so no sequence of calls the parser makes can
-break it.
+break it. Each method also promises exactly what it stored, on the
+arena's history (so the fact outlives later records): the node at the
+position it returns is the record's node with its children at the
+indices the record gives (`name_at`, `level_at`, `expr_at`, `text_at`,
+`list_at`), and a declaration method records exactly that declaration
+under a name not recorded before (`adds`, `info_at`); `finish` hands the
+declarations and mutual blocks to the `ExportFile` unchanged.
 
 What is trusted is **fidelity**: that the declarations the builder ends up
 holding are the ones the file states. A misreading would make nanoda check

@@ -23,6 +23,53 @@ use vstd::prelude::*;
 
 verus! {
 
+/// WHAT THE EXPORT ARENA `a` HOLDS at position `i`, for good: its history
+/// (`arena_history.rs`), which the stored nodes agree with. The builder's
+/// contracts are stated on it, so what one record stored stays true after
+/// every later one.
+pub open spec fn name_at<'a>(a: nat, i: int) -> Name<'a> {
+    crate::arena_history::arena_hist::<Name<'a>>(a)[i]
+}
+
+pub open spec fn level_at<'a>(a: nat, i: int) -> Level<'a> {
+    crate::arena_history::arena_hist::<Level<'a>>(a)[i]
+}
+
+pub open spec fn expr_at<'a>(a: nat, i: int) -> Expr<'a> {
+    crate::arena_history::arena_hist::<Expr<'a>>(a)[i]
+}
+
+/// The text of the stored string `p` points to.
+pub open spec fn text_at<'a>(a: nat, p: StringPtr<'a>) -> Seq<char> {
+    crate::arena_history::arena_hist::<crate::util::CowStr<'a>>(a)[crate::name_arena_bridge::ptr_index(p) as int]@
+}
+
+pub open spec fn list_at<'a>(a: nat, i: int) -> Seq<LevelPtr<'a>> {
+    crate::arena_history::arena_hist::<Arc<[LevelPtr<'a>]>>(a)[i]@
+}
+
+/// Pointers at the export indices `idxs`, in order.
+pub open spec fn at_idxs<A>(ps: Seq<Ptr<A>>, idxs: Seq<u32>) -> bool {
+    &&& ps.len() == idxs.len()
+    &&& forall|k: int| 0 <= k < idxs.len() ==> crate::name_arena_bridge::ptr_index(#[trigger] ps[k]) == idxs[k]
+}
+
+/// Universe parameters given as name indices: each the stored
+/// `Level.param` of that name.
+pub open spec fn uparams_at<'a>(a: nat, p: LevelsPtr<'a>, idxs: Seq<u32>) -> bool {
+    let l = list_at::<'a>(a, crate::name_arena_bridge::ptr_index(p) as int);
+    &&& l.len() == idxs.len()
+    &&& forall|k: int| 0 <= k < idxs.len() ==> (level_at::<'a>(a, crate::name_arena_bridge::ptr_index(#[trigger] l[k]) as int) matches Level::Param(n, _)
+        && crate::name_arena_bridge::ptr_index(n) == idxs[k])
+}
+
+/// The parts every declaration has, as the export file gives them.
+pub open spec fn info_at<'a>(a: nat, info: DeclarInfo<'a>, name: u32, ty: u32, uparams: Seq<u32>) -> bool {
+    &&& crate::name_arena_bridge::ptr_index(info.name) == name
+    &&& crate::name_arena_bridge::ptr_index(info.ty) == ty
+    &&& uparams_at(a, info.uparams, uparams)
+}
+
 pub struct ExportBuilder<'a> {
     dag: LeanDag<'a>,
     declars: crate::env::DeclarMap<'a>,
@@ -62,6 +109,52 @@ impl<'a> ExportBuilder<'a> {
 
     pub closed spec fn levels_len(self) -> nat {
         crate::indexmap_model::iset_keys(&self.dag.levels).len()
+    }
+
+    /// The declarations recorded, by name, and the names in order.
+    pub closed spec fn decls(self) -> Map<NamePtr<'a>, Declar<'a>> {
+        crate::indexmap_model::imap_view(&self.declars)
+    }
+
+    pub closed spec fn keys(self) -> Seq<NamePtr<'a>> {
+        crate::indexmap_model::imap_keys(&self.declars)
+    }
+
+    /// Each inductive's mutual block: where it starts, how many declarations.
+    pub closed spec fn blocks(self) -> Map<NamePtr<'a>, (usize, usize)> {
+        self.mutual_block_sizes@
+    }
+
+    /// The declaration recorded last.
+    pub open spec fn last(self) -> Declar<'a> {
+        self.decls()[self.keys().last()]
+    }
+
+    /// Nothing but nodes added: the same arena, declarations and blocks.
+    pub open spec fn same_decls(self, old: Self) -> bool {
+        &&& self.arena() == old.arena()
+        &&& self.decls() == old.decls()
+        &&& self.keys() == old.keys()
+        &&& self.blocks() == old.blocks()
+    }
+
+    /// No node added.
+    pub open spec fn same_nodes(self, old: Self) -> bool {
+        &&& self.arena() == old.arena()
+        &&& self.names_len() == old.names_len()
+        &&& self.levels_len() == old.levels_len()
+        &&& self.exprs_len() == old.exprs_len()
+    }
+
+    /// One more declaration, `last()`, recorded under a name not recorded
+    /// before; no node added.
+    pub open spec fn adds(self, old: Self) -> bool {
+        &&& self.same_nodes(old)
+        &&& self.keys().len() > 0
+        &&& !old.decls().contains_key(self.keys().last())
+        &&& crate::env::declar_info(self.last()).name == self.keys().last()
+        &&& self.decls() == old.decls().insert(self.keys().last(), self.last())
+        &&& self.keys() == old.keys().push(self.keys().last())
     }
 
     /// An empty export file: the anonymous name and level zero at position 0,
@@ -151,8 +244,17 @@ impl<'a> ExportBuilder<'a> {
             final(self).exprs_len() >= old(self).exprs_len(),
             final(self).names_len() == old(self).names_len(),
             final(self).levels_len() == old(self).levels_len(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) == e,
     {
         let r = self.dag.insert_export_expr(e);
+        proof {
+            self.dag.lemma_hist();
+        }
         r
     }
 
@@ -162,6 +264,8 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            at_idxs(list_at::<'a>(final(self).arena(), crate::name_arena_bridge::ptr_index(result) as int), idxs@),
             crate::util_model::export_tagged(final(self).arena(), result),
             final(self).arena() == old(self).arena(),
             final(self).names_len() == old(self).names_len(),
@@ -177,6 +281,7 @@ impl<'a> ExportBuilder<'a> {
                 k <= idxs@.len(),
                 v@.len() == k,
                 forall|j: int| 0 <= j < k ==> crate::util_model::export_tagged(self.arena(), #[trigger] v@[j]),
+                forall|j: int| 0 <= j < k ==> crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) == idxs@[j],
             decreases idxs@.len() - k,
         {
             let l = self.level_ptr(idxs[k]);
@@ -188,6 +293,9 @@ impl<'a> ExportBuilder<'a> {
             vstd::std_specs::smart_ptrs::axiom_arc_contents_view(&a);
         }
         let idx = self.dag.insert_export_levels(a);
+        proof {
+            self.dag.lemma_hist();
+        }
         Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.dag.id()))
     }
 
@@ -205,6 +313,8 @@ impl<'a> ExportBuilder<'a> {
             final(self).names_len() == old(self).names_len(),
             final(self).levels_len() == old(self).levels_len(),
             final(self).exprs_len() == old(self).exprs_len(),
+            final(self).same_decls(*old(self)),
+            uparams_at(final(self).arena(), result, name_idxs@),
     {
         let mut v: Vec<LevelPtr<'a>> = Vec::new();
         let mut k: usize = 0;
@@ -216,6 +326,8 @@ impl<'a> ExportBuilder<'a> {
                 v@.len() == k,
                 forall|j: int| 0 <= j < k ==> crate::util_model::export_tagged(self.arena(), #[trigger] v@[j])
                     && crate::level_arena_bridge::to_model(v@[j]) is Param,
+                forall|j: int| 0 <= j < k ==> (level_at::<'a>(self.arena(), crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) as int) matches Level::Param(n, _)
+                    && crate::name_arena_bridge::ptr_index(n) == name_idxs@[j]),
             decreases name_idxs@.len() - k,
         {
             let n = self.name_ptr(name_idxs[k]);
@@ -229,6 +341,9 @@ impl<'a> ExportBuilder<'a> {
                 },
             };
             let l = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.dag.id()));
+            proof {
+                self.dag.lemma_hist();
+            }
             v.push(l);
             k = k + 1;
         }
@@ -237,6 +352,9 @@ impl<'a> ExportBuilder<'a> {
             vstd::std_specs::smart_ptrs::axiom_arc_contents_view(&a);
         }
         let idx = self.dag.insert_export_levels(a);
+        proof {
+            self.dag.lemma_hist();
+        }
         Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.dag.id()))
     }
 
@@ -251,8 +369,17 @@ impl<'a> ExportBuilder<'a> {
             final(self).arena() == old(self).arena(),
             final(self).names_len() >= old(self).names_len(),
             final(self).levels_len() == old(self).levels_len(),
+            final(self).same_decls(*old(self)),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).names_len() == old(self).names_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).names_len(),
+            name_at::<'a>(final(self).arena(), result.0 as int) == n,
     {
         let r = self.dag.insert_export_name(n);
+        proof {
+            self.dag.lemma_hist();
+        }
         r
     }
 
@@ -266,8 +393,17 @@ impl<'a> ExportBuilder<'a> {
             final(self).arena() == old(self).arena(),
             final(self).levels_len() >= old(self).levels_len(),
             final(self).names_len() == old(self).names_len(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).levels_len() == old(self).levels_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).levels_len(),
+            level_at::<'a>(final(self).arena(), result.0 as int) == l,
     {
         let r = self.dag.insert_export_level(l);
+        proof {
+            self.dag.lemma_hist();
+        }
         r
     }
 
@@ -281,8 +417,14 @@ impl<'a> ExportBuilder<'a> {
             final(self).arena() == old(self).arena(),
             final(self).names_len() == old(self).names_len(),
             final(self).levels_len() == old(self).levels_len(),
+            final(self).same_decls(*old(self)),
+            final(self).same_nodes(*old(self)),
+            text_at(final(self).arena(), result) == t@,
     {
         let (idx, _) = self.dag.insert_export_string(t);
+        proof {
+            self.dag.lemma_hist();
+        }
         Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.dag.id()))
     }
 
@@ -292,6 +434,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).names_len() == old(self).names_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).names_len(),
+            name_at::<'a>(final(self).arena(), result.0 as int) matches Name::Str(p, t, _) && crate::name_arena_bridge::ptr_index(p) == pre && text_at(final(self).arena(), t) == s@,
     {
         let pfx = self.name_ptr(pre);
         let sfx = self.string_ptr(std::borrow::Cow::Owned(s));
@@ -309,6 +457,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).names_len() == old(self).names_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).names_len(),
+            name_at::<'a>(final(self).arena(), result.0 as int) matches Name::Num(p, j, _) && crate::name_arena_bridge::ptr_index(p) == pre && j == i,
     {
         let pfx = self.name_ptr(pre);
         let hash = crate::hash64!(crate::name::NUM_HASH, pfx, i);
@@ -324,6 +478,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).levels_len() == old(self).levels_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).levels_len(),
+            level_at::<'a>(final(self).arena(), result.0 as int) matches Level::Succ(x, _) && crate::name_arena_bridge::ptr_index(x) == l,
     {
         let a = self.level_ptr(l);
         let hash = crate::hash64!(crate::level::SUCC_HASH, a);
@@ -339,6 +499,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).levels_len() == old(self).levels_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).levels_len(),
+            level_at::<'a>(final(self).arena(), result.0 as int) matches Level::Max(x, y, _) && crate::name_arena_bridge::ptr_index(x) == l && crate::name_arena_bridge::ptr_index(y) == r,
     {
         let a = self.level_ptr(l);
         let b = self.level_ptr(r);
@@ -356,6 +522,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).levels_len() == old(self).levels_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).levels_len(),
+            level_at::<'a>(final(self).arena(), result.0 as int) matches Level::IMax(x, y, _) && crate::name_arena_bridge::ptr_index(x) == l && crate::name_arena_bridge::ptr_index(y) == r,
     {
         let a = self.level_ptr(l);
         let b = self.level_ptr(r);
@@ -382,6 +554,7 @@ impl<'a> ExportBuilder<'a> {
         ensures
             result@.len() == idxs@.len(),
             forall|j: int| 0 <= j < result@.len() ==> crate::util_model::export_tagged(self.arena(), #[trigger] result@[j]),
+            at_idxs(result@, idxs@),
     {
         let mut v: Vec<NamePtr<'a>> = Vec::new();
         let mut k: usize = 0;
@@ -391,6 +564,7 @@ impl<'a> ExportBuilder<'a> {
                 k <= idxs@.len(),
                 v@.len() == k,
                 forall|j: int| 0 <= j < k ==> crate::util_model::export_tagged(self.arena(), #[trigger] v@[j]),
+                forall|j: int| 0 <= j < k ==> crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) == idxs@[j],
             decreases idxs@.len() - k,
         {
             let n = self.name_ptr(idxs[k]);
@@ -419,11 +593,13 @@ impl<'a> ExportBuilder<'a> {
             final(self).names_len() == old(self).names_len(),
             final(self).levels_len() == old(self).levels_len(),
             final(self).exprs_len() == old(self).exprs_len(),
+            final(self).same_decls(*old(self)),
+            info_at(final(self).arena(), result, name, ty, uparams@),
     {
-        let name = self.name_ptr(name);
-        let ty = self.expr_ptr(ty);
-        let uparams = self.uparams_list(uparams);
-        DeclarInfo { name, uparams, ty }
+        let n = self.name_ptr(name);
+        let t = self.expr_ptr(ty);
+        let us = self.uparams_list(uparams);
+        DeclarInfo { name: n, uparams: us, ty: t }
     }
 
     /// Record a declaration under its name; a name recorded twice is an error.
@@ -439,6 +615,9 @@ impl<'a> ExportBuilder<'a> {
             final(self).names_len() == old(self).names_len(),
             final(self).levels_len() == old(self).levels_len(),
             final(self).exprs_len() == old(self).exprs_len(),
+            final(self).adds(*old(self)),
+            final(self).last() == d,
+            final(self).blocks() == old(self).blocks(),
     {
         let name = d.info().name;
         let ghost a = self.dag.id();
@@ -462,6 +641,9 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Axiom { info } && info_at(final(self).arena(), info, name, ty, uparams@),
     {
         let info = self.info(name, ty, uparams);
         self.insert_declar(Declar::Axiom { info });
@@ -473,6 +655,9 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Definition { info, val: v, hint: h } && info_at(final(self).arena(), info, name, ty, uparams@) && crate::name_arena_bridge::ptr_index(v) == val && h == hint,
     {
         let info = self.info(name, ty, uparams);
         let val = self.expr_ptr(val);
@@ -485,6 +670,9 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Theorem { info, val: v } && info_at(final(self).arena(), info, name, ty, uparams@) && crate::name_arena_bridge::ptr_index(v) == val,
     {
         let info = self.info(name, ty, uparams);
         let val = self.expr_ptr(val);
@@ -497,6 +685,9 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Opaque { info, val: v } && info_at(final(self).arena(), info, name, ty, uparams@) && crate::name_arena_bridge::ptr_index(v) == val,
     {
         let info = self.info(name, ty, uparams);
         let val = self.expr_ptr(val);
@@ -509,6 +700,9 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Quot { info } && info_at(final(self).arena(), info, name, ty, uparams@),
     {
         let info = self.info(name, ty, uparams);
         self.insert_declar(Declar::Quot { info });
@@ -534,6 +728,11 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks().insert(final(self).keys().last(), (block_start, block_size)),
+            final(self).last() matches Declar::Inductive(d) && info_at(final(self).arena(), d.info, name, ty, uparams@)
+                && d.is_recursive == is_recursive && d.is_nested == is_nested && d.num_params == num_params && d.num_indices == num_indices
+                && at_idxs(d.all_ind_names@, all@) && at_idxs(d.all_ctor_names@, ctors@),
     {
         let info = self.info(name, ty, uparams);
         let all_ind_names = self.names_list(all);
@@ -568,6 +767,10 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Constructor(c) && info_at(final(self).arena(), c.info, name, ty, uparams@) && crate::name_arena_bridge::ptr_index(c.inductive_name) == induct
+                && c.ctor_idx == ctor_idx && c.num_params == num_params && c.num_fields == num_fields,
     {
         let info = self.info(name, ty, uparams);
         let inductive_name = self.name_ptr(induct);
@@ -592,6 +795,14 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).adds(*old(self)),
+            final(self).blocks() == old(self).blocks(),
+            final(self).last() matches Declar::Recursor(d) && info_at(final(self).arena(), d.info, name, ty, uparams@)
+                && at_idxs(d.all_inductives@, all@) && d.num_params == num_params && d.num_indices == num_indices
+                && d.num_motives == num_motives && d.num_minors == num_minors && d.is_k == is_k
+                && d.rec_rules@.len() == rules@.len()
+                && forall|j: int| 0 <= j < rules@.len() ==> crate::name_arena_bridge::ptr_index(#[trigger] d.rec_rules@[j].val) == rules@[j].0
+                    && crate::name_arena_bridge::ptr_index(d.rec_rules@[j].ctor_name) == rules@[j].1 && d.rec_rules@[j].ctor_telescope_size_wo_params == rules@[j].2,
     {
         let info = self.info(name, ty, uparams);
         let mut v: Vec<RecRule<'a>> = Vec::new();
@@ -606,6 +817,9 @@ impl<'a> ExportBuilder<'a> {
                 crate::util_model::export_tagged(self.arena(), info.name),
                 crate::util_model::export_tagged(self.arena(), info.uparams),
                 crate::util_model::export_tagged(self.arena(), info.ty),
+                info_at(self.arena(), info, name, ty, uparams@),
+                forall|j: int| 0 <= j < k ==> crate::name_arena_bridge::ptr_index(#[trigger] v@[j].val) == rules@[j].0
+                    && crate::name_arena_bridge::ptr_index(v@[j].ctor_name) == rules@[j].1 && v@[j].ctor_telescope_size_wo_params == rules@[j].2,
             decreases rules@.len() - k,
         {
             let (rhs, ctor, nfields) = rules[k];
@@ -789,6 +1003,10 @@ impl<'a> ExportBuilder<'a> {
             crate::inductive::export_ok(result),
             crate::inductive::export_rec_names_ok(result),
             crate::inductive::export_blocks_ok(result),
+            result.arena() == self.arena(),
+            result.declars_view() == self.decls(),
+            result.declars_keys() == self.keys(),
+            result.blocks_view() == self.blocks(),
     {
         let recs = self.recursor_names();
         let name_cache = self.dag.mk_name_cache();
@@ -811,6 +1029,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Sort { level, .. } && crate::name_arena_bridge::ptr_index(level) == l,
     {
         let level = self.level_ptr(l);
         let hash = crate::hash64!(crate::expr::SORT_HASH, level);
@@ -826,6 +1050,13 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Const { name, levels, .. } && crate::name_arena_bridge::ptr_index(name) == n
+                && at_idxs(list_at::<'a>(final(self).arena(), crate::name_arena_bridge::ptr_index(levels) as int), ls@),
     {
         let name = self.name_ptr(n);
         let levels = self.levels_list(ls);
@@ -846,6 +1077,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Var { dbj_idx: d, .. } && d == dbj_idx,
     {
         assert!(dbj_idx < u16::MAX, "de Bruijn index is out of range");
         let hash = crate::hash64!(crate::expr::VAR_HASH, dbj_idx);
@@ -858,6 +1095,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::App { fun, arg, .. } && crate::name_arena_bridge::ptr_index(fun) == f && crate::name_arena_bridge::ptr_index(arg) == a,
     {
         let fun = self.expr_ptr(f);
         let arg = self.expr_ptr(a);
@@ -879,6 +1122,15 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            pi ==> (expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Pi { binder_name, binder_style: st, binder_type, body, .. }
+                && crate::name_arena_bridge::ptr_index(binder_name) == n && st == binder_style && crate::name_arena_bridge::ptr_index(binder_type) == t && crate::name_arena_bridge::ptr_index(body) == b),
+            !pi ==> (expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Lambda { binder_name, binder_style: st, binder_type, body, .. }
+                && crate::name_arena_bridge::ptr_index(binder_name) == n && st == binder_style && crate::name_arena_bridge::ptr_index(binder_type) == t && crate::name_arena_bridge::ptr_index(body) == b),
     {
         let binder_name = self.name_ptr(n);
         let binder_type = self.expr_ptr(t);
@@ -907,6 +1159,13 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Let { binder_name, binder_type, val, body, nondep: nd, .. }
+                && crate::name_arena_bridge::ptr_index(binder_name) == n && crate::name_arena_bridge::ptr_index(binder_type) == t && crate::name_arena_bridge::ptr_index(val) == v && crate::name_arena_bridge::ptr_index(body) == b && nd == nondep,
     {
         let binder_name = self.name_ptr(n);
         let binder_type = self.expr_ptr(t);
@@ -933,6 +1192,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::Proj { ty_name, idx: i, structure, .. } && crate::name_arena_bridge::ptr_index(ty_name) == t && i == idx && crate::name_arena_bridge::ptr_index(structure) == st,
     {
         let ty_name = self.name_ptr(t);
         let structure = self.expr_ptr(st);
@@ -951,6 +1216,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            final(self).exprs_len() == old(self).exprs_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).exprs_len(),
+            expr_at::<'a>(final(self).arena(), result.0 as int) matches Expr::StringLit { ptr, .. } && text_at(final(self).arena(), ptr) == s@,
     {
         let ptr = self.string_ptr(std::borrow::Cow::Owned(s));
         let hash = crate::hash64!(crate::expr::STRING_LIT_HASH, ptr);
@@ -967,6 +1238,18 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).levels_len() == old(self).levels_len(),
+            match result {
+                Some(r) => {
+                    &&& final(self).exprs_len() == old(self).exprs_len() + if r.1 { 1nat } else { 0nat }
+                    &&& r.1 ==> r.0 == old(self).exprs_len()
+                    &&& expr_at::<'a>(final(self).arena(), r.0 as int) matches Expr::NatLit { ptr, .. }
+                        && crate::expr_arena_bridge::bignum_ptr_value(ptr) == crate::nat_lit_model::to_nat(n)
+                },
+                None => final(self).exprs_len() == old(self).exprs_len(),
+            },
     {
         let idx = match self.dag.insert_export_bignum(n) {
             Some(i) => i,
@@ -986,6 +1269,12 @@ impl<'a> ExportBuilder<'a> {
             old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).same_decls(*old(self)),
+            final(self).names_len() == old(self).names_len(),
+            final(self).exprs_len() == old(self).exprs_len(),
+            final(self).levels_len() == old(self).levels_len() + if result.1 { 1nat } else { 0nat },
+            result.1 ==> result.0 == old(self).levels_len(),
+            level_at::<'a>(final(self).arena(), result.0 as int) matches Level::Param(x, _) && crate::name_arena_bridge::ptr_index(x) == n,
     {
         let p = self.name_ptr(n);
         let hash = crate::hash64!(crate::level::PARAM_HASH, p);
