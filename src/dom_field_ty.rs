@@ -1,0 +1,498 @@
+//! THE FIELDS' TYPES REBUILT (docs/TYPED_TARGET.md, R3b-2): a closed simple
+//! type nanoda typed inside a constructor's telescope is typed in the empty
+//! context below its inductive's rank. No strengthening: from the
+//! certificate's signature only the level equalities of its arguments'
+//! sorts cross over (type uniqueness and sort injectivity there), and the
+//! derivation is rebuilt from its constants' types, typed below their ranks
+//! (R3a, `dom_rec_end::types_below`).
+#[allow(unused_imports)]
+use crate::expr_model::{BinderKind, ExprSpec};
+#[allow(unused_imports)]
+use crate::level_model::LevelSpec;
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
+verus! {
+
+/// THE BOUNDARY: a closed simple type's heads take sorts (else the sorts'
+/// match lives under the telescope's binders).
+pub open spec fn sort_doms(sig: crate::ti_syntax::Sig, e: ExprSpec) -> bool
+    decreases e, 1int,
+{
+    let h = crate::beta_model::spine_head(e);
+    let n = crate::beta_model::spine_args(e).len();
+    &&& h is Const
+    &&& forall|i: int| 0 <= i < n ==> (#[trigger] crate::rec_canon::tdoms(sig.consts[h->Const_0].ty, n)[i]) is Sort
+    &&& sd_args(sig, e)
+}
+
+pub open spec fn sd_args(sig: crate::ti_syntax::Sig, e: ExprSpec) -> bool
+    decreases e, 0int,
+{
+    match e {
+        ExprSpec::App(f, x) => sd_args(sig, *f) && sort_doms(sig, *x),
+        _ => true,
+    }
+}
+
+/// A spine's arguments take sorts as it does.
+pub proof fn sd_args_args(sig: crate::ti_syntax::Sig, e: ExprSpec)
+    requires
+        sd_args(sig, e),
+    ensures
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> #[trigger] sort_doms(sig, crate::beta_model::spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        sd_args_args(sig, *f);
+        let a = crate::beta_model::spine_args(e);
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] sort_doms(sig, a[i]) by {
+            if i < a.len() - 1 {
+                assert(a[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// A simple type's parts: its head another type former of as many binders
+/// as arguments, its arguments simple.
+pub proof fn simple_parts(sig: crate::ti_syntax::Sig, ind: u64, e: ExprSpec)
+    requires
+        crate::rec_canon::simple_app(sig, ind, e),
+    ensures
+        crate::beta_model::spine_head(e) is Const,
+        crate::rec_canon::other_former(sig, ind, crate::beta_model::spine_head(e)->Const_0),
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len()
+            ==> #[trigger] crate::rec_canon::simple_ty(sig, ind, crate::beta_model::spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        simple_parts(sig, ind, *f);
+        let a = crate::beta_model::spine_args(e);
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] crate::rec_canon::simple_ty(sig, ind, a[i]) by {
+            if i < a.len() - 1 {
+                assert(a[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// A ranked term's parts: its head ranked, its arguments ranked.
+pub proof fn ranked_parts(sig: crate::ti_syntax::Sig, e: ExprSpec, r: int)
+    requires
+        crate::dom_canon::ranked(sig, e, r),
+        crate::beta_model::spine_head(e) is Const,
+    ensures
+        0 <= crate::dom_code::rk(sig, crate::beta_model::spine_head(e)->Const_0) < r,
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len()
+            ==> #[trigger] crate::dom_canon::ranked(sig, crate::beta_model::spine_args(e)[i], r),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        ranked_parts(sig, *f, r);
+        let a = crate::beta_model::spine_args(e);
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] crate::dom_canon::ranked(sig, a[i], r) by {
+            if i < a.len() - 1 {
+                assert(a[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// A telescope of at most its arity splits into its first domains and the
+/// rest.
+pub proof fn tel_split(t: ExprSpec, n: nat)
+    requires
+        n <= crate::rec_canon::tarity(t),
+    ensures
+        crate::rec_canon::tdoms(t, n).len() == n,
+        t == crate::rec_canon::binds(BinderKind::Pi, crate::rec_canon::tdoms(t, n), crate::rec_canon::tbody(t, n)),
+    decreases n,
+{
+    if n > 0 {
+        if let ExprSpec::Bind(BinderKind::Pi, a, b) = t {
+            tel_split(*b, (n - 1) as nat);
+            let ds = crate::rec_canon::tdoms(t, n);
+            assert(ds.drop_first() =~= crate::rec_canon::tdoms(*b, (n - 1) as nat));
+        }
+    }
+}
+
+/// A telescope's domains, read back.
+pub proof fn tdoms_binds(xs: Seq<ExprSpec>, b: ExprSpec)
+    ensures
+        crate::rec_canon::tdoms(crate::rec_canon::binds(BinderKind::Pi, xs, b), xs.len()) == xs,
+        crate::rec_canon::tarity(crate::rec_canon::binds(BinderKind::Pi, xs, b)) == xs.len() + crate::rec_canon::tarity(b),
+    decreases xs.len(),
+{
+    if xs.len() > 0 {
+        tdoms_binds(xs.drop_first(), b);
+        assert(seq![xs[0]] + xs.drop_first() =~= xs);
+    }
+}
+
+/// A TYPED TELESCOPE'S DOMAINS are types, each in the context of the ones
+/// before it.
+pub proof fn tel_inv(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, xs: Seq<ExprSpec>, b: ExprSpec, t: ExprSpec, i: int) -> (l: LevelSpec)
+    requires
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, crate::rec_canon::binds(BinderKind::Pi, xs, b),
+            crate::rec_canon::binds(BinderKind::Pi, xs, b), t)),
+        0 <= i < xs.len(),
+    ensures
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g + xs.subrange(0, i), xs[i], xs[i], crate::ti_syntax::sort(l))),
+    decreases i,
+{
+    let e = crate::rec_canon::binds(BinderKind::Pi, xs, b);
+    let rest = crate::rec_canon::binds(BinderKind::Pi, xs.drop_first(), b);
+    assert(e == ExprSpec::Bind(BinderKind::Pi, Box::new(xs[0]), Box::new(rest)));
+    let d = crate::ti_sub::get(sig, crate::ti_syntax::eq(g, e, e, t));
+    crate::ti_gen::gen(sig, d);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(xs[0], rest, l1, l2)
+        && crate::ti_gen::typ(sig, g, xs[0], l1) && crate::ti_gen::typ(sig, g.push(xs[0]), rest, l2)
+        && crate::ti_chain::tchain(sig, g, t, crate::ti_syntax::sort(crate::ti_syntax::imax(l1, l2)));
+    if i == 0 {
+        assert(g + xs.subrange(0, 0) =~= g);
+        l1
+    } else {
+        let l = tel_inv(sig, g.push(xs[0]), xs.drop_first(), b, crate::ti_syntax::sort(l2), i - 1);
+        assert(g.push(xs[0]) + xs.drop_first().subrange(0, i - 1) =~= g + xs.subrange(0, i));
+        assert(xs.drop_first()[i - 1] == xs[i]);
+        l
+    }
+}
+
+/// Two signatures agreeing on the smaller one's constants, its recursors
+/// among the larger one's.
+pub open spec fn agree(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig) -> bool {
+    &&& forall|k: u64| #[trigger] small.consts.contains_key(k) ==> big.consts.contains_key(k) && big.consts[k] == small.consts[k]
+    &&& forall|k: u64| #[trigger] small.ienv.recs.contains_key(k) ==> big.ienv.recs.contains_key(k)
+}
+
+/// A SIMPLE TYPE MOVES DOWN to a signature agreeing on its constants.
+pub proof fn simple_app_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, ind: u64, e: ExprSpec)
+    requires
+        crate::rec_canon::simple_app(big, ind, e),
+        crate::ti_level::all_consts(e, small.consts.dom()),
+        agree(big, small),
+    ensures
+        crate::rec_canon::simple_app(small, ind, e),
+    decreases e, 0int,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            simple_app_down(big, small, ind, *f);
+            simple_ty_down(big, small, ind, *x);
+        },
+        ExprSpec::Const(j, _) => {
+            assert(small.consts.contains_key(j));
+        },
+        _ => {},
+    }
+}
+
+pub proof fn simple_ty_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, ind: u64, e: ExprSpec)
+    requires
+        crate::rec_canon::simple_ty(big, ind, e),
+        crate::ti_level::all_consts(e, small.consts.dom()),
+        agree(big, small),
+    ensures
+        crate::rec_canon::simple_ty(small, ind, e),
+    decreases e, 1int,
+{
+    simple_app_down(big, small, ind, e);
+    crate::twin::all_consts_head(e, small.consts.dom());
+}
+
+/// The boundary moves down too.
+pub proof fn sd_args_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, e: ExprSpec)
+    requires
+        sd_args(big, e),
+        crate::ti_level::all_consts(e, small.consts.dom()),
+        agree(big, small),
+    ensures
+        sd_args(small, e),
+    decreases e, 0int,
+{
+    if let ExprSpec::App(f, x) = e {
+        sd_args_down(big, small, *f);
+        sort_doms_down(big, small, *x);
+    }
+}
+
+pub proof fn sort_doms_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, e: ExprSpec)
+    requires
+        sort_doms(big, e),
+        crate::ti_level::all_consts(e, small.consts.dom()),
+        agree(big, small),
+    ensures
+        sort_doms(small, e),
+    decreases e, 1int,
+{
+    sd_args_down(big, small, e);
+    crate::twin::all_consts_head(e, small.consts.dom());
+}
+
+/// Level substitution keeps a spine's head constant, its arity and its
+/// arguments' places.
+pub proof fn sl_spine_shape(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures ({
+        let e2 = crate::expr_model::subst_expr_levels(e, ks, vs);
+        let (h, h2) = (crate::beta_model::spine_head(e), crate::beta_model::spine_head(e2));
+        let (a, a2) = (crate::beta_model::spine_args(e), crate::beta_model::spine_args(e2));
+        &&& (h is Const) == (h2 is Const)
+        &&& h is Const ==> h2->Const_0 == h->Const_0
+        &&& a2.len() == a.len()
+        &&& forall|i: int| 0 <= i < a.len() ==> #[trigger] a2[i] == crate::expr_model::subst_expr_levels(a[i], ks, vs)
+    }),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        sl_spine_shape(*f, ks, vs);
+        let e2 = crate::expr_model::subst_expr_levels(e, ks, vs);
+        let (a, a2) = (crate::beta_model::spine_args(e), crate::beta_model::spine_args(e2));
+        let (af, af2) = (crate::beta_model::spine_args(*f), crate::beta_model::spine_args(crate::expr_model::subst_expr_levels(*f, ks, vs)));
+        assert forall|i: int| 0 <= i < a.len() implies #[trigger] a2[i] == crate::expr_model::subst_expr_levels(a[i], ks, vs) by {
+            if i < a.len() - 1 {
+                assert(a[i] == af[i]);
+                assert(a2[i] == af2[i]);
+            }
+        }
+    }
+}
+
+/// The boundary at a level instance.
+pub proof fn sd_args_sl(sig: crate::ti_syntax::Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sd_args(sig, e),
+    ensures
+        sd_args(sig, crate::expr_model::subst_expr_levels(e, ks, vs)),
+    decreases e, 0int,
+{
+    if let ExprSpec::App(f, x) = e {
+        sd_args_sl(sig, *f, ks, vs);
+        sort_doms_sl(sig, *x, ks, vs);
+    }
+}
+
+pub proof fn sort_doms_sl(sig: crate::ti_syntax::Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sort_doms(sig, e),
+    ensures
+        sort_doms(sig, crate::expr_model::subst_expr_levels(e, ks, vs)),
+    decreases e, 1int,
+{
+    sd_args_sl(sig, e, ks, vs);
+    sl_spine_shape(e, ks, vs);
+}
+
+/// A TYPED SPINE'S HEAD is typed at its declared type.
+pub proof fn head_typed(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, e: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, e, e, t)),
+        crate::beta_model::spine_head(e) is Const,
+    ensures ({
+        let h = crate::beta_model::spine_head(e);
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, h, h, crate::ti_syntax::dty_at(sig, h->Const_0, h->Const_1)))
+        &&& h->Const_1.len() == sig.consts[h->Const_0].lps.len()
+        &&& sig.consts.contains_key(h->Const_0)
+    }),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            let d = crate::ti_sub::get(sig, crate::ti_syntax::eq(g, e, e, t));
+            crate::ti_gen::gen(sig, d);
+            let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, b, l2, l2)
+                && crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, *f, *f, crate::ti_syntax::pi(a, b)))
+                && crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, *x, *x, a))
+                && crate::ti_gen::typ(sig, g.push(a), b, l2)
+                && crate::ti_chain::tchain(sig, g, t, crate::subst_algebra::inst(0, *x, b));
+            head_typed(sig, g, *f, crate::ti_syntax::pi(a, b));
+        },
+        ExprSpec::Const(c, ls) => {
+            crate::ti_spine::const_typed(sig, g, c, ls, t);
+        },
+        _ => {},
+    }
+}
+
+/// A CONSTANT TYPED BELOW A RANK above its own, in the empty context.
+pub proof fn const_below(tw: crate::ti_syntax::Sig, r: int, j: u64, us: Seq<LevelSpec>)
+    requires
+        crate::dom_rec_end::types_below(tw),
+        crate::ti_syntax::iota_ok(tw),
+        crate::dom_levels::sig_lps(tw),
+        tw.consts.contains_key(j) && tw.consts[j].val is None,
+        0 <= crate::dom_code::rk(tw, j) < r,
+        us.len() == tw.consts[j].lps.len(),
+    ensures
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(Seq::empty(),
+            ExprSpec::Const(j, us), ExprSpec::Const(j, us), crate::ti_syntax::dty_at(tw, j, us))),
+{
+    let tt = crate::ti_strip::strip_below(tw, r);
+    let rj = crate::dom_code::rk(tw, j);
+    crate::dom_rec_end::ty_closed_at(tw, j, rj, Seq::empty());
+    crate::ti_strip::strip_below_twice(tw, r, rj);
+    assert(crate::ti_strip::strip_below(tt, rj) == crate::ti_strip::strip_below(tw, rj));
+    assert(crate::dom_code::rk(tt, j) == rj);
+    crate::dom_levels::sig_lps_strip(tw, r);
+    crate::ti_strip::iota_ok_below(tw, r);
+    crate::jkernel::wf_nil(tt);
+    crate::ti_ls2::levs_eq_refl(us);
+    assert(crate::ti_syntax::dty_at(tt, j, Seq::empty()) == crate::ti_syntax::dty_at(tw, j, Seq::empty()));
+    crate::iota_sr::const_lv(tt, rj, Seq::empty(), j, us, us);
+    assert(crate::ti_syntax::dty_at(tt, j, us) == crate::ti_syntax::dty_at(tw, j, us));
+}
+
+/// A CLOSED SIMPLE TYPE TYPED IN A CERTIFICATE'S SIGNATURE `s` (in any
+/// context) is typed in the empty context below rank `r` of `tw`, at a sort
+/// its certified type converts to, with its arguments and type parameters
+/// (`dom_code::styped`): its head from its type below its rank (R3a), each
+/// argument by induction, retyped at its domain's sort by the level
+/// equality type uniqueness and sort injectivity give in `s`.
+#[verifier::spinoff_prover]
+pub proof fn simple_rebuild(s: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, tw: crate::ti_syntax::Sig, r: int, ind: u64,
+    e: ExprSpec, te: ExprSpec) -> (l: LevelSpec)
+    requires
+        crate::dom_rec_end::sig_sr(s),
+        crate::ti_syntax::derivable(s, crate::ti_syntax::eq(g, e, e, te)),
+        crate::rec_canon::simple_ty(s, ind, e),
+        sort_doms(s, e),
+        forall|k: u64| #[trigger] s.consts.contains_key(k) ==> tw.consts.contains_key(k) && tw.consts[k] == s.consts[k],
+        crate::dom_rec_end::types_below(tw),
+        crate::ti_syntax::iota_ok(tw),
+        crate::dom_levels::sig_lps(tw),
+        crate::dom_canon::ranked(tw, e, r),
+    ensures
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(Seq::empty(), e, e, crate::ti_syntax::sort(l))),
+        crate::ti_chain::tchain(s, g, te, crate::ti_syntax::sort(l)),
+        crate::dom_code::styped(tw, r, e),
+    decreases crate::beta_model::size(e),
+{
+    let tt = crate::ti_strip::strip_below(tw, r);
+    let h = crate::beta_model::spine_head(e);
+    let a = crate::beta_model::spine_args(e);
+    crate::beta_model::spine_recompose(e);
+    simple_parts(s, ind, e);
+    let (j, us) = (h->Const_0, h->Const_1);
+    let ty = s.consts[j].ty;
+    let n = a.len();
+    let lps = s.consts[j].lps;
+    tel_split(ty, n);
+    let ds = crate::rec_canon::tdoms(ty, n);
+    let b = crate::rec_canon::tbody(ty, n);
+    let sj = b->Sort_0;
+    head_typed(s, g, e, te);
+    let t0 = crate::ti_syntax::dty_at(s, j, us);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, ds, b, lps, us);
+    let dsu = crate::dom_rec_shape::sls(ds, lps, us);
+    let bu = crate::expr_model::subst_expr_levels(b, lps, us);
+    let l = crate::level_model::subst_level_spec(sj, lps, us);
+    assert(bu == crate::ti_syntax::sort(l));
+    assert(t0 == crate::rec_canon::binds(BinderKind::Pi, dsu, bu));
+    assert forall|i: int| 0 <= i < n implies #[trigger] crate::ti_spine::is_pi(crate::dom_con_rel::trest(t0, a.subrange(0, i))) by {
+        crate::ti_spine::tel_next(dsu, bu, a, i);
+    }
+    crate::ti_spine::spine_ty(s, g, h, t0, a, te);
+    crate::ti_spine::trest_binds(dsu, bu, a);
+    crate::ti_spine::vsub_closed(bu, a);
+    sd_args_args(s, e);
+    ranked_parts(tw, e, r);
+    // the arguments, rebuilt and retyped at their domains' sorts
+    assert forall|i: int| 0 <= i < n implies
+        crate::ti_syntax::derivable(tt, crate::ti_syntax::eq(Seq::empty(), #[trigger] a[i], a[i], crate::ti_spine::sdom(t0, a, i)))
+        && crate::dom_code::styped(tw, r, a[i]) by {
+        crate::ti_spine::tel_next(dsu, bu, a, i);
+        let mi = crate::level_model::subst_level_spec(ds[i]->Sort_0, lps, us);
+        assert(dsu[i] == crate::ti_syntax::sort(mi));
+        crate::ti_spine::vsub_closed(dsu[i], a.subrange(0, i));
+        let di = crate::ti_spine::sdom(t0, a, i);
+        assert(di == crate::ti_syntax::sort(mi));
+        crate::beta_model::spine_app_size_elem(h, a, i);
+        let li = simple_rebuild(s, g, tw, r, ind, a[i], di);
+        crate::dom_fund::sort_inj_chain(s, g, mi, li);
+        crate::dom_levels::sort_retype2(tt, Seq::empty(), a[i], a[i], mi, li);
+    }
+    // the head, and the spine
+    assert(tw.consts[j] == s.consts[j]);
+    const_below(tw, r, j, us);
+    assert(crate::ti_syntax::dty_at(tw, j, us) == t0);
+    crate::ti_spine::spine_build(tt, Seq::empty(), h, t0, a);
+    // its facts below the rank
+    sargs_of(tw, r, e);
+    sdoms_rebuilt(tw, r, e, t0, dsu, bu);
+    l
+}
+
+/// `simple_rebuild`'s type parameters: a canonical former's sort-typed
+/// parameter is typed at its declared sort, its domain there.
+proof fn sdoms_rebuilt(tw: crate::ti_syntax::Sig, r: int, e: ExprSpec, t0: ExprSpec, dsu: Seq<ExprSpec>, bu: ExprSpec)
+    requires
+        crate::beta_model::spine_head(e) is Const,
+        ({
+            let h = crate::beta_model::spine_head(e);
+            let (j, us) = (h->Const_0, h->Const_1);
+            let ty = tw.consts[j].ty;
+            let n = crate::beta_model::spine_args(e).len();
+            &&& n == crate::rec_canon::tarity(ty)
+            &&& us.len() == tw.consts[j].lps.len()
+            &&& dsu == crate::dom_rec_shape::sls(crate::rec_canon::tdoms(ty, n), tw.consts[j].lps, us)
+            &&& t0 == crate::rec_canon::binds(BinderKind::Pi, dsu, bu)
+            &&& crate::rec_canon::tdoms(ty, n).len() == n
+        }),
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r),
+            crate::ti_syntax::eq(Seq::empty(), #[trigger] crate::beta_model::spine_args(e)[i], crate::beta_model::spine_args(e)[i],
+            crate::ti_spine::sdom(t0, crate::beta_model::spine_args(e), i))),
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==>
+            #[trigger] crate::rec_canon::tdoms(tw.consts[crate::beta_model::spine_head(e)->Const_0].ty, crate::beta_model::spine_args(e).len())[i] is Sort,
+    ensures
+        crate::dom_code::sdoms_typed(tw, r, e),
+{
+    let h = crate::beta_model::spine_head(e);
+    let a = crate::beta_model::spine_args(e);
+    let (j, us) = (h->Const_0, h->Const_1);
+    let ty = tw.consts[j].ty;
+    let n = a.len();
+    let lps = tw.consts[j].lps;
+    if crate::dom_code::has_canon(tw, j) {
+        let sh = crate::dom_code::canon_shape(tw, j);
+        crate::dom_ctor_bound::ctor_shape_ind(tw, j);
+        let xs = sh.pdoms + sh.idoms;
+        let bb = crate::rec_canon::tbody(ty, sh.np + sh.ni);
+        tdoms_binds(xs, bb);
+        assert(n == xs.len());
+        assert(crate::rec_canon::tdoms(ty, n) == xs);
+        crate::dom_rel::lpad_id(us, lps.len());
+        assert forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort implies
+            crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
+                crate::dom_rel::ptype(tw, j, crate::dom_rel::iinst(tw, j, e), q))) by {
+            crate::ti_spine::tel_next(dsu, bu, a, q);
+            assert(xs[q] == sh.pdoms[q]);
+            crate::ti_spine::vsub_closed(dsu[q], a.subrange(0, q));
+        }
+    }
+}
+
+/// A spine whose arguments are each typed below a rank has them as its
+/// argument facts (`styped`'s second part).
+pub proof fn sargs_of(sig: crate::ti_syntax::Sig, r: int, e: ExprSpec)
+    requires
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> #[trigger] crate::dom_code::styped(sig, r, crate::beta_model::spine_args(e)[i]),
+    ensures
+        crate::dom_code::sargs_typed(sig, r, e),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        let a = crate::beta_model::spine_args(e);
+        assert forall|i: int| 0 <= i < crate::beta_model::spine_args(*f).len()
+            implies #[trigger] crate::dom_code::styped(sig, r, crate::beta_model::spine_args(*f)[i]) by {
+            assert(a[i] == crate::beta_model::spine_args(*f)[i]);
+        }
+        sargs_of(sig, r, *f);
+        assert(a[a.len() - 1] == *x);
+        assert(crate::dom_code::styped(sig, r, a[a.len() - 1]));
+        assert(crate::dom_code::sargs_typed(sig, r, e) == (crate::dom_code::sargs_typed(sig, r, *f) && crate::dom_code::styped(sig, r, *x)));
+    }
+}
+
+} // verus!

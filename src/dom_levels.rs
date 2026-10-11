@@ -41,6 +41,23 @@ pub proof fn sig_lps_at(sig: Sig, ks: Seq<u64>, vs: Seq<LevelSpec>)
     assert(crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, 0), ks, vs));
 }
 
+/// A strip keeps the level facts.
+pub proof fn sig_lps_strip(sig: Sig, r: int)
+    requires
+        sig_lps(sig),
+    ensures
+        sig_lps(crate::ti_strip::strip_below(sig, r)),
+{
+    reveal(sig_lps);
+    let s1 = crate::ti_strip::strip_below(sig, r);
+    assert forall|r2: int, ks: Seq<u64>, vs: Seq<LevelSpec>| ks.len() == vs.len()
+        implies #[trigger] crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(s1, r2), ks, vs) by {
+        crate::ti_strip::strip_below_twice(sig, r, r2);
+        let m = if r <= r2 { r } else { r2 };
+        assert(crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(sig, m), ks, vs));
+    }
+}
+
 pub proof fn sig_lps_below(sig: Sig, r: int, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
         sig_lps(sig),

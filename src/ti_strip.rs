@@ -136,6 +136,18 @@ pub proof fn strip_below_zero(sig: Sig)
     assert(strip_below(sig, 0).ienv =~= strip(sig).ienv);
 }
 
+/// Two strips are the lower one.
+pub proof fn strip_below_twice(sig: Sig, a: int, b: int)
+    ensures
+        strip_below(strip_below(sig, a), b) == strip_below(sig, if a <= b { a } else { b }),
+{
+    let m = if a <= b { a } else { b };
+    let (s1, s2, s3) = (strip_below(sig, a), strip_below(strip_below(sig, a), b), strip_below(sig, m));
+    assert(s2.ienv.recs =~= s3.ienv.recs);
+    assert(s2.ienv.struct_ctor =~= s3.ienv.struct_ctor);
+    assert(s2.ienv =~= s3.ienv);
+}
+
 /// The strip forgets the locals.
 pub proof fn strip_below_locals(sig: Sig, d: Map<nat, ExprSpec>, r: int)
     ensures
