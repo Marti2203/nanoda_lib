@@ -143,6 +143,268 @@ pub closed spec fn str_stored<'t, 'p>(c: TcCtx<'t, 'p>, p: StringPtr<'t>) -> boo
     else { crate::name_arena_bridge::ptr_index(p) < c.export_file.dag.n_strings() }
 }
 
+/// The pointer is within what its tier's dag stores (names, levels).
+pub open spec fn name_stored<'t, 'p>(c: TcCtx<'t, 'p>, p: NamePtr<'t>) -> bool {
+    if crate::util_model::ptr_is_tc(p) { crate::name_arena_bridge::ptr_index(p) < c.dag.n_names() }
+    else { crate::name_arena_bridge::ptr_index(p) < c.export_file.names_view().len() }
+}
+
+pub open spec fn level_stored<'t, 'p>(c: TcCtx<'t, 'p>, p: LevelPtr<'t>) -> bool {
+    if crate::util_model::ptr_is_tc(p) { crate::name_arena_bridge::ptr_index(p) < c.dag.n_levels() }
+    else { crate::name_arena_bridge::ptr_index(p) < c.export_file.levels_view().len() }
+}
+
+/// What is stored stays stored.
+pub proof fn name_stored_mono<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>, n: NamePtr<'t>)
+    requires
+        crate::util_model::same_arenas(a, b),
+        name_stored(a, n),
+    ensures
+        name_stored(b, n),
+{
+}
+
+pub proof fn level_stored_mono<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>, l: LevelPtr<'t>)
+    requires
+        crate::util_model::same_arenas(a, b),
+        level_stored(a, l),
+    ensures
+        level_stored(b, l),
+{
+}
+
+/// Both dags' invariants (from `lemma_dags_ok`, which a tracked context
+/// gives).
+pub closed spec fn dags_ok<'t, 'p>(c: TcCtx<'t, 'p>) -> bool {
+    c.dag.inv() && c.export_file.dag.inv() && c.export_file.inv()
+}
+
+pub proof fn lemma_dags_ok<'t, 'p>(tracked c: &TcCtx<'t, 'p>)
+    ensures
+        dags_ok(*c),
+{
+    use_type_invariant(c.export_file);
+    use_type_invariant(&c.export_file.dag);
+    use_type_invariant(&*c.dag);
+}
+
+/// The checker's own names, in order.
+pub closed spec fn tc_names<'t, 'p>(c: TcCtx<'t, 'p>) -> Seq<Name<'t>> {
+    crate::indexmap_model::iset_keys(&c.dag.names)
+}
+
+/// The node a stored name pointer's dag holds at its index, and what that
+/// says: well formed there, its export-tier prefix stored, the pointer's
+/// denotation read off it, and (in the checker's tier) not an export name.
+proof fn name_node_facts<'t, 'p>(c: TcCtx<'t, 'p>, n: NamePtr<'t>) -> (r: Name<'t>)
+    requires
+        dags_ok(c),
+        crate::util_model::owns(c, n),
+        name_stored(c, n),
+    ensures
+        crate::name_arena_bridge::to_model_name(n) == crate::name_arena_bridge::to_model_of_name(r),
+        crate::name_arena_bridge::name_hash_ok(r),
+        crate::name_arena_bridge::name_children_owned(c, r),
+        match r {
+            Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => name_stored(c, pfx)
+                && (crate::util_model::ptr_is_tc(pfx) ==> crate::util_model::ptr_is_tc(n) && crate::name_arena_bridge::ptr_index(pfx) < crate::name_arena_bridge::ptr_index(n))
+                && (!crate::util_model::ptr_is_tc(n) ==> !crate::util_model::ptr_is_tc(pfx) && crate::name_arena_bridge::ptr_index(pfx) < crate::name_arena_bridge::ptr_index(n)),
+            Name::Anon => true,
+        },
+        crate::util_model::ptr_is_tc(n) ==> tc_names(c)[crate::name_arena_bridge::ptr_index(n) as int] == r
+            && !c.export_file.names_view().contains(r),
+        !crate::util_model::ptr_is_tc(n) ==> c.export_file.names_view()[crate::name_arena_bridge::ptr_index(n) as int] == r,
+{
+    c.dag.lemma_hist_of();
+    c.export_file.dag.lemma_hist_of();
+    crate::util_model::ptr_is_tc_agree(n);
+    crate::name_arena_bridge::to_model_name_at(n);
+    let i = crate::name_arena_bridge::ptr_index(n) as int;
+    let r = if crate::util_model::ptr_is_tc(n) {
+        let k = crate::indexmap_model::iset_keys(&c.dag.names);
+        assert(crate::name_arena_bridge::name_node_ok(k[i], i as nat, true, c.dag.id(), c.dag.partner()));
+        assert(name_export_kids_in(k[i], c.dag.pnames().len()));
+        k[i]
+    } else {
+        let k = crate::indexmap_model::iset_keys(&c.export_file.dag.names);
+        assert(crate::name_arena_bridge::name_node_ok(k[i], i as nat, false, c.export_file.dag.id(), c.export_file.dag.id()));
+        k[i]
+    };
+    match r {
+        Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => crate::util_model::ptr_is_tc_agree(pfx),
+        Name::Anon => {},
+    }
+    r
+}
+
+/// HASH-CONSING FOR NAMES: two stored names a context owns are the same
+/// pointer exactly when they denote the same name. Within a tier, the
+/// stored nodes are distinct and carry their canonical hashes, so equal
+/// denotations (children equal by induction, suffixes equal as the same
+/// string pointer) are equal nodes at one position; across tiers, the
+/// checker never stores a name the export file has (`alloc_name` looks
+/// there first).
+pub proof fn to_model_name_injective<'t, 'p>(c: TcCtx<'t, 'p>, n1: NamePtr<'t>, n2: NamePtr<'t>)
+    requires
+        dags_ok(c),
+        crate::util_model::owns(c, n1),
+        crate::util_model::owns(c, n2),
+        name_stored(c, n1),
+        name_stored(c, n2),
+    ensures
+        (n1 == n2) <==> (crate::name_arena_bridge::to_model_name(n1) == crate::name_arena_bridge::to_model_name(n2)),
+    decreases
+        (if crate::util_model::ptr_is_tc(n1) { 1int } else { 0int }) + (if crate::util_model::ptr_is_tc(n2) { 1int } else { 0int }),
+        crate::name_arena_bridge::ptr_index(n1) + crate::name_arena_bridge::ptr_index(n2),
+{
+    if crate::name_arena_bridge::to_model_name(n1) != crate::name_arena_bridge::to_model_name(n2) {
+        return;
+    }
+    let r1 = name_node_facts(c, n1);
+    let r2 = name_node_facts(c, n2);
+    let ids = crate::util_model::arena_ids(c);
+    match (r1, r2) {
+        (Name::Str(p1, s1, h1), Name::Str(p2, s2, h2)) => {
+            to_model_name_injective(c, p1, p2);
+            crate::util_model::owned_raw_eq_in(ids, s1, s2);
+        },
+        (Name::Num(p1, k1, h1), Name::Num(p2, k2, h2)) => {
+            to_model_name_injective(c, p1, p2);
+        },
+        _ => {},
+    }
+    assert(r1 == r2);
+    let (i1, i2) = (crate::name_arena_bridge::ptr_index(n1) as int, crate::name_arena_bridge::ptr_index(n2) as int);
+    if crate::util_model::ptr_is_tc(n1) && crate::util_model::ptr_is_tc(n2) {
+        let k = crate::indexmap_model::iset_keys(&c.dag.names);
+        assert(k.no_duplicates());
+        assert(i1 == i2);
+    } else if !crate::util_model::ptr_is_tc(n1) && !crate::util_model::ptr_is_tc(n2) {
+        let k = crate::indexmap_model::iset_keys(&c.export_file.dag.names);
+        assert(k.no_duplicates());
+        assert(i1 == i2);
+    } else if crate::util_model::ptr_is_tc(n1) {
+        assert(c.export_file.names_view().contains(r2));
+    } else {
+        assert(c.export_file.names_view().contains(r1));
+    }
+    raw_index_tier(crate::util_model::ptr_raw(n1), crate::util_model::ptr_raw(n2));
+    crate::util_model::owned_raw_eq_in(ids, n1, n2);
+}
+
+/// `Name.str pn s` with its canonical hash.
+pub open spec fn str_node<'a>(pn: NamePtr<'a>, s: StringPtr<'a>) -> Name<'a> {
+    Name::Str(pn, s, crate::util_model::fx_finish(
+        Seq::<int>::empty().push(crate::name::STR_HASH as int).push(crate::util_model::ptr_raw(pn) as int).push(crate::util_model::ptr_raw(s) as int)))
+}
+
+/// THE CANONICAL POINTER OF A NAME NODE, stated on what never changes: the
+/// pointer's history holds `n` there and nowhere before; in the checker's
+/// tier `n` is not one of the export file's names `en`, in the export tier
+/// it is `en`'s at that position. Two such pointers of one arena pair are
+/// the same (`name_canon_unique`).
+pub open spec fn name_canon<'a>(p: NamePtr<'a>, n: Name<'a>, en: Seq<Name<'a>>) -> bool {
+    let h = crate::arena_history::arena_hist::<Name<'a>>(arena_of(p));
+    let i = crate::name_arena_bridge::ptr_index(p) as int;
+    &&& i < h.len() && h[i] == n
+    &&& forall|j: int| 0 <= j < i ==> h[j] != n
+    &&& crate::util_model::ptr_is_tc(p) ==> !en.contains(n)
+    &&& !crate::util_model::ptr_is_tc(p) ==> i < en.len() && en[i] == n
+}
+
+pub proof fn name_canon_unique<'a>(ids: (nat, nat), p1: NamePtr<'a>, p2: NamePtr<'a>, n: Name<'a>, en: Seq<Name<'a>>)
+    requires
+        crate::util_model::owns_in(ids, p1),
+        crate::util_model::owns_in(ids, p2),
+        name_canon(p1, n, en),
+        name_canon(p2, n, en),
+    ensures
+        p1 == p2,
+{
+    let (i1, i2) = (crate::name_arena_bridge::ptr_index(p1) as int, crate::name_arena_bridge::ptr_index(p2) as int);
+    if crate::util_model::ptr_is_tc(p1) == crate::util_model::ptr_is_tc(p2) {
+        if i1 < i2 {
+            assert(crate::arena_history::arena_hist::<Name<'a>>(arena_of(p2))[i1] != n);
+        } else if i2 < i1 {
+            assert(crate::arena_history::arena_hist::<Name<'a>>(arena_of(p1))[i2] != n);
+        }
+        raw_index_tier(crate::util_model::ptr_raw(p1), crate::util_model::ptr_raw(p2));
+        crate::util_model::owned_raw_eq_in(ids, p1, p2);
+    } else if crate::util_model::ptr_is_tc(p1) {
+        assert(en.contains(n));
+    } else {
+        assert(en.contains(n));
+    }
+}
+
+/// The checker's own levels, in order.
+pub closed spec fn tc_levels<'t, 'p>(c: TcCtx<'t, 'p>) -> Seq<Level<'t>> {
+    crate::indexmap_model::iset_keys(&c.dag.levels)
+}
+
+/// HASH-CONSING FOR UNIVERSE PARAMETERS: two stored levels a context owns,
+/// both parameters, are the same pointer exactly when they denote the same
+/// parameter. Equal denotations name the same name pointer, so the nodes
+/// (with their canonical hashes) are equal; within a tier they sit at one
+/// position, and the checker never stores a level the export file has.
+pub proof fn level_ptr_eq_iff_same_model_param<'t, 'p>(c: TcCtx<'t, 'p>, a: LevelPtr<'t>, b: LevelPtr<'t>)
+    requires
+        dags_ok(c),
+        crate::util_model::owns(c, a),
+        crate::util_model::owns(c, b),
+        level_stored(c, a),
+        level_stored(c, b),
+        crate::level_arena_bridge::to_model(a) is Param,
+        crate::level_arena_bridge::to_model(b) is Param,
+    ensures
+        (a == b) <==> (crate::level_arena_bridge::to_model(a) == crate::level_arena_bridge::to_model(b)),
+{
+    if crate::level_arena_bridge::to_model(a) != crate::level_arena_bridge::to_model(b) {
+        return;
+    }
+    c.dag.lemma_hist_of();
+    c.export_file.dag.lemma_hist_of();
+    let ids = crate::util_model::arena_ids(c);
+    crate::util_model::ptr_is_tc_agree(a);
+    crate::util_model::ptr_is_tc_agree(b);
+    crate::level_arena_bridge::to_model_at(a);
+    crate::level_arena_bridge::to_model_at(b);
+    let (i1, i2) = (crate::name_arena_bridge::ptr_index(a) as int, crate::name_arena_bridge::ptr_index(b) as int);
+    let ek = crate::indexmap_model::iset_keys(&c.export_file.dag.levels);
+    let tk = crate::indexmap_model::iset_keys(&c.dag.levels);
+    let r1 = if crate::util_model::ptr_is_tc(a) { tk[i1] } else { ek[i1] };
+    let r2 = if crate::util_model::ptr_is_tc(b) { tk[i2] } else { ek[i2] };
+    if crate::util_model::ptr_is_tc(a) {
+        assert(crate::level_arena_bridge::level_node_ok(tk[i1], i1 as nat, true, c.dag.id(), c.dag.partner()));
+    } else {
+        assert(crate::level_arena_bridge::level_node_ok(ek[i1], i1 as nat, false, c.export_file.dag.id(), c.export_file.dag.id()));
+    }
+    if crate::util_model::ptr_is_tc(b) {
+        assert(crate::level_arena_bridge::level_node_ok(tk[i2], i2 as nat, true, c.dag.id(), c.dag.partner()));
+    } else {
+        assert(crate::level_arena_bridge::level_node_ok(ek[i2], i2 as nat, false, c.export_file.dag.id(), c.export_file.dag.id()));
+    }
+    if let (Level::Param(n1, _), Level::Param(n2, _)) = (r1, r2) {
+        crate::util_model::owned_raw_eq_in(ids, n1, n2);
+    }
+    assert(r1 == r2);
+    if crate::util_model::ptr_is_tc(a) && crate::util_model::ptr_is_tc(b) {
+        assert(tk.no_duplicates());
+        assert(i1 == i2);
+    } else if !crate::util_model::ptr_is_tc(a) && !crate::util_model::ptr_is_tc(b) {
+        assert(ek.no_duplicates());
+        assert(i1 == i2);
+    } else if crate::util_model::ptr_is_tc(a) {
+        assert(c.export_file.levels_view().contains(r2));
+        assert(!c.dag.plevels().contains(tk[i1]));
+    } else {
+        assert(c.export_file.levels_view().contains(r1));
+        assert(!c.dag.plevels().contains(tk[i2]));
+    }
+    raw_index_tier(crate::util_model::ptr_raw(a), crate::util_model::ptr_raw(b));
+    crate::util_model::owned_raw_eq_in(ids, a, b);
+}
+
 /// A stored string stays stored, in the same tier's dag.
 pub proof fn str_stored_mono<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>, p: StringPtr<'t>)
     requires
@@ -665,6 +927,15 @@ impl<'p> ExportFile<'p> {
         self.name_cache.arena_id()
     }
 
+    /// The export file's names and levels, in order.
+    pub closed spec fn names_view(self) -> Seq<Name<'p>> {
+        crate::indexmap_model::iset_keys(&self.dag.names)
+    }
+
+    pub closed spec fn levels_view(self) -> Seq<Level<'p>> {
+        crate::indexmap_model::iset_keys(&self.dag.levels)
+    }
+
 }
 
 /// `arena`'s definition, for proofs inside the crate.
@@ -842,6 +1113,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             crate::name_arena_bridge::name_children_owned(*self, result),
             crate::name_arena_bridge::to_model_of_name(result) == crate::name_arena_bridge::to_model_name(p),
+            name_stored(*self, p),
+            match result {
+                Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => name_stored(*self, pfx),
+                Name::Anon => true,
+            },
     {
         proof {
             use_type_invariant(self.export_file);
@@ -850,10 +1126,32 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::util_model::ptr_is_tc_agree(p);
             crate::name_arena_bridge::to_model_name_at(p);
         }
-        match p.dag_marker() {
+        let r = match p.dag_marker() {
             DagMarker::ExportFile => self.export_file.dag.names.get_index(p.idx()).copied().unwrap(),
             DagMarker::TcCtx => self.dag.names.get_index(p.idx()).copied().unwrap(),
+        };
+        proof {
+            let i = crate::name_arena_bridge::ptr_index(p) as int;
+            if crate::util_model::ptr_is_tc(p) {
+                let k = crate::indexmap_model::iset_keys(&self.dag.names);
+                assert(k[i] == r);
+                assert(crate::name_arena_bridge::name_node_ok(k[i], i as nat, true, self.dag.id(), self.dag.partner()));
+                assert(name_export_kids_in(k[i], self.dag.pnames().len()));
+                match r {
+                    Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => crate::util_model::ptr_is_tc_agree(pfx),
+                    Name::Anon => {},
+                }
+            } else {
+                let k = crate::indexmap_model::iset_keys(&self.export_file.dag.names);
+                assert(k[i] == r);
+                assert(crate::name_arena_bridge::name_node_ok(k[i], i as nat, false, self.export_file.dag.id(), self.export_file.dag.id()));
+                match r {
+                    Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => crate::util_model::ptr_is_tc_agree(pfx),
+                    Name::Anon => {},
+                }
+            }
         }
+        r
     }
 
     /// Store a `Name`, getting back a pointer to the allocated item. If the item was
@@ -866,8 +1164,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// the arena (both ghost, erased at run time).
     /// VERUS-REWRITE(stored-child-check): a prefix in this context's own tier
     /// is TESTED to be already stored (`idx < len`) before the name is
-    /// appended; every pointer the checker holds came from an earlier
-    /// allocation, so it never fails.
+    /// appended, and so is one in the export file's tier; every pointer the
+    /// checker holds came from an earlier allocation, so it never fails.
     pub fn alloc_name(&mut self, n: Name<'t>) -> (result: NamePtr<'t>)
         requires
             crate::util_model::ctx_ok(*old(self)),
@@ -879,6 +1177,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
+            name_stored(*final(self), result),
+            name_canon(result, n, final(self).export_file.names_view()),
     {
         let ghost ids = crate::util_model::arena_ids(*self);
         proof {
@@ -901,6 +1201,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             proof {
                 let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.names);
                 assert(ek[idx as int] == n);
+                self.export_file.dag.lemma_hist();
+                assert forall|j: int| 0 <= j < idx implies crate::arena_history::arena_hist::<Name<'t>>(self.export_file.dag.id())[j] != n by {
+                    assert(ek[j] == crate::arena_history::arena_hist::<Name<'t>>(self.export_file.dag.id())[j]);
+                    assert(ek.no_duplicates());
+                }
                 assert(crate::name_arena_bridge::name_node_ok(ek[idx as int], idx as nat, false, self.export_file.dag.id(), self.export_file.dag.id()));
             }
             let r = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()));
@@ -910,6 +1215,9 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             match n {
                 Name::Str(pfx, _, _) | Name::Num(pfx, _, _) => {
                     if matches!(pfx.dag_marker(), DagMarker::TcCtx) && pfx.idx() >= self.dag.names.len() {
+                        panic!("alloc_name: a prefix that is not stored");
+                    }
+                    if matches!(pfx.dag_marker(), DagMarker::ExportFile) && pfx.idx() >= self.export_file.dag.names.len() {
                         panic!("alloc_name: a prefix that is not stored");
                     }
                 },
@@ -932,7 +1240,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 assert(crate::name_arena_bridge::name_node_ok(n, tk.len() as nat, true, self.dag.id(), self.dag.partner()));
             }
             let (idx, _) = crate::arena_history::arena_insert(&mut self.dag.names, Tracked(&mut self.dag.toks.borrow_mut().names), n);
-            proof { use_type_invariant(&*self.dag); }
+            proof {
+                use_type_invariant(&*self.dag);
+                self.dag.lemma_hist();
+                let k = crate::indexmap_model::iset_keys(&self.dag.names);
+                assert(k[idx as int] == n);
+                assert forall|j: int| 0 <= j < idx implies crate::arena_history::arena_hist::<Name<'t>>(self.dag.id())[j] != n by {
+                    assert(k[j] == crate::arena_history::arena_hist::<Name<'t>>(self.dag.id())[j]);
+                    assert(k.no_duplicates());
+                }
+                assert(!self.dag.pnames().contains(k[idx as int]));
+            }
             let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
             proof { crate::name_arena_bridge::to_model_name_at(r); }
             r
@@ -947,6 +1265,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             crate::util_model::owns(*self, result),
             crate::name_arena_bridge::to_model_name(result) == crate::name_model::NameSpec::Anon,
+            name_stored(*self, result),
     {
         proof {
             use_type_invariant(self.export_file);
@@ -967,6 +1286,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             result@.len() == crate::level_arena_bridge::to_model_of_levels(p).len(),
             forall|i: int|
                 0 <= i < result@.len() ==> #[trigger] crate::level_arena_bridge::to_model(result@[i]) == crate::level_arena_bridge::to_model_of_levels(p)[i],
+            forall|i: int| 0 <= i < result@.len() ==> level_stored(*self, #[trigger] result@[i]),
     {
         proof {
             use_type_invariant(self.export_file);
@@ -985,15 +1305,17 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             if crate::util_model::ptr_is_tc(p) {
                 let k = crate::indexmap_model::iset_keys(&self.dag.uparams);
                 assert(k[i] == crate::arena_history::arena_hist::<Arc<[LevelPtr<'t>]>>(self.dag.id())[i]);
-                assert forall|j: int| 0 <= j < r@.len() implies crate::util_model::owns_in(ids, #[trigger] r@[j]) by {
+                assert forall|j: int| 0 <= j < r@.len() implies crate::util_model::owns_in(ids, #[trigger] r@[j]) && level_stored(*self, r@[j]) by {
                     assert(crate::util_model::owns_in((self.dag.id(), self.dag.partner()), k[i]@[j]));
+                    assert(level_kid_in(k[i]@[j], self.dag.n_levels(), self.dag.plevels().len()));
                 }
             } else {
                 let k = crate::indexmap_model::iset_keys(&self.export_file.dag.uparams);
                 assert(k[i] == crate::arena_history::arena_hist::<Arc<[LevelPtr<'t>]>>(self.export_file.dag.id())[i]);
-                assert forall|j: int| 0 <= j < r@.len() implies crate::util_model::owns_in(ids, #[trigger] r@[j]) by {
+                assert forall|j: int| 0 <= j < r@.len() implies crate::util_model::owns_in(ids, #[trigger] r@[j]) && level_stored(*self, r@[j]) by {
                     assert(crate::util_model::owns_in((self.export_file.dag.id(), self.export_file.dag.partner()), k[i]@[j]));
                     assert(!crate::util_model::ptr_is_tc(k[i]@[j]));
+                    assert(level_kid_in(k[i]@[j], self.export_file.dag.n_levels(), self.export_file.dag.n_levels()));
                 }
             }
         }
@@ -1346,6 +1668,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         ensures
             crate::level_arena_bridge::level_children_owned(*self, result),
             crate::level_arena_bridge::to_model_of_level(result) == crate::level_arena_bridge::to_model(p),
+            level_stored(*self, p),
     {
         proof {
             use_type_invariant(self.export_file);
@@ -1358,6 +1681,131 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             DagMarker::ExportFile => self.export_file.dag.levels.get_index(p.idx()).copied().unwrap(),
             DagMarker::TcCtx => self.dag.levels.get_index(p.idx()).copied().unwrap(),
         }
+    }
+
+    /// Store a sequence of `Level` items, but check whether the sequence has previously been allocated
+    /// first, by probing with a slice.
+    ///
+    /// Verified: the list stored is `ls`. VERUS-REWRITE(alloc-levels-arc):
+    /// the slice is made the `Arc` it is stored as (through a `Vec` built
+    /// while each element is TESTED to be stored, as `alloc_level` tests a
+    /// child) before the two lookups, so they look up the stored key type,
+    /// as `alloc_levels` does.
+    /// VERUS-REWRITE(arena-tokens): as in `alloc_name`.
+    pub fn alloc_levels_slice(&mut self, ls: &[LevelPtr<'t>]) -> (result: LevelsPtr<'t>)
+        requires
+            crate::util_model::owns_all(*old(self), ls@),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            crate::level_arena_bridge::to_model_of_levels(result).len() == ls@.len(),
+            forall|i: int|
+                0 <= i < ls@.len() ==> #[trigger] crate::level_arena_bridge::to_model_of_levels(result)[i] == crate::level_arena_bridge::to_model(ls@[i]),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        let ghost ids = crate::util_model::arena_ids(*self);
+        let mut k: usize = 0;
+        let mut v: Vec<LevelPtr<'t>> = Vec::new();
+        while k < ls.len()
+            invariant
+                k <= ls@.len(),
+                v@ == ls@.subrange(0, k as int),
+                crate::util_model::owns_all(*self, ls@),
+                forall|j: int| 0 <= j < k ==> level_kid_in(#[trigger] ls@[j], self.dag.n_levels(), self.export_file.dag.n_levels()),
+            decreases ls@.len() - k,
+        {
+            let l = ls[k];
+            v.push(l);
+            if (matches!(l.dag_marker(), DagMarker::TcCtx) && l.idx() >= self.dag.levels.len())
+                || (matches!(l.dag_marker(), DagMarker::ExportFile) && l.idx() >= self.export_file.dag.levels.len()) {
+                panic!("alloc_levels_slice: a level that is not stored");
+            }
+            proof {
+                crate::util_model::ptr_is_tc_agree(l);
+            }
+            k = k + 1;
+        }
+        let a: Arc<[LevelPtr<'t>]> = Arc::from(v);
+        proof {
+            vstd::std_specs::smart_ptrs::axiom_arc_contents_view(&a);
+            assert(ls@.subrange(0, ls@.len() as int) =~= ls@);
+            assert(a@ == ls@);
+            assert forall|j: int| 0 <= j < a@.len() implies crate::util_model::owns_in(ids, #[trigger] a@[j]) by {
+                assert(a@[j] == ls@[j]);
+                assert(crate::util_model::owns_in(ids, ls@[j]));
+            }
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            self.dag.lemma_hist();
+            self.export_file.dag.lemma_hist();
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_fx();
+            let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.uparams);
+            assert forall|m: Arc<[LevelPtr<'t>]>, j: int| #[trigger] ek.to_set().insert(a).contains(m) && 0 <= j < m@.len()
+                implies crate::util_model::owns_in(ids, #[trigger] m@[j]) by {
+                if m != a {
+                    let i = choose|i: int| 0 <= i < ek.len() && ek[i] == m;
+                    assert(crate::util_model::owns_in((self.export_file.dag.id(), self.export_file.dag.partner()), ek[i]@[j]));
+                    assert(!crate::util_model::ptr_is_tc(ek[i]@[j]));
+                } else {
+                    assert(crate::util_model::owns_in(ids, a@[j]));
+                }
+            }
+            crate::level_arena_bridge::owned_level_lists_keys_obey_model(ids, ek.to_set().insert(a));
+        }
+        if let Some(idx) = self.export_file.dag.uparams.get_index_of(&a) {
+            let r = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.export_file.arena()));
+            proof {
+                let ek = crate::indexmap_model::iset_keys(&self.export_file.dag.uparams);
+                assert(ek[idx as int] == a);
+                crate::level_arena_bridge::to_model_of_levels_at(r);
+            }
+            return r;
+        }
+        proof {
+            let tk = crate::indexmap_model::iset_keys(&self.dag.uparams);
+            assert forall|m: Arc<[LevelPtr<'t>]>, j: int| #[trigger] tk.to_set().insert(a).contains(m) && 0 <= j < m@.len()
+                implies crate::util_model::owns_in(ids, #[trigger] m@[j]) by {
+                if m != a {
+                    let i = choose|i: int| 0 <= i < tk.len() && tk[i] == m;
+                    assert(crate::util_model::owns_in((self.dag.id(), self.dag.partner()), tk[i]@[j]));
+                } else {
+                    assert(crate::util_model::owns_in(ids, a@[j]));
+                }
+            }
+            crate::level_arena_bridge::owned_level_lists_keys_obey_model(ids, tk.to_set().insert(a));
+        }
+        if let Some(idx) = self.dag.uparams.get_index_of(&a) {
+            let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
+            proof {
+                let tk = crate::indexmap_model::iset_keys(&self.dag.uparams);
+                assert(tk[idx as int] == a);
+                crate::level_arena_bridge::to_model_of_levels_at(r);
+            }
+            return r;
+        }
+        let ghost tk = crate::indexmap_model::iset_keys(&self.dag.uparams);
+        proof {
+            assert forall|j: int| 0 <= j < a@.len() implies crate::util_model::owns_in((self.dag.id(), self.dag.partner()), #[trigger] a@[j])
+                && level_kid_in(a@[j], self.dag.n_levels(), self.dag.plevels().len()) by {
+                assert(crate::util_model::owns_in(ids, a@[j]));
+                assert(a@[j] == ls@[j]);
+                assert(level_kid_in(ls@[j], self.dag.n_levels(), self.export_file.dag.n_levels()));
+                assert(self.dag.plevels() == self.export_file.levels_view());
+            }
+        }
+        let (idx, _) = crate::arena_history::arena_insert(&mut self.dag.uparams, Tracked(&mut self.dag.toks.borrow_mut().uparams), a);
+        proof {
+            use_type_invariant(&*self.dag);
+            self.dag.lemma_hist();
+        }
+        let r = Ptr::from_in(DagMarker::TcCtx, idx, Ghost(self.dag.id()));
+        proof {
+            crate::level_arena_bridge::to_model_of_levels_at(r);
+        }
+        r
     }
 
     /// Store a `Level`, getting back a pointer to the allocated item. If the item was
@@ -1378,6 +1826,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
+            level_stored(*final(self), result),
     {
         let ghost ids = crate::util_model::arena_ids(*self);
         proof {
@@ -1467,6 +1916,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             use_type_invariant(&*tdag);
             tdag.toks.borrow_mut().is_tc = true;
             tdag.toks.borrow_mut().partner = export_file.arena();
+            tdag.toks.borrow_mut().pnames = crate::indexmap_model::iset_keys(&export_file.dag.names);
+            tdag.toks.borrow_mut().plevels = crate::indexmap_model::iset_keys(&export_file.dag.levels);
         }
         Self {
             export_file,
@@ -1546,18 +1997,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             Ptr::from(DagMarker::ExportFile, idx)
         } else {
             Ptr::from(DagMarker::TcCtx, self.dag.uparams.insert_full(ls).0)
-        }
-    }
-
-    /// Store a sequence of `Level` items, but check whether the sequence has previously been allocated
-    /// first, by probing with a slice.
-    pub fn alloc_levels_slice(&mut self, ls: &[LevelPtr<'t>]) -> LevelsPtr<'t> {
-        if let Some(idx) = self.export_file.dag.uparams.get_index_of(ls) {
-            Ptr::from(DagMarker::ExportFile, idx)
-        } else if let Some(idx) = self.dag.uparams.get_index_of(ls) {
-            Ptr::from(DagMarker::TcCtx, idx)
-        } else {
-            Ptr::from(DagMarker::TcCtx, self.dag.uparams.insert_full(Arc::from(ls)).0)
         }
     }
 
@@ -1710,6 +2149,26 @@ pub tracked struct DagToks<'a> {
     /// its nodes may point into.
     pub ghost is_tc: bool,
     pub ghost partner: nat,
+    /// For a checker's dag, the export file's names and levels (fixed while
+    /// the checker runs): the dag never stores one of them again, and its
+    /// names point into the export file only at what it stores.
+    pub ghost pnames: Seq<Name<'a>>,
+    pub ghost plevels: Seq<Level<'a>>,
+}
+
+/// A level list's element is stored: in its own tier among the first
+/// `own`, in the export file's tier among the first `ext`.
+pub open spec fn level_kid_in<'a>(e: LevelPtr<'a>, own: nat, ext: nat) -> bool {
+    if crate::util_model::ptr_is_tc(e) { crate::name_arena_bridge::ptr_index(e) < own } else { crate::name_arena_bridge::ptr_index(e) < ext }
+}
+
+/// A name's prefix, when it is in the export file's tier, is among the
+/// first `np` (what the export file stores).
+pub open spec fn name_export_kids_in<'a>(n: Name<'a>, np: nat) -> bool {
+    match n {
+        Name::Str(p, _, _) | Name::Num(p, _, _) => !crate::util_model::ptr_is_tc(p) ==> crate::name_arena_bridge::ptr_index(p) < np,
+        Name::Anon => true,
+    }
 }
 
 impl<'a> LeanDag<'a> {
@@ -1737,6 +2196,41 @@ impl<'a> LeanDag<'a> {
             && 0 <= j < crate::indexmap_model::iset_keys(&self.uparams)[i]@.len()
             ==> crate::util_model::owns_in((t.names.id(), t.partner), #[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i]@[j])
                 && (!t.is_tc ==> !crate::util_model::ptr_is_tc(crate::indexmap_model::iset_keys(&self.uparams)[i]@[j]))
+        &&& t.is_tc ==> forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
+            ==> !t.pnames.contains(#[trigger] crate::indexmap_model::iset_keys(&self.names)[i])
+                && name_export_kids_in(crate::indexmap_model::iset_keys(&self.names)[i], t.pnames.len())
+        &&& t.is_tc ==> forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
+            ==> !t.plevels.contains(#[trigger] crate::indexmap_model::iset_keys(&self.levels)[i])
+        &&& forall|i: int, j: int| 0 <= i < crate::indexmap_model::iset_keys(&self.uparams).len()
+            && 0 <= j < crate::indexmap_model::iset_keys(&self.uparams)[i]@.len()
+            ==> level_kid_in(#[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i]@[j], crate::indexmap_model::iset_keys(&self.levels).len(),
+                if t.is_tc { t.plevels.len() } else { crate::indexmap_model::iset_keys(&self.levels).len() })
+    }
+
+    /// For a checker's dag, the export file's names and levels.
+    pub closed spec fn pnames(self) -> Seq<Name<'a>> {
+        self.toks@.pnames
+    }
+
+    pub closed spec fn plevels(self) -> Seq<Level<'a>> {
+        self.toks@.plevels
+    }
+
+    /// How many names and levels the dag stores.
+    pub closed spec fn n_names(self) -> nat {
+        crate::indexmap_model::iset_keys(&self.names).len()
+    }
+
+    pub closed spec fn n_levels(self) -> nat {
+        crate::indexmap_model::iset_keys(&self.levels).len()
+    }
+
+    /// The counts are the stored sets' lengths.
+    pub(crate) proof fn lemma_counts(self)
+        ensures
+            self.n_names() == crate::indexmap_model::iset_keys(&self.names).len(),
+            self.n_levels() == crate::indexmap_model::iset_keys(&self.levels).len(),
+    {
     }
 
     /// The dag's arena.
@@ -1745,8 +2239,14 @@ impl<'a> LeanDag<'a> {
     }
 
     /// Every stored node is its arena history's node at its position.
+    /// The type invariant, nameable in contracts.
+    pub closed spec fn ok(self) -> bool {
+        self.inv()
+    }
+
     pub(crate) proof fn lemma_hist(tracked &self)
         ensures
+            self.ok(),
             forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
                 ==> #[trigger] crate::indexmap_model::iset_keys(&self.names)[i] == crate::arena_history::arena_hist::<Name<'a>>(self.id())[i],
             forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
@@ -1759,6 +2259,24 @@ impl<'a> LeanDag<'a> {
                 ==> #[trigger] crate::indexmap_model::iset_keys(&self.strings)[i] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[i],
     {
         use_type_invariant(self);
+        self.lemma_hist_of();
+    }
+
+    pub(crate) proof fn lemma_hist_of(self)
+        requires
+            self.ok(),
+        ensures
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.names)[i] == crate::arena_history::arena_hist::<Name<'a>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.levels).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.levels)[i] == crate::arena_history::arena_hist::<Level<'a>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.exprs).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.exprs)[i] == crate::arena_history::arena_hist::<Expr<'a>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.uparams).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i] == crate::arena_history::arena_hist::<Arc<[LevelPtr<'a>]>>(self.id())[i],
+            forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.strings).len()
+                ==> #[trigger] crate::indexmap_model::iset_keys(&self.strings)[i] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[i],
+    {
     }
 
     /// How many strings the dag stores.
@@ -1934,6 +2452,8 @@ impl<'a> LeanDag<'a> {
             old(self).partner() == old(self).id(),
             crate::name_arena_bridge::name_node_ok(n, crate::indexmap_model::iset_keys(&old(self).names).len(), false, old(self).id(), old(self).id()),
         ensures
+            final(self).pnames() == old(self).pnames(),
+            final(self).plevels() == old(self).plevels(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -1979,6 +2499,8 @@ impl<'a> LeanDag<'a> {
     /// Store a string (strings carry no pointers, so any dag).
     pub(crate) fn insert_export_string(&mut self, t: CowStr<'a>) -> (result: (usize, bool))
         ensures
+            final(self).pnames() == old(self).pnames(),
+            final(self).plevels() == old(self).plevels(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2009,6 +2531,8 @@ impl<'a> LeanDag<'a> {
     /// (`nat_extension`); numbers carry no pointers, so any dag.
     pub(crate) fn insert_export_bignum(&mut self, n: BigUint) -> (result: Option<usize>)
         ensures
+            final(self).pnames() == old(self).pnames(),
+            final(self).plevels() == old(self).plevels(),
             result matches Some(i) ==> forall|p: BigUintPtr<'a>| arena_of(p) == final(self).id() && crate::name_arena_bridge::ptr_index(p) == i
                 ==> #[trigger] crate::expr_arena_bridge::bignum_ptr_value(p) == crate::nat_lit_model::to_nat(n),
             final(self).id() == old(self).id(),
@@ -2081,6 +2605,8 @@ impl<'a> LeanDag<'a> {
             old(self).partner() == old(self).id(),
             crate::expr_arena_bridge::expr_node_ok(e, crate::indexmap_model::iset_keys(&old(self).exprs).len(), false, old(self).id(), old(self).id()),
         ensures
+            final(self).pnames() == old(self).pnames(),
+            final(self).plevels() == old(self).plevels(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2171,7 +2697,10 @@ impl<'a> LeanDag<'a> {
             !old(self).is_tc(),
             old(self).partner() == old(self).id(),
             forall|j: int| 0 <= j < a@.len() ==> crate::util_model::export_tagged(old(self).id(), #[trigger] a@[j]),
+            forall|j: int| 0 <= j < a@.len() ==> crate::name_arena_bridge::ptr_index(#[trigger] a@[j]) < old(self).n_levels(),
         ensures
+            final(self).pnames() == old(self).pnames(),
+            final(self).plevels() == old(self).plevels(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -2225,6 +2754,8 @@ impl<'a> LeanDag<'a> {
             old(self).partner() == old(self).id(),
             crate::level_arena_bridge::level_node_ok(l, crate::indexmap_model::iset_keys(&old(self).levels).len(), false, old(self).id(), old(self).id()),
         ensures
+            final(self).pnames() == old(self).pnames(),
+            final(self).plevels() == old(self).plevels(),
             final(self).id() == old(self).id(),
             final(self).is_tc() == old(self).is_tc(),
             final(self).partner() == old(self).partner(),
@@ -3356,6 +3887,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
+            name_stored(*final(self), result),
+            name_canon(result, str_node(pfx, sfx), final(self).export_file.names_view()),
     {
         let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
         self.alloc_name(Name::Str(pfx, sfx, hash))
@@ -3485,6 +4018,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             to_model_of_level(result.1) == to_model(x),
             crate::level_arena_bridge::level_children_owned(*self, result.0),
             crate::level_arena_bridge::level_children_owned(*self, result.1),
+            level_stored(*self, a),
+            level_stored(*self, x),
     {
         (self.read_level(a), self.read_level(x))
     }

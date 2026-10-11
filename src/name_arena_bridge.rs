@@ -112,11 +112,13 @@ pub open spec fn to_model_of_name<'a>(n: Name<'a>) -> NameSpec {
     }
 }
 
-/// A `StringPtr`'s opaque identity, standing in for `Str`'s suffix content
+/// A `StringPtr`'s identity (its raw index), standing in for `Str`'s suffix content
 /// (never inspected by `replace_pfx`/`get_pfx`/`concat_name`, only moved
 /// around structurally) -- same "identity, not content" convention as
 /// `name_id`/`expr_id`/`const_id`.
-pub uninterp spec fn string_id<'a>(s: StringPtr<'a>) -> u32;
+pub open spec fn string_id<'a>(s: StringPtr<'a>) -> u32 {
+    crate::util_model::ptr_raw(s)
+}
 
 // ---------------------------------------------------------------------
 // ARENA STORAGE MODEL (2026-09-17). First step toward discharging the
@@ -529,7 +531,7 @@ pub proof fn owned_names_keys_obey_model<'a>(ids: (nat, nat), s: Set<Name<'a>>)
 
 /// The canonical hash of a name node: what `hash64!` computes from its
 /// contents. The arena compares nodes including this field, so it is what
-/// makes hash-consing (`to_model_name_injective`) hold.
+/// makes hash-consing (`util::to_model_name_injective`) hold.
 pub open spec fn name_hash_ok<'t>(n: Name<'t>) -> bool {
     match n {
         Name::Anon => true,
@@ -552,37 +554,6 @@ pub open spec fn name_children_owned<'t, 'p>(c: TcCtx<'t, 'p>, n: crate::name::N
     }
 }
 
-// Contradiction detector, run and removed: a `proof fn` assuming exactly the
-// biconditional below and claiming `ensures false` FAILS to verify, as it must.
-// Non-degeneracy is witnessed by `TcCtx::get_pfx` and `TcCtx::replace_pfx`
-// (`name.rs`): neither can be proven without it, both compare pointers where
-// the model compares structure.
-/// HASH-CONSING, at the structural level: distinct `NamePtr`s denote distinct
-/// names. The level arena already pays this
-/// (`level_ptr_eq_iff_same_model_param`); `name_id_injective` is NOT the same
-/// fact -- it is about the opaque `name_id`, not about `to_model_name`.
-///
-/// Not proven yet. Within one tier it follows from the arena histories: a
-/// dag's stored names are distinct and carry canonical hashes (`LeanDag`'s
-/// invariant). Across tiers it also needs the checker's names to be disjoint
-/// from the export file's, which `alloc_name` ensures by looking in the export
-/// file first but which is not yet stated as an invariant.
-///
-/// The `==>` direction is free (`to_model_name` is a function); the content is
-/// the converse. It holds because the arena compares whole nodes, hash
-/// included, and every node carries its CANONICAL hash: `alloc_name` requires
-/// `name_hash_ok`, which the constructors prove from `hash64!`'s
-/// specification, and the parser builds names with the same macro.
-#[verifier::external_body]
-pub proof fn to_model_name_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'a>, n2: NamePtr<'a>)
-    requires
-        crate::util_model::owns(c, n1),
-        crate::util_model::owns(c, n2),
-    ensures
-        (n1 == n2) <==> (to_model_name(n1) == to_model_name(n2)),
-{
-}
-
 /// The one new trust boundary needed for `gen_elim_level`'s termination
 /// proof (`inductive.rs:997-1012`): an opaque per-`(name, idx)` id
 /// standing in for `append_index_after`'s fresh suffix (`name.rs:60-70`,
@@ -592,9 +563,7 @@ pub proof fn to_model_name_injective<'t, 'p, 'a>(c: TcCtx<'t, 'p>, n1: NamePtr<'
 /// bridge (`vstd::std_specs::fmt`) has `ensures true`, nothing about the
 /// resulting `String`'s content -- so there is no way to PROVE two
 /// different `idx` values produce different names from first principles,
-/// it has to be trusted, same as `name_id_injective`/`to_model_name_injective`
-/// above trust hash-consing's own uniqueness rather than
-/// deriving it. Scoped as narrowly as possible: only claims injectivity
+/// it has to be trusted. Scoped as narrowly as possible: only claims injectivity
 /// in `idx` for a FIXED prefix name, nothing about `format!` in general.
 /// Keyed by the context's arena pair `ids` as well: two contexts put the
 /// same fresh name at different indices of their own dags.

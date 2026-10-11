@@ -282,6 +282,7 @@ impl<'a> ExportBuilder<'a> {
                 v@.len() == k,
                 forall|j: int| 0 <= j < k ==> crate::util_model::export_tagged(self.arena(), #[trigger] v@[j]),
                 forall|j: int| 0 <= j < k ==> crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) == idxs@[j],
+                forall|j: int| 0 <= j < k ==> crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) < self.levels_len(),
             decreases idxs@.len() - k,
         {
             let l = self.level_ptr(idxs[k]);
@@ -291,6 +292,9 @@ impl<'a> ExportBuilder<'a> {
         let a: Arc<[LevelPtr<'a>]> = Arc::from(v);
         proof {
             vstd::std_specs::smart_ptrs::axiom_arc_contents_view(&a);
+        }
+        proof {
+            self.dag.lemma_counts();
         }
         let idx = self.dag.insert_export_levels(a);
         proof {
@@ -328,6 +332,7 @@ impl<'a> ExportBuilder<'a> {
                     && crate::level_arena_bridge::to_model(v@[j]) is Param,
                 forall|j: int| 0 <= j < k ==> (level_at::<'a>(self.arena(), crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) as int) matches Level::Param(n, _)
                     && crate::name_arena_bridge::ptr_index(n) == name_idxs@[j]),
+                forall|j: int| 0 <= j < k ==> crate::name_arena_bridge::ptr_index(#[trigger] v@[j]) < self.levels_len(),
             decreases name_idxs@.len() - k,
         {
             let n = self.name_ptr(name_idxs[k]);
@@ -350,6 +355,9 @@ impl<'a> ExportBuilder<'a> {
         let a: Arc<[LevelPtr<'a>]> = Arc::from(v);
         proof {
             vstd::std_specs::smart_ptrs::axiom_arc_contents_view(&a);
+        }
+        proof {
+            self.dag.lemma_counts();
         }
         let idx = self.dag.insert_export_levels(a);
         proof {

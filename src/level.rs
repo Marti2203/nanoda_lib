@@ -70,7 +70,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 #[cfg(verus_only)]
 use crate::level_arena_bridge::to_model;
 #[cfg(verus_only)]
-use crate::level_arena_bridge::{level_ptr_eq_iff_same_model_param, to_model_of_levels};
+use crate::level_arena_bridge::to_model_of_levels;
 #[cfg(verus_only)]
 use crate::level_model::{
     find_level_idx, find_level_idx_first_match, find_level_idx_no_match, imax_normal, interp, level_depth, level_names,
@@ -107,7 +107,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     /// Verified in place: the body is the kernel's, with loop annotations. The
     /// set holds the pointers seen so far, and hash-consing
-    /// (`level_ptr_eq_iff_same_model_param`) turns "not seen as a pointer" into
+    /// (`util::level_ptr_eq_iff_same_model_param`) turns "not seen as a pointer" into
     /// "not seen as a level".
     #[verifier::exec_allows_no_decreases_clause]
     pub(crate) fn no_dupes_all_params(&mut self, ls: LevelsPtr<'t>) -> (result: bool)
@@ -130,6 +130,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 forall|j: int| 0 <= j < it.index() ==> (#[trigger] m[j]) is Param,
                 forall|j: int| 0 <= j < it.index() ==> #[trigger] set@.contains(it.seq()[j]),
                 forall|k: LevelPtr<'t>| #[trigger] set@.contains(k) ==> crate::util_model::owns(*self, k),
+                forall|j: int| 0 <= j < it.index() ==> crate::util::level_stored(*self, #[trigger] it.seq()[j]),
                 forall|a: int, b: int|
                     0 <= a < it.index() && 0 <= b < it.index() && a != b ==> #[trigger] m[a] != #[trigger] m[b],
         {
@@ -145,9 +146,10 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         return false;
                     } else {
                         proof {
+                            crate::util::lemma_dags_ok(&*self);
                             assert forall|a: int| 0 <= a < i implies #[trigger] m[a] != m[i] by {
                                 assert(set@.contains(it.seq()[a]));
-                                level_ptr_eq_iff_same_model_param(*self, it.seq()[a], l);
+                                crate::util::level_ptr_eq_iff_same_model_param(*self, it.seq()[a], l);
                             }
                         }
                         set.insert(l);
@@ -554,7 +556,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             (Param(a, ..), Param(x, ..)) => {
                 let res = a == x && diff >= 0;
                 proof {
-                    level_ptr_eq_iff_same_model_param(*self, l_in, r_in);
+                    crate::util::lemma_dags_ok(&*self);
+                    crate::util::level_ptr_eq_iff_same_model_param(*self, l_in, r_in);
                     if res {
                         assert(to_model(l_in) == to_model(r_in));
                     }
@@ -1721,6 +1724,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         crate::util_model::owns_all(*self, ks_read@),
                         crate::util_model::owns_all(*self, vs_read@),
                         crate::util_model::owns(*self, level),
+                        crate::util::level_stored(*self, level),
+                        forall|j: int| 0 <= j < ks_read@.len() ==> crate::util::level_stored(*self, #[trigger] ks_read@[j]),
                         ks_read@.len() == to_model_of_levels(ks).len(),
                         vs_read@.len() == to_model_of_levels(vs).len(),
                         to_model_of_levels(ks).len() == to_model_of_levels(vs).len(),
@@ -1750,7 +1755,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                         proof {
                             let i = it.index();
                             crate::util_model::owned_raw_eq(*self, level, k);
-                            level_ptr_eq_iff_same_model_param(*self, level, k);
+                            crate::util::lemma_dags_ok(&*self);
+                            crate::util::level_ptr_eq_iff_same_model_param(*self, level, k);
                             assert(to_model_of_levels(ks)[i] == LevelSpec::Param(q));
                             assert(names[i] == q);
                             find_level_idx_first_match(names, q, i as nat);
@@ -1760,7 +1766,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     }
                     proof {
                         let i = it.index();
-                        level_ptr_eq_iff_same_model_param(*self, level, k);
+                        crate::util::lemma_dags_ok(&*self);
+                        crate::util::level_ptr_eq_iff_same_model_param(*self, level, k);
                         assert(names[i] != q);
                         scanned = scanned + 1;
                     }

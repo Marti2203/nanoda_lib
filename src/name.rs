@@ -83,6 +83,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     == crate::name_model::NameSpec::Anon,
                 crate::util_model::owns(*self, n),
                 crate::util_model::owns(*self, anonymous),
+                crate::util::name_stored(*self, anonymous),
         {
             match self.read_name(n) {
                 Anon => return n,
@@ -92,7 +93,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 // `sfx` bound only so the proof can name the node's shape.
                 Str(pfx, sfx, ..) => {
                     proof {
-                        crate::name_arena_bridge::to_model_name_injective(*self, pfx, anonymous);
+                        crate::util::lemma_dags_ok(&*self);
+                        crate::util::to_model_name_injective(*self, pfx, anonymous);
                         assert(crate::name_arena_bridge::to_model_name(n)
                             == crate::name_model::NameSpec::Str(
                             Box::new(crate::name_arena_bridge::to_model_name(pfx)),
@@ -117,7 +119,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                 },
                 Num(pfx, sfx, ..) => {
                     proof {
-                        crate::name_arena_bridge::to_model_name_injective(*self, pfx, anonymous);
+                        crate::util::lemma_dags_ok(&*self);
+                        crate::util::to_model_name_injective(*self, pfx, anonymous);
                         assert(crate::name_arena_bridge::to_model_name(n)
                             == crate::name_model::NameSpec::Num(
                             Box::new(crate::name_arena_bridge::to_model_name(pfx)),
@@ -146,7 +149,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place. Same pointer-versus-structure bridge as `get_pfx`:
     /// the guard `n == outgoing` is a pointer test, `replace_pfx_full`'s is on
     /// models.
-    #[verifier::exec_allows_no_decreases_clause]
+    ///
+    /// VERUS-REWRITE(stored-read): `outgoing` is read once first, which
+    /// panics only if it is not stored (never: the checker holds only
+    /// pointers it was handed by an allocation); the recursion is
+    /// `replace_pfx_stored`, the original body.
     pub(crate) fn replace_pfx(
         &mut self,
         n: NamePtr<'t>,
@@ -168,10 +175,42 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
     {
+        let _ = self.read_name(outgoing);
+        self.replace_pfx_stored(n, outgoing, incoming)
+    }
+
+    /// `replace_pfx`, `outgoing` known stored: the guard `n == outgoing` is a
+    /// pointer test, `replace_pfx_full`'s is on models, and hash-consing
+    /// (`util::to_model_name_injective`) bridges them for stored names.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn replace_pfx_stored(
+        &mut self,
+        n: NamePtr<'t>,
+        outgoing: NamePtr<'t>,
+        incoming: NamePtr<'t>,
+    ) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), n),
+            crate::util_model::owns(*old(self), outgoing),
+            crate::util_model::owns(*old(self), incoming),
+            crate::util::name_stored(*old(self), outgoing),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            crate::name_arena_bridge::to_model_name(result) == crate::name_model::replace_pfx_full(
+                crate::name_arena_bridge::to_model_name(n),
+                crate::name_arena_bridge::to_model_name(outgoing),
+                crate::name_arena_bridge::to_model_name(incoming),
+            ),
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+    {
+        let r = self.read_name(n);
         proof {
-            crate::name_arena_bridge::to_model_name_injective(*self, n, outgoing);
+            crate::util::lemma_dags_ok(&*self);
+            crate::util::to_model_name_injective(*self, n, outgoing);
         }
-        match self.read_name(n) {
+        match r {
             Anon => match self.read_name(outgoing) {
                 Anon => incoming,
                 _ => self.anonymous(),
@@ -183,11 +222,11 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             Str(..) if n == outgoing => incoming,
             Num(..) if n == outgoing => incoming,
             Str(pfx, sfx, ..) => {
-                let pfx = self.replace_pfx(pfx, outgoing, incoming);
+                let pfx = self.replace_pfx_stored(pfx, outgoing, incoming);
                 self.str(pfx, sfx)
             },
             Num(pfx, sfx, ..) => {
-                let pfx = self.replace_pfx(pfx, outgoing, incoming);
+                let pfx = self.replace_pfx_stored(pfx, outgoing, incoming);
                 self.num(pfx, sfx)
             },
         }

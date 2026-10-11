@@ -263,35 +263,6 @@ pub(crate) fn name_ptr_eq<'t>(a: NamePtr<'t>, b: NamePtr<'t>) -> (result: bool)
 ///
 /// Same assumption as before, not a new one -- and the witness form is now
 /// DERIVED from it rather than separately assumed.
-#[verifier::external_body]
-pub proof fn level_ptr_eq_iff_same_model_param<'t, 'p, 'a>(c: TcCtx<'t, 'p>, a: LevelPtr<'a>, b: LevelPtr<'a>)
-    requires
-        crate::util_model::owns(c, a),
-        crate::util_model::owns(c, b),
-        to_model(a) is Param,
-        to_model(b) is Param,
-    ensures
-        (a == b) <==> (to_model(a) == to_model(b)),
-{
-}
-
-pub proof fn level_ptr_eq_iff_same_param<'t, 'p, 'a>(
-    c: TcCtx<'t, 'p>,
-    a: LevelPtr<'a>,
-    b: LevelPtr<'a>,
-    na: NamePtr<'a>,
-    nb: NamePtr<'a>,
-)
-    requires
-        crate::util_model::owns(c, a),
-        crate::util_model::owns(c, b),
-        to_model(a) == LevelSpec::Param(name_id(na)),
-        to_model(b) == LevelSpec::Param(name_id(nb)),
-    ensures
-        (a == b) <==> (name_id(na) == name_id(nb)),
-{
-    level_ptr_eq_iff_same_model_param(c, a, b);
-}
 
 /// What a `LevelsPtr` (a hash-consed LIST of levels -- e.g. a
 /// declaration's `uparams`, or a `Const`'s level arguments) denotes: the
@@ -369,28 +340,14 @@ pub(crate) fn read_levels_vec<'t, 'p>(ctx: &TcCtx<'t, 'p>, p: LevelsPtr<'t>) -> 
         result@.len() == to_model_of_levels(p).len(),
         forall|i: int|
             0 <= i < result@.len() ==> #[trigger] to_model(result@[i]) == to_model_of_levels(p)[i],
+        forall|i: int| 0 <= i < result@.len() ==> crate::util::level_stored(*ctx, #[trigger] result@[i]),
 {
     ctx.read_levels(p).iter().copied().collect()
 }
 
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::alloc_levels_slice ](
-    ctx: &mut TcCtx<'t, 'p>,
-    ls: &[LevelPtr<'t>],
-) -> (result: LevelsPtr<'t>) where 'p: 't
-    requires
-        crate::util_model::owns_all(*old(ctx), ls@),
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        to_model_of_levels(result).len() == ls@.len(),
-        forall|i: int|
-            0 <= i < ls@.len() ==> #[trigger] to_model_of_levels(result)[i] == to_model(ls@[i]),
-        final(ctx).expr_cache == old(ctx).expr_cache,
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
 
 /// The canonical hash of a level node (see `name_hash_ok`): what makes the
-/// level arena's hash-consing (`level_ptr_eq_iff_same_model_param`) hold.
+/// level arena's hash-consing (`util::level_ptr_eq_iff_same_model_param`) hold.
 pub open spec fn level_hash_ok<'t>(l: Level<'t>) -> bool {
     match l {
         Level::Zero => true,

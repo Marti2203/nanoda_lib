@@ -470,7 +470,9 @@ pub open spec fn owns<'t, 'p, A>(c: crate::util::TcCtx<'t, 'p>, p: crate::util::
 /// (`TcCtx::new` makes it so, and every context function keeps it:
 /// `same_arenas`). Part of `owns`, so an owned pointer carries it.
 pub open spec fn ctx_ok<'t, 'p>(c: crate::util::TcCtx<'t, 'p>) -> bool {
-    c.dag.is_tc() && c.dag.partner() == c.export_file.arena()
+    &&& c.dag.is_tc() && c.dag.partner() == c.export_file.arena()
+    &&& c.dag.pnames() == c.export_file.names_view()
+    &&& c.dag.plevels() == c.export_file.levels_view()
 }
 
 /// Two pointers one context owns are equal exactly when their indices are:
@@ -523,6 +525,10 @@ pub open spec fn same_arenas<'t, 'p>(a: crate::util::TcCtx<'t, 'p>, b: crate::ut
     &&& arena_ids(a) == arena_ids(b)
     &&& crate::util::unique_count(a) <= crate::util::unique_count(b)
     &&& a.dag.n_strings() <= b.dag.n_strings()
+    &&& a.dag.n_names() <= b.dag.n_names()
+    &&& a.dag.n_levels() <= b.dag.n_levels()
+    &&& a.dag.pnames() == b.dag.pnames()
+    &&& a.dag.plevels() == b.dag.plevels()
     &&& a.export_file == b.export_file
     &&& a.dag.is_tc() == b.dag.is_tc()
     &&& a.dag.partner() == b.dag.partner()
