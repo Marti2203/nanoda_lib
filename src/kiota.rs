@@ -947,6 +947,47 @@ pub proof fn proj_cong_d(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, 
     crate::ti_meta::mk_d(sig, dr);
 }
 
+/// A PROJECTION'S CONGRUENCE in either world: the fragment's through the
+/// model, the full judgment's from its hypotheses.
+pub proof fn proj_cong_m(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, tx: ExprSpec, t: ExprSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig) || (sig.ienv.full && crate::meta_hyp::meta_ok(sig)),
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x)), t)),
+        derivable(sig, eq(g, x, x2, tx)),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)), t)),
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x2)), ExprSpec::Proj(i, Box::new(x2)), t)),
+{
+    if !sig.ienv.full {
+        proj_cong_d(sig, g, i, x, x2, tx, t);
+        return;
+    }
+    assert(crate::meta_hyp::meta_ok(sig)) by {
+        reveal(crate::ti_syntax::iota_ok);
+    }
+    let m = ExprSpec::Proj(i, Box::new(x));
+    let m2 = ExprSpec::Proj(i, Box::new(x2));
+    let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
+    crate::ti_gen::gen(sig, dm);
+    let (st, l, y) = choose|st: ExprSpec, l: LevelSpec, y: ExprSpec| #[trigger] crate::ti_gen::gmark(st, y, l, l)
+        && derivable(sig, eq(g, y, x, st)) && crate::full_red::gproj_ty(sig, st, i as nat, y) is Some
+        && crate::ti_gen::typ(sig, g, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0, l)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l))
+        && crate::ti_chain::tchain(sig, g, t, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0);
+    let dyx = crate::ti_sub::get(sig, eq(g, y, x, st));
+    let dxs = crate::ti_meta::d_right(sig, dyx);
+    crate::ti_meta::mk_d(sig, dxs);
+    let dxx = crate::ti_sub::get(sig, eq(g, x, x2, tx));
+    let dxt = crate::ti_meta::d_left(sig, dxx);
+    crate::ti_meta::mk_d(sig, dxt);
+    crate::meta_hyp::uniq_m(sig, g, x, tx, st);
+    crate::ti_chain::conv_chain(sig, g, x, x2, tx, st);
+    crate::jkernel::gproj_cong(sig, g, i, st, l, y, x, x2, t);
+    let dmm = crate::ti_sub::get(sig, eq(g, m, m2, t));
+    let dr = crate::ti_meta::d_right(sig, dmm);
+    crate::ti_meta::mk_d(sig, dr);
+}
+
 /// THE KERNEL'S PROJECTION STEP converts a typed projection with the
 /// field it extracts.
 #[verifier::spinoff_prover]

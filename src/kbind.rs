@@ -102,8 +102,9 @@ pub proof fn jsig_sub_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d:
     ensures
         crate::ti_valid::sig_ext(jsig(dty, denv, d), jsig(dty, denv, d2)),
 {
-    assert(crate::kclaims::frag_env(dty, denv));
-    assert(crate::kclaims::ind_ok(jsig(dty, denv, d2)));
+    if crate::kclaims::kh_frag(dty, denv) {
+        assert(crate::kclaims::ind_ok(jsig(dty, denv, d2)));
+    }
     crate::jkernel::jsig_ext(dty, denv, d2);
     crate::jkernel::jsig_locals(dty, denv, d);
     crate::jkernel::jsig_locals(dty, denv, d2);

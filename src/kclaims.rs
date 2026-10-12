@@ -44,7 +44,7 @@ verus! {
 /// Church-Rosser need (`export_sound::kh_hyp` names those the checker does
 /// not establish).
 pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    kh_frag(dty, denv)
+    kh_frag(dty, denv) || kh_full(dty, denv)
 }
 
 /// In the fragment: the domain model discharges the metatheory.
@@ -63,6 +63,7 @@ pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] crate::meta_hyp::meta_ok(crate::metatheory::jsig(dty, denv, d))
         && crate::meta_hyp::h_sr_red(crate::metatheory::jsig(dty, denv, d))
     &&& fv_free(dty, denv) && crate::swap_model::env_fv_free(denv) && crate::conv_frag::env_rules_ok(denv)
+        && crate::subst_algebra::env_bv_free(denv)
     &&& crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
@@ -815,7 +816,8 @@ pub proof fn cw_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
             assert(typed(dty, denv, d, s1, st1) && typed(dty, denv, d, s2, st2));
             assert(jconv(dty, denv, d, s1, s2));
             let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), s1, s2, t0));
-            crate::kiota::proj_cong_d(sig, Seq::empty(), idx, s1, s2, t0, t1);
+            kh_meta(dty, denv, d);
+            crate::kiota::proj_cong_m(sig, Seq::empty(), idx, s1, s2, t0, t1);
         }
     }
 }
@@ -1343,14 +1345,28 @@ pub proof fn cw_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
             let sig = jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
             crate::jkernel::kh_at(dty, denv, d);
-            assert(ind_ok(sig));
             ci_use(dty, denv, g, d, x, a);
             ci_use(dty, denv, g, d, y, b);
             assert(jconv(dty, denv, d, a, b));
             jconv_symm(dty, denv, d, a, b);
             typed_move(dty, denv, d, y, b, a);
             let la = type_sort(dty, denv, d, a);
+            if denv.full {
+                // Lean's unit eta
+                assert(sig.ienv == denv);
+                let dx = crate::ti_sub::get(sig, eq(g0, x, x, a));
+                let dy = crate::ti_sub::get(sig, eq(g0, y, y, a));
+                let da = crate::ti_sub::get(sig, eq(g0, a, a, crate::ti_syntax::sort(la)));
+                let j = eq(g0, x, y, a);
+                let ps = seq![dx, dy, da];
+                assert(crate::tc_model::unit_like_head(sig.ienv, ind));
+                assert(crate::full_red::full_conv(sig, x, y, a));
+                assert(crate::ti_syntax::prems(ps, seq![eq(g0, x, x, a), eq(g0, y, y, a), eq(g0, a, a, crate::ti_syntax::sort(la))]));
+                crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::RedG(la), j, ps);
+                crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::RedG(la), j, ps));
+            } else {
             // the unit structure, smashed, with no fields
+            assert(ind_ok(sig));
             assert(sig.ienv.struct_ctor.contains_key(ind));
             assert(crate::dom_code::smash(sig, ind));
             crate::kstruct::struct_facts(sig, ind);
@@ -1375,6 +1391,7 @@ pub proof fn cw_unit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
             }
             crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::StructEta(la), j, ps);
             crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::StructEta(la), j, ps));
+            }
         }
     }
 }
@@ -1444,6 +1461,7 @@ pub proof fn cw_eta(
     nf: nat,
 )
     requires
+        !denv.full,
         ci(dty, denv, g, x, a),
         ci(dty, denv, g, y, b),
         cw(dty, denv, g, a, b),
@@ -1696,6 +1714,7 @@ pub proof fn pi_spine_tdoms(t: ExprSpec, k: nat)
 /// the one `rec_ind` makes.
 pub proof fn k_rec_canon(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, rid: u64, ind: u64)
     requires
+        !denv.full,
         kh(dty, denv),
         k_rec(dty, denv, rid, ind),
     ensures
@@ -1749,6 +1768,7 @@ pub proof fn cwh_k(
     rest: Seq<ExprSpec>,
 )
     requires
+        !denv.full,
         ci(dty, denv, g, major, t0),
         cwh(dty, denv, g, t0, mty),
         mty == spine_app(ExprSpec::Const(ind, ls), params + rest),
@@ -1856,6 +1876,7 @@ pub proof fn cwh_eta_exp(
     r: ExprSpec,
 )
     requires
+        !denv.full,
         ci(dty, denv, g, e, ety),
         ety == spine_app(ExprSpec::Const(ind, ls), args),
         nlbv(e) <= 0,
@@ -1974,6 +1995,7 @@ pub proof fn cwh_rec_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g:
 /// Quotient reduction gives the reduction claim.
 pub proof fn cwh_quot_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec)
     requires
+        !denv.full,
         quot_ready(denv.export, e),
         nlbv(e) <= 0 ==> nlbv(quot_result(denv.export, e)) <= 0,
     ensures
@@ -2136,8 +2158,8 @@ pub proof fn cwh_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
             let s2 = LevelSpec::Succ(Box::new(l2));
             crate::jkernel::typed_sort(dty, denv, d, l1);
             crate::jkernel::typed_sort(dty, denv, d, l2);
-            assert(crate::kclaims::ind_ok(sig));
-            crate::ti_sr::uniq(sig, g0, x, t, ExprSpec::Sort(s1));
+            kh_meta(dty, denv, d);
+            crate::meta_hyp::uniq_m(sig, g0, x, t, ExprSpec::Sort(s1));
             crate::jkernel::wf_nil(sig);
             let w = crate::ti_sub::get(sig, crate::ti_syntax::Jd::Wf(g0));
             assert(crate::conv_cr::lev_eq(s2, s1)) by {
@@ -2260,7 +2282,8 @@ pub proof fn cwh_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
             assert(rtyped(dty, denv, d, s) && rtyped(dty, denv, d, s2));
             assert(jconv(dty, denv, d, s, s2));
             let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), s, s2, t0));
-            crate::kiota::proj_cong_d(sig, Seq::empty(), idx, s, s2, t0, t);
+            kh_meta(dty, denv, d);
+            crate::kiota::proj_cong_m(sig, Seq::empty(), idx, s, s2, t0, t);
             tconv_refl(dty, denv, d, t);
             assert(typed(dty, denv, d, x2, t));
         }
@@ -2273,6 +2296,7 @@ pub proof fn cwh_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
 /// says anything. A literal reaches nothing.
 pub proof fn cwh_to_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, n: crate::expr_model::NatLitPayload)
     requires
+        !denv.full,
         cw(dty, denv, g, e, ExprSpec::NatLit(n)),
         pstep_star(denv, ExprSpec::NatLit(n), e),
     ensures
@@ -2367,7 +2391,7 @@ pub proof fn ci_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
             assert(crate::conv_cr::levs_eq(ls, ls));
             assert(crate::jkernel::lev_inst_ok(sig, cid, ls, ls));
             let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
-            if denv.recs.contains_key(cid) && crate::twin::rec_core(raw, cid) {
+            if !denv.full && denv.recs.contains_key(cid) && crate::twin::rec_core(raw, cid) {
                 // a twinned recursor: its declared type converts to the
                 // canonical one at a sort (`twin_ok`), so it is a type
                 let can = crate::expr_model::subst_expr_levels(crate::twin::canon_ty(raw, cid), dty[cid].0, ls);
@@ -2388,6 +2412,7 @@ pub proof fn ci_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
 /// REGULARITY, LITERALS: a literal is typed nowhere in the fragment.
 pub proof fn ci_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, cid: u64)
     requires
+        !denv.full,
         (matches!(e, ExprSpec::NatLit(_)) && cid == crate::expr_arena_bridge::nat_type_id(denv.export))
         || (matches!(e, ExprSpec::StringLit(_)) && cid == crate::expr_arena_bridge::string_type_id(denv.export)),
         dty.contains_key(cid),
@@ -2455,9 +2480,9 @@ pub proof fn ci_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
             let (a1, b1, l2) = choose|a1: ExprSpec, b1: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a1, b1, l2, l2)
                 && derivable(sig, eq(g0, f, f, crate::ti_syntax::pi(a1, b1))) && derivable(sig, eq(g0, a, a, a1))
                 && crate::ti_gen::typ(sig, g0.push(a1), b1, l2) && crate::ti_chain::tchain(sig, g0, te, crate::subst_algebra::inst(0, a, b1));
-            assert(crate::kclaims::ind_ok(sig));
-            crate::ti_sr::uniq(sig, g0, f, crate::ti_syntax::pi(a1, b1), p);
-            crate::dom_fund::pi_inj_chain(sig, g0, a1, b1, pa, pb);
+            kh_meta(dty, denv, d);
+            crate::meta_hyp::uniq_m(sig, g0, f, crate::ti_syntax::pi(a1, b1), p);
+            crate::meta_hyp::pi_inj_m(sig, g0, a1, b1, pa, pb);
             crate::ti_chain::conv_chain(sig, g0, a, a, a1, pa);
             app_typed(dty, denv, d, f, a, pa, pb);
             let lpp = type_sort(dty, denv, d, p);
@@ -2725,10 +2750,25 @@ pub proof fn tt_eta_lam(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: M
     }
 }
 
+/// THE METATHEORY AT ANY LOCALS: the model's in the fragment, the named
+/// hypotheses in the full judgment.
+pub proof fn kh_meta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>)
+    requires
+        kh(dty, denv),
+    ensures
+        crate::meta_hyp::meta_ok(jsig(dty, denv, d)),
+{
+    crate::jkernel::kh_at(dty, denv, d);
+    if kh_frag(dty, denv) {
+        assert(ind_ok(jsig(dty, denv, d)));
+        crate::meta_hyp::meta_of(jsig(dty, denv, d));
+    }
+}
+
 /// A judgment conversion at the left side's given type.
 pub proof fn jconv_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, t: ExprSpec)
     requires
-        crate::kclaims::frag_env(dty, denv),
+        kh(dty, denv),
         jconv(dty, denv, d, x, y),
         typed(dty, denv, d, x, t),
     ensures
@@ -2738,8 +2778,8 @@ pub proof fn jconv_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map
     let sig = jsig(dty, denv, d);
     let t0 = choose|t0: ExprSpec| #[trigger] derivable(sig, eq(Seq::empty(), x, y, t0));
     crate::dom_adeq_syn::dsym(sig, Seq::empty(), x, y, t0);
-    assert(crate::kclaims::ind_ok(sig));
-    crate::ti_sr::uniq(sig, Seq::empty(), x, t0, t);
+    kh_meta(dty, denv, d);
+    crate::meta_hyp::uniq_m(sig, Seq::empty(), x, t0, t);
     crate::ti_chain::conv_chain(sig, Seq::empty(), x, y, t0, t);
     crate::dom_adeq_syn::dsym(sig, Seq::empty(), x, y, t);
 }
@@ -2757,7 +2797,7 @@ pub proof fn jconv_symm(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: M
 
 pub proof fn jconv_trans(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, z: ExprSpec)
     requires
-        crate::kclaims::frag_env(dty, denv),
+        kh(dty, denv),
         jconv(dty, denv, d, x, y),
         jconv(dty, denv, d, y, z),
     ensures
@@ -2802,6 +2842,7 @@ pub proof fn cw_of_jn(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
 /// joinability).
 pub proof fn cw_of_ceq(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
     requires
+        !denv.full,
         crate::conv_frag::ceq(denv, x, y, h),
     ensures
         cw(dty, denv, g, x, y),
@@ -2815,7 +2856,7 @@ pub proof fn cw_of_ceq(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Ma
 /// Application congruence for judgment conversions.
 pub proof fn app_jconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, f1: ExprSpec, a1: ExprSpec, f2: ExprSpec, a2: ExprSpec)
     requires
-        crate::kclaims::frag_env(dty, denv),
+        kh(dty, denv),
         rtyped(dty, denv, d, ExprSpec::App(Box::new(f1), Box::new(a1))),
         jconv(dty, denv, d, f1, f2),
         jconv(dty, denv, d, a1, a2),
@@ -2912,7 +2953,7 @@ pub proof fn type_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
 /// A typing moves along a conversion of its type that the kernel claims.
 pub proof fn typed_move(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t0: ExprSpec, t1: ExprSpec) -> (l: LevelSpec)
     requires
-        crate::kclaims::frag_env(dty, denv),
+        kh(dty, denv),
         typed(dty, denv, d, e, t0),
         is_type(dty, denv, d, t0),
         jconv(dty, denv, d, t0, t1),
@@ -3193,8 +3234,8 @@ proof fn bind_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat,
         body_move(sig, t2, t1, l1, b1, b2, cc0);
     }
     crate::dom_adeq_syn::dsym(sig, seq![t1], b1, b2, cc0);
-    assert(crate::kclaims::ind_ok(sig));
-    crate::ti_sr::uniq(sig, seq![t1], b1, cc0, c1);
+    kh_meta(dty, denv, d);
+    crate::meta_hyp::uniq_m(sig, seq![t1], b1, cc0, c1);
     crate::ti_chain::conv_chain(sig, seq![t1], b1, b2, cc0, c1);
     body_move(sig, t1, t2, l1, b1, b2, c1);
     if bk == BinderKind::Pi {
@@ -3266,7 +3307,7 @@ pub proof fn spine_parts(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
 /// convert (judgment form).
 pub proof fn spine_jconv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, h1: ExprSpec, h2: ExprSpec, a1: Seq<ExprSpec>, a2: Seq<ExprSpec>)
     requires
-        crate::kclaims::frag_env(dty, denv),
+        kh(dty, denv),
         a1.len() == a2.len(),
         rtyped(dty, denv, d, spine_app(h1, a1)),
         jconv(dty, denv, d, h1, h2),
@@ -3364,6 +3405,7 @@ pub open spec fn untypable(export: nat, e: ExprSpec) -> bool {
 
 pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
     requires
+        !denv.full,
         kh(dty, denv),
         untypable(denv.export, e),
         typed(dty, denv, d, e, t),
@@ -3382,6 +3424,7 @@ pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
 /// A conversion claim with an untypable side holds.
 pub proof fn cw_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires
+        !denv.full,
         untypable(denv.export, x) || untypable(denv.export, y),
     ensures
         cw(dty, denv, g, x, y),
@@ -3403,6 +3446,7 @@ pub proof fn cw_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
 /// A type-preserving transfer from an untypable term holds.
 pub proof fn tp_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires
+        !denv.full,
         untypable(denv.export, x),
     ensures
         tp_to(dty, denv, g, x, y),
@@ -3418,6 +3462,7 @@ pub proof fn tp_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
 /// One step of the kernel's eta-free conversion gives the claim.
 pub proof fn cw_of_step(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires
+        !denv.full,
         crate::beta_model::defeq(denv, x, y) || crate::tc_model::deq_leaf(x, y)
             || crate::tc_model::deq_quot(denv.export, x, y) || crate::tc_model::deq_rec(denv, x, y),
     ensures

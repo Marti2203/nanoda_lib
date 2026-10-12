@@ -250,6 +250,7 @@ proof fn walk_facts(
     d: Map<nat, ExprSpec>,
 ) -> (lt: LevelSpec)
     requires
+        !denv.full,
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
     ensures ({
         let sig = crate::metatheory::jsig(dty, denv, d);
@@ -326,6 +327,7 @@ proof fn walk_arg(
     j: int,
 )
     requires
+        !denv.full,
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
         0 <= j <= denv.ctor_np[cid] as nat + idx as nat,
     ensures ({
@@ -391,6 +393,7 @@ proof fn walk_pi(
     l: LevelSpec,
 ) -> (r: (LevelSpec, LevelSpec))
     requires
+        !denv.full,
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
         0 <= k <= denv.ctor_np[cid] as nat + idx as nat,
         crate::ti_syntax::derivable(crate::metatheory::jsig(dty, denv, d), crate::ti_syntax::eq(Seq::empty(), cs[k], cs[k], crate::ti_syntax::sort(l))),
@@ -466,6 +469,7 @@ proof fn walk_ty(
     k: int,
 ) -> (l: LevelSpec)
     requires
+        !denv.full,
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
         0 <= k <= denv.ctor_np[cid] as nat + idx as nat,
     ensures
@@ -535,6 +539,7 @@ pub proof fn ci_proj(
     btm: ExprSpec,
 )
     requires
+        !denv.full,
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
     ensures
         ci(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
@@ -598,6 +603,7 @@ pub proof fn cc_proj(
     btm: ExprSpec,
 )
     requires
+        !denv.full,
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
         crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
     ensures

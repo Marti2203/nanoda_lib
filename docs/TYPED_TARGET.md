@@ -2449,6 +2449,22 @@ prefixes, which nothing proves.
   environment facts the checker certifies (`fv_free`, `env_wf`, `sig_wf`,
   `lev_ok`, level-parameter facts, closed rules); no Church-Rosser
   (`cr_env`'s confluence is false for real exports) and no twin.
-  `kh = kh_frag` still: switching to `kh_frag || kh_full` leaves 47
-  claim lemmas to prove in the full world (the kernel's contracts are
-  untouched -- they instantiate non-full environments).
+- **`kh = kh_frag || kh_full` -- DONE.** The claim library (`kclaims`,
+  `jkernel`, `kbind`, `kiota`) holds in both worlds: subject reduction for
+  parallel reduction (`jkernel::sr_pstep` under `sr_ok`) gets full-mode
+  leaves (`redg_d`: a `RedG` node from `h_sr_red`; `delta_d`, generic;
+  literals unfold), projection congruence goes through `gproj_cong` /
+  `kiota::proj_cong_m`, unit eta is a `RedG` node, and uniqueness and
+  Pi injectivity come from `kh_meta` (the model's in the fragment, the
+  hypotheses in full). The kernel's contracts are unchanged: they
+  instantiate non-full environments, where `kh` is `kh_frag`.
+- **Fragment-only claim lemmas (the gaps for full-mode certificates).**
+  Restricted to `!denv.full`, since their arguments are the fragment's
+  (untypable literals, undeclared quotient and Nat heads, canonical
+  recursors, `cr_env`): `kclaims::{untypable_untyped, cw_of_untypable,
+  tp_of_untypable, ci_lit, cwh_to_lit, cwh_quot_leaf, cw_of_step,
+  cw_of_ceq, cwh_k, k_rec_canon, cw_eta, cwh_eta_exp}` and
+  `proj_reg::{ci_proj, cc_proj}` with their walk lemmas.
+- **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
+  `declar_cert_at` claim also at the flagged environment -- with full
+  versions of the lemmas above.

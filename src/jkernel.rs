@@ -46,6 +46,95 @@ pub open spec fn frag_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lct
     &&& crate::kclaims::ind_ok(jsig(dty, denv, lctx))
 }
 
+/// The kernel-side assumptions of subject reduction in Lean's full
+/// judgment: the metatheory hypotheses (`meta_hyp`).
+pub open spec fn full_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
+    &&& denv.full
+    &&& crate::meta_hyp::meta_ok(jsig(dty, denv, lctx))
+    &&& crate::meta_hyp::h_sr_red(jsig(dty, denv, lctx))
+    &&& crate::ti_sr::sig_wf(jsig(dty, denv, lctx))
+    &&& defs_in(dty, denv)
+    &&& crate::subst_algebra::env_bv_free(denv)
+}
+
+/// Subject reduction's assumptions in either world.
+pub open spec fn sr_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
+    frag_ok(dty, denv, lctx) || full_ok(dty, denv, lctx)
+}
+
+/// The metatheory, in either world.
+pub proof fn sr_meta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
+    requires
+        sr_ok(dty, denv, lctx),
+    ensures
+        crate::meta_hyp::meta_ok(jsig(dty, denv, lctx)),
+{
+    if frag_ok(dty, denv, lctx) {
+        crate::meta_hyp::meta_of(jsig(dty, denv, lctx));
+    }
+}
+
+/// A KERNEL CONTRACTION IN THE FULL JUDGMENT: a typed redex converts with
+/// its reduct, which subject reduction types.
+pub proof fn redg_d(sig: Sig, g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec)
+    requires
+        sig.ienv.full,
+        crate::meta_hyp::h_sr_red(sig),
+        derivable(sig, eq(g, m, m, t)),
+        crate::full_red::full_red(sig, m, n),
+    ensures
+        derivable(sig, eq(g, m, n, t)),
+{
+    let dm = get(sig, eq(g, m, m, t));
+    crate::ti_valid::d_ty(sig, dm);
+    let (l, dt) = crate::ti_sub::get_t(sig, g, t, t);
+    assert(derivable(sig, eq(g, n, n, t)));
+    let dn = get(sig, eq(g, n, n, t));
+    let j = eq(g, m, n, t);
+    let ps = seq![dm, dn, dt];
+    assert(prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]));
+    valid_node(sig, Rule::RedG(l), j, ps);
+    mk_d(sig, node(Rule::RedG(l), j, ps));
+}
+
+/// A PROJECTION OF ANY STRUCTURE IS A CONGRUENCE (the full judgment):
+/// through the subject its generation names.
+pub proof fn gproj_cong(sig: Sig, g: Ctx, i: usize, st: ExprSpec, l: LevelSpec, y: ExprSpec, x: ExprSpec, x2: ExprSpec, t: ExprSpec)
+    requires
+        sig.ienv.full,
+        derivable(sig, eq(g, y, x, st)),
+        derivable(sig, eq(g, x, x2, st)),
+        crate::full_red::gproj_ty(sig, st, i as nat, y) is Some,
+        typ(sig, g, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0, l),
+        crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l),
+        tchain(sig, g, t, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)), t)),
+{
+    let ty = crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0;
+    let (my, m, m2) = (ExprSpec::Proj(i, Box::new(y)), ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)));
+    let dyx = get(sig, eq(g, y, x, st));
+    let dxx2 = get(sig, eq(g, x, x2, st));
+    let dyx2 = crate::ti_meta::d_trans(sig, dyx, dxx2);
+    let d1 = get(sig, eq(g, ty, ty, sort(l)));
+    let (ja, pa) = (eq(g, my, m2, ty), seq![dyx2, d1]);
+    assert(prems(pa, seq![eq(g, y, x2, st), eq(g, ty, ty, sort(l))]));
+    assert(step_ok(sig, Rule::ProjG(l), ja, pa)) by {
+        reveal(crate::ti_syntax::proj_g_ok);
+    }
+    valid_node(sig, Rule::ProjG(l), ja, pa);
+    let (jb, pb) = (eq(g, my, m, ty), seq![dyx, d1]);
+    assert(prems(pb, seq![eq(g, y, x, st), eq(g, ty, ty, sort(l))]));
+    assert(step_ok(sig, Rule::ProjG(l), jb, pb)) by {
+        reveal(crate::ti_syntax::proj_g_ok);
+    }
+    valid_node(sig, Rule::ProjG(l), jb, pb);
+    let zb = crate::ti_meta::d_sym(sig, node(Rule::ProjG(l), jb, pb));
+    let z = crate::ti_meta::d_trans(sig, zb, node(Rule::ProjG(l), ja, pa));
+    mk_d(sig, z);
+    conv_to(sig, g, m, m2, ty, t);
+}
+
 /// A conversion moves to any type chained to its own.
 pub proof fn conv_to(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, x: ExprSpec, t: ExprSpec)
     requires
@@ -105,7 +194,7 @@ pub proof fn no_builtin_head(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
 /// term converts with every parallel reduct, at its type.
 pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         derivable(jsig(dty, denv, lctx), eq(g, m, m, t)),
         pstep(denv, m, m2),
     ensures
@@ -127,9 +216,14 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
             assert(denv.defs.contains_key(id));
             assert(is_def(sig, id, ls));
             assert(dval(sig, id, ls) == m2);
-            assert(crate::ti_syntax::iota_ok(sig)) by { reveal(crate::ti_syntax::iota_ok); }
-            assert(crate::kclaims::ind_ok(sig));
-            crate::ti_sr::sr(sig, g, m, t);
+            crate::ti_sr::delta_d(sig, g, id, ls, t);
+        },
+        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
+            // typed only in the full judgment, where a literal unfolds
+            assert(denv.full);
+            assert(sig.ienv == denv);
+            assert(crate::full_red::full_red(sig, m, m2));
+            redg_d(sig, g, m, m2, t);
         },
         _ => {},
     }
@@ -140,7 +234,7 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
 #[verifier::spinoff_prover]
 proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x)), t)),
         pstep(denv, ExprSpec::Proj(i, Box::new(x)), m2),
     ensures
@@ -149,10 +243,14 @@ proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
 {
     let sig = jsig(dty, denv, lctx);
     let m = ExprSpec::Proj(i, Box::new(x));
-    assert(crate::kclaims::ind_ok(sig));
     assert(crate::ti_zsize::zsize(x) < crate::ti_zsize::zsize(m));
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
+    if denv.full {
+        sr_proj_full(dty, denv, lctx, g, i, x, m2, t);
+        return;
+    }
+    assert(crate::kclaims::ind_ok(sig));
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some;
     if m2 is Proj && m2->Proj_0 == i && pstep(denv, x, *m2->Proj_1) {
@@ -172,6 +270,50 @@ proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
         crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, lv), args2);
         crate::kiota::proj_step_d(sig, g, i, x2, t);
         crate::dom_adeq_syn::dtrans(sig, g, m, ExprSpec::Proj(i, Box::new(x2)), m2, t);
+    }
+}
+
+/// Projections in the full judgment: congruence through the generated
+/// subject, and the projection contraction by subject reduction.
+#[verifier::spinoff_prover]
+proof fn sr_proj_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
+    requires
+        full_ok(dty, denv, lctx),
+        gen_ok(jsig(dty, denv, lctx), g, ExprSpec::Proj(i, Box::new(x)), t),
+        pstep(denv, ExprSpec::Proj(i, Box::new(x)), m2),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), m2, t)),
+    decreases crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 0int,
+{
+    let sig = jsig(dty, denv, lctx);
+    let m = ExprSpec::Proj(i, Box::new(x));
+    assert(crate::ti_zsize::zsize(x) < crate::ti_zsize::zsize(m));
+    assert(sig.ienv == denv);
+    let (st, l, y) = choose|st: ExprSpec, l: LevelSpec, y: ExprSpec| #[trigger] crate::ti_gen::gmark(st, y, l, l)
+        && derivable(sig, eq(g, y, x, st)) && crate::full_red::gproj_ty(sig, st, i as nat, y) is Some
+        && typ(sig, g, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0, l)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l))
+        && tchain(sig, g, t, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0);
+    let dyx = get(sig, eq(g, y, x, st));
+    let dx = d_right(sig, dyx);
+    mk_d(sig, dx);
+    if m2 is Proj && m2->Proj_0 == i && pstep(denv, x, *m2->Proj_1) {
+        let x2 = *m2->Proj_1;
+        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        gproj_cong(sig, g, i, st, l, y, x, x2, t);
+        assert(m2 == ExprSpec::Proj(i, Box::new(x2)));
+    } else {
+        let x2 = choose|inner2: ExprSpec| (#[trigger] crate::beta_model::iota_reduct(inner2)) && pstep(denv, x, inner2)
+            && crate::beta_model::iota_extract(denv, i, inner2, m2);
+        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        gproj_cong(sig, g, i, st, l, y, x, x2, t);
+        let mx2 = ExprSpec::Proj(i, Box::new(x2));
+        let dmx = get(sig, eq(g, m, mx2, t));
+        let dr = d_right(sig, dmx);
+        mk_d(sig, dr);
+        assert(crate::full_red::full_red(sig, mx2, m2));
+        redg_d(sig, g, mx2, m2, t);
+        crate::dom_adeq_syn::dtrans(sig, g, m, mx2, m2, t);
     }
 }
 
@@ -231,7 +373,7 @@ pub proof fn app_parts(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec) 
 #[verifier::spinoff_prover]
 proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, sapp(f, x), t),
         pstep(denv, sapp(f, x), m2),
         sapp(f, x) != m2,
@@ -265,25 +407,64 @@ proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<na
         sr_pstep(dty, denv, lctx, g, f, f2, pi(a1, b1));
         sr_pstep(dty, denv, lctx, g, x, x2, a1);
         app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
-        sr_iota_at(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+        if denv.full {
+            assert(sig.ienv == denv);
+            redg_d(sig, g, sapp(f2, x2), m2, inst(0, x, b1));
+        } else {
+            sr_iota_at(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+        }
         crate::dom_adeq_syn::dtrans(sig, g, m, sapp(f2, x2), m2, inst(0, x, b1));
         conv_to(sig, g, m, m2, inst(0, x, b1), t);
     } else {
         // the remaining steps fire only on a literal-fold or quotient
         // head, and their redex is typed
         let (f2, x2) = if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-            && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2)) {
+            && pstep(denv, f, f2) && pstep(denv, x, a2) && denv.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+            && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2)) {
             choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-                && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+                && pstep(denv, f, f2) && pstep(denv, x, a2) && denv.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+                && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2))
         } else {
             choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::quot_reduct(f2, a2))
                 && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::tc_model::quot_ready(denv.export, sapp(f2, a2))
+                && m2 == crate::tc_model::quot_result(denv.export, sapp(f2, a2))
         };
         sr_pstep(dty, denv, lctx, g, f, f2, pi(a1, b1));
         sr_pstep(dty, denv, lctx, g, x, x2, a1);
         app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
-        no_builtin_head(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+        if denv.full {
+            sr_fold_quot(dty, denv, lctx, g, f, x, f2, x2, m2, t, inst(0, x, b1));
+        } else {
+            no_builtin_head(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+        }
     }
+}
+
+/// A Nat fold or quotient contraction in the full judgment.
+#[verifier::spinoff_prover]
+proof fn sr_fold_quot(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, x: ExprSpec,
+    f2: ExprSpec, x2: ExprSpec, m2: ExprSpec, t: ExprSpec, tt: ExprSpec)
+    requires
+        full_ok(dty, denv, lctx),
+        pstep(denv, sapp(f, x), m2),
+        pstep(denv, f, f2),
+        pstep(denv, x, x2),
+        crate::beta_model::nat_fold_ready(denv.export, sapp(f2, x2)) || crate::tc_model::quot_ready(denv.export, sapp(f2, x2)),
+        derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), sapp(f2, x2), tt)),
+        derivable(jsig(dty, denv, lctx), eq(g, sapp(f2, x2), sapp(f2, x2), tt)),
+        tchain(jsig(dty, denv, lctx), g, t, tt),
+        // the redex this pair witnesses is the one `m2` contracts
+        (denv.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, x2)) && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, x2)))
+            || (crate::tc_model::quot_ready(denv.export, sapp(f2, x2)) && m2 == crate::tc_model::quot_result(denv.export, sapp(f2, x2))),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), m2, t)),
+{
+    let sig = jsig(dty, denv, lctx);
+    assert(sig.ienv == denv);
+    assert(crate::full_red::full_red(sig, sapp(f2, x2), m2));
+    redg_d(sig, g, sapp(f2, x2), m2, tt);
+    crate::dom_adeq_syn::dtrans(sig, g, sapp(f, x), sapp(f2, x2), m2, tt);
+    conv_to(sig, g, sapp(f, x), m2, tt, t);
 }
 
 /// The rule instance at rule `j`'s right-hand side `b`, as `rec_result`
@@ -453,7 +634,7 @@ pub proof fn spine_conv(sig: Sig, g: Ctx, f1: ExprSpec, f2: ExprSpec, args: Seq<
 #[verifier::spinoff_prover]
 proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, aa: ExprSpec, body: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec, a1: ExprSpec, b1: ExprSpec, k1: LevelSpec, k2: LevelSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         f == lam(aa, body),
         app_facts(jsig(dty, denv, lctx), g, f, x, t, a1, b1, k1, k2),
         exists|body2: ExprSpec, a2: ExprSpec|
@@ -474,8 +655,11 @@ proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
     let (bt, j1, j2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, body, l1, l2)
         && typ(sig, g, aa, l1) && derivable(sig, eq(g.push(aa), body, body, bt)) && typ(sig, g.push(aa), bt, l2)
         && tchain(sig, g, pi(a1, b1), pi(aa, bt));
-    assert(crate::kclaims::ind_ok(sig));
-    crate::dom_fund::pi_inj_chain(sig, g, a1, b1, aa, bt);
+    if !denv.full {
+        assert(crate::kclaims::ind_ok(sig));
+        crate::meta_hyp::meta_of(sig);
+    }
+    crate::meta_hyp::pi_inj_m(sig, g, a1, b1, aa, bt);
     assert(f == ExprSpec::Bind(BinderKind::Lam, Box::new(aa), Box::new(body)));
     assert(m == ExprSpec::App(Box::new(f), Box::new(x)));
     sr_pstep(dty, denv, lctx, g.push(aa), body, body2, bt);
@@ -494,7 +678,7 @@ proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
 #[verifier::spinoff_prover]
 proof fn sr_bind(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, bk: BinderKind, a: ExprSpec, b: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, ExprSpec::Bind(bk, Box::new(a), Box::new(b)), t),
         pstep(denv, ExprSpec::Bind(bk, Box::new(a), Box::new(b)), m2),
         ExprSpec::Bind(bk, Box::new(a), Box::new(b)) != m2,
@@ -568,7 +752,7 @@ proof fn let_conv(sig: Sig, g: Ctx, a: ExprSpec, v: ExprSpec, b: ExprSpec, a2: E
 #[verifier::spinoff_prover]
 proof fn sr_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, a: ExprSpec, v: ExprSpec, b: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)), t),
         pstep(denv, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)), m2),
         ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)) != m2,
@@ -618,7 +802,7 @@ proof fn tconv_link(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec, l: LevelSpec)
 
 proof fn sr_chain_k(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, ch: Seq<ExprSpec>, t: ExprSpec, k: int)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         ch.len() >= 1,
         0 <= k < ch.len(),
         crate::beta_model::pstep_chain_valid(denv, ch),
@@ -640,7 +824,7 @@ proof fn sr_chain_k(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Ma
 /// SUBJECT REDUCTION FOR REDUCTION SEQUENCES.
 pub proof fn sr_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, m: ExprSpec, r: ExprSpec, t: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         derivable(jsig(dty, denv, lctx), eq(g, m, m, t)),
         crate::beta_model::pstep_star(denv, m, r),
     ensures
@@ -654,7 +838,7 @@ pub proof fn sr_star(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
 /// JOINABLE TYPED TERMS CONVERT, at either one's type.
 pub proof fn join_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, x: ExprSpec, y: ExprSpec, tx: ExprSpec, ty: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         derivable(jsig(dty, denv, lctx), eq(g, x, x, tx)),
         derivable(jsig(dty, denv, lctx), eq(g, y, y, ty)),
         crate::beta_model::defeq(denv, x, y),
@@ -667,8 +851,8 @@ pub proof fn join_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx:
     sr_star(dty, denv, lctx, g, y, z, ty);
     crate::dom_adeq_syn::dsym(sig, g, x, z, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, z, ty);
-    assert(crate::kclaims::ind_ok(sig));
-    crate::ti_sr::uniq(sig, g, z, ty, tx);
+    sr_meta(dty, denv, lctx);
+    crate::meta_hyp::uniq_m(sig, g, z, ty, tx);
     conv_chain(sig, g, y, z, ty, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, z, tx);
     crate::dom_adeq_syn::dtrans(sig, g, x, z, y, tx);
@@ -952,7 +1136,7 @@ proof fn lveq_let(sig: Sig, g: Ctx, a: ExprSpec, v: ExprSpec, b: ExprSpec, a2: E
 /// TYPED TERMS JOINABLE MODULO LEVELS CONVERT, at the left one's type.
 pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, x: ExprSpec, y: ExprSpec, tx: ExprSpec, ty: ExprSpec)
     requires
-        frag_ok(dty, denv, lctx),
+        sr_ok(dty, denv, lctx),
         lev_ok(jsig(dty, denv, lctx)),
         derivable(jsig(dty, denv, lctx), eq(g, x, x, tx)),
         derivable(jsig(dty, denv, lctx), eq(g, y, y, ty)),
@@ -968,8 +1152,8 @@ pub proof fn jn_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
     crate::dom_adeq_syn::dsym(sig, g, y, y2, ty);
     lveq_conv(sig, g, x2, y2, tx);
     crate::dom_adeq_syn::dsym(sig, g, x2, y2, tx);
-    assert(crate::kclaims::ind_ok(sig));
-    crate::ti_sr::uniq(sig, g, y2, ty, tx);
+    sr_meta(dty, denv, lctx);
+    crate::meta_hyp::uniq_m(sig, g, y2, ty, tx);
     conv_chain(sig, g, y, y2, ty, tx);
     crate::dom_adeq_syn::dsym(sig, g, y, y2, tx);
     crate::dom_adeq_syn::dtrans(sig, g, x, x2, y2, tx);
@@ -1015,8 +1199,7 @@ pub proof fn kh_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map
         crate::kclaims::kh(dty, denv),
     ensures
         crate::kclaims::kh_frag(dty, denv) ==> frag_ok(dty, denv, lctx) && crate::conv_frag::cr_env(denv),
-        crate::kclaims::kh_full(dty, denv) ==> crate::meta_hyp::meta_ok(jsig(dty, denv, lctx))
-            && crate::meta_hyp::h_sr_red(jsig(dty, denv, lctx)),
+        crate::kclaims::kh_full(dty, denv) ==> full_ok(dty, denv, lctx),
         lev_ok(jsig(dty, denv, lctx)),
         crate::ti_sr::sig_wf(jsig(dty, denv, lctx)),
         defs_in(dty, denv),
@@ -1127,7 +1310,7 @@ pub proof fn typed_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
         ls.len() == dty[c].0.len(),
     ensures
         crate::metatheory::typed(dty, denv, d, ExprSpec::Const(c, ls), crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls)),
-        !(denv.recs.contains_key(c) && crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), c))
+        denv.full || !(denv.recs.contains_key(c) && crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), c))
             ==> dty_at(jsig(dty, denv, d), c, ls) == crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls),
 {
     let sig = jsig(dty, denv, d);
@@ -1138,7 +1321,7 @@ pub proof fn typed_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
     wf_nil(sig);
     assert(crate::conv_cr::levs_eq(ls, ls));
     const_d(sig, Seq::empty(), c, ls, ls);
-    if denv.recs.contains_key(c) && crate::twin::rec_core(raw, c) {
+    if !denv.full && denv.recs.contains_key(c) && crate::twin::rec_core(raw, c) {
         // the twin types the recursor at its canonical type, which its
         // declared one converts to (`twin_ok`, nanoda's def_eq)
         let decl = crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls);

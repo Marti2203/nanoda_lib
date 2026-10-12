@@ -641,6 +641,37 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
     conv_chain(sig, g, m, fld, ty, t);
 }
 
+/// DELTA AT A TYPED CONSTANT: a definition converts with its value, at any
+/// type the constant has.
+pub proof fn delta_d(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, t: ExprSpec)
+    requires
+        sig_wf(sig),
+        is_def(sig, c, ls),
+        derivable(sig, eq(g, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls), t)),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Const(c, ls), dval(sig, c, ls), t)),
+{
+    let m = ExprSpec::Const(c, ls);
+    let dm = get(sig, eq(g, m, m, t));
+    gen(sig, dm);
+    let w = d_wf(sig, dm);
+    mk_d(sig, w);
+    let tc = dty_at(sig, c, ls);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), tc, tc, sort(l)));
+    wk_closed(sig, g, tc, tc, sort(l));
+    wk_closed(sig, g, dval(sig, c, ls), dval(sig, c, ls), tc);
+    let q1 = get(sig, eq(g, tc, tc, sort(l)));
+    let q2 = get(sig, eq(g, dval(sig, c, ls), dval(sig, c, ls), tc));
+    let wg = get(sig, Jd::Wf(g));
+    let dj = eq(g, m, dval(sig, c, ls), tc);
+    let dp = seq![wg, q1, q2];
+    assert(prems(dp, seq![Jd::Wf(g), eq(g, tc, tc, sort(l)), eq(g, dval(sig, c, ls), dval(sig, c, ls), tc)]));
+    valid_node(sig, Rule::Delta(l), dj, dp);
+    mk_d(sig, node(Rule::Delta(l), dj, dp));
+    tchain_sym(sig, g, t, tc);
+    conv_chain(sig, g, m, dval(sig, c, ls), tc, t);
+}
+
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its
 /// type.
 #[verifier::spinoff_prover]
