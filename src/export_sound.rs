@@ -246,8 +246,11 @@ proof fn decl_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64) -> (
         let j = entry_of(ef, c, id);
         assert(pos_of(ef, id) == j);
     }
+    assert(crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)));
     if m_denv(ef, cc).defs.contains_key(cid) {
         assert(crate::tc::declar_value(d) is Some);
+        assert(crate::kclaims::frag_term(m_denv(ef, cc).defs[cid].1));
+        assert(crate::kclaims::frag_term(m_dty(ef, cc)[cid].1));
     }
     c
 }

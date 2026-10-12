@@ -2460,11 +2460,16 @@ prefixes, which nothing proves.
   instantiate non-full environments, where `kh` is `kh_frag`.
 - **Fragment-only claim lemmas (the gaps for full-mode certificates).**
   Restricted to `!denv.full`, since their arguments are the fragment's
-  (untypable literals, undeclared quotient and Nat heads, canonical
-  recursors, `cr_env`): `kclaims::{untypable_untyped, cw_of_untypable,
-  tp_of_untypable, ci_lit, cwh_to_lit, cwh_quot_leaf, cw_of_step,
-  cw_of_ceq, cwh_k, k_rec_canon, cw_eta, cwh_eta_exp}` and
-  `proj_reg::{ci_proj, cc_proj}` with their walk lemmas.
+  (untypable literals, canonical recursors, the model's structures):
+  `kclaims::{untypable_untyped, cw_of_untypable, tp_of_untypable,
+  cwh_to_lit, cwh_k, k_rec_canon, cw_eta, cwh_eta_exp}` and
+  `proj_reg::{ci_proj, cc_proj}` with their walk lemmas. Closed in both
+  worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
+  `nat_ext::cr_ext` -- the fold-free environment's syntactic
+  confluence conditions and `h_nat_ext`, the Nat-extension agreement
+  Lean's kernel rests on -- so untyped conversion joins with folding off
+  and lifts back), `cwh_quot_leaf` (a parallel step, typed by subject
+  reduction), `ci_lit` (a `LitTy` node at the declared `Nat`/`String`).
 - **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
   `declar_cert_at` claim also at the flagged environment -- with full
   versions of the lemmas above.

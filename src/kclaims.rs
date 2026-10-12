@@ -64,6 +64,7 @@ pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
         && crate::meta_hyp::h_sr_red(crate::metatheory::jsig(dty, denv, d))
     &&& fv_free(dty, denv) && crate::swap_model::env_fv_free(denv) && crate::conv_frag::env_rules_ok(denv)
         && crate::subst_algebra::env_bv_free(denv)
+    &&& crate::nat_ext::cr_ext(denv)
     &&& crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
@@ -1995,14 +1996,20 @@ pub proof fn cwh_rec_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g:
 /// Quotient reduction gives the reduction claim.
 pub proof fn cwh_quot_leaf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec)
     requires
-        !denv.full,
         quot_ready(denv.export, e),
         nlbv(e) <= 0 ==> nlbv(quot_result(denv.export, e)) <= 0,
     ensures
         cwh(dty, denv, g, e, quot_result(denv.export, e)),
 {
     let r = quot_result(denv.export, e);
-    if kh(dty, denv) {
+    if kh(dty, denv) && denv.full {
+        // a quotient step, typed by subject reduction
+        if let ExprSpec::App(f, a) = e {
+            crate::beta_model::pstep_quot_intro(denv, f, a, *f, *a, r);
+            crate::beta_model::pstep_star_one(denv, e, r);
+            cwh_of_pstep_star(dty, denv, g, e, r);
+        }
+    } else if kh(dty, denv) {
         assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(r, i) by {
             crate::reduce_fv::quot_result_fv(denv.export, e, i);
         }
@@ -2412,7 +2419,6 @@ pub proof fn ci_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
 /// REGULARITY, LITERALS: a literal is typed nowhere in the fragment.
 pub proof fn ci_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, cid: u64)
     requires
-        !denv.full,
         (matches!(e, ExprSpec::NatLit(_)) && cid == crate::expr_arena_bridge::nat_type_id(denv.export))
         || (matches!(e, ExprSpec::StringLit(_)) && cid == crate::expr_arena_bridge::string_type_id(denv.export)),
         dty.contains_key(cid),
@@ -2430,9 +2436,32 @@ pub proof fn ci_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
             implies #[trigger] ci_at(dty, denv, d, e, t) by {
             let sig = jsig(dty, denv, d);
-            let t0 = choose|t0: ExprSpec| #[trigger] typed(dty, denv, d, e, t0);
-            let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t0));
-            crate::ti_gen::gen(sig, de);
+            if denv.full {
+                // the literal's type is a type (declared at a sort), and a
+                // literal is typed at it
+                crate::jkernel::typed_const(dty, denv, d, cid, Seq::empty());
+                let s0 = dty[cid].1->Sort_0;
+                assert(crate::expr_model::subst_expr_levels(dty[cid].1, dty[cid].0, Seq::<LevelSpec>::empty()) == ExprSpec::Sort(s0)) by {
+                    assert(crate::level_inst::elp_in(dty[cid].1, dty[cid].0));
+                    assert(dty[cid].0 =~= Seq::<u64>::empty());
+                    crate::level_inst::expr_closed(dty[cid].1, dty[cid].0, Seq::<LevelSpec>::empty());
+                }
+                is_type_of_sort(dty, denv, d, t, s0);
+                crate::jkernel::wf_nil(sig);
+                let w = crate::ti_sub::get(sig, crate::ti_syntax::Jd::Wf(Seq::empty()));
+                let dt = crate::ti_sub::get(sig, eq(Seq::empty(), t, t, ExprSpec::Sort(s0)));
+                let j = eq(Seq::empty(), e, e, t);
+                let ps = seq![w, dt];
+                assert(sig.ienv == denv);
+                assert(crate::full_red::lit_ty(sig, e) == Some(t));
+                assert(crate::ti_syntax::prems(ps, seq![crate::ti_syntax::Jd::Wf(Seq::empty()), eq(Seq::empty(), t, t, crate::ti_syntax::sort(s0))]));
+                crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::LitTy(s0), j, ps);
+                crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::LitTy(s0), j, ps));
+            } else {
+                let t0 = choose|t0: ExprSpec| #[trigger] typed(dty, denv, d, e, t0);
+                let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t0));
+                crate::ti_gen::gen(sig, de);
+            }
         }
     }
 }
@@ -2842,13 +2871,16 @@ pub proof fn cw_of_jn(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
 /// joinability).
 pub proof fn cw_of_ceq(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec, h: nat)
     requires
-        !denv.full,
         crate::conv_frag::ceq(denv, x, y, h),
     ensures
         cw(dty, denv, g, x, y),
 {
     if kh(dty, denv) {
-        crate::conv_frag::ceq_jn(denv, x, y, h);
+        if denv.full {
+            crate::nat_ext::ceq_jn_ext(denv, x, y, h);
+        } else {
+            crate::conv_frag::ceq_jn(denv, x, y, h);
+        }
         cw_of_jn(dty, denv, g, x, y);
     }
 }
@@ -3462,15 +3494,21 @@ pub proof fn tp_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
 /// One step of the kernel's eta-free conversion gives the claim.
 pub proof fn cw_of_step(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires
-        !denv.full,
         crate::beta_model::defeq(denv, x, y) || crate::tc_model::deq_leaf(x, y)
             || crate::tc_model::deq_quot(denv.export, x, y) || crate::tc_model::deq_rec(denv, x, y),
     ensures
         cw(dty, denv, g, x, y),
 {
     if kh(dty, denv) {
-        crate::conv_frag::cr_into_self(denv);
-        crate::conv_frag::jn_of_leaf(denv, denv, x, y);
+        if denv.full {
+            // joinable with the Nat extension off (`h_nat_ext`), so here
+            crate::nat_ext::cr_into_ext(denv);
+            crate::conv_frag::jn_of_leaf(denv, crate::conv_frag::nofold(denv), x, y);
+            crate::conv_frag::jn_up(denv, crate::conv_frag::nofold(denv), x, y);
+        } else {
+            crate::conv_frag::cr_into_self(denv);
+            crate::conv_frag::jn_of_leaf(denv, denv, x, y);
+        }
         cw_of_jn(dty, denv, g, x, y);
     }
 }
