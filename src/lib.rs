@@ -27,6 +27,7 @@ pub mod meta_hyp;
 pub mod full_red;
 pub mod full_eta;
 pub mod full_e2;
+pub mod nat_unary;
 pub mod dom_iota;
 pub mod dom_model;
 pub mod dom_proj;

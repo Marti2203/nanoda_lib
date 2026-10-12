@@ -3968,67 +3968,6 @@ pub proof fn cw_eta_lam(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: M
     }
 }
 
-/// Terms the fragment types nowhere: literals and what they reduce to.
-pub open spec fn untypable(export: nat, e: ExprSpec) -> bool {
-    crate::jkernel::natish(export, e) || e is StringLit
-}
-
-pub proof fn untypable_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
-    requires
-        !denv.full,
-        kh(dty, denv),
-        untypable(denv.export, e),
-        typed(dty, denv, d, e, t),
-    ensures
-        false,
-{
-    if crate::jkernel::natish(denv.export, e) {
-        crate::jkernel::natish_untyped(dty, denv, d, e, t);
-    } else {
-        let sig = jsig(dty, denv, d);
-        let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t));
-        crate::ti_gen::gen(sig, de);
-    }
-}
-
-/// A conversion claim with an untypable side holds.
-pub proof fn cw_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires
-        !denv.full,
-        untypable(denv.export, x) || untypable(denv.export, y),
-    ensures
-        cw(dty, denv, g, x, y),
-{
-    if kh(dty, denv) {
-        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
-            implies #[trigger] jconv(dty, denv, d, x, y) by {
-            let tx = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, x, t);
-            let ty = choose|t: ExprSpec| #[trigger] typed(dty, denv, d, y, t);
-            if untypable(denv.export, x) {
-                untypable_untyped(dty, denv, d, x, tx);
-            } else {
-                untypable_untyped(dty, denv, d, y, ty);
-            }
-        }
-    }
-}
-
-/// A type-preserving transfer from an untypable term holds.
-pub proof fn tp_of_untypable(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
-    requires
-        !denv.full,
-        untypable(denv.export, x),
-    ensures
-        tp_to(dty, denv, g, x, y),
-{
-    if kh(dty, denv) {
-        assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && #[trigger] typed(dty, denv, d, x, t)
-            implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, y, t2) && tconv(dty, denv, d, t2, t) by {
-            untypable_untyped(dty, denv, d, x, t);
-        }
-    }
-}
-
 /// One step of the kernel's eta-free conversion gives the claim.
 pub proof fn cw_of_step(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, x: ExprSpec, y: ExprSpec)
     requires

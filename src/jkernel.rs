@@ -1467,20 +1467,4 @@ pub proof fn natish_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
     }
 }
 
-/// A numeral is a literal's reduct form.
-pub proof fn natish_of_nat_value(export: nat, e: ExprSpec)
-    requires
-        crate::beta_model::nat_value(export, e) is Some,
-    ensures
-        natish(export, e),
-    decreases e,
-{
-    if let ExprSpec::App(f, a) = e {
-        if let ExprSpec::Const(id, ls) = *f {
-            assert(ls =~= Seq::<LevelSpec>::empty());
-        }
-        natish_of_nat_value(export, *a);
-    }
-}
-
 } // verus!

@@ -2461,10 +2461,12 @@ prefixes, which nothing proves.
 - **Fragment-only claim lemmas (the gaps for full-mode certificates).**
   Restricted to `!denv.full`, since their arguments are the fragment's
   (untypable literals, canonical recursors, the model's structures):
-  `kclaims::{untypable_untyped, cw_of_untypable, tp_of_untypable,
-  cwh_to_lit}` (vacuity in the fragment: literals are untypable there;
-  the kernel sites using them need full-mode replacements at the
-  dual-contract stage). Closed in both
+  `kclaims::cwh_to_lit` (a numeral folded back to its literal: typing the
+  literal needs facts about the built-in declarations, `Nat.succ : Nat
+  -> Nat` and the like, which neither nanoda nor Lean's kernel checks).
+  The kernel's other literal comparisons are untyped conversions in both
+  judgments (`nat_unary`: a numeral and its literal reduce to the same
+  unary numeral), so the vacuity lemmas they used are gone. Closed in both
   worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
   `nat_ext::cr_ext` -- the fold-free environment's syntactic
   confluence conditions and `h_nat_ext`, the Nat-extension agreement

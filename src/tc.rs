@@ -1244,7 +1244,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::tc_model::deq_any_of_defeq(fm, sl, to_model_expr(c));
                     // the unfolding is an untyped step; `whnf`'s is typed
                     kconv_of_deq(*old(self).env, sl, to_model_expr(c));
-                    kcw_of_untypable(*old(self).env, sl, to_model_expr(c));
+                    kcw_of_step(*old(self).env, sl, to_model_expr(c));
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // M7: the unfolding's reduction claim, then whnf's
                     scope_pres_of_closed(crate::env_model::env_arena_ids(*self.env), sl, to_model_expr(c));
@@ -3989,8 +3989,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 crate::tc_model::deq_any_symm(fm, to_model_expr(y), z);
                 crate::tc_model::deq_any_trans(fm, to_model_expr(x), z, to_model_expr(y));
                 kconv_of_deq(*old(self).env, to_model_expr(x), to_model_expr(y));
-                crate::jkernel::natish_of_nat_value(fm.export, to_model_expr(x));
-                kcw_of_untypable(*old(self).env, to_model_expr(x), to_model_expr(y));
+                crate::nat_unary::defeq_values(fm, to_model_expr(x), to_model_expr(y));
+                kcw_of_step(*old(self).env, to_model_expr(x), to_model_expr(y));
             }
             return Some(true)
         }
@@ -6650,18 +6650,6 @@ pub proof fn kcw_of_step<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
 }
 
-/// A conversion with a side the fragment cannot type holds as a claim.
-pub proof fn kcw_of_untypable<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
-    requires
-        crate::kclaims::untypable(crate::env_model::to_model_of_env(env).export, x)
-            || crate::kclaims::untypable(crate::env_model::to_model_of_env(env).export, y),
-    ensures
-        kcw(env, x, y),
-{
-    crate::kclaims::cw_of_untypable(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env),
-        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
-}
-
 /// Every untyped step is a typed one (`deq_c` is `deq_p_c`'s first disjunct).
 pub proof fn kconv_of_deq<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     requires
@@ -6887,7 +6875,8 @@ pub proof fn kconv_nat_value<'x, 't>(env: Env<'x, 't>, v: ExprSpec)
         _ => {},
     }
     kconv_of_deq(env, v, lit);
-    kcw_of_untypable(env, v, lit);
+    crate::nat_unary::defeq_value_lit(fm, v);
+    kcw_of_step(env, v, lit);
 }
 
 
