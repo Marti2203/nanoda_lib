@@ -2459,15 +2459,18 @@ prefixes, which nothing proves.
   hypotheses in full). The kernel's contracts are unchanged: they
   instantiate non-full environments, where `kh` is `kh_frag`.
 - **Fragment-only claim lemmas (the gaps for full-mode certificates).**
-  Restricted to `!denv.full`, since their arguments are the fragment's
-  (untypable literals, canonical recursors, the model's structures):
-  `kclaims::cwh_to_lit` (a numeral folded back to its literal: typing the
-  literal needs facts about the built-in declarations, `Nat.succ : Nat
-  -> Nat` and the like, which neither nanoda nor Lean's kernel checks).
-  The kernel's other literal comparisons are untyped conversions in both
-  judgments (`nat_unary`: a numeral and its literal reduce to the same
-  unary numeral), so the vacuity lemmas they used are gone. Closed in both
-  worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
+  Once restricted to `!denv.full`, since their arguments were the
+  fragment's (untypable literals, canonical recursors, the model's
+  structures). The kernel's literal comparisons are untyped conversions in
+  both judgments (`nat_unary`: a numeral and its literal reduce to the
+  same unary numeral), so the vacuity lemmas they used are gone.
+  `cwh_to_lit` (a `Nat.succ` numeral folded back to its literal):
+  `kh_full` asks `nat_decl_ok` (an export declaring `Nat.succ` declares
+  `Nat` at a sort, with no universe parameters -- checkable on the
+  declarations; nanoda folds by name and checks neither). A typed numeral
+  has its head declared (generation), so the literal is typed at `Nat`,
+  subject reduction types the numeral there, and uniqueness chains its
+  other types (`kclaims::to_lit_full`). Closed in both worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
   `nat_ext::cr_ext` -- the fold-free environment's syntactic
   confluence conditions and `h_nat_ext`, the Nat-extension agreement
   Lean's kernel rests on -- so untyped conversion joins with folding off
