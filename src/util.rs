@@ -2867,6 +2867,27 @@ impl<'a> LeanDag<'a> {
         self.lemma_hist_of();
     }
 
+    /// An export dag's stored expressions are placed in its arena's history
+    /// (`export_full::hist_placed`).
+    pub(crate) proof fn lemma_placed(tracked &self)
+        ensures
+            !self.is_tc() && self.partner() == self.id()
+                ==> crate::export_full::hist_placed(self.id(), crate::indexmap_model::iset_keys(&self.exprs).len()),
+    {
+        use_type_invariant(self);
+        self.lemma_hist_of();
+        let a = self.id();
+        let ek = crate::indexmap_model::iset_keys(&self.exprs);
+        if !self.is_tc() && self.partner() == self.id() {
+            assert forall|i: int| #![trigger crate::arena_history::arena_hist::<Expr<'a>>(a)[i]]
+                0 <= i < ek.len() implies i < crate::arena_history::arena_hist::<Expr<'a>>(a).len()
+                && crate::expr_arena_bridge::expr_node_ok(crate::arena_history::arena_hist::<Expr<'a>>(a)[i], i as nat, false, a, a) by {
+                assert(ek[i] == crate::arena_history::arena_hist::<Expr<'a>>(a)[i]);
+                assert(crate::expr_arena_bridge::expr_node_ok(ek[i], i as nat, false, a, a));
+            }
+        }
+    }
+
     pub(crate) proof fn lemma_hist_of(self)
         requires
             self.ok(),

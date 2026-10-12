@@ -3673,7 +3673,8 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
                     crate::expr_arena_bridge::to_model(ind_ty),
                     crate::expr_arena_bridge::to_model(ctor_ty),
                     np as nat,
-                ),
+                )
+                && crate::e2_lift::pi_prefix(crate::expr_arena_bridge::to_model(ind_ty), np as nat),
             final(self).expr_cache == old(self).expr_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
@@ -3785,6 +3786,18 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
         proof {
             assert(crate::e2_lift::pr(ti, 0) == ti);
+            reveal(crate::e2_lift::pi_prefix);
+            assert forall|q: nat| #![trigger crate::e2_lift::pr(ti, q)] q < np implies crate::e2_lift::pr(ti, q) is Bind
+                && crate::e2_lift::pr(ti, q)->Bind_0 == crate::expr_model::BinderKind::Pi by {
+                let qi = q as int;
+                assert(doms@[qi] == doms@[qi]);
+                assert(qi as nat == q);
+                assert(crate::e2_lift::pr(ti, qi as nat) == crate::expr_model::ExprSpec::Bind(
+                    crate::expr_model::BinderKind::Pi,
+                    Box::new(crate::expr_arena_bridge::to_model(doms@[qi])),
+                    Box::new(crate::e2_lift::pr(ti, (qi + 1) as nat)),
+                ));
+            }
         }
         Some(self.mk_lambda(ctor_name, BinderStyle::Default, ctor_ty, acc))
     }

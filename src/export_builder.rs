@@ -95,6 +95,7 @@ impl<'a> ExportBuilder<'a> {
                 && crate::inductive::declar_export_tagged(a, view[k])
                 && crate::env_model::declar_params_ok(view[k])
                 && crate::env::declar_info(view[k]).name == k
+                && crate::export_full::decl_below(view[k], crate::indexmap_model::iset_keys(&self.dag.exprs).len())
         &&& forall|k: NamePtr<'a>| #[trigger] self.mutual_block_sizes@.contains_key(k)
             ==> crate::util_model::export_tagged(a, k)
     }
@@ -622,6 +623,7 @@ impl<'a> ExportBuilder<'a> {
             final(self).exprs_len() == old(self).exprs_len(),
             final(self).same_decls(*old(self)),
             info_at(final(self).arena(), result, name, ty, uparams@),
+            crate::name_arena_bridge::ptr_index(result.ty) < final(self).exprs_len(),
     {
         let n = self.name_ptr(name);
         let t = self.expr_ptr(ty);
@@ -636,6 +638,7 @@ impl<'a> ExportBuilder<'a> {
             crate::util_model::export_tagged(old(self).arena(), crate::env::declar_info(d).name),
             crate::inductive::declar_export_tagged(old(self).arena(), d),
             crate::env_model::declar_params_ok(d),
+            crate::export_full::decl_below(d, old(self).exprs_len()),
         ensures
             final(self).wf(),
             final(self).arena() == old(self).arena(),
@@ -1030,12 +1033,17 @@ impl<'a> ExportBuilder<'a> {
             crate::inductive::export_ok(result),
             crate::inductive::export_rec_names_ok(result),
             crate::inductive::export_blocks_ok(result),
+            crate::export_full::export_placed(result),
             result.arena() == self.arena(),
             result.declars_view() == self.decls(),
             result.declars_keys() == self.keys(),
             result.blocks_view() == self.blocks(),
     {
         let recs = self.recursor_names();
+        proof {
+            self.dag.lemma_placed();
+        }
+        let ghost n = self.exprs_len();
         let name_cache = self.dag.mk_name_cache();
         let ghost a = self.arena();
         let ghost view = crate::indexmap_model::imap_view(&self.declars);
@@ -1046,6 +1054,7 @@ impl<'a> ExportBuilder<'a> {
             crate::inductive::export_ok_intro(ef);
             crate::inductive::export_rec_names_ok_intro(ef);
             crate::inductive::export_blocks_ok_intro(ef);
+            assert(crate::export_full::hist_placed(ef.arena(), n));
         }
         ef
     }

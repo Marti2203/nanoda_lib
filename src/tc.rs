@@ -6418,6 +6418,7 @@ pub open spec fn ctor_e2_cert<'p>(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: cra
     &&& dty[ind].0 == crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
     &&& crate::inductive::ctor_form_m(to_model_expr(c.info.ty), ind, dty[ind].1, crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
     &&& !denv.defs.contains_key(ind) && !denv.ctor_ind.contains_key(ind) && !denv.recs.contains_key(ind)
+    &&& crate::e2_lift::pi_prefix(dty[ind].1, c.num_params as nat)
     &&& (crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
         ==> crate::kclaims::rtyped(dty, denv, Map::empty(), crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
     &&& (crate::kclaims::kh(dty, crate::kclaims::flag(denv)) && crate::kclaims::full_term(crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
@@ -6543,6 +6544,7 @@ pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::Constru
         env.find(crate::level_arena_bridge::name_id(c.inductive_name)) == Some(crate::env::Declar::Inductive(i)),
         crate::level_arena_bridge::to_model_of_levels(i.info.uparams) == crate::level_arena_bridge::to_model_of_levels(c.info.uparams),
         l == crate::e2_lift::lmk(to_model_expr(i.info.ty), to_model_expr(c.info.ty), c.num_params as nat),
+        crate::e2_lift::pi_prefix(to_model_expr(i.info.ty), c.num_params as nat),
         !crate::expr_model::has_fv(l),
         kcc(env, l, inf),
         crate::inductive::ctor_form_m(to_model_expr(c.info.ty), crate::level_arena_bridge::name_id(c.inductive_name), to_model_expr(i.info.ty),

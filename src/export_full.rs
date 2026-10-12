@@ -21,22 +21,165 @@ pub open spec fn fl<'p>(ef: crate::util::ExportFile<'p>, c: int) -> EnvSpec {
     crate::kclaims::flag(m_denv(ef, c))
 }
 
-/// THE DECLARATIONS ARE TERMS: no declared type, value or constructor
-/// parameter term denotes the model's non-term (`ExprSpec::Closed`, which
-/// only a misplaced arena node denotes; to be certified from the arena's
-/// node invariant, `expr_arena_bridge::expr_node_ok`).
-pub open spec fn terms_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    &&& forall|cid: u64| #[trigger] dty.contains_key(cid) ==> crate::kclaims::full_term(dty[cid].1)
-    &&& forall|cid: u64| #[trigger] denv.defs.contains_key(cid) ==> crate::kclaims::full_term(denv.defs[cid].1)
-    &&& forall|cid: u64| #[trigger] denv.ctor_ind.contains_key(cid) && denv.ctor_np.contains_key(cid)
-        ==> crate::kclaims::full_term(crate::e2_lift::lmk(dty[denv.ctor_ind[cid]].1, dty[cid].1, denv.ctor_np[cid] as nat))
+/// THE EXPORT ARENA'S FIRST `n` NODES, as stored: each in the arena's
+/// history, its children placed below it in the same arena (the dag's
+/// invariant, `LeanDag::ok`).
+pub open spec fn hist_placed<'a>(a: nat, n: nat) -> bool {
+    forall|i: int| #![trigger crate::arena_history::arena_hist::<crate::expr::Expr<'a>>(a)[i]]
+        0 <= i < n ==> i < crate::arena_history::arena_hist::<crate::expr::Expr<'a>>(a).len()
+        && crate::expr_arena_bridge::expr_node_ok(crate::arena_history::arena_hist::<crate::expr::Expr<'a>>(a)[i], i as nat, false, a, a)
+}
+
+/// A declaration's type and value are among the first `n` nodes.
+pub open spec fn decl_below<'a>(d: crate::env::Declar<'a>, n: nat) -> bool {
+    &&& crate::name_arena_bridge::ptr_index(crate::env::declar_info(d).ty) < n
+    &&& (crate::tc::declar_value(d) matches Some(v) ==> crate::name_arena_bridge::ptr_index(v) < n)
+}
+
+/// THE EXPORT'S TERMS ARE STORED NODES (the parser's guarantee,
+/// `ExportBuilder::finish`): its arena's first `n` nodes are placed, and
+/// every declaration's type and value is one of them.
+pub open spec fn export_placed<'p>(ef: crate::util::ExportFile<'p>) -> bool {
+    exists|n: nat| #[trigger] hist_placed(ef.arena(), n)
+        && forall|k: crate::util::NamePtr<'p>| #[trigger] ef.declars_view().contains_key(k) ==> decl_below(ef.declars_view()[k], n)
+}
+
+/// A stored export node denotes a term: no `Closed` anywhere below it.
+pub proof fn placed_full<'a>(p: crate::util::ExprPtr<'a>, n: nat)
+    requires
+        hist_placed(crate::util::arena_of(p), n),
+        !crate::util_model::ptr_is_tc(p),
+        crate::name_arena_bridge::ptr_index(p) < n,
+    ensures
+        crate::kclaims::full_term(crate::expr_arena_bridge::to_model(p)),
+    decreases crate::name_arena_bridge::ptr_index(p),
+{
+    let a = crate::util::arena_of(p);
+    let i = crate::name_arena_bridge::ptr_index(p);
+    let h = crate::arena_history::arena_hist::<crate::expr::Expr<'a>>(a);
+    let e = h[i as int];
+    assert(crate::expr_arena_bridge::expr_node_ok(e, i, false, a, a));
+    crate::expr_arena_bridge::to_model_at(p);
+    match h[i as int] {
+        crate::expr::Expr::App { fun, arg, .. } => {
+            placed_full(fun, n);
+            placed_full(arg, n);
+        },
+        crate::expr::Expr::Pi { binder_type, body, .. } | crate::expr::Expr::Lambda { binder_type, body, .. } => {
+            placed_full(binder_type, n);
+            placed_full(body, n);
+        },
+        crate::expr::Expr::Let { binder_type, val, body, .. } => {
+            placed_full(binder_type, n);
+            placed_full(val, n);
+            placed_full(body, n);
+        },
+        crate::expr::Expr::Proj { structure, .. } => {
+            placed_full(structure, n);
+        },
+        _ => {},
+    }
+}
+
+/// A declaration's type and value are terms.
+proof fn decl_full<'p>(ef: crate::util::ExportFile<'p>, i: int)
+    requires
+        crate::inductive::export_ok(ef),
+        export_placed(ef),
+        0 <= i < ef.declars_keys().len(),
+    ensures
+        crate::kclaims::full_term(crate::expr_arena_bridge::to_model(crate::env::declar_info(decl_at(ef, i)).ty)),
+        crate::tc::declar_value(decl_at(ef, i)) matches Some(v) ==> crate::kclaims::full_term(crate::expr_arena_bridge::to_model(v)),
+{
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let keys = ef.declars_keys();
+    assert(keys.to_set().contains(keys[i]));
+    assert(ef.declars_view().contains_key(keys[i]));
+    let n = choose|n: nat| #[trigger] hist_placed(ef.arena(), n)
+        && forall|k: crate::util::NamePtr<'p>| #[trigger] ef.declars_view().contains_key(k) ==> decl_below(ef.declars_view()[k], n);
+    let d = decl_at(ef, i);
+    assert(decl_below(d, n));
+    placed_full(crate::env::declar_info(d).ty, n);
+    if let Some(v) = crate::tc::declar_value(d) {
+        placed_full(v, n);
+    }
+}
+
+/// Peeling one more binder.
+proof fn pr_shift(a: ExprSpec, c: ExprSpec, j: nat)
+    ensures
+        crate::e2_lift::pr(ExprSpec::Bind(crate::expr_model::BinderKind::Pi, Box::new(a), Box::new(c)), j + 1) == crate::e2_lift::pr(c, j),
+    decreases j,
+{
+    let t = ExprSpec::Bind(crate::expr_model::BinderKind::Pi, Box::new(a), Box::new(c));
+    assert(crate::e2_lift::pr(t, 0) == t);
+    if j > 0 {
+        pr_shift(a, c, (j - 1) as nat);
+        assert(crate::e2_lift::pr(t, j) == crate::e2_lift::pr(c, (j - 1) as nat));
+        assert(crate::e2_lift::pr(t, j + 1) == crate::e2_lift::pr(c, j));
+    } else {
+        assert(crate::e2_lift::pr(t, 1) == c);
+        assert(crate::e2_lift::pr(c, 0) == c);
+    }
+}
+
+/// A term under a Pi prefix, its binders made lambdas over a term, is a term.
+proof fn lamify_full(t: ExprSpec, n: nat, b: ExprSpec)
+    requires
+        crate::kclaims::full_term(t),
+        crate::kclaims::full_term(b),
+        crate::e2_lift::pi_prefix(t, n),
+    ensures
+        crate::kclaims::full_term(crate::e2_lift::lamify(t, n, b)),
+    decreases n,
+{
+    reveal(crate::e2_lift::pi_prefix);
+    if n > 0 {
+        assert(crate::e2_lift::pr(t, 0) == t);
+        if let ExprSpec::Bind(k, a, c) = t {
+            assert forall|j: nat| #![trigger crate::e2_lift::pr(*c, j)] j < (n - 1) as nat implies crate::e2_lift::pr(*c, j) is Bind
+                && crate::e2_lift::pr(*c, j)->Bind_0 == crate::expr_model::BinderKind::Pi by {
+                pr_shift(*a, *c, j);
+                assert(crate::e2_lift::pr(t, j + 1) is Bind);
+            }
+            lamify_full(*c, (n - 1) as nat, b);
+        }
+    }
+}
+
+/// An application spine of terms is a term.
+proof fn spine_full(h: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        crate::kclaims::full_term(h),
+        forall|i: int| 0 <= i < args.len() ==> crate::kclaims::full_term(#[trigger] args[i]),
+    ensures
+        crate::kclaims::full_term(crate::beta_model::spine_app(h, args)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        spine_full(h, args.subrange(0, args.len() - 1));
+    }
+}
+
+/// THE PARAMETER TERM of terms, its inductive's type with enough binders,
+/// is a term.
+proof fn lmk_full(ti: ExprSpec, tc: ExprSpec, np: nat)
+    requires
+        crate::kclaims::full_term(ti),
+        crate::kclaims::full_term(tc),
+        crate::e2_lift::pi_prefix(ti, np),
+    ensures
+        crate::kclaims::full_term(crate::e2_lift::lmk(ti, tc, np)),
+{
+    spine_full(ExprSpec::Var(np), crate::e2_lift::vargs0(np));
+    lamify_full(ti, np, crate::e2_lift::vb0(np));
 }
 
 /// WHAT THE CHECKER DOES NOT ESTABLISH in the full judgment: the
 /// metatheory (`meta_hyp`), Church-Rosser with the Nat extension
-/// (`nat_ext::cr_ext`), the two facts about the declarations nanoda does
-/// not check (`kclaims::structs_sorted`, `kclaims::nat_decl_ok`), and that
-/// the declarations are terms.
+/// (`nat_ext::cr_ext`), and the two facts about the declarations nanoda
+/// does not check (`kclaims::structs_sorted`, `kclaims::nat_decl_ok`).
 pub open spec fn full_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, fe: EnvSpec) -> bool {
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] crate::meta_hyp::meta_ok(crate::metatheory::jsig(dty, fe, d))
         && crate::meta_hyp::h_sr_red(crate::metatheory::jsig(dty, fe, d))
@@ -44,12 +187,12 @@ pub open spec fn full_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, fe: EnvSpec) -> b
     &&& crate::nat_ext::cr_ext(fe)
     &&& crate::kclaims::structs_sorted(dty, fe)
     &&& crate::kclaims::nat_decl_ok(dty, fe)
-    &&& terms_full(dty, fe)
 }
 
 /// What every cutoff before `cc` has, and the hypotheses up to it.
 pub open spec fn below_full<'p>(ef: crate::util::ExportFile<'p>, cc: int) -> bool {
     &&& crate::inductive::export_ok(ef)
+    &&& export_placed(ef)
     &&& all_certified(ef)
     &&& forall|c: int| 0 <= c <= cc ==> #[trigger] full_hyp(m_dty(ef, c), fl(ef, c))
     &&& 0 <= cc <= ef.declars_keys().len()
@@ -124,6 +267,7 @@ proof fn decl_facts_full<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
         assert(pos_of(ef, id) == j);
     }
     assert(crate::kclaims::kh(m_dty(ef, c), fl(ef, c)));
+    decl_full(ef, i);
     assert(crate::kclaims::full_term(m_dty(ef, cc)[cid].1));
     assert(crate::tc::type_cert_full(m_dty(ef, c), fl(ef, c), m_dty(ef, cc)[cid].1));
     if fl(ef, cc).defs.contains_key(cid) {
@@ -595,6 +739,11 @@ proof fn e2_full1<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
         assert(dty[cid] == crate::env_model::ty_entry(d)->0);
         assert(fe.ctor_np[cid] == c.num_params);
         let lm = crate::e2_lift::lmk(dty[ind].1, dty[cid].1, c.num_params as nat);
+        decl_full(ef, i);
+        let ii = entry_of(ef, cc, ind);
+        decl_full(ef, ii);
+        assert(dty[ind] == crate::env_model::ty_entry(decl_at(ef, ii))->0);
+        lmk_full(dty[ind].1, dty[cid].1, c.num_params as nat);
         assert(crate::kclaims::full_term(lm));
         assert(crate::kclaims::kh(d0, n0));
         assert(crate::kclaims::rtyped(d0, n0, em, lm));
@@ -612,6 +761,7 @@ proof fn e2_full1<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
 pub proof fn export_kh_full<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     requires
         crate::inductive::export_ok(ef),
+        export_placed(ef),
         all_certified(ef),
         forall|c: int| 0 <= c <= cc ==> #[trigger] full_hyp(m_dty(ef, c), fl(ef, c)),
         0 <= cc <= ef.declars_keys().len(),

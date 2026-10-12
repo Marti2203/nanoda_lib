@@ -2545,7 +2545,12 @@ prefixes, which nothing proves.
   `lev_ok`, the free-variable and level facts, `struct_ok`, `ctor_forms`,
   `e2_ok`. Named (`export_full::full_hyp`): the metatheory (`meta_ok`,
   `h_sr_red`, `h_str`), Church-Rosser with the Nat extension (`cr_ext`),
-  `structs_sorted`, `nat_decl_ok`, and `terms_full` -- the declarations
-  denote no `Closed`, which only a misplaced arena node denotes; the
-  arena's node invariant (`expr_node_ok`) should certify it.
-- **Next:** certify `terms_full` from the arena; then widen the fragment.
+  `structs_sorted`, `nat_decl_ok`. The declarations denote no `Closed`
+  (needed for the full-mode certificates' `full_term` guards): the
+  parser guarantees `export_full::export_placed` (`ExportBuilder::finish`:
+  the arena's stored nodes are placed, by the dag's invariant, and every
+  declaration's type and value is one of them), so `export_full::placed_full`
+  makes them terms; a constructor's parameter term is one because
+  `ctor_param_term` walks its inductive's parameter binders
+  (`e2_lift::pi_prefix`, recorded in `ctor_e2_cert`).
+- **Next:** widen the fragment.

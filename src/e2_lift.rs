@@ -58,6 +58,12 @@ pub open spec fn pr(t: ExprSpec, i: nat) -> ExprSpec
     }
 }
 
+/// `t` starts with `n` Pi binders.
+#[verifier::opaque]
+pub open spec fn pi_prefix(t: ExprSpec, n: nat) -> bool {
+    forall|j: nat| #![trigger pr(t, j)] j < n ==> pr(t, j) is Bind && pr(t, j)->Bind_0 == BinderKind::Pi
+}
+
 /// The parameters as bound variables, under the parameter binders.
 pub open spec fn vargs0(np: nat) -> Seq<ExprSpec> {
     Seq::new(np, |i: int| ExprSpec::Var((np - 1 - i) as nat))
