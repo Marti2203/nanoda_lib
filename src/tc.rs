@@ -1952,7 +1952,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure_ty), L, c0));
             in_scope_of_deep_in(*self, structure_ty, L);
         }
-        let structure_ty_may_be_prop = self.may_be_prop(structure_ty).0;
+        // VERUS-REWRITE(bound-result): `may_be_prop`'s result is bound to
+        // `mbp` so its claim (the sort, never zero when it answers no)
+        // reaches the projection's claim; same call.
+        let mbp = self.may_be_prop(structure_ty);
+        let structure_ty_may_be_prop = mbp.0;
         let (sf, struct_ty_name, struct_ty_levels, struct_ty_args) = self.ctx.unfold_const_apps(structure_ty).unwrap();
         let ghost am = crate::expr_arena_bridge::ptr_models(struct_ty_args@);
         let ghost ind_id = crate::level_arena_bridge::name_id(struct_ty_name);
@@ -2326,9 +2330,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert forall|k: int| #![trigger wsf[k]] 0 <= k < m implies cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(wsf[k]), seq![crate::proj_reg::psq(am, np as nat, s_m, idx as nat)[k]], 0) by {
                         assert(wsf[k] == ws[k]);
                     }
-                    crate::proj_reg::ci_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm);
+                    let lv = to_model_expr(mbp.1)->Sort_0;
+                    crate::proj_reg::ci_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm, lv);
                     if flag == Check {
-                        crate::proj_reg::cc_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm);
+                        crate::proj_reg::cc_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm, lv);
                     }
                     kinfer_of_ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1);
                 }

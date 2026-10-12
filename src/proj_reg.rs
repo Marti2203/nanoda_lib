@@ -324,11 +324,12 @@ proof fn walk_facts_full(
     ws: Seq<ExprSpec>,
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
+    lv: LevelSpec,
 ) -> (ds: Seq<ExprSpec>)
     requires
         crate::kclaims::kh_full(dty, denv),
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
-        crate::kclaims::never_prop_at(dty, ind, ls),
+        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
     ensures ({
         let sig = crate::metatheory::jsig(dty, denv, d);
         let g0 = Seq::<ExprSpec>::empty();
@@ -390,9 +391,24 @@ proof fn walk_facts_full(
         assert(am2p[i] == am[i]);
         assert(am2p.subrange(0, i) =~= am.subrange(0, i));
     }
+    // never a proposition: the kernel's sort for the structure
+    // application, never zero, is the structure's at the instance
+    let p = ExprSpec::Proj(idx, Box::new(s));
+    rctx_mono(g, s, p);
+    crate::kclaims::sub_trans(rctx(g, s), rctx(g, p), d);
+    crate::kclaims::sub_trans(rctx(g, ety), rctx(g, s), d);
+    assert(rtyped(dty, denv, d, ety));
+    crate::kclaims::ci_use(dty, denv, g, d, ety, ExprSpec::Sort(lv));
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), am);
+    crate::full_eta::ind_sort(sig, g0, ind, ls, am, ExprSpec::Sort(lv));
+    let ti = dty[ind].1;
+    let l0 = crate::level_model::subst_level_spec(crate::rec_canon::tbody(ti, np)->Sort_0, dty[ind].0, ls);
+    crate::meta_hyp::sort_inj_m(sig, g0, lv, l0);
     assert(!crate::ti_syntax::proj_prop(sig, ety)) by {
         reveal(crate::ti_syntax::proj_prop);
-        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), am);
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l0, rho) > 0 by {
+            assert(crate::level_model::interp(lv, rho) > 0);
+        }
     }
     assert(am2p.subrange(0, np as int) =~= am);
     ds
@@ -415,11 +431,12 @@ proof fn walk_arg_full(
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
     j: int,
+    lv: LevelSpec,
 )
     requires
         crate::kclaims::kh_full(dty, denv),
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
-        crate::kclaims::never_prop_at(dty, ind, ls),
+        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         0 <= j <= denv.ctor_np[cid] as nat + idx as nat,
     ensures ({
         let sig = crate::metatheory::jsig(dty, denv, d);
@@ -438,7 +455,7 @@ proof fn walk_arg_full(
     let nf = denv.ctor_nf[cid] as nat;
     let m = np + idx as nat;
     let sq = psq(am, np, s, idx as nat);
-    let ds = walk_facts_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let ds = walk_facts_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, lv);
     let am2 = am + crate::tc_model::eta_projs(s, nf);
     let ety = spine_app(ExprSpec::Const(ind, ls), am);
     let dsy = crate::dom_rec_shape::sls(ds, dty[cid].0, ls);
@@ -483,9 +500,10 @@ proof fn walk_arg(
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
     j: int,
+    lv: LevelSpec,
 )
     requires
-        denv.full ==> crate::kclaims::never_prop_at(dty, ind, ls),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
         0 <= j <= denv.ctor_np[cid] as nat + idx as nat,
     ensures ({
@@ -500,7 +518,7 @@ proof fn walk_arg(
     }),
 {
     if denv.full {
-        walk_arg_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
+        walk_arg_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j, lv);
         return;
     }
     let sig = crate::metatheory::jsig(dty, denv, d);
@@ -553,9 +571,10 @@ proof fn walk_pi(
     d: Map<nat, ExprSpec>,
     k: int,
     l: LevelSpec,
+    lv: LevelSpec,
 ) -> (r: (LevelSpec, LevelSpec))
     requires
-        denv.full ==> crate::kclaims::never_prop_at(dty, ind, ls),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
         0 <= k <= denv.ctor_np[cid] as nat + idx as nat,
         crate::ti_syntax::derivable(crate::metatheory::jsig(dty, denv, d), crate::ti_syntax::eq(Seq::empty(), cs[k], cs[k], crate::ti_syntax::sort(l))),
@@ -601,7 +620,7 @@ proof fn walk_pi(
     crate::ti_chain::tchain_one(sig, g0, c, w);
     crate::ti_chain::tchain_sym(sig, g0, c, w);
     crate::ti_chain::tchain_trans(sig, g0, w, c, tr);
-    walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, k);
+    walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, k, lv);
     let (a, b) = (*w->Bind_1, *w->Bind_2);
     assert(w == crate::ti_syntax::pi(a, b));
     crate::meta_hyp::pi_inj_m(sig, g0, a, b, *tr->Bind_1, *tr->Bind_2);
@@ -630,9 +649,10 @@ proof fn walk_ty(
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
     k: int,
+    lv: LevelSpec,
 ) -> (l: LevelSpec)
     requires
-        denv.full ==> crate::kclaims::never_prop_at(dty, ind, ls),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
         0 <= k <= denv.ctor_np[cid] as nat + idx as nat,
     ensures
@@ -665,9 +685,9 @@ proof fn walk_ty(
         l0
     } else {
         let j = k - 1;
-        let lj = walk_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
-        let (l1, l2) = walk_pi(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j, lj);
-        walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
+        let lj = walk_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j, lv);
+        let (l1, l2) = walk_pi(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j, lj, lv);
+        walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j, lv);
         let x = sq[j];
         let (a, b) = (*ws[j]->Bind_1, *ws[j]->Bind_2);
         let tr = crate::dom_con_rel::trest(tyc, sq.subrange(0, j));
@@ -700,9 +720,10 @@ pub proof fn ci_proj(
     cs: Seq<ExprSpec>,
     ws: Seq<ExprSpec>,
     btm: ExprSpec,
+    lv: LevelSpec,
 )
     requires
-        denv.full ==> crate::kclaims::never_prop_at(dty, ind, ls),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
     ensures
         ci(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
@@ -733,9 +754,9 @@ pub proof fn ci_proj(
             assert(crate::metatheory::typed(dty, denv, d, s, st));
             assert(rtyped(dty, denv, d, s));
             crate::kclaims::ci_use(dty, denv, g, d, s, ety);
-            let lm = walk_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m);
-            let (l1, l2) = walk_pi(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lm);
-            walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m);
+            let lm = walk_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lv);
+            let (l1, l2) = walk_pi(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lm, lv);
+            walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lv);
             let a = *ws[m]->Bind_1;
             assert(btm == a);
             let tr = crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), psq(am, np, s, idx as nat).subrange(0, m));
@@ -764,9 +785,10 @@ pub proof fn cc_proj(
     cs: Seq<ExprSpec>,
     ws: Seq<ExprSpec>,
     btm: ExprSpec,
+    lv: LevelSpec,
 )
     requires
-        denv.full ==> crate::kclaims::never_prop_at(dty, ind, ls),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
         crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
     ensures
@@ -775,11 +797,11 @@ pub proof fn cc_proj(
     let p = ExprSpec::Proj(idx, Box::new(s));
     if kh(dty, denv) && crate::kclaims::frag_term(p) {
         let ety = spine_app(ExprSpec::Const(ind, ls), am);
-        ci_proj(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm);
+        ci_proj(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, lv);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, p), d)
             implies #[trigger] crate::kclaims::cc_at(dty, denv, d, p, btm) by {
             if denv.full {
-                cc_proj_full_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+                cc_proj_full_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, lv);
             } else {
             let sig = crate::metatheory::jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
@@ -833,10 +855,11 @@ proof fn cc_proj_full_at(
     ws: Seq<ExprSpec>,
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
+    lv: LevelSpec,
 )
     requires
         crate::kclaims::kh_full(dty, denv),
-        crate::kclaims::never_prop_at(dty, ind, ls),
+        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
         crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
         crate::kclaims::frag_term(ExprSpec::Proj(idx, Box::new(s))),
@@ -858,7 +881,7 @@ proof fn cc_proj_full_at(
     crate::kclaims::cc_use(dty, denv, g, d, s, ety);
     crate::kclaims::ci_use(dty, denv, g, d, s, ety);
     assert(walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d));
-    let ds = walk_facts_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let ds = walk_facts_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, lv);
     let am2 = am + crate::tc_model::eta_projs(s, nf);
     crate::full_eta::projs_typed(sig, g0, ind, cid, ls, am2, ds, s, (idx + 1) as nat);
     let ii = idx as int;

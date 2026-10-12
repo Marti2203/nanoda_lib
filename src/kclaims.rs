@@ -1645,14 +1645,6 @@ pub proof fn ctor_at_params(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
     assert(typed(dty, denv, d, hp, t));
 }
 
-/// The structure at the instance is never a proposition (what nanoda's
-/// `may_be_prop` check before an eta expansion establishes).
-pub open spec fn never_prop_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, ind: u64, ls: Seq<LevelSpec>) -> bool {
-    let ti = dty[ind].1;
-    crate::ti_syntax::never_zero(crate::level_model::subst_level_spec(
-        crate::rec_canon::tbody(ti, crate::rec_canon::tarity(ti))->Sort_0, dty[ind].0, ls))
-}
-
 /// THE KERNEL'S ETA EXPANSION in the full judgment, at one context: the
 /// parameters typed by E2', the projections along the telescope, so the
 /// expansion is typed at the term's type and converts with it.
