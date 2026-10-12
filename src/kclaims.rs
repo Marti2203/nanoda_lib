@@ -76,6 +76,13 @@ pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
     &&& crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
 }
 
+/// THE KERNEL'S ENVIRONMENT IN LEAN'S FULL JUDGMENT: the same tables and
+/// rules, the judgment's flag set. The kernel's contracts state each claim
+/// at both (`tc::kcw` and co, `kdual`).
+pub open spec fn flag(denv: EnvSpec) -> EnvSpec {
+    EnvSpec { full: true, ..denv }
+}
+
 /// THE FRAGMENT: recursors the model interprets (so iota on typed terms
 /// is the judgment's), structures the model smashes (`ind_ok_hyp`'s
 /// structure clause: their projections and eta are the judgment's), and

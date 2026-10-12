@@ -69,6 +69,7 @@ pub mod kbind;
 pub mod ti_zsize;
 pub mod ti_level;
 pub mod kclaims;
+pub mod kdual;
 pub mod inductive_model;
 pub mod indexmap_model;
 pub mod level;

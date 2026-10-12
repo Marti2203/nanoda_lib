@@ -905,7 +905,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let inferred_type = self.infer(info.ty, Check);
         let sort = self.ensure_sort(inferred_type);
         proof {
-            crate::kclaims::cc_whnf(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env),
+            crate::kdual::cc_whnf(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env),
                 crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)),
                 to_model_expr(info.ty), to_model_expr(inferred_type), ExprSpec::Sort(to_model_level(sort)));
         }
@@ -1182,7 +1182,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             ExprSpec::Proj((k - np) as usize, Box::new(xm)), am[k]) by {
                             assert(def_eq_claim(env0, ExprSpec::Proj((k - np) as usize, Box::new(xm)), am[k]));
                         }
-                        crate::kclaims::cw_eta(
+                        assert forall|k: int| np <= k < np + (*num_fields as nat) implies #[trigger] crate::kclaims::cw(
+                            crate::env_model::to_model_of_declar_ty(env0), crate::kclaims::flag(crate::env_model::to_model_of_env(env0)), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
+                            ExprSpec::Proj((k - np) as usize, Box::new(xm)), am[k]) by {
+                            assert(def_eq_claim(env0, ExprSpec::Proj((k - np) as usize, Box::new(xm)), am[k]));
+                        }
+                        crate::kdual::cw_eta(
                             crate::env_model::to_model_of_declar_ty(env0), crate::env_model::to_model_of_env(env0), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
                             xm, to_model_expr(y), to_model_expr(x_type), to_model_expr(y_type),
                             crate::level_arena_bridge::name_id(*inductive_name), crate::level_arena_bridge::name_id(name),
@@ -1191,7 +1196,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     } else {
                         // a term with loose variables is typed nowhere
                         let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env0), crate::env_model::to_model_of_env(env0), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)));
-                        crate::kclaims::cw_open(kd, ke, kg, xm, to_model_expr(y));
+                        crate::kdual::cw_open(kd, ke, kg, xm, to_model_expr(y));
                     }
                 }
                 return Some(true)
@@ -1401,7 +1406,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 unit_claim(env0, to_model_expr(x), to_model_expr(y), to_model_expr(x_ty), to_model_expr(y_type), crate::level_arena_bridge::name_id(name));
             }
             if b {
-                crate::kclaims::cw_unit(
+                crate::kdual::cw_unit(
                     crate::env_model::to_model_of_declar_ty(env0), em, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
                     to_model_expr(x), to_model_expr(y), to_model_expr(x_ty), to_model_expr(y_type), crate::level_arena_bridge::name_id(name),
                 );
@@ -1623,14 +1628,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             assert(am.update(0, vm) =~= Seq::<ExprSpec>::empty().push(vm));
                             crate::beta_model::spine_app_compose_last(fm0, Seq::<ExprSpec>::empty(), vm);
                             assert(crate::beta_model::spine_app(fm0, am.update(0, vm)) == w);
-                            crate::kclaims::cwh_replace(kd, fme, kg, fm0, am, 0, vm);
+                            crate::kdual::cwh_replace(kd, fme, kg, fm0, am, 0, vm);
                             assert(crate::beta_model::nat_value(crate::env_model::to_model_of_env(*self.env).export, w) is Some);
                             kconv_nat_value(env, w);
                             nat_value_expand(env, w);
                             let ln = crate::expr_model::NatLitPayload(Ghost(crate::beta_model::nat_value(fme.export, w)->Some_0));
                             assert(to_model_expr(rr) == ExprSpec::NatLit(ln));
-                            crate::kclaims::cwh_to_lit(kd, fme, kg, w, ln);
-                            crate::kclaims::cwh_trans(kd, fme, kg, em, w, to_model_expr(rr));
+                            crate::kdual::cwh_to_lit(kd, fme, kg, w, ln);
+                            crate::kdual::cwh_trans(kd, fme, kg, em, w, to_model_expr(rr));
                         }
                     }
                     r
@@ -1822,12 +1827,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             // M7: reduce the structure under the projection, then the iota step
             let kd = crate::env_model::to_model_of_declar_ty(env);
             let kg = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
-            crate::kclaims::cwh_proj(kd, fm, kg, idx, s0, sm);
+            crate::kdual::cwh_proj(kd, fm, kg, idx, s0, sm);
             if crate::expr_model::nlbv(sm) <= 0 {
                 crate::beta_model::spine_app_nlbv_decompose(ExprSpec::Const(id, lv), am2);
             }
-            crate::kclaims::cwh_of_pstep_star(kd, fm, kg, pm, to_model_expr(a));
-            crate::kclaims::cwh_trans(kd, fm, kg, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
+            crate::kdual::cwh_of_pstep_star(kd, fm, kg, pm, to_model_expr(a));
+            crate::kdual::cwh_trans(kd, fm, kg, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
             // scope: the field is an argument of the whnf'd structure
             assert forall|SS: ISet<nat>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), ExprSpec::Proj(idx, Box::new(s0)), SS, k)
                 implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(a), SS, k) by {
@@ -1899,7 +1904,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         proof {
             kinfer_conv(*old(self).env, to_model_expr(e), to_model_expr(ty), to_model_expr(r));
             if flag == InferFlag::Check {
-                crate::kclaims::cc_whnf(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env),
+                crate::kdual::cc_whnf(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env),
                     crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(ty), to_model_expr(r));
             }
         }
@@ -2332,41 +2337,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(crate::tc_model::proj_marker(f2, Ts, ind_id, ls, am, ctor_id, np, ctm));
                     assert(ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1));
                     // regularity: the kernel's walk, recorded
-                    let wsf = ws.push(wb);
-                    let m = np as nat + idx as nat;
-                    assert forall|k: int| 0 <= k <= m implies #[trigger] crate::kclaims::cwh(dty, denv, lctx, cs[k], wsf[k]) by {
-                        if k < m {
-                            assert(wsf[k] == ws[k]);
-                            assert(kcwh(env0, cs[k], ws[k]));
-                        }
-                    }
-                    assert forall|k: int| 0 <= k <= m implies (#[trigger] wsf[k]) is Bind && wsf[k]->Bind_0 == BinderKind::Pi by {
-                        if k < m {
-                            assert(wsf[k] == ws[k]);
-                        }
-                    }
-                    assert forall|k: int| #![trigger wsf[k]] 0 <= k < m implies cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(wsf[k]), seq![crate::proj_reg::psq(am, np as nat, s_m, idx as nat)[k]], 0) by {
-                        assert(wsf[k] == ws[k]);
-                    }
-                    assert forall|k: int| #![trigger wsf[k]] 0 <= k <= m implies (cs[k] is Bind ==> wsf[k] == cs[k]) by {
-                        if k < m {
-                            assert(wsf[k] == ws[k]);
-                        }
-                    }
                     let lv = to_model_expr(mbp.1)->Sort_0;
-                    // a structure that may be a proposition: the kernel's checks
-                    if !crate::ti_syntax::never_zero(lv) {
-                        assert(structure_ty_may_be_prop);
-                        assert forall|k: int| #![trigger wsf[k]] np as nat <= k < m && crate::expr_model::nlbv(crate::proj_reg::pbod(wsf[k])) > 0
-                            implies crate::kclaims::cprop(dty, denv, lctx, crate::ctor_typing::pdom(wsf[k])) by {
-                            assert(wsf[k] == ws[k]);
-                        }
-                        assert(crate::proj_reg::pprop_ok(dty, denv, lctx, idx, ctor_id, wsf, btm));
-                    }
-                    crate::proj_reg::ci_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm, lv);
-                    if flag == Check {
-                        crate::proj_reg::cc_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm, lv);
-                    }
+                    proj_claims(env0, idx, s_m, ind_id, ctor_id, ls, am, cs, ws, wb, btm, lv, structure_ty_may_be_prop, flag == Check);
                     kinfer_of_ktypes(env0, ExprSpec::Proj(idx, Box::new(s_m)), btm, f2 + 1);
                 }
                 binder_type
@@ -2417,8 +2389,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     crate::expr_arena_bridge::arena_lctx_local(crate::env_model::env_arena_ids(*self.env), e);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0));
                     crate::expr_arena_bridge::is_local_shape_model(e);
-                    crate::kclaims::ci_local(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::expr_arena_bridge::expr_id(e));
-                    crate::kclaims::cc_local(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::expr_arena_bridge::expr_id(e));
+                    crate::kdual::ci_local(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::expr_arena_bridge::expr_id(e));
+                    crate::kdual::cc_local(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::expr_arena_bridge::expr_id(e));
                     kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(binder_type), 0);
                 }
                 binder_type
@@ -2428,8 +2400,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let r = self.infer_sort(level, flag);
                 proof {
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(r), 0));
-                    crate::kclaims::ci_sort(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_level(level));
-                    crate::kclaims::cc_sort(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_level(level));
+                    crate::kdual::ci_sort(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_level(level));
+                    crate::kdual::cc_sort(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_level(level));
                     kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(r), 0);
                 }
                 r
@@ -2497,8 +2469,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     crate::expr_arena_bridge::is_const_shape_model(t);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
-                    crate::kclaims::ci_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
-                    crate::kclaims::cc_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
+                    crate::kdual::ci_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
+                    crate::kdual::cc_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
                     assert(to_model_expr(t)->Const_1 =~= Seq::<crate::level_model::LevelSpec>::empty());
                     assert(to_model_expr(t) == ExprSpec::Const(to_model_expr(t)->Const_0, Seq::empty()));
                     kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
@@ -2517,8 +2489,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 proof {
                     crate::expr_arena_bridge::is_const_shape_model(t);
                     assert(ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0));
-                    crate::kclaims::ci_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
-                    crate::kclaims::cc_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
+                    crate::kdual::ci_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
+                    crate::kdual::cc_lit(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), to_model_expr(e), to_model_expr(t)->Const_0);
                     assert(to_model_expr(t)->Const_1 =~= Seq::<crate::level_model::LevelSpec>::empty());
                     assert(to_model_expr(t) == ExprSpec::Const(to_model_expr(t)->Const_0, Seq::empty()));
                     kinfer_of_ktypes(*old(self).env, to_model_expr(e), to_model_expr(t), 0);
@@ -2786,10 +2758,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(as_pi0), L, c0));
                         kconv_trans(env0, T, to_model_expr(as_pi0), to_model_expr(as_pi));
                         if flag == Check {
-                            crate::kclaims::cc_whnf(crate::env_model::to_model_of_declar_ty(env0), crate::env_model::to_model_of_env(env0), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
+                            crate::kdual::cc_whnf(crate::env_model::to_model_of_declar_ty(env0), crate::env_model::to_model_of_env(env0), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
                                 crate::beta_model::spine_app(H, SA.take(k as int)), to_model_expr(as_pi0), to_model_expr(as_pi));
                         }
-                        crate::kclaims::ci_whnf(crate::env_model::to_model_of_declar_ty(env0), crate::env_model::to_model_of_env(env0), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
+                        crate::kdual::ci_whnf(crate::env_model::to_model_of_declar_ty(env0), crate::env_model::to_model_of_env(env0), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0)),
                             crate::beta_model::spine_app(H, SA.take(k as int)), to_model_expr(as_pi0), to_model_expr(as_pi));
                     }
                     match self.ctx.read_expr(as_pi) {
@@ -3551,14 +3523,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             );
             assert(ktypes(*old(self).env, lt, T, f + 1));
             assert(ktc_marker(T, f + 1));
-            crate::kclaims::ci_let(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)),
+            crate::kdual::ci_let(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)),
                 to_model_expr(binder_type), to_model_expr(val), to_model_expr(body0), to_model_expr(r));
             if flag == Check {
                 if let Some(di) = self.declar_info {
                     crate::level_inst::elp_in_subst_rev(to_model_expr(body0), seq![to_model_expr(val)], 0,
                         crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(di.uparams)));
                 }
-                crate::kclaims::cc_let(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)),
+                crate::kdual::cc_let(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)),
                     to_model_expr(binder_type), to_model_expr(val), to_model_expr(body0), to_model_expr(r), bt_sort->Sort_0, val_ty_m);
             }
             assert forall|S: vstd::iset::ISet<nat>, c: u16|
@@ -4766,7 +4738,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         let rest = am.subrange(np, am.len() as int);
                         assert(params + rest =~= am);
                         kcprop_of(env, to_model_expr(major_ty));
-                        crate::kclaims::cwh_refl(kd, ke, kg, to_model_expr(major_ty));
+                        crate::kdual::cwh_refl(kd, ke, kg, to_model_expr(major_ty));
                         // the K recursor's major premise is headed by the major's inductive
                         let rid = choose|rid: u64| env.find(rid) == Some(Declar::Recursor(*rec));
                         crate::env_model::to_model_of_recursors_at(env, rid);
@@ -4780,7 +4752,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         assert(ind == crate::level_arena_bridge::name_id(name));
                         assert(name == n);
                         assert(crate::kclaims::k_rec(kd, ke, rid, ind));
-                        crate::kclaims::cwh_k(kd, ke, kg, to_model_expr(major), to_model_expr(major_ty), to_model_expr(major_ty),
+                        crate::kdual::cwh_k(kd, ke, kg, to_model_expr(major), to_model_expr(major_ty), to_model_expr(major_ty),
                             to_model_expr(new_ctor_app), to_model_expr(new_type), ind, cid, ls, params, rest);
                     }
                     Some(new_ctor_app)
@@ -4818,7 +4790,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     {
         proof {
             kconv_refl(*self.env, to_model_expr(e));
-            crate::kclaims::cwh_refl(crate::env_model::to_model_of_declar_ty(*self.env), crate::env_model::to_model_of_env(*self.env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*self.env)), to_model_expr(e));
+            crate::kdual::cwh_refl(crate::env_model::to_model_of_declar_ty(*self.env), crate::env_model::to_model_of_env(*self.env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*self.env)), to_model_expr(e));
         }
         if (!self.env.can_be_struct(&ind_name)) || self.is_ctor_app(e).is_some() {
             e
@@ -5812,8 +5784,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).live == (*old(self)).live,
             scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result.1)),
             kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result.1)),
-            !result.0 ==> to_model_expr(result.1) is Sort
-                && crate::ti_syntax::never_zero(to_model_expr(result.1)->Sort_0),
+            to_model_expr(result.1) is Sort,
+            !result.0 ==> crate::ti_syntax::never_zero(to_model_expr(result.1)->Sort_0),
     {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
@@ -5882,7 +5854,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         if b {
                             let env = *old(self).env;
                             kcprop_of(env, to_model_expr(l_type));
-                            crate::kclaims::cw_irrel(
+                            crate::kdual::cw_irrel(
                                 crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
                                 to_model_expr(x), to_model_expr(y), to_model_expr(l_type), to_model_expr(r_type),
                             );
@@ -6331,26 +6303,38 @@ pub open spec fn kconv<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bo
 }
 
 /// THE KERNEL CLAIMS, M7 SHAPE (`kclaims.rs`): the model claims at the
-/// kernel's environment, over the arena's locals. Each holds in every
+/// kernel's environment, and at the same environment in Lean's full
+/// judgment (`kclaims::flag`; the lemmas through `kdual`), over the arena's
+/// locals. Each holds in every
 /// admissible context, under the named hypotheses and the environment
 /// invariants (`kclaims::kh`).
 pub open spec fn kcw<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec) -> bool {
-    crate::kclaims::cw(
+    &&& crate::kclaims::cw(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        x,
-        y,
+        x, y,
+    )
+    &&& crate::kclaims::cw(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::kclaims::flag(crate::env_model::to_model_of_env(env)),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+        x, y,
     )
 }
 
 pub open spec fn kcwh<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) -> bool {
-    crate::kclaims::cwh(
+    &&& crate::kclaims::cwh(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        e,
-        r,
+        e, r,
+    )
+    &&& crate::kclaims::cwh(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::kclaims::flag(crate::env_model::to_model_of_env(env)),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+        e, r,
     )
 }
 
@@ -6362,12 +6346,17 @@ pub open spec fn klp<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e: ExprSpec) -> bo
 }
 
 pub open spec fn kcc<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
-    crate::kclaims::cc(
+    &&& crate::kclaims::cc(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        e,
-        t,
+        e, t,
+    )
+    &&& crate::kclaims::cc(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::kclaims::flag(crate::env_model::to_model_of_env(env)),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+        e, t,
     )
 }
 
@@ -6617,19 +6606,30 @@ pub proof fn kval_cert_intro<'x, 't>(env: Env<'x, 't>, val: ExprSpec, inf: ExprS
 }
 
 pub open spec fn kci<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpec) -> bool {
-    crate::kclaims::ci(
+    &&& crate::kclaims::ci(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-        e,
-        t,
+        e, t,
+    )
+    &&& crate::kclaims::ci(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::kclaims::flag(crate::env_model::to_model_of_env(env)),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+        e, t,
     )
 }
 
 pub open spec fn kcprop<'x, 't>(env: Env<'x, 't>, a: ExprSpec) -> bool {
-    crate::kclaims::cprop(
+    &&& crate::kclaims::cprop(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
+        crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+        a,
+    )
+    &&& crate::kclaims::cprop(
+        crate::env_model::to_model_of_declar_ty(env),
+        crate::kclaims::flag(crate::env_model::to_model_of_env(env)),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
         a,
     )
@@ -6653,7 +6653,7 @@ pub proof fn kconv_refl<'x, 't>(env: Env<'x, 't>, x: ExprSpec)
         kconv(env, x, x),
         kcw(env, x, x),
 {
-    crate::kclaims::cw_refl(
+    crate::kdual::cw_refl(
         crate::env_model::to_model_of_declar_ty(env),
         crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
@@ -6693,7 +6693,7 @@ pub proof fn kcw_of_step<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
     ensures
         kcw(env, x, y),
 {
-    crate::kclaims::cw_of_step(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env),
+    crate::kdual::cw_of_step(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env),
         crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
 }
 
@@ -7007,7 +7007,7 @@ pub proof fn nat_pred_kconv<'x, 't>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
     let a = ExprSpec::App(Box::new(s), Box::new(to_model_expr(r)));
     if to_model_expr(e) == a {
         kconv_refl(env, a);
-        crate::kclaims::cwh_refl(kd, fm, kg, a);
+        crate::kdual::cwh_refl(kd, fm, kg, a);
     } else {
         crate::expr_arena_bridge::is_nat_lit_shape_model(e);
         crate::expr_arena_bridge::is_nat_lit_shape_model(r);
@@ -7023,7 +7023,7 @@ pub proof fn nat_pred_kconv<'x, 't>(env: Env<'x, 't>, e: ExprPtr<'t>, r: ExprPtr
         assert(crate::expr_model::nlbv(a) <= 0) by {
             reveal_with_fuel(crate::expr_model::nlbv, 2);
         }
-        crate::kclaims::cwh_of_pstep_star(kd, fm, kg, to_model_expr(e), a);
+        crate::kdual::cwh_of_pstep_star(kd, fm, kg, to_model_expr(e), a);
     }
 }
 
@@ -7038,11 +7038,11 @@ pub proof fn kcw_via<'x, 't>(env: Env<'x, 't>, x: ExprSpec, xn: ExprSpec, y: Exp
         kcw(env, x, y),
 {
     let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
-    crate::kclaims::tt_of_tp(kd, ke, kg, x, xn);
-    crate::kclaims::tt_of_tp(kd, ke, kg, y, yn);
-    crate::kclaims::cw_trans(kd, ke, kg, x, xn, yn);
-    crate::kclaims::cw_symm(kd, ke, kg, y, yn);
-    crate::kclaims::cw_trans_r(kd, ke, kg, x, yn, y);
+    crate::kdual::tt_of_tp(kd, ke, kg, x, xn);
+    crate::kdual::tt_of_tp(kd, ke, kg, y, yn);
+    crate::kdual::cw_trans(kd, ke, kg, x, xn, yn);
+    crate::kdual::cw_symm(kd, ke, kg, y, yn);
+    crate::kdual::cw_trans_r(kd, ke, kg, x, yn, y);
 }
 
 /// A claim about the weak head normal forms is a claim about the inputs.
@@ -7061,11 +7061,11 @@ pub proof fn def_eq_claim_via<'x, 't>(env: Env<'x, 't>, x: ExprSpec, xn: ExprSpe
         kconv_trans(env, x, yn, y);
     }
     // x ~ xn ~ yn (xn from x), then ~ y (yn from y)
-    crate::kclaims::tt_of_tp(kd, ke, kg, x, xn);
-    crate::kclaims::tt_of_tp(kd, ke, kg, y, yn);
-    crate::kclaims::cw_trans(kd, ke, kg, x, xn, yn);
-    crate::kclaims::cw_symm(kd, ke, kg, y, yn);
-    crate::kclaims::cw_trans_r(kd, ke, kg, x, yn, y);
+    crate::kdual::tt_of_tp(kd, ke, kg, x, xn);
+    crate::kdual::tt_of_tp(kd, ke, kg, y, yn);
+    crate::kdual::cw_trans(kd, ke, kg, x, xn, yn);
+    crate::kdual::cw_symm(kd, ke, kg, y, yn);
+    crate::kdual::cw_trans_r(kd, ke, kg, x, yn, y);
 }
 
 
@@ -7151,11 +7151,11 @@ pub proof fn nat_bin_whnf_claim<'x, 't>(env: Env<'x, 't>, h: ExprSpec, xm: ExprS
         kcw_of_step(env, sp, rm);
         kconv_trans(env, s0, sp, rm);
     }
-    crate::kclaims::cwh_replace(kd, fm, kg, h, args0, 0, xwm);
-    crate::kclaims::cwh_replace(kd, fm, kg, h, args1, 1, ywm);
-    crate::kclaims::cwh_trans(kd, fm, kg, s0, s1, sp);
-    crate::kclaims::cwh_of_pstep_star(kd, fm, kg, sp, rm);
-    crate::kclaims::cwh_trans(kd, fm, kg, s0, sp, rm);
+    crate::kdual::cwh_replace(kd, fm, kg, h, args0, 0, xwm);
+    crate::kdual::cwh_replace(kd, fm, kg, h, args1, 1, ywm);
+    crate::kdual::cwh_trans(kd, fm, kg, s0, s1, sp);
+    crate::kdual::cwh_of_pstep_star(kd, fm, kg, sp, rm);
+    crate::kdual::cwh_trans(kd, fm, kg, s0, sp, rm);
 }
 
 pub proof fn whnf_claim_spine_head<'x, 't>(env: Env<'x, 't>, h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
@@ -7171,7 +7171,7 @@ pub proof fn whnf_claim_spine_head<'x, 't>(env: Env<'x, 't>, h1: ExprSpec, h2: E
         crate::beta_model::spine_app_nlbv(h2, args);
     }
     spine_scope_pres(crate::env_model::env_arena_ids(env), h1, h2, args);
-    crate::kclaims::cwh_head(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), h1, h2, args);
+    crate::kdual::cwh_head(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), h1, h2, args);
 }
 
 pub proof fn spine_scope_pres(aids: (nat, nat), h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
@@ -7400,7 +7400,7 @@ pub proof fn binder_step_kcw<'x, 't>(
     crate::expr_model::dbj_deep_unreach(aids, x2, k, cj);
     crate::rctx::rctx_fresh(kg, x1, k);
     crate::rctx::rctx_fresh(kg, x2, k);
-    crate::kclaims::cw_bind(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), kg, bk, u1, u2, s1, s2, k);
+    crate::kdual::cw_bind(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), kg, bk, u1, u2, s1, s2, k);
 }
 
 /// The locals opened before depth `j` are closed and deep-in-scope below
@@ -7806,7 +7806,7 @@ pub proof fn binder_walk_close<'x, 't>(
         crate::beta_model::subst_full_empty(b1s[0], 0);
         crate::beta_model::subst_full_empty(b2s[0], 0);
     } else {
-        crate::kclaims::cw_open(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), b1s[0], b2s[0]);
+        crate::kdual::cw_open(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), b1s[0], b2s[0]);
     }
 }
 
@@ -7855,9 +7855,9 @@ pub proof fn whnf_claim_of_pstep_star<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: 
         crate::tc_model::deq_any_of_defeq(ke, e, r);
         kconv_of_deq(env, e, r);
         kcw_of_step(env, e, r);
-        crate::kclaims::cwh_of_pstep_star(kd, ke, kg, e, r);
+        crate::kdual::cwh_of_pstep_star(kd, ke, kg, e, r);
     } else {
-        crate::kclaims::cwh_open(kd, ke, kg, e, r);
+        crate::kdual::cwh_open(kd, ke, kg, e, r);
     }
 }
 
@@ -7897,7 +7897,7 @@ pub proof fn whnf_claim_sort<'x, 't>(env: Env<'x, 't>, l1: crate::level_model::L
     crate::tc_model::deq_any_of_leaf(ke, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
     kconv_of_deq(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
     kcw_of_step(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
-    crate::kclaims::cwh_sort(kd, ke, kg, l1, l2);
+    crate::kdual::cwh_sort(kd, ke, kg, l1, l2);
 }
 
 /// N BETA STEPS AT ONCE, the model half of `whnf_no_unfolding_aux`'s lambda
@@ -8029,7 +8029,7 @@ pub proof fn whnf_claim_refl<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
 {
     let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
     kconv_refl(env, a);
-    crate::kclaims::cwh_refl(kd, ke, kg, a);
+    crate::kdual::cwh_refl(kd, ke, kg, a);
 }
 
 pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: ExprSpec)
@@ -8043,7 +8043,7 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
     if crate::expr_model::nlbv(a) <= 0 {
         kconv_trans(env, a, b, c);
     }
-    crate::kclaims::cwh_trans(kd, ke, kg, a, b, c);
+    crate::kdual::cwh_trans(kd, ke, kg, a, b, c);
 }
 
 /// THE KERNEL'S TYPING JUDGEMENT: the typed family in the kernel's mode
@@ -8103,7 +8103,7 @@ pub proof fn kinfer_claim_conv<'x, 't>(env: Env<'x, 't>, e: ExprSpec, t: ExprSpe
     ensures
         kinfer_claim(env, e, t2),
 {
-    crate::kclaims::ci_whnf(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e, t, t2);
+    crate::kdual::ci_whnf(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e, t, t2);
     let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, t);
     kconv_trans(env, T, t, t2);
@@ -8132,7 +8132,7 @@ pub proof fn kinfer_conv<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r1: ExprSpec, r2
     ensures
         kinfer_claim(env, e, r2),
 {
-    crate::kclaims::ci_whnf(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e, r1, r2);
+    crate::kdual::ci_whnf(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e, r1, r2);
     let (T, f) = choose|T: ExprSpec, f: nat| #[trigger] ktc_marker(T, f) && ktypes(env, e, T, f)
         && crate::expr_model::nlbv(T) <= 0 && kconv(env, T, r1);
     kconv_trans(env, T, r1, r2);
@@ -8372,7 +8372,7 @@ pub proof fn pi_telescope_step<'x, 't>(
     assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
     assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
     let f = pi_rule_step(env, As[ii], Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii]), us[ii], acc);
-    crate::kclaims::ci_pi(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+    crate::kdual::ci_pi(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
         As[ii], Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii]), us[ii], acc);
     kinfer_of_ktypes(
         env,
@@ -8443,7 +8443,7 @@ pub proof fn pi_telescope_step_cc<'x, 't>(
     assert(kcc(env, As[ii], ExprSpec::Sort(us[ii])));
     assert(crate::expr_model::fv_absent(Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii])));
     assert(crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env))[crate::expr_arena_bridge::expr_id(locals[ii])] == As[ii]);
-    crate::kclaims::cc_pi(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), As[ii], Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii]), us[ii], acc);
+    crate::kdual::cc_pi(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), As[ii], Bs[ii], crate::expr_arena_bridge::expr_id(locals[ii]), us[ii], acc);
 }
 
 /// `pi_telescope` for the check claim.
@@ -8826,7 +8826,7 @@ pub proof fn lam_telescope_ci<'x, 't>(
         assert(crate::expr_model::fv_absent(As[ii], k));
         assert(crate::expr_model::nlbv(As[ii]) <= 0);
         assert(crate::expr_model::levels_fit(As[ii], (c1 + i) as u16));
-        crate::kclaims::ci_lam(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), As[ii], Bs[ii], k, C1, (c1 + i + 1) as u16);
+        crate::kdual::ci_lam(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), As[ii], Bs[ii], k, C1, (c1 + i + 1) as u16);
         crate::expr_model::abstr_full_absent(As[ii], k, 0);
         crate::expr_model::abstr_full_nlbv1(C1, k, 0);
         crate::expr_model::abstr_full_levels_fit(As[ii], seq![k], 0, (c1 + i) as u16);
@@ -8880,7 +8880,7 @@ pub proof fn lam_telescope_cc<'x, 't>(
         assert(crate::expr_model::fv_absent(Bs[ii], k));
         assert(crate::expr_model::fv_absent(As[ii], k));
         assert(kcc(env, As[ii], ExprSpec::Sort(lus[ii])));
-        crate::kclaims::cc_lam(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), As[ii], Bs[ii], k, lus[ii], C1, (c1 + i + 1) as u16);
+        crate::kdual::cc_lam(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), As[ii], Bs[ii], k, lus[ii], C1, (c1 + i + 1) as u16);
         crate::expr_model::abstr_full_absent(As[ii], k, 0);
         let R = lam_close(As, ks, T, i);
         assert(R == ExprSpec::Bind(BinderKind::Pi,
@@ -9226,7 +9226,7 @@ pub proof fn kconv_of_empty_pstep<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: Expr
     kconv_of_deq(env, x, y);
     kcw_of_step(env, x, y);
     if crate::expr_model::nlbv(y) <= 0 {
-        crate::kclaims::cwh_of_pstep_star(crate::env_model::to_model_of_declar_ty(env), fm, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
+        crate::kdual::cwh_of_pstep_star(crate::env_model::to_model_of_declar_ty(env), fm, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
     }
 }
 
@@ -9248,16 +9248,16 @@ pub proof fn eta_exp_kcw<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec, a: 
     assert(crate::tc_model::deq_eta(lam, y));
     crate::tc_model::deq_of_eta(ke, lam, y, 0);
     kconv_of_deq(env, lam, y);
-    crate::kclaims::cw_eta_lam(kd, ke, kg, y, a, b);
-    crate::kclaims::tt_eta_lam(kd, ke, kg, y, a, b);
-    crate::kclaims::cw_trans_r(kd, ke, kg, x, lam, y);
+    crate::kdual::cw_eta_lam(kd, ke, kg, y, a, b);
+    crate::kdual::tt_eta_lam(kd, ke, kg, y, a, b);
+    crate::kdual::cw_trans_r(kd, ke, kg, x, lam, y);
 }
 
 pub proof fn kcwh_refl<'x, 't>(env: Env<'x, 't>, e: ExprSpec)
     ensures
         kcwh(env, e, e),
 {
-    crate::kclaims::cwh_refl(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e);
+    crate::kdual::cwh_refl(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e);
 }
 
 pub proof fn kcwh_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: ExprSpec)
@@ -9267,7 +9267,7 @@ pub proof fn kcwh_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: E
     ensures
         kcwh(env, a, c),
 {
-    crate::kclaims::cwh_trans(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), a, b, c);
+    crate::kdual::cwh_trans(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), a, b, c);
 }
 
 /// Anything without locals or loose indices is in scope wherever anything is.
@@ -9356,6 +9356,114 @@ pub open spec fn nullary_marker(cid: u64, ind: u64, ls: Seq<crate::level_model::
 pub open spec fn kprop_claim<'x, 't>(env: Env<'x, 't>, a: ExprSpec) -> bool {
     exists|l: crate::level_model::LevelSpec| #[trigger] kinfer_claim(env, a, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>|
         #[trigger] crate::level_model::interp(l, rho) <= 0)
+}
+
+/// THE PROJECTION'S CLAIMS from `infer_proj`'s recorded walk: the walk at
+/// the kernel's environment carries over to the flagged one (the same
+/// tables, the claims dual), and the kernel's proposition checks are the
+/// full judgment's condition for a structure that may be a proposition.
+#[verifier::spinoff_prover]
+pub proof fn proj_claims<'x, 't>(
+    env0: Env<'x, 't>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<crate::level_model::LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    wb: ExprSpec,
+    btm: ExprSpec,
+    lv: crate::level_model::LevelSpec,
+    may_prop: bool,
+    check: bool,
+)
+    requires ({
+        let dty = crate::env_model::to_model_of_declar_ty(env0);
+        let denv = crate::env_model::to_model_of_env(env0);
+        let np = denv.ctor_np[cid] as nat;
+        let m = np + idx as nat;
+        let sq = crate::proj_reg::psq(am, np, s, idx as nat);
+        let ety = crate::beta_model::spine_app(ExprSpec::Const(ind, ls), am);
+        &&& denv.struct_ctor(ind) == Some(cid)
+        &&& denv.ctor_np.contains_key(cid)
+        &&& np <= am.len()
+        &&& denv.ctor_nf.contains_key(cid)
+        &&& (idx as nat) < denv.ctor_nf[cid] as nat
+        &&& dty.contains_key(cid)
+        &&& ls.len() == dty[cid].0.len()
+        &&& cs.len() == m + 1
+        &&& ws.len() == m
+        &&& cs[0] == crate::ctor_typing::ctor_ty_at(dty, cid, ls)
+        &&& forall|k: int| 0 <= k < m ==> #[trigger] kcwh(env0, cs[k], ws[k])
+        &&& forall|k: int| 0 <= k < m ==> (#[trigger] ws[k]) is Bind && ws[k]->Bind_0 == BinderKind::Pi
+        &&& forall|k: int| #![trigger ws[k]] 0 <= k < m ==> cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(ws[k]), seq![sq[k]], 0)
+        &&& forall|k: int| #![trigger ws[k]] 0 <= k < m ==> (cs[k] is Bind ==> ws[k] == cs[k])
+        &&& kcwh(env0, cs[m as int], wb)
+        &&& wb is Bind && wb->Bind_0 == BinderKind::Pi
+        &&& (cs[m as int] is Bind ==> wb == cs[m as int])
+        &&& crate::ctor_typing::pdom(wb) == btm
+        &&& kci(env0, s, ety)
+        &&& crate::expr_model::nlbv(s) <= 0
+        &&& forall|k: int| 0 <= k < am.len() ==> crate::expr_model::nlbv(#[trigger] am[k]) <= 0
+        &&& kci(env0, ety, ExprSpec::Sort(lv))
+        &&& !crate::ti_syntax::never_zero(lv) ==> may_prop
+        &&& may_prop ==> forall|k: int| #![trigger ws[k]] np <= k < m
+            && crate::expr_model::nlbv(crate::proj_reg::pbod(ws[k])) > 0 ==> kcprop(env0, crate::ctor_typing::pdom(ws[k]))
+        &&& may_prop ==> kcprop(env0, btm)
+        &&& check ==> kcc(env0, s, ety)
+    }),
+    ensures
+        kci(env0, ExprSpec::Proj(idx, Box::new(s)), btm),
+        check ==> kcc(env0, ExprSpec::Proj(idx, Box::new(s)), btm),
+{
+    let dty = crate::env_model::to_model_of_declar_ty(env0);
+    let denv = crate::env_model::to_model_of_env(env0);
+    let g = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env0));
+    let fd = crate::kclaims::flag(denv);
+    let np = denv.ctor_np[cid] as nat;
+    let m = np + idx as nat;
+    let wsf = ws.push(wb);
+    assert forall|k: int| 0 <= k <= m implies #[trigger] crate::kclaims::cwh(dty, denv, g, cs[k], wsf[k]) by {
+        if k < m {
+            assert(wsf[k] == ws[k]);
+            assert(kcwh(env0, cs[k], ws[k]));
+        }
+    }
+    assert forall|k: int| 0 <= k <= m implies #[trigger] crate::kclaims::cwh(dty, fd, g, cs[k], wsf[k]) by {
+        if k < m {
+            assert(wsf[k] == ws[k]);
+            assert(kcwh(env0, cs[k], ws[k]));
+        }
+    }
+    assert forall|k: int| 0 <= k <= m implies (#[trigger] wsf[k]) is Bind && wsf[k]->Bind_0 == BinderKind::Pi by {
+        if k < m {
+            assert(wsf[k] == ws[k]);
+        }
+    }
+    assert forall|k: int| #![trigger wsf[k]] 0 <= k < m implies cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(wsf[k]), seq![crate::proj_reg::psq(am, np, s, idx as nat)[k]], 0) by {
+        assert(wsf[k] == ws[k]);
+    }
+    assert forall|k: int| #![trigger wsf[k]] 0 <= k <= m implies (cs[k] is Bind ==> wsf[k] == cs[k]) by {
+        if k < m {
+            assert(wsf[k] == ws[k]);
+        }
+    }
+    assert(crate::proj_reg::pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, wsf, btm));
+    assert(crate::proj_reg::pwalk_ok(dty, fd, g, idx, s, ind, cid, ls, am, cs, wsf, btm));
+    if !crate::ti_syntax::never_zero(lv) {
+        assert forall|k: int| #![trigger wsf[k]] np <= k < m && crate::expr_model::nlbv(crate::proj_reg::pbod(wsf[k])) > 0
+            implies crate::kclaims::cprop(dty, fd, g, crate::ctor_typing::pdom(wsf[k])) by {
+            assert(wsf[k] == ws[k]);
+            assert(kcprop(env0, crate::ctor_typing::pdom(ws[k])));
+        }
+        assert(crate::proj_reg::pprop_ok(dty, fd, g, idx, cid, wsf, btm));
+    }
+    crate::kdual::ci_proj(dty, denv, g, idx, s, ind, cid, ls, am, cs, wsf, btm, lv);
+    if check {
+        crate::kdual::cc_proj(dty, denv, g, idx, s, ind, cid, ls, am, cs, wsf, btm, lv);
+    }
 }
 
 /// The kernel's proposition test gives the claim it rests on.
@@ -9693,9 +9801,9 @@ pub proof fn rec_step_claim<'x, 't>(
             crate::beta_model::spine_app_nlbv(s1, flds);
             crate::beta_model::spine_app_nlbv(s2, post);
         }
-        crate::kclaims::cwh_replace(kd, fm, kg, H, am, mi, mm);
-        crate::kclaims::cwh_rec_leaf(kd, fm, kg, x2);
-        crate::kclaims::cwh_trans(kd, fm, kg, x, x2, r);
+        crate::kdual::cwh_replace(kd, fm, kg, H, am, mi, mm);
+        crate::kdual::cwh_rec_leaf(kd, fm, kg, x2);
+        crate::kdual::cwh_trans(kd, fm, kg, x, x2, r);
     }
     // scope
     assert forall|S: vstd::iset::ISet<nat>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), x, S, c)
@@ -9738,7 +9846,7 @@ pub proof fn infer_app_step_kci<'x, 't>(env: Env<'x, 't>, sp: ExprSpec, a: ExprS
     let aty = crate::expr_model::subst_full(bt, ctxm, 0);
     let bt2 = crate::expr_model::subst_full(body, ctxm, 1);
     assert(crate::expr_model::subst_full(ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), ctxm, 0) == crate::metatheory::pi(aty, bt2));
-    crate::kclaims::ci_app(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), sp, a, aty, bt2);
+    crate::kdual::ci_app(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), sp, a, aty, bt2);
     crate::expr_model::subst_full_push(body, ctxm, a, 0);
 }
 
@@ -9759,7 +9867,7 @@ pub proof fn infer_app_step_kcc<'x, 't>(env: Env<'x, 't>, sp: ExprSpec, a: ExprS
     let aty = crate::expr_model::subst_full(bt, ctxm, 0);
     let bt2 = crate::expr_model::subst_full(body, ctxm, 1);
     assert(crate::expr_model::subst_full(ExprSpec::Bind(BinderKind::Pi, Box::new(bt), Box::new(body)), ctxm, 0) == crate::metatheory::pi(aty, bt2));
-    crate::kclaims::cc_app(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), sp, a, aty, bt2, ta);
+    crate::kdual::cc_app(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), sp, a, aty, bt2, ta);
     crate::expr_model::subst_full_push(body, ctxm, a, 0);
 }
 
@@ -9830,7 +9938,7 @@ pub proof fn dec_proj<'x, 't>(env: Env<'x, 't>, idx: usize, s1: ExprSpec, s2: Ex
     if crate::expr_model::nlbv(ExprSpec::Proj(idx, Box::new(s1))) <= 0 && crate::expr_model::nlbv(ExprSpec::Proj(idx, Box::new(s2))) <= 0 {
         kconv_proj_congr(env, idx, s1, s2);
     }
-    crate::kclaims::cw_proj(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), idx, s1, s2);
+    crate::kdual::cw_proj(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), idx, s1, s2);
 }
 
 pub proof fn dec_spine2<'x, 't>(env: Env<'x, 't>, h1: ExprSpec, h2: ExprSpec, a1: Seq<ExprSpec>, a2: Seq<ExprSpec>)
@@ -9851,10 +9959,10 @@ pub proof fn dec_spine2<'x, 't>(env: Env<'x, 't>, h1: ExprSpec, h2: ExprSpec, a1
         }
         kconv_spine_pairwise(env, h1, h2, a1, a2);
     }
-    assert forall|i: int| 0 <= i < a1.len() implies crate::kclaims::cw(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), #[trigger] a1[i], a2[i]) by {
+    assert forall|i: int| 0 <= i < a1.len() implies #[trigger] kcw(env, a1[i], a2[i]) by {
         assert(def_eq_claim(env, a1[i], a2[i]));
     }
-    crate::kclaims::cw_spine2(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), h1, h2, a1, a2);
+    crate::kdual::cw_spine2(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), h1, h2, a1, a2);
 }
 
 pub proof fn def_eq_claim_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpec)
@@ -9866,7 +9974,7 @@ pub proof fn def_eq_claim_symm<'x, 't>(env: Env<'x, 't>, x: ExprSpec, y: ExprSpe
     if crate::expr_model::nlbv(x) <= 0 && crate::expr_model::nlbv(y) <= 0 {
         kconv_symm(env, x, y);
     }
-    crate::kclaims::cw_symm(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
+    crate::kdual::cw_symm(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), x, y);
 }
 
 /// ONE QUOTIENT STEP, the model half of `reduce_quot`. The major premise
@@ -9911,14 +10019,14 @@ pub proof fn quot_step_lemma<'x, 't>(
         // M7: the major replaced by its reduct, then the quotient step
         let (kd, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
         let s2 = crate::beta_model::spine_app(head, args2);
-        crate::kclaims::cwh_replace(kd, fm, kg, head, am, q, qm);
+        crate::kdual::cwh_replace(kd, fm, kg, head, am, q, qm);
         crate::beta_model::spine_destruct_app(head, args2);
         crate::tc_model::deq_quot_intro(fm.export, head, args2, q as nat, mk_head, mk_args, r);
         if crate::expr_model::nlbv(s2) <= 0 {
             crate::reduce_fv::quot_result_nlbv(fm.export, s2);
         }
-        crate::kclaims::cwh_quot_leaf(kd, fm, kg, s2);
-        crate::kclaims::cwh_trans(kd, fm, kg, s0, s2, r);
+        crate::kdual::cwh_quot_leaf(kd, fm, kg, s2);
+        crate::kdual::cwh_trans(kd, fm, kg, s0, s2, r);
         if crate::expr_model::nlbv(s0) <= 0 {
             crate::beta_model::spine_app_nlbv_decompose(head, am);
             assert(crate::expr_model::nlbv(am[q]) <= 0);
@@ -11694,8 +11802,8 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                         crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(d_uparams)),
                         crate::level_arena_bridge::to_model_of_levels(c_uparams),
                     );
-                    crate::kclaims::ci_const(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::level_arena_bridge::name_id(c_name), crate::level_arena_bridge::to_model_of_levels(c_uparams));
-                    crate::kclaims::cc_const(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::level_arena_bridge::name_id(c_name), crate::level_arena_bridge::to_model_of_levels(c_uparams));
+                    crate::kdual::ci_const(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::level_arena_bridge::name_id(c_name), crate::level_arena_bridge::to_model_of_levels(c_uparams));
+                    crate::kdual::cc_const(crate::env_model::to_model_of_declar_ty(*old(self).env), crate::env_model::to_model_of_env(*old(self).env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(*old(self).env)), crate::level_arena_bridge::name_id(c_name), crate::level_arena_bridge::to_model_of_levels(c_uparams));
                 }
                 r
             },
@@ -11935,17 +12043,17 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 let etm = to_model_expr(e_type);
                 assert(crate::expr_arena_bridge::const_levels_vec(out_c0) == crate::expr_arena_bridge::const_levels_vec(_f));
                 assert(am.subrange(0, np as int) =~= am);
-                if crate::kclaims::kh(kd, ke) {
+                if crate::kclaims::kh(kd, ke) || crate::kclaims::kh(kd, crate::kclaims::flag(ke)) {
                     if crate::expr_model::nlbv(em) <= 0 {
                         assert(kci(env0, em, etm));
                         assert(crate::expr_model::nlbv(etm) <= 0);
                         let lv = choose|lv: crate::level_model::LevelSpec| #[trigger] kci(env0, etm, ExprSpec::Sort(lv))
                             && crate::ti_syntax::never_zero(lv);
-                        crate::kclaims::cwh_eta_exp(kd, ke, kg, em, etm,
+                        crate::kdual::cwh_eta_exp(kd, ke, kg, em, etm,
                             crate::level_arena_bridge::name_id(c_name), crate::level_arena_bridge::name_id(ctor_name0),
                             crate::expr_arena_bridge::const_levels_vec(_f), am, np as nat, nf as nat, to_model_expr(out), lv);
                     } else {
-                        crate::kclaims::cwh_open(kd, ke, kg, em, to_model_expr(out));
+                        crate::kdual::cwh_open(kd, ke, kg, em, to_model_expr(out));
                     }
                 }
             }
