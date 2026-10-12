@@ -325,6 +325,7 @@ needed a different shape.
 | `infer_const` | `src/tc.rs` | accessor shape, and an arity check hoisted one frame |
 | `infer_let`, `infer_lambda` | `src/tc.rs` | the level `infer_sort_of` returns (in `Check` mode) is bound to a local instead of discarded, so the check claim can name the binder type's sort; same call |
 | `infer` | `src/tc.rs` | both cache lookups go through the verified readers `cached_infer_check`/`cached_infer_no_check` — same lookups, and they hand back the caches' claims |
+| `append_index_after` | `src/name.rs` | the two `format!`s (`"{s}_{idx}"`, `"_{idx}"`) are the claim-free helpers `suffixed`/`underscored` (Verus cannot check `format!`); same strings, same allocations. Verified in place, which retires its `assume_specification` |
 | `nat_sub`, `nat_div`, `nat_mod`, `nat_shl`, `nat_shr` | `src/util.rs` | `y > x`, `y.is_zero()` and the arithmetic operators through the `nat_lit_model` wrappers that carry their specifications (`biguint_gt`, `biguint_is_zero`, `biguint_sub`/`div`/`rem`/`mul`), and `BigUint::from(2u8)` as `1 + 1`; the same operations. Verified in place, which retires their five `assume_specification`s |
 | `is_nat_zero`, `pred_of_nat_succ` | `src/expr.rs` | `read_bignum(..).map(|n| n.is_zero()).unwrap_or(false)` and `read_bignum(ptr)?`, `n - 1u8` → `read_bignum_value`, `biguint_is_zero`, `biguint_pred` |
 | `try_string_lit_expansion` | `src/tc.rs` | the `matches!(..) \|\| matches!(..)` bound in two steps so the swapped call's claim can be turned around; same calls, same short-circuit |

@@ -31,7 +31,7 @@ the like, which promise nothing). The vstd specifications come from the
 Verus fork nanoda builds against (Cargo.toml's `vstd` path); its additions
 are listed in docs/VSTD_GAPS.md, "The fork today".
 
-On 2026-10-11: 55 claiming items and 32 claim-free. The kernel's
+On 2026-10-12: 53 claiming items and 34 claim-free. The kernel's
 `nat_sub`, `nat_div`, `nat_mod`, `nat_shl` and `nat_shr` are verified in
 place (they were five claims); verifying the parser's decimal reader
 added two library ones (`BigUint::parse_bytes`, `&BigUint * &BigUint`).
@@ -50,7 +50,9 @@ Unique locals are verified the same way: `mk_unique` is verified in
 place, every stored `Unique` local's serial is below a ghost bound no
 greater than the counter, so a new local is the first with its serial
 (`expr_arena_bridge::unique_canon`), and two such locals with one serial
-are one (`unique_serial_injective`, a lemma now).
+are one (`unique_serial_injective`, a lemma now). `append_index_after` is verified
+in place too (its two `format!`s are claim-free helpers); the axiom that
+its fresh names differ by index was unused and is gone.
 The parser's boundary with the libraries (reading a line, serde's
 decoding, the formatted messages, the axiom whitelist's name text) is
 claim-free helpers, so it promises nothing the proofs use.

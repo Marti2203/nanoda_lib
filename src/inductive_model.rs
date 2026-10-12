@@ -51,7 +51,6 @@ use crate::expr_arena_bridge::{const_id, const_levels_of, const_levels_vec, cons
 use crate::expr_arena_bridge::{expr_as_app, expr_as_lambda, expr_as_let, expr_as_pi, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
 use crate::expr_arena_bridge::{expr_ptr_eq, verified_abstr_lambda_telescope, verified_abstr_pi_telescope, verified_foldl_apps};
 #[cfg(verus_only)]
-#[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 #[cfg(verus_only)]
 use crate::expr_model::subst_expr_levels_rel;
@@ -74,7 +73,6 @@ use crate::level_model::level_names;
 use crate::level_model::LevelSpec;
 use crate::name::Name;
 #[cfg(verus_only)]
-use crate::name_arena_bridge::{append_index_after_id, gen_elim_level_collision_bound};
 #[cfg(verus_only)]
 use crate::quot_model::local_type;
 #[cfg(verus_only)]

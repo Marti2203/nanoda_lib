@@ -38,21 +38,49 @@ impl<'a> Name<'a> {
     }
 }
 
+::vstd::prelude::verus! {
+
+/// `"{s}_{idx}"`, `s` the stored string `sfx` (claim-free: the text is not
+/// modelled).
+#[verifier::external_body]
+fn suffixed<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>, sfx: crate::util::StringPtr<'t>, idx: u64) -> String {
+    format!("{}_{}", ctx.read_string(sfx), idx)
+}
+
+/// `"_{idx}"` (claim-free).
+#[verifier::external_body]
+fn underscored(idx: u64) -> String {
+    format!("_{}", idx)
+}
+
 impl<'x, 't: 'x, 'p: 't> TcCtx<'t, 'p> {
-    pub(crate) fn append_index_after(&mut self, n: NamePtr<'t>, idx: u64) -> NamePtr<'t> {
+    /// Verified in place (it was an `assume_specification`): a name the
+    /// context owns. VERUS-REWRITE(formatted-string): the two `format!`s are
+    /// the claim-free helpers `suffixed`/`underscored`; same strings.
+    pub(crate) fn append_index_after(&mut self, n: NamePtr<'t>, idx: u64) -> (result: NamePtr<'t>)
+        requires
+            crate::util_model::owns(*old(self), n),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            final(self).expr_cache == old(self).expr_cache,
+    {
         match self.read_name(n) {
             Str(pfx, sfx, ..) => {
-                let s = self.read_string(sfx);
-                let s = self.alloc_string(CowStr::Owned(format!("{}_{}", s, idx)));
+                let s = suffixed(self, sfx, idx);
+                let s = self.alloc_string(CowStr::Owned(s));
                 self.str(pfx, s)
             }
             _ => {
-                let s = self.alloc_string(CowStr::Owned(format!("_{}", idx)));
+                let s = self.alloc_string(CowStr::Owned(underscored(idx)));
                 self.str(n, s)
             }
         }
     }
 }
+
+} // verus!
 
 ::vstd::prelude::verus! {
 
