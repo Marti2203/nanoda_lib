@@ -320,7 +320,7 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
         Rule::AppCong(_, _) => d_ls2_app(sig, d, dl, ks, vs, vs2),
         Rule::Beta(_, _) => d_ls2_via(sig, d, dl, ks, vs, vs2, 4),
         Rule::Zeta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
-        Rule::Iota(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 1),
+        Rule::Iota(_) | Rule::IotaG(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 1),
         Rule::ProjCong(_) => d_ls2_pcong(sig, d, dl, ks, vs, vs2),
         Rule::ProjIota(_) => {
             reveal(crate::ti_syntax::proj_iota_ok);

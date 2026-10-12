@@ -226,7 +226,7 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
             }
         },
         Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => { assert(scoped(j)); },
-        Rule::Iota(_) | Rule::ProjCong(_) | Rule::ProjIota(_) | Rule::StructEta(_) | Rule::RecEta(_) => d_scope_red(sig, d),
+        Rule::Iota(_) | Rule::IotaG(_) | Rule::ProjCong(_) | Rule::ProjIota(_) | Rule::StructEta(_) | Rule::RecEta(_) => d_scope_red(sig, d),
     }
 }
 
@@ -235,7 +235,7 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
 proof fn d_scope_red(sig: Sig, d: Deriv)
     requires
         valid(sig, d),
-        d->Node_0 is Iota || d->Node_0 is ProjCong || d->Node_0 is ProjIota || d->Node_0 is StructEta || d->Node_0 is RecEta,
+        d->Node_0 is Iota || d->Node_0 is IotaG || d->Node_0 is ProjCong || d->Node_0 is ProjIota || d->Node_0 is StructEta || d->Node_0 is RecEta,
     ensures
         scoped(concl(d)),
     decreases d, 0int,

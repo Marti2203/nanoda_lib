@@ -60,10 +60,11 @@ pub open spec fn no_recs(sig: Sig) -> bool {
 
 /// What the model needs of the signature's recursors to interpret them:
 /// each is in the fragment `dom_rec_end::rec_frag` (docs/TYPED_TARGET.md,
-/// "The landing"). Syntactic, so the Iota rule can ask it.
+/// "The landing"), and the signature is not the full judgment's. Syntactic,
+/// so the Iota rule can ask it.
 #[verifier::opaque]
 pub open spec fn iota_ok(sig: Sig) -> bool {
-    forall|rid: u64| #[trigger] sig.ienv.recs.contains_key(rid) ==> crate::dom_rec_end::rec_frag(sig, rid)
+    !sig.full && forall|rid: u64| #[trigger] sig.ienv.recs.contains_key(rid) ==> crate::dom_rec_end::rec_frag(sig, rid)
 }
 
 /// Each recursor of a signature meeting Iota's condition is in the
@@ -74,6 +75,7 @@ pub proof fn frag_of(sig: Sig, rid: u64)
         sig.ienv.recs.contains_key(rid),
     ensures
         crate::dom_rec_end::rec_frag(sig, rid),
+        !sig.full,
 {
     reveal(iota_ok);
 }
@@ -95,6 +97,10 @@ pub ghost struct Sig {
     pub rank: Map<u64, nat>,
     /// The recursor and constructor tables the iota rule reads.
     pub ienv: crate::expr_arena_bridge::EnvSpec,
+    /// Lean's full rules apply (`IotaG`, ...), not only the fragment the
+    /// domain model interprets (docs/TYPED_TARGET.md, "The conditional
+    /// theorem").
+    pub full: bool,
 }
 
 /// The highest rank of a constant `e` mentions, plus one (0 for none).
@@ -198,6 +204,9 @@ pub enum Rule {
     /// rule's instance, where both sides are typed, and their type is a
     /// type at the given sort (a proposition for a recursor into Prop).
     Iota(LevelSpec),
+    /// Lean's iota at any recursor: the environment's own rule, where both
+    /// sides are typed, in the full judgment.
+    IotaG(LevelSpec),
     /// A projection, at its field's type over the parameters and the
     /// earlier projections (a proposition when the structure may be one).
     ProjCong(LevelSpec),
@@ -397,6 +406,12 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                 && n == crate::beta_model::rec_result(sig.ienv, m) && iota_lv(sig, m)
                 && l == iota_lm(sig, m)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + iota_pjs(sig, g, m)),
+            _ => false,
+        },
+        Rule::IotaG(l) => match j {
+            Jd::Eq(g, m, n, t) => sig.full && crate::beta_model::rec_ready(sig.ienv, m)
+                && n == crate::beta_model::rec_result(sig.ienv, m)
+                && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]),
             _ => false,
         },
         Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),

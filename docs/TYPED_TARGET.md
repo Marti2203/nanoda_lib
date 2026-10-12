@@ -2377,3 +2377,31 @@ the fragment (`m` is not Sort-typed: `rec_small`, `rec_frag_l`,
   structure sides.
 - **Later: dependent fields** (`Sigma.snd`, `Subtype.property`): table
   entries that depend on earlier fields (Σ-codes).
+
+### The conditional theorem (started 2026-10-12)
+
+Goal: the end-to-end theorem for EVERY export, conditional on named
+metatheory hypotheses `H_meta` about Lean's type theory (Pi/sort
+injectivity, type-former injectivity, unique typing, subject reduction for
+the kernel's reductions), which are open for full Lean. Inside the
+fragment the domain model still discharges them; outside, they are
+assumptions, stated once.
+
+Design: the signature carries a flag `Sig.full`. Lean's rules that the
+model does not interpret (`IotaG`: iota at any recursor, by the
+environment's own rule; later K, `Quot`, literals, general structures) fire
+only when `full` holds; `iota_ok` (what the model needs) includes
+`!full`, so every model proof sees them as vacuous. `jsig` keeps
+`full: false`, so every existing result is unchanged; the conditional
+theorem is stated at `Sig { full: true, ..jsig }`, into which every
+fragment derivation transfers (the old rules do not read the flag). Its
+shape: `frag_env || H_meta(full sig) ==> kernel claims at the full sig`.
+
+Unlike gating on a semantic predicate, the flag is preserved by every
+signature operation (`strip_below`, `sig_with`, `sig_swap`, `twin`), so
+the structural lemmas (renaming, substitution, level instances, local
+swap/close, scope, generation, extension) carry the new rules directly.
+
+- **`IotaG` -- DONE.** Premises: `rec_ready`, `n == rec_result`, both
+  sides typed at `t`, `t` a type. Transports via `psub_rec`, `fswap_rec`,
+  `fclose_rec`, `li_rec`, `rec_sub`.

@@ -369,6 +369,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::Beta(_, _) => d_sub_beta(sig, d, dl, s, s2),
         Rule::Zeta(_) => d_sub_zeta(sig, d, dl, s, s2),
         Rule::Iota(_) => d_sub_iota(sig, d, dl, s, s2),
+        Rule::IotaG(_) => d_sub_iotag(sig, d, dl, s, s2),
         Rule::ProjCong(_) => d_sub_pcong(sig, d, dl, s, s2),
         Rule::ProjIota(_) => d_sub_piota(sig, d, dl, s, s2),
         Rule::StructEta(_) => d_sub_seta(sig, d, dl, s, s2),
@@ -1206,6 +1207,49 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     ] + pj2));
     valid_node(sig, Rule::Iota(l), bj, bp);
     let bd = node(Rule::Iota(l), bj, bp);
+    let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
+    let z = d_trans(sig, bd, bb);
+    mk_d(sig, z);
+}
+
+#[verifier::spinoff_prover]
+proof fn d_sub_iotag(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is IotaG,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let l = rule->IotaG_0;
+    let g = j->Eq_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    spair_left(sig, g, dl, s, s2);
+    d_sub(sig, ps[0], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s2);
+    d_sub(sig, ps[2], dl, s, s);
+    assert(psub(sort(l), s) == sort(l));
+    crate::ti_subst::psub_rec(s, sig.ienv, m);
+    let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
+    let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
+    let q2 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    let bj = eq(dl, psub(m, s), psub(n, s), psub(a, s));
+    let bp = seq![q0, q1, q2];
+    assert(prems(bp, seq![
+        eq(dl, psub(m, s), psub(m, s), psub(a, s)),
+        eq(dl, psub(n, s), psub(n, s), psub(a, s)),
+        eq(dl, psub(a, s), psub(a, s), sort(l)),
+    ]));
+    valid_node(sig, Rule::IotaG(l), bj, bp);
+    let bd = node(Rule::IotaG(l), bj, bp);
     let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
     let z = d_trans(sig, bd, bb);
     mk_d(sig, z);

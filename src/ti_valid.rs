@@ -87,7 +87,7 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Zeta(_) => {
             d_ty(sig, ps[2]);
         },
-        Rule::Iota(_) => {
+        Rule::Iota(_) | Rule::IotaG(_) => {
             d_ty(sig, ps[0]);
         },
         Rule::RecEta(_) => {
@@ -136,6 +136,7 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
         || (sig2.consts == sig.consts && sig2.rank == sig.rank)
     &&& sig.ienv.sub(sig2.ienv)
     &&& iota_ok(sig2)
+    &&& (sig.full ==> sig2.full)
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_ind.contains_key(k) ==> sig2.ienv.ctor_ind.contains_key(k) && sig2.ienv.ctor_ind[k] == sig.ienv.ctor_ind[k]
     &&& forall|k: u64| #[trigger] sig.ienv.struct_ctor.contains_key(k) ==> sig2.ienv.struct_ctor.contains_key(k) && sig2.ienv.struct_ctor[k] == sig.ienv.struct_ctor[k]
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_nf.contains_key(k) ==> sig2.ienv.ctor_nf.contains_key(k) && sig2.ienv.ctor_nf[k] == sig.ienv.ctor_nf[k]
@@ -369,6 +370,9 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
         Rule::Local(_) => {
             let k = j->Eq_1->Free_0;
             assert(sig.locals.contains_key(k));
+        },
+        Rule::IotaG(_) => {
+            rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
         },
         Rule::Iota(_) => {
             let m = j->Eq_1;

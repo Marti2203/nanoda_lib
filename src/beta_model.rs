@@ -840,6 +840,15 @@ pub open spec fn rec_ready_u(env: EnvSpec, s: ExprSpec) -> bool {
     }
 }
 
+/// A ready redex is ready up to its rule's right-hand side.
+pub proof fn rec_ready_u_of(env: EnvSpec, s: ExprSpec)
+    requires
+        rec_ready(env, s),
+    ensures
+        rec_ready_u(env, s),
+{
+}
+
 /// The rule instance when `rec_ready` (garbage otherwise): the rule
 /// value at the recursor's levels, applied to the params/motives/minors
 /// prefix, then the constructor's FIELDS (the last `nfields` arguments

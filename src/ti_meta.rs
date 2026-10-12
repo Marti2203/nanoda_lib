@@ -143,7 +143,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::AppCong(_, _) => d_wf(sig, ps[0]),
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
         Rule::Zeta(_) => d_wf(sig, ps[0]),
-        Rule::Iota(_) => d_wf(sig, ps[0]),
+        Rule::Iota(_) | Rule::IotaG(_) => d_wf(sig, ps[0]),
         Rule::ProjCong(_) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             d_wf(sig, ps[0])
@@ -322,6 +322,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
         Rule::Zeta(..) => d_ren_zeta(sig, d, w, dl, r),
         Rule::Iota(_) => d_ren_iota(sig, d, w, dl, r),
+        Rule::IotaG(_) => d_ren_iotag(sig, d, w, dl, r),
         Rule::ProjCong(_) => d_ren_pcong(sig, d, w, dl, r),
         Rule::ProjIota(_) => d_ren_piota(sig, d, w, dl, r),
         Rule::StructEta(_) => d_ren_seta(sig, d, w, dl, r),
@@ -897,6 +898,44 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     ] + pj2));
     valid_node(sig, Rule::Iota(l), j2, ps2);
     node(Rule::Iota(l), j2, ps2)
+}
+
+/// General iota, renamed.
+#[verifier::spinoff_prover]
+proof fn d_ren_iotag(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is IotaG,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let l = rule->IotaG_0;
+    let m = j->Eq_1;
+    let n = j->Eq_2;
+    let a = j->Eq_3;
+    let q = rn(r);
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    let d2 = d_ren(sig, ps[2], w, dl, r);
+    assert(psub(sort(l), q) == sort(l));
+    crate::ti_subst::psub_rec(q, sig.ienv, m);
+    let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    let ps2 = seq![d0, d1, d2];
+    assert(prems(ps2, seq![
+        eq(dl, psub(m, q), psub(m, q), psub(a, q)),
+        eq(dl, psub(n, q), psub(n, q), psub(a, q)),
+        eq(dl, psub(a, q), psub(a, q), sort(l)),
+    ]));
+    valid_node(sig, Rule::IotaG(l), j2, ps2);
+    node(Rule::IotaG(l), j2, ps2)
 }
 
 /// Structure eta, renamed.

@@ -312,7 +312,7 @@ pub proof fn gen(sig: Sig, d: Deriv)
             assert(gmark(t, x, l1, l1));
             gen(sig, ps[2]);
         },
-        Rule::Iota(_) => {
+        Rule::Iota(_) | Rule::IotaG(_) => {
             gen(sig, ps[0]);
             gen(sig, ps[1]);
         },
