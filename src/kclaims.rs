@@ -854,10 +854,11 @@ pub open spec fn ci_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Ma
 /// THE CHECK CLAIM (kernel `Check` mode): in every admissible context `e`
 /// is really typed, at a type convertible to `t`. What `ci` assumes of `e`,
 /// `Check` mode establishes. Literals are outside the fragment's
-/// judgment, so the claim is about the fragment's terms; a projection's
+/// judgment, so the claim is about the fragment's terms there (every term
+/// in the full judgment, `cterm`); a projection's
 /// structure is one the model smashes (`proj_reg::cc_proj`).
 pub open spec fn cc(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec) -> bool {
-    kh(dty, denv) && frag_term(e) ==> forall|d: Map<nat, ExprSpec>| #![trigger cc_at(dty, denv, d, e, t)]
+    kh(dty, denv) && cterm(denv, e) ==> forall|d: Map<nat, ExprSpec>| #![trigger cc_at(dty, denv, d, e, t)]
         lctx_wf(dty, denv, d) && sub(rctx(g, e), d) ==> cc_at(dty, denv, d, e, t)
 }
 
@@ -870,7 +871,7 @@ pub proof fn cc_use(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
     -> (t2: ExprSpec)
     requires
         kh(dty, denv),
-        frag_term(e),
+        cterm(denv, e),
         cc(dty, denv, g, e, t),
         lctx_wf(dty, denv, d),
         sub(rctx(g, e), d),
@@ -935,14 +936,26 @@ pub proof fn cc_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
     }
 }
 
-/// CHECK, LITERALS: outside the fragment.
+/// CHECK, LITERALS: outside the fragment; in the full judgment typed at
+/// their declared type.
 pub proof fn cc_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<nat, ExprSpec>, e: ExprSpec, cid: u64)
     requires
         (matches!(e, ExprSpec::NatLit(_)) && cid == crate::expr_arena_bridge::nat_type_id(denv.export))
         || (matches!(e, ExprSpec::StringLit(_)) && cid == crate::expr_arena_bridge::string_type_id(denv.export)),
+        dty.contains_key(cid),
+        dty[cid].0.len() == 0,
+        dty[cid].1 is Sort,
     ensures
         cc(dty, denv, g, e, ExprSpec::Const(cid, Seq::empty())),
 {
+    let t = ExprSpec::Const(cid, Seq::<LevelSpec>::empty());
+    if kh(dty, denv) && cterm(denv, e) {
+        // in the full judgment a literal is typed at its type (`LitTy`)
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
+            lit_typed_full(dty, denv, d, e, cid);
+            tconv_refl(dty, denv, d, t);
+        }
+    }
 }
 
 /// A check claim moves along a reduction of its type.
@@ -954,7 +967,7 @@ pub proof fn cc_whnf(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<
     ensures
         cc(dty, denv, g, e, t1),
 {
-    if kh(dty, denv) && frag_term(e) {
+    if kh(dty, denv) && cterm(denv, e) {
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t1) by {
             let t2 = cc_use(dty, denv, g, d, e, t0);
             rtyped_closed(dty, denv, d, e);
@@ -987,7 +1000,7 @@ pub proof fn cc_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
     let e = ExprSpec::App(Box::new(f), Box::new(a));
     let p = crate::metatheory::pi(pa, pb);
     let t = subst_full(pb, seq![a], 0);
-    if kh(dty, denv) && frag_term(e) {
+    if kh(dty, denv) && cterm(denv, e) {
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
             let sig = jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
@@ -1035,13 +1048,13 @@ pub proof fn cc_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
 {
     let e = ExprSpec::Let(Box::new(ty), Box::new(v), Box::new(b));
     let bv = subst_full(b, seq![v], 0);
-    if kh(dty, denv) && frag_term(e) {
+    if kh(dty, denv) && cterm(denv, e) {
         assert forall|i: nat| #[trigger] fv_absent(e, i) implies fv_absent(bv, i) by {
             if !fv_absent(bv, i) {
                 crate::rctx::subst_free_fv(b, v, 0, i);
             }
         }
-        frag_term_inst(b, v);
+        cterm_subst(denv, b, v, 0);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) implies #[trigger] cc_at(dty, denv, d, e, t) by {
             let sig = jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
@@ -1097,8 +1110,8 @@ pub proof fn cc_pi(
 {
     let x = ExprSpec::Bind(BinderKind::Pi, Box::new(a), Box::new(b));
     let t = ExprSpec::Sort(LevelSpec::IMax(Box::new(u), Box::new(acc)));
-    if kh(dty, denv) && frag_term(x) {
-        frag_term_subst(b, ExprSpec::Free(lid), 0);
+    if kh(dty, denv) && cterm(denv, x) {
+        cterm_subst(denv, b, ExprSpec::Free(lid), 0);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) implies #[trigger] cc_at(dty, denv, d, x, t) by {
             let sig = jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
@@ -1154,8 +1167,8 @@ pub proof fn cc_lam(
     let x = ExprSpec::Bind(BinderKind::Lam, Box::new(a), Box::new(b));
     let cod = crate::expr_model::abstr_full(c, seq![lid], 0);
     let t = crate::metatheory::pi(a, cod);
-    if kh(dty, denv) && frag_term(x) {
-        frag_term_subst(b, ExprSpec::Free(lid), 0);
+    if kh(dty, denv) && cterm(denv, x) {
+        cterm_subst(denv, b, ExprSpec::Free(lid), 0);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) implies #[trigger] cc_at(dty, denv, d, x, t) by {
             let sig = jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
@@ -1237,7 +1250,7 @@ pub proof fn cc_closed_is_type(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpe
     requires
         kh(dty, denv),
         cc(dty, denv, g, e, ExprSpec::Sort(l)),
-        frag_term(e),
+        cterm(denv, e),
         !crate::expr_model::has_fv(e),
     ensures
         is_type(dty, denv, Map::empty(), e),
@@ -1254,7 +1267,7 @@ pub proof fn cc_closed_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
     requires
         kh(dty, denv),
         cc(dty, denv, g, e, t),
-        frag_term(e),
+        cterm(denv, e),
         !crate::expr_model::has_fv(e),
     ensures
         exists|t2: ExprSpec| #[trigger] typed(dty, denv, Map::empty(), e, t2) && tconv(dty, denv, Map::empty(), t2, t),
@@ -3719,6 +3732,53 @@ pub proof fn frag_term_inst(b: ExprSpec, v: ExprSpec)
         frag_term(subst_full(b, seq![v], 0)),
 {
     frag_term_subst(b, v, 0);
+}
+
+/// A TERM OF THE FULL JUDGMENT: anything but the model's non-term.
+pub open spec fn full_term(e: ExprSpec) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::Closed => false,
+        ExprSpec::Proj(_, x) => full_term(*x),
+        ExprSpec::App(f, a) => full_term(*f) && full_term(*a),
+        ExprSpec::Bind(_, t, b) => full_term(*t) && full_term(*b),
+        ExprSpec::Let(t, v, b) => full_term(*t) && full_term(*v) && full_term(*b),
+        _ => true,
+    }
+}
+
+pub proof fn full_term_subst(b: ExprSpec, v: ExprSpec, off: nat)
+    requires
+        full_term(b),
+        full_term(v),
+    ensures
+        full_term(subst_full(b, seq![v], off)),
+    decreases b,
+{
+    match b {
+        ExprSpec::App(f, x) => { full_term_subst(*f, v, off); full_term_subst(*x, v, off); },
+        ExprSpec::Bind(_, t, bd) => { full_term_subst(*t, v, off); full_term_subst(*bd, v, off + 1); },
+        ExprSpec::Let(t, x, bd) => { full_term_subst(*t, v, off); full_term_subst(*x, v, off); full_term_subst(*bd, v, off + 1); },
+        ExprSpec::Proj(_, x) => { full_term_subst(*x, v, off); },
+        _ => {},
+    }
+}
+
+/// THE TERMS A CHECK CLAIM COVERS: the fragment's, or in the full judgment
+/// every term (literals included).
+pub open spec fn cterm(denv: EnvSpec, e: ExprSpec) -> bool {
+    if denv.full { full_term(e) } else { frag_term(e) }
+}
+
+pub proof fn cterm_subst(denv: EnvSpec, b: ExprSpec, v: ExprSpec, off: nat)
+    requires
+        cterm(denv, b),
+        cterm(denv, v),
+    ensures
+        cterm(denv, subst_full(b, seq![v], off)),
+{
+    if denv.full { full_term_subst(b, v, off); } else { frag_term_subst(b, v, off); }
 }
 
 /// ENTERING A BINDER: the far local `j2`, and the swapped context the

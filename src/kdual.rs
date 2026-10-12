@@ -198,6 +198,9 @@ pub proof fn cc_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
     requires
         (matches!(e, ExprSpec::NatLit(_)) && cid == crate::expr_arena_bridge::nat_type_id(denv.export))
         || (matches!(e, ExprSpec::StringLit(_)) && cid == crate::expr_arena_bridge::string_type_id(denv.export)),
+        dty.contains_key(cid),
+        dty[cid].0.len() == 0,
+        dty[cid].1 is Sort,
     ensures
         cc(dty, denv, g, e, ExprSpec::Const(cid, Seq::empty())),
         cc(dty, flag(denv), g, e, ExprSpec::Const(cid, Seq::empty())),
