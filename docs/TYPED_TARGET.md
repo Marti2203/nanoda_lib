@@ -2402,6 +2402,24 @@ signature operation (`strip_below`, `sig_with`, `sig_swap`, `twin`), so
 the structural lemmas (renaming, substitution, level instances, local
 swap/close, scope, generation, extension) carry the new rules directly.
 
-- **`IotaG` -- DONE.** Premises: `rec_ready`, `n == rec_result`, both
-  sides typed at `t`, `t` a type. Transports via `psub_rec`, `fswap_rec`,
-  `fclose_rec`, `li_rec`, `rec_sub`.
+- **`RedG` -- DONE.** One rule for the kernel's contractions beyond
+  beta/delta/zeta, `full_red::full_red`: iota by the environment's own
+  rule (`rec_ready`/`rec_result`), Nat folding, quotient reduction,
+  projection of a constructor application, Nat-literal unfolding, String
+  expansion -- `pstep`'s redexes. Both sides typed at `t`, `t` a type.
+  K-like reduction needs no rule: the kernel swaps the major for a
+  constructor by proof irrelevance, then iota fires. `full_red`'s lemmas
+  carry it through substitution, swap, close, level instances and
+  environment extension, one proof per operation.
+- **`LitTy` -- DONE.** A literal at `Nat`/`String` (`full_red::lit_ty`,
+  the kernel's inference), the type typed as a premise; shaped like
+  `Local`, and `gen_ok` gains the literal case (under `full`, so the
+  fragment's untypability of literals is unchanged).
+- **The hypotheses -- `meta_hyp::meta_ok`.** Uniqueness of types, Pi and
+  Sort injectivity, Pi not a sort; `meta_of` proves them from the model
+  for the fragment. Generic lemmas move to `meta_ok` (`ti_spine`'s `_m`
+  forms so far). Subject reduction for `RedG` is the remaining hypothesis
+  to state.
+- **Next:** structure eta and unit eta for any structure, projection
+  typing for any structure; then the claims at `Sig { full: !frag_env,
+  ..jsig }`.

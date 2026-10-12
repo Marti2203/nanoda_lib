@@ -176,6 +176,9 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
     let db = get(sig, eq(g, m, m, tb));
     gen(sig, da);
     gen(sig, db);
+    assert(!sig.full) by {
+        reveal(crate::ti_syntax::iota_ok);
+    }
     match m {
         ExprSpec::Proj(i, x) => {
             let (st1, l1) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)

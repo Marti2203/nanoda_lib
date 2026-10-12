@@ -56,7 +56,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::Eta(l1, l2) => Rule::Eta(ll_(l1, ks, vs), ll_(l2, ks, vs)),
         Rule::Irr(l) => Rule::Irr(ll_(l, ks, vs)),
         Rule::Iota(l) => Rule::Iota(ll_(l, ks, vs)),
-        Rule::IotaG(l) => Rule::IotaG(ll_(l, ks, vs)),
+        Rule::RedG(l) => Rule::RedG(ll_(l, ks, vs)),
         Rule::ProjCong(l) => Rule::ProjCong(ll_(l, ks, vs)),
         Rule::ProjIota(l) => Rule::ProjIota(ll_(l, ks, vs)),
         Rule::StructEta(l) => Rule::StructEta(ll_(l, ks, vs)),
@@ -64,6 +64,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::ConstAx(l) => Rule::ConstAx(ll_(l, ks, vs)),
         Rule::ConstDef(l) => Rule::ConstDef(ll_(l, ks, vs)),
         Rule::Local(l) => Rule::Local(ll_(l, ks, vs)),
+        Rule::LitTy(l) => Rule::LitTy(ll_(l, ks, vs)),
         Rule::Delta(l) => Rule::Delta(ll_(l, ks, vs)),
         Rule::Zeta(l) => Rule::Zeta(ll_(l, ks, vs)),
         _ => r,
@@ -376,7 +377,7 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
         sig_lp_ok(sig, ks, vs),
         step_ok(sig, r, j, ps),
         pls_ok(sig, ps, ks, vs),
-        r is ConstAx || r is ConstDef || r is Delta || r is Local,
+        r is ConstAx || r is ConstDef || r is Delta || r is Local || r is LitTy,
     ensures
         step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
 {
@@ -416,6 +417,13 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
         Rule::Local(_) => {
             let k = j->Eq_1->Free_0;
             assert(sig.locals.contains_key(k));
+            assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+            assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+        },
+        Rule::LitTy(_) => {
+            crate::full_red::lit_ty_closed(sig, j->Eq_1);
+            crate::level_inst::expr_closed(j->Eq_1, ks, vs);
+            crate::level_inst::expr_closed(j->Eq_3, ks, vs);
             assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
             assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
         },
@@ -519,21 +527,20 @@ proof fn step_ls_iota(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
 }
 
-/// General iota at a level instance.
+/// A kernel reduction at a level instance.
 #[verifier::spinoff_prover]
-proof fn step_ls_iotag(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
+proof fn step_ls_redg(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
         sig_lp_ok(sig, ks, vs),
         step_ok(sig, r, j, ps),
         pls_ok(sig, ps, ks, vs),
-        r is IotaG,
+        r is RedG,
     ensures
         step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
 {
     let qs = pls(sig, ps, ks, vs);
     assert(qs.len() == ps.len());
-    crate::beta_model::rec_ready_u_of(sig.ienv, j->Eq_1);
-    crate::level_inst::li_rec(sig.ienv, j->Eq_1, ks, vs);
+    crate::full_red::full_red_ls(sig, j->Eq_1, j->Eq_2, ks, vs);
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
@@ -676,8 +683,8 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
         step_ls_beta(sig, r, j, ps, ks, vs);
     } else if r is Iota {
         step_ls_iota(sig, r, j, ps, ks, vs);
-    } else if r is IotaG {
-        step_ls_iotag(sig, r, j, ps, ks, vs);
+    } else if r is RedG {
+        step_ls_redg(sig, r, j, ps, ks, vs);
     } else if r is ProjCong || r is ProjIota {
         step_ls_proj(sig, r, j, ps, ks, vs);
     } else if r is StructEta {
@@ -793,7 +800,7 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
             assert(sig.consts.dom().contains(j->Eq_1->Const_0));
             assert(consts_ok(sig, j));
         },
-        Rule::Local(_) | Rule::Var(_) | Rule::Univ(..) | Rule::CtxNil | Rule::CtxCons(_) => {
+        Rule::Local(_) | Rule::LitTy(_) | Rule::Var(_) | Rule::Univ(..) | Rule::CtxNil | Rule::CtxCons(_) => {
             assert(consts_ok(sig, j));
         },
         Rule::RecEta(_) => {

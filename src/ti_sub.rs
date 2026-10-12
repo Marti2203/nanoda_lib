@@ -369,14 +369,14 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::Beta(_, _) => d_sub_beta(sig, d, dl, s, s2),
         Rule::Zeta(_) => d_sub_zeta(sig, d, dl, s, s2),
         Rule::Iota(_) => d_sub_iota(sig, d, dl, s, s2),
-        Rule::IotaG(_) => d_sub_iotag(sig, d, dl, s, s2),
+        Rule::RedG(_) => d_sub_redg(sig, d, dl, s, s2),
         Rule::ProjCong(_) => d_sub_pcong(sig, d, dl, s, s2),
         Rule::ProjIota(_) => d_sub_piota(sig, d, dl, s, s2),
         Rule::StructEta(_) => d_sub_seta(sig, d, dl, s, s2),
         Rule::RecEta(_) => d_sub_reta(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
-        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => d_sub_sig(sig, d, dl, s, s2),
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) | Rule::LitTy(_) => d_sub_sig(sig, d, dl, s, s2),
         _ => {},
     }
 }
@@ -938,7 +938,7 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         valid(sig, d),
         concl(d) is Eq,
         spair(sig, concl(d)->Eq_0, dl, s, s2),
-        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta,
+        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta || d->Node_0 is LitTy,
     ensures
         derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
         tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
@@ -951,6 +951,9 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let m = j->Eq_1;
     let n = j->Eq_2;
     let a = j->Eq_3;
+    if rule is LitTy {
+        crate::full_red::lit_ty_closed(sig, m);
+    }
     spair_left(sig, g, dl, s, s2);
     psub_closed(a, s);
     psub_closed(a, s2);
@@ -971,7 +974,7 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             valid_node(sig, rule, j2, ip);
             mk_d(sig, node(rule, j2, ip));
         },
-        Rule::Local(l) => {
+        Rule::Local(l) | Rule::LitTy(l) => {
             psub_closed(n, s2);
             let ip = seq![w, q1];
             assert(prems(ip, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
@@ -1013,6 +1016,7 @@ pub open spec fn rule_level(r: Rule) -> LevelSpec {
         Rule::ConstDef(l) => l,
         Rule::Local(l) => l,
         Rule::Delta(l) => l,
+        Rule::LitTy(l) => l,
         _ => LevelSpec::Zero,
     }
 }
@@ -1213,12 +1217,12 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
 }
 
 #[verifier::spinoff_prover]
-proof fn d_sub_iotag(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+proof fn d_sub_redg(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
         valid(sig, d),
         concl(d) is Eq,
         spair(sig, concl(d)->Eq_0, dl, s, s2),
-        d->Node_0 is IotaG,
+        d->Node_0 is RedG,
     ensures
         derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
         tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
@@ -1226,7 +1230,7 @@ proof fn d_sub_iotag(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    let l = rule->IotaG_0;
+    let l = rule->RedG_0;
     let g = j->Eq_0;
     let m = j->Eq_1;
     let n = j->Eq_2;
@@ -1237,7 +1241,7 @@ proof fn d_sub_iotag(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[1], dl, s, s2);
     d_sub(sig, ps[2], dl, s, s);
     assert(psub(sort(l), s) == sort(l));
-    crate::ti_subst::psub_rec(s, sig.ienv, m);
+    crate::full_red::full_red_psub(sig, m, n, s);
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let q2 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
@@ -1248,8 +1252,8 @@ proof fn d_sub_iotag(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         eq(dl, psub(n, s), psub(n, s), psub(a, s)),
         eq(dl, psub(a, s), psub(a, s), sort(l)),
     ]));
-    valid_node(sig, Rule::IotaG(l), bj, bp);
-    let bd = node(Rule::IotaG(l), bj, bp);
+    valid_node(sig, Rule::RedG(l), bj, bp);
+    let bd = node(Rule::RedG(l), bj, bp);
     let bb = get(sig, eq(dl, psub(n, s), psub(n, s2), psub(a, s)));
     let z = d_trans(sig, bd, bb);
     mk_d(sig, z);

@@ -84,6 +84,8 @@ pub open spec fn gen_ok(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> bool {
         ExprSpec::App(f, x) => gen_app(sig, g, *f, *x, t),
         ExprSpec::Let(a, v, b) => gen_let(sig, g, *a, *v, *b, t),
         ExprSpec::Proj(i, x) => gen_proj(sig, g, i as nat, *x, t),
+        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => sig.full && crate::full_red::lit_ty(sig, m) is Some
+            && tchain(sig, g, t, crate::full_red::lit_ty(sig, m)->Some_0),
         _ => false,
     }
 }
@@ -108,6 +110,9 @@ pub proof fn gen_conv(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, t: ExprSpec)
         },
         ExprSpec::Const(c, ls) => {
             tchain_trans(sig, g, t, a, dty_at(sig, c, ls));
+        },
+        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
+            tchain_trans(sig, g, t, a, crate::full_red::lit_ty(sig, m)->Some_0);
         },
         ExprSpec::Bind(bk, ta, b) => {
             if bk == BinderKind::Pi {
@@ -213,7 +218,7 @@ pub proof fn gen(sig: Sig, d: Deriv)
             gen(sig, ps[1]);
             gen(sig, ps[2]);
         },
-        Rule::Local(l) => {
+        Rule::Local(l) | Rule::LitTy(l) => {
             tchain_refl(sig, g, t);
         },
         Rule::ConstAx(l) | Rule::ConstDef(l) => {
@@ -312,7 +317,7 @@ pub proof fn gen(sig: Sig, d: Deriv)
             assert(gmark(t, x, l1, l1));
             gen(sig, ps[2]);
         },
-        Rule::Iota(_) | Rule::IotaG(_) => {
+        Rule::Iota(_) | Rule::RedG(_) => {
             gen(sig, ps[0]);
             gen(sig, ps[1]);
         },

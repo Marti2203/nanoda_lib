@@ -57,7 +57,7 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Irr(l) => {
             mk_t(sig, ps[0], l);
         },
-        Rule::ConstAx(l) | Rule::ConstDef(l) | Rule::Local(l) | Rule::Delta(l) => {
+        Rule::ConstAx(l) | Rule::ConstDef(l) | Rule::Local(l) | Rule::Delta(l) | Rule::LitTy(l) => {
             let r = d_left(sig, ps[1]);
             mk_t(sig, r, l);
         },
@@ -87,7 +87,7 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Zeta(_) => {
             d_ty(sig, ps[2]);
         },
-        Rule::Iota(_) | Rule::IotaG(_) => {
+        Rule::Iota(_) | Rule::RedG(_) => {
             d_ty(sig, ps[0]);
         },
         Rule::RecEta(_) => {
@@ -371,8 +371,8 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             let k = j->Eq_1->Free_0;
             assert(sig.locals.contains_key(k));
         },
-        Rule::IotaG(_) => {
-            rec_sub(sig.ienv, sig2.ienv, j->Eq_1);
+        Rule::RedG(_) => {
+            crate::full_red::full_red_sub(sig, sig2, j->Eq_1, j->Eq_2);
         },
         Rule::Iota(_) => {
             let m = j->Eq_1;

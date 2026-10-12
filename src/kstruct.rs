@@ -45,6 +45,13 @@ pub proof fn struct_facts(sig: Sig, s: u64)
     assert(crate::dom_proj_sound::struct_sem(sig, s));
     crate::dom_code::canon_side(sig, s);
     reveal(crate::dom_code::ind_side);
+    let sh = crate::dom_code::canon_shape(sig, s);
+    assert(crate::dom_rec_ty::ind_scope(sig, sh));
+    assert(sh.ind == s && sh.lps == sig.consts[s].lps);
+    assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_code::canon_ok(sig, s));
+    assert(crate::dom_levels::sig_lps(sig));
+    assert(crate::ti_syntax::iota_ok(sig));
 }
 
 /// AN INDUCTIVE OF KNOWN SHAPE IS IN SCOPE, with the model's facts about

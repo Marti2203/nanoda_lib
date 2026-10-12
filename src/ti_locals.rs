@@ -678,8 +678,16 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
         Rule::Iota(_) => step_swap_iota(sig, r, j, ps, x, y),
-        Rule::IotaG(_) => {
-            crate::swap_model::fswap_rec(sig.ienv, j->Eq_1, x, y);
+        Rule::LitTy(_) => {
+            crate::full_red::lit_ty_closed(sig, j->Eq_1);
+            crate::swap_model::fswap_closed(j->Eq_1, x, y);
+            crate::swap_model::fswap_closed(j->Eq_3, x, y);
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
+        Rule::RedG(_) => {
+            crate::full_red::full_red_fswap(sig, j->Eq_1, j->Eq_2, x, y);
             assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
             assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
             assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
@@ -853,10 +861,18 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
         step_close_bind(sig, k, a, r, j, ps);
     } else if r is Iota {
         step_close_iota(sig, k, a, r, j, ps);
-    } else if r is IotaG {
+    } else if r is LitTy {
         let qs = pclose(sig, k, a, ps);
         assert(qs.len() == ps.len());
-        crate::fclose::fclose_rec(k, j->Eq_0.len(), sig.ienv, j->Eq_1);
+        crate::full_red::lit_ty_closed(sig, j->Eq_1);
+        crate::fclose::fclose_closed(k, j->Eq_0.len(), j->Eq_1);
+        crate::fclose::fclose_closed(k, j->Eq_0.len(), j->Eq_3);
+        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+    } else if r is RedG {
+        let qs = pclose(sig, k, a, ps);
+        assert(qs.len() == ps.len());
+        crate::full_red::full_red_fclose(sig, k, j->Eq_0.len(), j->Eq_1, j->Eq_2);
         assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
         assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
         assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));

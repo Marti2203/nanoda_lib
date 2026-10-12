@@ -320,7 +320,7 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
         Rule::AppCong(_, _) => d_ls2_app(sig, d, dl, ks, vs, vs2),
         Rule::Beta(_, _) => d_ls2_via(sig, d, dl, ks, vs, vs2, 4),
         Rule::Zeta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
-        Rule::Iota(_) | Rule::IotaG(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 1),
+        Rule::Iota(_) | Rule::RedG(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 1),
         Rule::ProjCong(_) => d_ls2_pcong(sig, d, dl, ks, vs, vs2),
         Rule::ProjIota(_) => {
             reveal(crate::ti_syntax::proj_iota_ok);
@@ -338,7 +338,7 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
         Rule::Irr(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Delta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::ConstAx(_) | Rule::ConstDef(_) => d_ls2_cst(sig, d, dl, ks, vs, vs2),
-        Rule::Local(_) => d_ls2_local(sig, d, dl, ks, vs, vs2),
+        Rule::Local(_) | Rule::LitTy(_) => d_ls2_local(sig, d, dl, ks, vs, vs2),
         _ => {},
     }
 }
@@ -576,7 +576,7 @@ proof fn d_ls2_local(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpe
         valid(sig, d),
         concl(d) is Eq,
         lpair(sig, concl(d)->Eq_0, dl, ks, vs, vs2),
-        d->Node_0 is Local,
+        d->Node_0 is Local || d->Node_0 is LitTy,
     ensures
         derivable(sig, eq(dl, le_(concl(d)->Eq_1, ks, vs), le_(concl(d)->Eq_2, ks, vs2), le_(concl(d)->Eq_3, ks, vs))),
         tconvd(sig, dl, le_(concl(d)->Eq_3, ks, vs), le_(concl(d)->Eq_3, ks, vs2)),
@@ -586,8 +586,15 @@ proof fn d_ls2_local(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpe
     let Deriv::Node(rule, j, ps) = d;
     let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
     assert(sig_lp_ok(sig, ks, vs) && sig_lp_ok(sig, ks, vs2)) by { reveal(lpair); }
-    let k = m->Free_0;
-    assert(sig.locals.contains_key(k));
+    if rule is Local {
+        assert(sig.locals.contains_key(m->Free_0));
+    } else {
+        crate::full_red::lit_ty_closed(sig, m);
+        crate::level_inst::expr_closed(m, ks, vs);
+        crate::level_inst::expr_closed(m, ks, vs2);
+        crate::level_inst::expr_closed(a, ks, vs);
+        crate::level_inst::expr_closed(a, ks, vs2);
+    }
     ls_move(sig, d, dl, ks, vs, vs2);
     ls_move(sig, ps[1], dl, ks, vs, vs2);
     let q = get(sig, eq(dl, le_(a, ks, vs), le_(a, ks, vs), sort(ll_(crate::ti_sub::rule_level(rule), ks, vs))));

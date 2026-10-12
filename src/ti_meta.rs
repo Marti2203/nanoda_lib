@@ -143,7 +143,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         Rule::AppCong(_, _) => d_wf(sig, ps[0]),
         Rule::Beta(_, _) => d_wf(sig, ps[0]),
         Rule::Zeta(_) => d_wf(sig, ps[0]),
-        Rule::Iota(_) | Rule::IotaG(_) => d_wf(sig, ps[0]),
+        Rule::Iota(_) | Rule::RedG(_) => d_wf(sig, ps[0]),
         Rule::ProjCong(_) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             d_wf(sig, ps[0])
@@ -162,7 +162,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         },
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
-        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) => ps[0],
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) | Rule::LitTy(_) => ps[0],
         _ => {
             assert(false);
             d
@@ -322,14 +322,14 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::Beta(..) => d_ren_beta(sig, d, w, dl, r),
         Rule::Zeta(..) => d_ren_zeta(sig, d, w, dl, r),
         Rule::Iota(_) => d_ren_iota(sig, d, w, dl, r),
-        Rule::IotaG(_) => d_ren_iotag(sig, d, w, dl, r),
+        Rule::RedG(_) => d_ren_redg(sig, d, w, dl, r),
         Rule::ProjCong(_) => d_ren_pcong(sig, d, w, dl, r),
         Rule::ProjIota(_) => d_ren_piota(sig, d, w, dl, r),
         Rule::StructEta(_) => d_ren_seta(sig, d, w, dl, r),
         Rule::RecEta(_) => d_ren_reta(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
-        Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) => d_ren_sig(sig, d, w, dl, r),
+        Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) | Rule::LitTy(..) => d_ren_sig(sig, d, w, dl, r),
         _ => {
             assert(false);
             d
@@ -748,7 +748,7 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
     requires
         valid(sig, d),
         concl(d) is Eq,
-        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta,
+        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta || d->Node_0 is LitTy,
         valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
@@ -765,6 +765,9 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
     let n = j->Eq_2;
     let a = j->Eq_3;
     let q = rn(r);
+    if rule is LitTy {
+        crate::full_red::lit_ty_closed(sig, m);
+    }
     psub_closed(a, q);
     psub_closed(m, q);
     let j2 = eq(dl, m, n, a);
@@ -779,7 +782,7 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             valid_node(sig, rule, j2, ps2);
             node(rule, j2, ps2)
         },
-        Rule::Local(l) => {
+        Rule::Local(l) | Rule::LitTy(l) => {
             let ps2 = seq![w, d1];
             assert(prems(ps2, seq![Jd::Wf(dl), eq(dl, a, a, sort(l))]));
             valid_node(sig, rule, j2, ps2);
@@ -900,13 +903,13 @@ proof fn d_ren_iota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     node(Rule::Iota(l), j2, ps2)
 }
 
-/// General iota, renamed.
+/// A kernel reduction, renamed.
 #[verifier::spinoff_prover]
-proof fn d_ren_iotag(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+proof fn d_ren_redg(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
         valid(sig, d),
         concl(d) is Eq,
-        d->Node_0 is IotaG,
+        d->Node_0 is RedG,
         valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
@@ -917,7 +920,7 @@ proof fn d_ren_iotag(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> n
 {
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
-    let l = rule->IotaG_0;
+    let l = rule->RedG_0;
     let m = j->Eq_1;
     let n = j->Eq_2;
     let a = j->Eq_3;
@@ -926,7 +929,7 @@ proof fn d_ren_iotag(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> n
     let d1 = d_ren(sig, ps[1], w, dl, r);
     let d2 = d_ren(sig, ps[2], w, dl, r);
     assert(psub(sort(l), q) == sort(l));
-    crate::ti_subst::psub_rec(q, sig.ienv, m);
+    crate::full_red::full_red_psub(sig, m, n, q);
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
     let ps2 = seq![d0, d1, d2];
     assert(prems(ps2, seq![
@@ -934,8 +937,8 @@ proof fn d_ren_iotag(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> n
         eq(dl, psub(n, q), psub(n, q), psub(a, q)),
         eq(dl, psub(a, q), psub(a, q), sort(l)),
     ]));
-    valid_node(sig, Rule::IotaG(l), j2, ps2);
-    node(Rule::IotaG(l), j2, ps2)
+    valid_node(sig, Rule::RedG(l), j2, ps2);
+    node(Rule::RedG(l), j2, ps2)
 }
 
 /// Structure eta, renamed.

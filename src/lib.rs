@@ -24,6 +24,7 @@ pub mod dom_compact;
 pub mod dom_con_rel;
 pub mod dom_fund;
 pub mod meta_hyp;
+pub mod full_red;
 pub mod dom_iota;
 pub mod dom_model;
 pub mod dom_proj;

@@ -97,7 +97,7 @@ pub ghost struct Sig {
     pub rank: Map<u64, nat>,
     /// The recursor and constructor tables the iota rule reads.
     pub ienv: crate::expr_arena_bridge::EnvSpec,
-    /// Lean's full rules apply (`IotaG`, ...), not only the fragment the
+    /// Lean's full rules apply (`RedG`, ...), not only the fragment the
     /// domain model interprets (docs/TYPED_TARGET.md, "The conditional
     /// theorem").
     pub full: bool,
@@ -204,9 +204,12 @@ pub enum Rule {
     /// rule's instance, where both sides are typed, and their type is a
     /// type at the given sort (a proposition for a recursor into Prop).
     Iota(LevelSpec),
-    /// Lean's iota at any recursor: the environment's own rule, where both
+    /// A kernel reduction (`full_red::full_red`: iota by the environment's
+    /// own rule, Nat folding, quotients, projections, literals), where both
     /// sides are typed, in the full judgment.
-    IotaG(LevelSpec),
+    RedG(LevelSpec),
+    /// A literal at its type (`Nat`, `String`), in the full judgment.
+    LitTy(LevelSpec),
     /// A projection, at its field's type over the parameters and the
     /// earlier projections (a proposition when the structure may be one).
     ProjCong(LevelSpec),
@@ -408,10 +411,14 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))] + iota_pjs(sig, g, m)),
             _ => false,
         },
-        Rule::IotaG(l) => match j {
-            Jd::Eq(g, m, n, t) => sig.full && crate::beta_model::rec_ready(sig.ienv, m)
-                && n == crate::beta_model::rec_result(sig.ienv, m)
+        Rule::RedG(l) => match j {
+            Jd::Eq(g, m, n, t) => sig.full && crate::full_red::full_red(sig, m, n)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]),
+            _ => false,
+        },
+        Rule::LitTy(l) => match j {
+            Jd::Eq(g, m, n, a) => sig.full && n == m && crate::full_red::lit_ty(sig, m) == Some(a)
+                && prems(ps, seq![Jd::Wf(g), eq(g, a, a, sort(l))]),
             _ => false,
         },
         Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),
