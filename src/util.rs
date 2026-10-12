@@ -2053,13 +2053,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         (self.read_name(p), self.read_name(q))
     }
 
-    pub fn read_bignum(&self, p: BigUintPtr<'t>) -> Option<&BigUint> {
-        match p.dag_marker() {
-            DagMarker::ExportFile => Some(self.export_file.dag.bignums.as_ref()?.get_index(p.idx()).unwrap()),
-            DagMarker::TcCtx => Some(self.dag.bignums.as_ref()?.get_index(p.idx()).unwrap()),
-        }
-    }
-
     /// Store a `BigUint` (a bignum), getting back a pointer to the allocated item. If the item was
     /// already stored, forego the allocation and return a pointer to the previously inserted
     /// element. Checks the longer-lived storage first.
@@ -4092,6 +4085,27 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Convenience function for reading two items as a tuple.
+    /// Verified in place, body unchanged: the number the pointer's dag
+    /// stores at its index (`None` without a nat-literal arena).
+    pub fn read_bignum(&self, p: BigUintPtr<'t>) -> (result: Option<&BigUint>)
+        requires
+            crate::util_model::owns(*self, p),
+        ensures
+            result matches Some(v) ==> crate::nat_lit_model::to_nat(*v) == crate::expr_arena_bridge::bignum_ptr_value(p),
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            crate::util_model::ptr_is_tc_agree(p);
+            crate::expr_arena_bridge::bignum_ptr_value_at(p);
+        }
+        match p.dag_marker() {
+            DagMarker::ExportFile => Some(self.export_file.dag.bignums.as_ref()?.get_index(p.idx()).unwrap()),
+            DagMarker::TcCtx => Some(self.dag.bignums.as_ref()?.get_index(p.idx()).unwrap()),
+        }
+    }
+
     /// Verified in place, body unchanged: the string the pointer's dag
     /// stores at its index.
     pub fn read_string(&self, p: StringPtr<'t>) -> (result: &CowStr<'t>)

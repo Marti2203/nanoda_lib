@@ -72,19 +72,6 @@ use crate::util::{ExprPtr, LevelPtr, LevelsPtr, NamePtr, StringPtr};
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-/// `expr.rs::get_bignum_from_expr`'s `NatLit` arm, standalone: dereference
-/// and clone the arena-stored `BigUint` (real `read_bignum` returns
-/// `Option<&BigUint>`; bridged as one opaque real function rather than
-/// separately bridging `Option::cloned`/`Clone` for a foreign type).
-#[allow(dead_code)]
-pub(crate) fn read_bignum_value<'t, 'p: 't>(
-    ctx: &TcCtx<'t, 'p>,
-    p: crate::util::BigUintPtr<'t>,
-) -> Option<num_bigint::BigUint> {
-    ctx.read_bignum(p).cloned()
-}
-
-
 verus! {
 
 broadcast use crate::util::ptr_eta, crate::util::lemma_export_arena;
@@ -2227,10 +2214,12 @@ pub open spec fn string_len<'a>(s: StringPtr<'a>) -> nat {
     string_chars(s).len()
 }
 
-pub assume_specification<'t, 'p>[ read_bignum_value ](
+/// `expr.rs::get_bignum_from_expr`'s `NatLit` arm, standalone: the stored
+/// number, copied. Verified, body unchanged.
+pub(crate) fn read_bignum_value<'t, 'p: 't>(
     ctx: &TcCtx<'t, 'p>,
     p: crate::util::BigUintPtr<'t>,
-) -> (result: Option<num_bigint::BigUint>) where 'p: 't
+) -> (result: Option<num_bigint::BigUint>)
     requires
         crate::util_model::owns(*ctx, p),
     ensures
@@ -2238,7 +2227,9 @@ pub assume_specification<'t, 'p>[ read_bignum_value ](
             Some(v) => crate::nat_lit_model::to_nat(v) == bignum_ptr_value(p),
             None => true,
         },
-;
+{
+    ctx.read_bignum(p).cloned()
+}
 
 /// `Sort`'s level, read directly off the shallow value -- simpler than
 /// `Const`'s `is_const_shape`/`const_name_of` indirection since `Sort`'s
