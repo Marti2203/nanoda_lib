@@ -2053,13 +2053,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         (self.read_name(p), self.read_name(q))
     }
 
-    pub fn read_string(&self, p: StringPtr<'t>) -> &CowStr<'t> {
-        match p.dag_marker() {
-            DagMarker::ExportFile => self.export_file.dag.strings.get_index(p.idx()).unwrap(),
-            DagMarker::TcCtx => self.dag.strings.get_index(p.idx()).unwrap(),
-        }
-    }
-
     pub fn read_bignum(&self, p: BigUintPtr<'t>) -> Option<&BigUint> {
         match p.dag_marker() {
             DagMarker::ExportFile => Some(self.export_file.dag.bignums.as_ref()?.get_index(p.idx()).unwrap()),
@@ -3073,6 +3066,11 @@ impl<'p> NameCache<'p> {
         &&& (self.string matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::string_type_id(self.arena@))
         &&& (self.bool_false matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_false_id(self.arena@))
         &&& (self.bool_true matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::expr_arena_bridge::bool_true_id(self.arena@))
+        &&& (self.char matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena@).0)
+        &&& (self.char_of_nat matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena@).1)
+        &&& (self.list_nil matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena@).2)
+        &&& (self.list_cons matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena@).3)
+        &&& (self.string_of_list matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena@).4)
         &&& (self.eager_reduce matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
         &&& (self.quot matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
         &&& (self.quot_mk matches Some(n) ==> crate::util_model::export_tagged(self.arena@, n))
@@ -3360,6 +3358,7 @@ impl<'p> NameCache<'p> {
     pub fn string_of_list(&self) -> (result: Option<NamePtr<'p>>)
         ensures
             result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena_id()).4,
     {
         proof {
             use_type_invariant(self);
@@ -3392,6 +3391,7 @@ impl<'p> NameCache<'p> {
     pub fn char(&self) -> (result: Option<NamePtr<'p>>)
         ensures
             result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena_id()).0,
     {
         proof {
             use_type_invariant(self);
@@ -3402,6 +3402,7 @@ impl<'p> NameCache<'p> {
     pub fn char_of_nat(&self) -> (result: Option<NamePtr<'p>>)
         ensures
             result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena_id()).1,
     {
         proof {
             use_type_invariant(self);
@@ -3422,6 +3423,7 @@ impl<'p> NameCache<'p> {
     pub fn list_nil(&self) -> (result: Option<NamePtr<'p>>)
         ensures
             result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena_id()).2,
     {
         proof {
             use_type_invariant(self);
@@ -3432,6 +3434,7 @@ impl<'p> NameCache<'p> {
     pub fn list_cons(&self) -> (result: Option<NamePtr<'p>>)
         ensures
             result matches Some(n) ==> crate::util_model::export_tagged(self.arena_id(), n),
+            result matches Some(n) ==> crate::level_arena_bridge::name_id(n) == crate::beta_model::string_names(self.arena_id()).3,
     {
         proof {
             use_type_invariant(self);
@@ -4089,6 +4092,28 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Convenience function for reading two items as a tuple.
+    /// Verified in place, body unchanged: the string the pointer's dag
+    /// stores at its index.
+    pub fn read_string(&self, p: StringPtr<'t>) -> (result: &CowStr<'t>)
+        requires
+            crate::util_model::owns(*self, p),
+        ensures
+            *result == str_at(p),
+    {
+        proof {
+            use_type_invariant(self.export_file);
+            use_type_invariant(&self.export_file.dag);
+            use_type_invariant(&*self.dag);
+            self.dag.lemma_hist();
+            self.export_file.dag.lemma_hist();
+            crate::util_model::ptr_is_tc_agree(p);
+        }
+        match p.dag_marker() {
+            DagMarker::ExportFile => self.export_file.dag.strings.get_index(p.idx()).unwrap(),
+            DagMarker::TcCtx => self.dag.strings.get_index(p.idx()).unwrap(),
+        }
+    }
+
     pub fn read_level_pair(&self, a: LevelPtr<'t>, x: LevelPtr<'t>) -> (result: (
         Level<'t>,
         Level<'t>,

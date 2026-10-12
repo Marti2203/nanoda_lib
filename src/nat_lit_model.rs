@@ -230,6 +230,12 @@ pub(crate) fn biguint_pred(x: BigUint) -> (result: BigUint)
 /// The other numeric constant. Added so that `succ` and `pred` can be BUILT
 /// from `add`/`sub` rather than each needing its own bridge: one constant
 /// replaces two operations.
+/// A number from a `u32` (`num_bigint`'s `From<u32>`).
+pub assume_specification[ <BigUint as core::convert::From<u32>>::from ](x: u32) -> (result: BigUint)
+    ensures
+        to_nat(result) == x as nat,
+;
+
 pub assume_specification[ <BigUint as num_traits::One>::one ]() -> (result: BigUint)
     ensures
         to_nat(result) == 1,

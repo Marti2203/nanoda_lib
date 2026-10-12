@@ -2218,47 +2218,14 @@ pub proof fn is_string_lit_shape_model<'a>(ptr: ExprPtr<'a>)
 /// directly). Callers instead take `string_len(s)` bounded by an
 /// explicit parameter, the same "caller-supplied sufficient bound"
 /// pattern used throughout this whole arc.
-/// The character codes of a stored string.
-pub uninterp spec fn string_chars<'a>(s: StringPtr<'a>) -> Seq<nat>;
+/// The character codes of a stored string (its text, `util::str_at`).
+pub open spec fn string_chars<'a>(s: StringPtr<'a>) -> Seq<nat> {
+    crate::util::str_at(s)@.map_values(|c: char| (c as u32) as nat)
+}
 
 pub open spec fn string_len<'a>(s: StringPtr<'a>) -> nat {
     string_chars(s).len()
 }
-
-/// `expr.rs::str_lit_to_constructor`'s real construction, counted by
-/// hand: `List.nil`'s own wrapper is depth 1; each character adds
-/// `App(App(List.cons, App(Char.ofNat, NatLit)), rest)` -- `NatLit`
-/// collapses to `ExprSpec::Closed` (depth 0, `is_nat_lit_shape_model`),
-/// so `App(Char.ofNat, NatLit)` is depth 1, `App(List.cons_partial, ..)`
-/// is depth 2, and wrapping the PREVIOUS `rest` costs exactly one more
-/// level once `rest`'s own depth reaches 2 (true from the first
-/// character on) -- so after `string_len(s)` characters the depth is
-/// `string_len(s) + 2`, plus one final `App` for the `String.ofList`
-/// wrapper: `string_len(s) + 3`. Every subterm is `Const`/`Closed`/`App`
-/// of those -- no `Var`/`Free` anywhere -- so `nlbv`/`max_var_below`
-/// hold unconditionally (bound `0` suffices for `max_var_below`,
-/// weakened to whatever the caller needs via `max_var_below_mono`).
-pub assume_specification<'t, 'p>[ TcCtx::<'t, 'p>::str_lit_to_constructor ](
-    ctx: &mut TcCtx<'t, 'p>,
-    s: StringPtr<'t>,
-) -> (result: Option<ExprPtr<'t>>) where 'p: 't
-    requires
-        crate::util_model::owns(*old(ctx), s),
-    ensures
-        result matches Some(r) ==> crate::util_model::owns(*final(ctx), r),
-        final(ctx).expr_cache.dsubst_cache == old(ctx).expr_cache.dsubst_cache,
-        match result {
-            Some(r) => {
-                &&& nlbv(to_model(r)) <= 0
-                &&& max_var_below(to_model(r), 0)
-                &&& depth(to_model(r)) <= string_len(s) + 3
-                &&& to_model(r) == string_lit_expand_model(crate::util_model::export_id(*final(ctx)), string_chars(s))
-            },
-            None => true,
-        },
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-;
 
 pub assume_specification<'t, 'p>[ read_bignum_value ](
     ctx: &TcCtx<'t, 'p>,

@@ -52,7 +52,13 @@ greater than the counter, so a new local is the first with its serial
 (`expr_arena_bridge::unique_canon`), and two such locals with one serial
 are one (`unique_serial_injective`, a lemma now). `append_index_after` is verified
 in place too (its two `format!`s are claim-free helpers); the axiom that
-its fresh names differ by index was unused and is gone.
+its fresh names differ by index was unused and is gone. `str_lit_to_constructor` is
+verified in place (a string literal's expansion is the model's, with a
+string's characters now defined as its text); this added one library
+specification (`BigUint::from(u32)`) and five slots to the name cache's
+assumed invariant (`Char`, `Char.ofNat`, `List.nil`, `List.cons`,
+`String.ofList` are the names the model's expansion uses), the same kind
+of fact the cache already carries for `Nat.zero` and the rest.
 The parser's boundary with the libraries (reading a line, serde's
 decoding, the formatted messages, the axiom whitelist's name text) is
 claim-free helpers, so it promises nothing the proofs use.

@@ -287,6 +287,7 @@ proof fn char_list_facts(export: nat, chars: Seq<nat>)
         crate::expr_model::nlbv(char_list_model(export, chars)) == 0,
         crate::level_inst::elp_in(char_list_model(export, chars), Seq::empty()),
         depth(char_list_model(export, chars)) == if chars.len() == 0 { 1 } else { chars.len() + 2 },
+        max_var_below(char_list_model(export, chars), 0),
     decreases chars.len(),
 {
     let zero = seq![crate::level_model::LevelSpec::Zero];
@@ -299,6 +300,7 @@ proof fn char_list_facts(export: nat, chars: Seq<nat>)
     reveal_with_fuel(crate::expr_model::nlbv, 5);
     reveal_with_fuel(crate::level_inst::elp_in, 5);
     reveal_with_fuel(crate::expr_model::depth, 5);
+    reveal_with_fuel(max_var_below, 5);
 }
 
 /// What the expansion's clients need: it mentions no free variable, no
@@ -310,6 +312,7 @@ pub proof fn string_lit_expand_no_fv(export: nat, chars: Seq<nat>)
         crate::expr_model::nlbv(string_lit_expand_model(export, chars)) == 0,
         crate::level_inst::elp_in(string_lit_expand_model(export, chars), Seq::empty()),
         depth(string_lit_expand_model(export, chars)) <= chars.len() + 3,
+        max_var_below(string_lit_expand_model(export, chars), 0),
 {
     reveal(string_lit_expand_model);
     char_list_facts(export, chars);
@@ -317,6 +320,7 @@ pub proof fn string_lit_expand_no_fv(export: nat, chars: Seq<nat>)
     reveal_with_fuel(crate::expr_model::nlbv, 2);
     reveal_with_fuel(crate::level_inst::elp_in, 2);
     reveal_with_fuel(crate::expr_model::depth, 2);
+    reveal_with_fuel(max_var_below, 2);
 }
 
 pub open spec fn pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec) -> bool

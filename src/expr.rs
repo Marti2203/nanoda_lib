@@ -88,6 +88,174 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     }
 }
 
+
+/// The characters of a stored string, in order.
+fn cow_chars<'a>(c: &crate::util::CowStr<'a>) -> (r: Vec<char>)
+    ensures
+        r@ == c@,
+{
+    match c {
+        std::borrow::Cow::Borrowed(t) => t.chars().collect(),
+        std::borrow::Cow::Owned(t) => t.as_str().chars().collect(),
+    }
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Convert a string literal to `String.ofList <| List.cons (Char.ofNat _) .. List.nil`
+    ///
+    /// Verified in place (it was an `assume_specification`): the result is
+    /// the expansion the model gives a string literal
+    /// (`beta_model::string_lit_expand_model`). VERUS-REWRITE(str-lit-chars):
+    /// the configuration is read through its accessors; the characters are
+    /// collected (`cow_chars`) and walked from the last by index rather than
+    /// by `chars().rev()`; the same constants, literals and applications, in
+    /// the same order.
+    pub(crate) fn str_lit_to_constructor(&mut self, s: StringPtr<'t>) -> (result: Option<ExprPtr<'t>>)
+        requires
+            crate::util_model::owns(*old(self), s),
+        ensures
+            result matches Some(r) ==> crate::util_model::owns(*final(self), r),
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            match result {
+                Some(r) => {
+                    &&& crate::expr_model::nlbv(crate::expr_arena_bridge::to_model(r)) <= 0
+                    &&& crate::beta_model::max_var_below(crate::expr_arena_bridge::to_model(r), 0)
+                    &&& crate::expr_model::depth(crate::expr_arena_bridge::to_model(r)) <= crate::expr_arena_bridge::string_len(s) + 3
+                    &&& crate::expr_arena_bridge::to_model(r) == crate::beta_model::string_lit_expand_model(
+                        crate::util_model::export_id(*final(self)), crate::expr_arena_bridge::string_chars(s))
+                },
+                None => true,
+            },
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+    {
+        if (!self.export_file.config.string_extension_on()) || (!self.export_file.config.nat_extension_on()) {
+            return None;
+        }
+        let ghost ex = crate::util_model::export_id(*self);
+        let ghost c0 = *self;
+        let zero = self.zero();
+        let empty_levels = self.alloc_levels_slice(&[]);
+        let tyzero_levels = self.alloc_levels_slice(&[zero]);
+        let ghost zl = seq![crate::level_model::LevelSpec::Zero];
+        proof {
+            assert(crate::level_arena_bridge::to_model_of_levels(empty_levels) =~= Seq::<crate::level_model::LevelSpec>::empty());
+            assert(crate::level_arena_bridge::to_model_of_levels(tyzero_levels) =~= zl);
+        }
+        let n_char = self.export_file.name_cache.char()?;
+        // Const(Char, [])
+        let c_char = self.mk_const(n_char, empty_levels);
+        let n_char_of_nat = self.export_file.name_cache.char_of_nat()?;
+        // Const(Char.ofNat, [])
+        let c_char_of_nat = self.mk_const(n_char_of_nat, empty_levels);
+        let n_list_nil = self.export_file.name_cache.list_nil()?;
+        // @List.nil.{0} Char
+        let c_list_nil_char = {
+            let f = self.mk_const(n_list_nil, tyzero_levels);
+            proof { crate::expr_arena_bridge::is_const_shape_model(f); }
+            self.mk_app(f, c_char)
+        };
+        let n_list_cons = self.export_file.name_cache.list_cons()?;
+        // @List.cons.{0} Char
+        let c_list_cons_char = {
+            let f = self.mk_const(n_list_cons, tyzero_levels);
+            proof { crate::expr_arena_bridge::is_const_shape_model(f); }
+            self.mk_app(f, c_char)
+        };
+        proof {
+            crate::expr_arena_bridge::is_const_shape_model(c_char);
+            crate::expr_arena_bridge::is_const_shape_model(c_char_of_nat);
+        }
+        let mut out = c_list_nil_char;
+        let chars = cow_chars(self.read_string(s));
+        let ghost cs = crate::expr_arena_bridge::string_chars(s);
+        let mut k = chars.len();
+        proof {
+            assert(cs.len() == chars@.len());
+            assert(cs.subrange(k as int, cs.len() as int) =~= Seq::<nat>::empty());
+        }
+        while k > 0
+            invariant
+                k <= chars@.len(),
+                cs.len() == chars@.len(),
+                forall|q: int| 0 <= q < chars@.len() ==> #[trigger] cs[q] == (chars@[q] as u32) as nat,
+                ex == crate::util_model::export_id(*self),
+                zl == seq![crate::level_model::LevelSpec::Zero],
+                crate::util_model::same_arenas(c0, *self),
+                self.dbj_level_counter == c0.dbj_level_counter,
+                self.expr_cache.dsubst_cache == c0.expr_cache.dsubst_cache,
+                crate::util_model::owns(*self, out),
+                crate::util_model::owns(*self, c_char_of_nat),
+                crate::util_model::owns(*self, c_list_cons_char),
+                crate::expr_arena_bridge::to_model(c_char_of_nat)
+                    == crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).1, Seq::empty()),
+                crate::expr_arena_bridge::to_model(c_list_cons_char) == crate::expr_model::ExprSpec::App(
+                    Box::new(crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).3, zl)),
+                    Box::new(crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).0, Seq::empty()))),
+                crate::expr_arena_bridge::to_model(out) == crate::beta_model::char_list_model(ex, cs.subrange(k as int, cs.len() as int)),
+            decreases k,
+        {
+            k = k - 1;
+            let c = chars[k];
+            let big = BigUint::from(c as u32);
+            let bptr = self.alloc_bignum(big).unwrap();
+            let bignum = self.mk_nat_lit(bptr).unwrap();
+            proof {
+                crate::expr_arena_bridge::is_nat_lit_shape_model(bignum);
+                assert(crate::expr_arena_bridge::nat_lit_value(bignum) == cs[k as int]);
+            }
+            // Char.ofNat (c as u32)
+            let x = self.mk_app(c_char_of_nat, bignum);
+            // List.cons (Char.ofNat u32)
+            let y = self.mk_app(c_list_cons_char, x);
+            let ghost prev = cs.subrange(k + 1, cs.len() as int);
+            // (List.cons (Char.ofNat u32)) xs
+            out = self.mk_app(y, out);
+            proof {
+                let now = cs.subrange(k as int, cs.len() as int);
+                assert(now.drop_first() =~= prev);
+                assert(now[0] == cs[k as int]);
+                let lit = crate::expr_model::ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(now[0])));
+                assert(crate::expr_arena_bridge::to_model(bignum) == lit);
+                let tail = crate::beta_model::char_list_model(ex, now.drop_first());
+                assert(crate::beta_model::char_list_model(ex, now) == crate::expr_model::ExprSpec::App(
+                    Box::new(crate::expr_model::ExprSpec::App(
+                        Box::new(crate::expr_model::ExprSpec::App(
+                            Box::new(crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).3, seq![crate::level_model::LevelSpec::Zero])),
+                            Box::new(crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).0, Seq::empty())))),
+                        Box::new(crate::expr_model::ExprSpec::App(
+                            Box::new(crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).1, Seq::empty())),
+                            Box::new(crate::expr_model::ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(now[0])))))))),
+                    Box::new(tail)));
+                assert(tail == crate::beta_model::char_list_model(ex, prev));
+                assert(crate::beta_model::char_list_model(ex, now) == crate::expr_model::ExprSpec::App(
+                    Box::new(crate::expr_model::ExprSpec::App(
+                        Box::new(crate::expr_arena_bridge::to_model(c_list_cons_char)),
+                        Box::new(crate::expr_model::ExprSpec::App(
+                            Box::new(crate::expr_model::ExprSpec::Const(crate::beta_model::string_names(ex).1, Seq::empty())),
+                            Box::new(lit))))),
+                    Box::new(crate::beta_model::char_list_model(ex, prev)))) by {
+                    assert(now.len() > 0);
+                    reveal_with_fuel(crate::beta_model::char_list_model, 2);
+                }
+                assert(crate::expr_arena_bridge::to_model(out) == crate::beta_model::char_list_model(ex, now));
+            }
+        }
+        let n_string_of_list = self.export_file.name_cache.string_of_list()?;
+        let string_of_list_const = self.mk_const(n_string_of_list, empty_levels);
+        proof {
+            crate::expr_arena_bridge::is_const_shape_model(string_of_list_const);
+            assert(cs.subrange(0, cs.len() as int) =~= cs);
+        }
+        let r = self.mk_app(string_of_list_const, out);
+        proof {
+            reveal(crate::beta_model::string_lit_expand_model);
+            crate::beta_model::string_lit_expand_no_fv(ex, cs);
+        }
+        Some(r)
+    }
+}
+
 } // verus!
 ::vstd::prelude::verus! {
 
@@ -515,42 +683,6 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// dispatch `tc.rs::reduce_quot` performs): 0 `Quot.lift`, 1 `Quot.ind`,
     /// 2 `Quot.mk`. Bridged to `expr_arena_bridge::quot_kind_of`.
 
-    /// Convert a string literal to `String.ofList <| List.cons (Char.ofNat _) .. List.nil`
-    pub(crate) fn str_lit_to_constructor(&mut self, s: StringPtr<'t>) -> Option<ExprPtr<'t>> {
-        if (!self.export_file.config.string_extension) || (!self.export_file.config.nat_extension) {
-            return None;
-        }
-        let zero = self.zero();
-        let empty_levels = self.alloc_levels_slice(&[]);
-        let tyzero_levels = self.alloc_levels_slice(&[zero]);
-        // Const(Char, [])
-        let c_char = self.mk_const(self.export_file.name_cache.char()?, empty_levels);
-        // Const(Char.ofNat, [])
-        let c_char_of_nat = self.mk_const(self.export_file.name_cache.char_of_nat()?, empty_levels);
-        // @List.nil.{0} Char
-        let c_list_nil_char = {
-            let f = self.mk_const(self.export_file.name_cache.list_nil()?, tyzero_levels);
-            self.mk_app(f, c_char)
-        };
-        // @List.cons.{0} Char
-        let c_list_cons_char = {
-            let f = self.mk_const(self.export_file.name_cache.list_cons()?, tyzero_levels);
-            self.mk_app(f, c_char)
-        };
-        let mut out = c_list_nil_char;
-        for c in self.read_string(s).clone().chars().rev() {
-            let bignum = self.alloc_bignum(BigUint::from(c as u32)).unwrap();
-            let bignum = self.mk_nat_lit(bignum).unwrap();
-            // Char.ofNat (c as u32)
-            let x = self.mk_app(c_char_of_nat, bignum);
-            // List.cons (Char.ofNat u32)
-            let y = self.mk_app(c_list_cons_char, x);
-            // (List.cons (Char.ofNat u32)) xs
-            out = self.mk_app(y, out);
-        }
-        let string_of_list_const = self.mk_const(self.export_file.name_cache.string_of_list()?, empty_levels);
-        Some(self.mk_app(string_of_list_const, out))
-    }
 
     /// Return the expression representing either `true` or `false`
 
