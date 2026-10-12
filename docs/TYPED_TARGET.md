@@ -2499,10 +2499,16 @@ prefixes, which nothing proves.
   its stages convert to the constructor's telescope as before, the
   parameters typed by E2', the earlier projections by
   `full_eta::projs_typed`).
-- **Open in full mode: `Prop` structures.** Eta for a structure whose sort
-  may but need not be `Prop` (`eta_sort_ok`), and projection claims for
-  structures that may be `Prop` (`never_prop_at` on `ci_proj`/`cc_proj`;
-  `And.left` is one): typing a field's type along the telescope types
+- **Structure eta's sort condition -- a named export fact.** A fieldless
+  structure needs no projections; for the rest `kh_full` asks
+  `structs_sorted` (each structure with fields is never or always a
+  proposition; checkable on the declarations, and Lean's `structure`
+  command rejects the others).
+- **The kernel's own `Prop` test.** `may_be_prop` now carries its claim
+  (the inferred sort, never zero when it answers no); the eta expansion
+  and the projection claims take their full-mode condition from it.
+- **Open in full mode: projections out of possibly-`Prop` structures**
+  (`And.left` is one): typing a field's type along the telescope types
   every earlier projection, but nanoda checks only the earlier fields the
   later types depend on (`infer_proj prop`), so a non-dependent earlier
   data field leaves the walk without its typing. Needs a strengthening

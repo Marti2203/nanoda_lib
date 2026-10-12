@@ -11840,6 +11840,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert(st.local_indices@[0] == st0.local_indices@[0]);
                     crate::kgen::serials_widen(aids, st.local_indices@[0]@, c_old, cnt0, c);
                 }
+                assert(old(st).ind_consts@.len() == 0 ==> forall|k: int| 0 <= k < (i+1) ==> #[trigger] ind_const_at(*st, k));
+                assert(walks_ok(*old(self).env, *st, (i+1) as int));
+                assert(teles_syn(st.tele@, (i+1) as int));
+                assert(crate::kgen::serials_in(crate::util_model::arena_ids(*old(self).ctx), st.local_indices@[0]@, crate::util::unique_count(*old(self).ctx) as nat, crate::util::unique_count(*self.ctx) as nat));
             }
         }
         assert_eq!(st.all_inductives_incl_specialized.len(), nbefore);

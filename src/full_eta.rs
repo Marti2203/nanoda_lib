@@ -251,7 +251,7 @@ pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, 
         eta_ctx(sig, g, s, c, ylv, am, ds),
         params_typed(sig, g, c, ylv, am, ds),
         derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))),
-        !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
+        sig.ienv.ctor_nf[c] > 0 ==> !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
         k <= sig.ienv.ctor_nf[c],
     ensures
         forall|j: int| 0 <= j < k ==> derivable(sig, eq(g, ExprSpec::Proj(j as usize, Box::new(x)), ExprSpec::Proj(j as usize, Box::new(x)),
@@ -324,7 +324,7 @@ pub proof fn expansion_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpe
         eta_ctx(sig, g, s, c, ylv, am, ds),
         params_typed(sig, g, c, ylv, am, ds),
         derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))),
-        !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
+        sig.ienv.ctor_nf[c] > 0 ==> !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
     ensures ({
         let np = sig.ienv.ctor_np[c] as nat;
         let st = spine_app(ExprSpec::Const(s, ylv), am.subrange(0, np as int));
@@ -374,7 +374,7 @@ pub proof fn eta_expansion(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>
         eta_ctx(sig, g, s, c, ylv, am, ds),
         derivable(sig, eq(g, spine_app(ExprSpec::Const(c, ylv), am), spine_app(ExprSpec::Const(c, ylv), am), b)),
         derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))),
-        !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
+        sig.ienv.ctor_nf[c] > 0 ==> !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
         forall|k: int| 0 <= k < sig.ienv.ctor_nf[c] ==> derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), am[sig.ienv.ctor_np[c] + k],
             #[trigger] fty(sig, c, ylv, ds, am, x, k as nat))),
     ensures ({

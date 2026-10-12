@@ -68,6 +68,7 @@ pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
     &&& crate::ctor_typing::struct_ok(dty, denv)
     &&& ctor_forms(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& e2_ok(dty, denv)
+    &&& structs_sorted(dty, denv)
     &&& crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
@@ -211,6 +212,7 @@ pub proof fn frag_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
 /// constants ranked above their types, the types typed below their ranks
 /// (`types_below`), and the inductive and constructors below the
 /// recursor -- with the certified level facts (`sig_lps`).
+#[verifier::spinoff_prover]
 pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
     requires
         crate::dom_rec_end::sig_sr_h(sig),
@@ -1471,7 +1473,6 @@ pub proof fn cw_eta(
         eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
         nlbv(x) <= 0,
         forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
-        denv.full ==> eta_sort_ok(dty, ind, ylv),
     ensures
         cw(dty, denv, g, x, y),
 {
@@ -1543,6 +1544,33 @@ pub proof fn cw_eta(
     }
 }
 
+
+/// THE EXPORT'S STRUCTURES WITH FIELDS ARE NEVER OR ALWAYS PROPOSITIONS: a
+/// named fact about the declarations, checkable on them (Lean's `structure`
+/// command rejects a structure whose sort may but need not be `Prop`).
+/// Structure eta on such a structure would need data projections out of a
+/// possible proposition, which no rule types.
+pub open spec fn structs_sorted(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    forall|ind: u64| #[trigger] denv.struct_ctor.contains_key(ind) && denv.ctor_nf.contains_key(denv.struct_ctor[ind])
+        && denv.ctor_nf[denv.struct_ctor[ind]] > 0 ==> {
+        let l = crate::rec_canon::tbody(dty[ind].1, crate::rec_canon::tarity(dty[ind].1))->Sort_0;
+        crate::ti_syntax::never_zero(l) || crate::ti_syntax::is_zero(l)
+    }
+}
+
+/// So at every instance.
+pub proof fn sorted_inst(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ind: u64, ylv: Seq<LevelSpec>)
+    requires
+        structs_sorted(dty, denv),
+        denv.struct_ctor.contains_key(ind) && denv.ctor_nf.contains_key(denv.struct_ctor[ind]),
+        denv.ctor_nf[denv.struct_ctor[ind]] > 0,
+        ylv.len() == dty[ind].0.len(),
+    ensures
+        eta_sort_ok(dty, ind, ylv),
+{
+    let l = crate::rec_canon::tbody(dty[ind].1, crate::rec_canon::tarity(dty[ind].1))->Sort_0;
+    crate::level_model::subst_level_spec_interp_forall(l, dty[ind].0, ylv);
+}
 
 /// The structure's sort at the instance is never zero or always zero
 /// (full-mode eta is proved for these; a universe-polymorphic structure
@@ -1903,7 +1931,6 @@ proof fn eta_full_at(
         cw(dty, denv, g, a, b),
         eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
         forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
-        eta_sort_ok(dty, ind, ylv),
         lctx_wf(dty, denv, d),
         sub(rctx(g, x), d),
         sub(rctx(g, y), d),
@@ -1924,9 +1951,10 @@ proof fn eta_full_at(
     let st = spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int));
     crate::ti_chain::conv_chain(sig, g0, x, x, b, st);
     crate::ti_chain::conv_chain(sig, g0, y, y, b, st);
-    if !crate::ti_syntax::proj_prop(sig, st) {
+    if !crate::ti_syntax::proj_prop(sig, st) || nf == 0 {
         eta_never_prop(dty, denv, g, d, x, y, b, ind, cid, ylv, am, np, nf, ds);
     } else {
+        sorted_inst(dty, denv, ind, ylv);
         eta_prop(dty, denv, d, x, y, ind, ylv, am, np);
     }
 }
@@ -1957,7 +1985,7 @@ proof fn eta_never_prop(
         typed(dty, denv, d, y, b),
         typed(dty, denv, d, x, spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
         typed(dty, denv, d, y, spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
-        !crate::ti_syntax::proj_prop(jsig(dty, denv, d), spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        nf > 0 ==> !crate::ti_syntax::proj_prop(jsig(dty, denv, d), spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
         forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
         lctx_wf(dty, denv, d),
         sub(rctx(g, x), d),
