@@ -92,9 +92,15 @@ pub open spec fn idx_typed_r(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
     crate::ti_syntax::iota_ok(s) ==> crate::dom_rule_g::idx_all(s)
 }
 
+/// The constant ranks: in the fragment, all of the above; in Lean's full
+/// judgment only the definitions' (the rest are the fragment's model's).
 pub open spec fn jrank(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> Map<u64, nat> {
-    choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r) && types_typed(dty, denv, r)
-        && ctors_ranked(dty, denv, r) && fields_typed_r(dty, denv, r) && idx_typed_r(dty, denv, r)
+    if denv.full {
+        choose|r: Map<u64, nat>| rank_ok(dty, denv, r)
+    } else {
+        choose|r: Map<u64, nat>| rank_ok(dty, denv, r) && types_ranked(dty, denv, r) && types_typed(dty, denv, r)
+            && ctors_ranked(dty, denv, r) && fields_typed_r(dty, denv, r) && idx_typed_r(dty, denv, r)
+    }
 }
 
 /// REAL TYPING: the typed judgment types `e` at `t`, in the empty de Bruijn

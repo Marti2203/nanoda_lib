@@ -57,6 +57,7 @@ pub mod env_weaken;
 pub mod expr;
 pub mod expr_arena_bridge;
 pub mod export_sound;
+pub mod export_full;
 pub mod export_builder;
 pub mod expr_model;
 pub mod injectivity;

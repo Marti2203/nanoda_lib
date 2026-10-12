@@ -93,7 +93,7 @@ pub open spec fn kh_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> b
 }
 
 /// A name visible at a cutoff is one of the declarations before it.
-proof fn entry_of<'p>(ef: crate::util::ExportFile<'p>, c: int, id: u64) -> (i: int)
+pub proof fn entry_of<'p>(ef: crate::util::ExportFile<'p>, c: int, id: u64) -> (i: int)
     requires
         crate::env::find_at(ef.declars_view(), ef.declars_keys(), c, id) is Some,
     ensures
@@ -107,7 +107,7 @@ proof fn entry_of<'p>(ef: crate::util::ExportFile<'p>, c: int, id: u64) -> (i: i
 }
 
 /// A declaration's certificate is at a cutoff no later than its position.
-proof fn cert_of<'p>(ef: crate::util::ExportFile<'p>, i: int) -> (c: int)
+pub proof fn cert_of<'p>(ef: crate::util::ExportFile<'p>, i: int) -> (c: int)
     requires
         crate::inductive::export_ok(ef),
         all_certified(ef),
@@ -2516,7 +2516,7 @@ proof fn ctor_forms_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
 
 
 /// Two keys of the export with the same id are the same key.
-proof fn key_eq<'p>(ef: crate::util::ExportFile<'p>, a: crate::util::NamePtr<'p>, b: crate::util::NamePtr<'p>)
+pub proof fn key_eq<'p>(ef: crate::util::ExportFile<'p>, a: crate::util::NamePtr<'p>, b: crate::util::NamePtr<'p>)
     requires
         crate::inductive::export_ok(ef),
         ef.declars_view().contains_key(a),

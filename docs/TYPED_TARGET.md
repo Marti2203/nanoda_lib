@@ -2525,6 +2525,27 @@ prefixes, which nothing proves.
   strengthening for closed terms, a metatheory hypothesis in `kh_full`
   next to `h_sr_red`. The projected field is a proposition too, so the
   projection rule types it at the kernel's field type (`walk_prop_at`).
-- **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
-  `declar_cert_at` claim also at the flagged environment -- with full
-  versions of the lemmas above.
+- **Dual kernel contracts -- DONE.** `tc::kcw`/`kcwh`/`kcc`/`kci`/
+  `kcprop` are each the claim at the kernel's environment and at
+  `kclaims::flag` of it (the same tables, the flag set); `kdual` wraps the
+  claim lemmas the kernel uses, calling each in both worlds. The check
+  claim's guard is `kclaims::cterm`: the fragment's terms in the
+  fragment, every term but the model's non-term `Closed` in the full
+  judgment (so literals are covered there).
+- **Full-mode certificates and the export theorem -- DONE.**
+  `declar_cert_at` and `ctor_e2_cert` carry the full judgment's clauses
+  next to the fragment's (`tc::type_cert_full`, `tc::val_cert_full`, the
+  parameter term at `flag`), from the dual contracts.
+  `export_full::export_kh_full` gives `kh` at every cutoff's flagged
+  environment: the fragment's induction (`export_sound::export_kh`) with
+  no twin, no `iota_ok` and no fragment conditions. Full-mode ranks need
+  only the definitions ordered (`metatheory::jrank` chooses by mode), and
+  weakening (`env_weaken::ew_*`) needs the twin only in the fragment.
+  Certified: the declarations' types and values typed, `sig_wf`,
+  `lev_ok`, the free-variable and level facts, `struct_ok`, `ctor_forms`,
+  `e2_ok`. Named (`export_full::full_hyp`): the metatheory (`meta_ok`,
+  `h_sr_red`, `h_str`), Church-Rosser with the Nat extension (`cr_ext`),
+  `structs_sorted`, `nat_decl_ok`, and `terms_full` -- the declarations
+  denote no `Closed`, which only a misplaced arena node denotes; the
+  arena's node invariant (`expr_node_ok`) should certify it.
+- **Next:** certify `terms_full` from the arena; then widen the fragment.
