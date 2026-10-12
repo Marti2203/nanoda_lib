@@ -1607,7 +1607,6 @@ pub proof fn ctor_at_params(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
         dty.contains_key(ind) && dty.contains_key(cid) && dty[cid].0 == dty[ind].0,
         ylv.len() == dty[ind].0.len(),
         crate::rec_canon::tdoms(dty[ind].1, ps.len()).len() == ps.len(),
-        nlbv(dty[cid].1) == 0,
         typed(dty, denv, d, spine_app(ExprSpec::Const(ind, ylv), ps), tst),
     ensures
         exists|t: ExprSpec| #[trigger] typed(dty, denv, d, spine_app(ExprSpec::Const(cid, ylv), ps), t),
@@ -1637,6 +1636,7 @@ pub proof fn ctor_at_params(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, 
     // the inductive's type is closed: its constant is typed in the empty context
     crate::jkernel::const_d(sig, g0, ind, ylv, ylv);
     crate::ti_scope::closed_of_empty(sig, ExprSpec::Const(ind, ylv), ExprSpec::Const(ind, ylv), crate::ti_syntax::dty_at(sig, ind, ylv));
+    crate::ti_scope::closed_of_empty(sig, ExprSpec::Const(cid, ylv), ExprSpec::Const(cid, ylv), crate::ti_syntax::dty_at(sig, cid, ylv));
     crate::ti_level::ls_nlbv(ti, ks, ylv);
     crate::ti_level::ls_nlbv(tc, ks, ylv);
     crate::full_e2::e2_inst(sig, ti2, tc2, np, ExprSpec::Const(cid, ylv), ps, t02);
@@ -1753,6 +1753,59 @@ proof fn eta_exp_full_at(
     assert(crate::ti_syntax::prems(ps, seq![eq(g0, e, e, ety), eq(g0, r, r, ety), eq(g0, ety, ety, crate::ti_syntax::sort(lt))]));
     crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::RedG(lt), j, ps);
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::RedG(lt), j, ps));
+}
+
+/// K-LIKE REDUCTION in the full judgment, at one context: the constructor
+/// the kernel puts for the major premise is typed (E2'), so the claim's
+/// conversion (proof irrelevance) applies to it.
+#[verifier::spinoff_prover]
+proof fn k_full_at(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    d: Map<nat, ExprSpec>,
+    major: ExprSpec,
+    mty: ExprSpec,
+    nc: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    params: Seq<ExprSpec>,
+    rest: Seq<ExprSpec>,
+)
+    requires
+        kh_full(dty, denv),
+        ci(dty, denv, g, major, mty),
+        mty == spine_app(ExprSpec::Const(ind, ls), params + rest),
+        denv.ctor_inductive(cid) == Some(ind),
+        denv.ctor_num_params(cid) == Some(params.len() as u16),
+        params.len() < 0x1_0000,
+        nc == spine_app(ExprSpec::Const(cid, ls), params),
+        lctx_wf(dty, denv, d),
+        sub(rctx(g, major), d),
+        rtyped(dty, denv, d, major),
+    ensures
+        rtyped(dty, denv, d, nc),
+{
+    let sig = jsig(dty, denv, d);
+    let s0 = jsig(dty, denv, Map::empty());
+    let g0 = Seq::<ExprSpec>::empty();
+    let am = params + rest;
+    let np = params.len();
+    crate::jkernel::kh_at(dty, denv, d);
+    kh_meta(dty, denv, d);
+    crate::jkernel::jsig_locals(dty, denv, d);
+    crate::jkernel::wf_nil(sig);
+    ci_use(dty, denv, g, d, major, mty);
+    let sm = choose|s: ExprSpec| #[trigger] typed(dty, denv, d, mty, s);
+    head_levels(dty, denv, d, ind, ls, am, sm);
+    assert(ctor_form(s0, cid));
+    let ti = dty[ind].1;
+    crate::full_e2::spine_arity(sig, g0, ind, ls, am, sm);
+    crate::full_e2::tdoms_len_mono(ti, np, crate::rec_canon::tarity(ti));
+    let (tp, _, _) = crate::full_e2::spine_prefix_typed(sig, g0, ExprSpec::Const(ind, ls), am, sm, np);
+    assert(am.subrange(0, np as int) =~= params);
+    ctor_at_params(dty, denv, d, ind, cid, ls, params, tp);
 }
 
 /// The certified structure facts, in the full judgment's terms.
@@ -2241,7 +2294,6 @@ pub proof fn cwh_k(
     rest: Seq<ExprSpec>,
 )
     requires
-        !denv.full,
         ci(dty, denv, g, major, t0),
         cwh(dty, denv, g, t0, mty),
         mty == spine_app(ExprSpec::Const(ind, ls), params + rest),
@@ -2281,6 +2333,15 @@ pub proof fn cwh_k(
         // wherever the major is typed, the constructor is, at its type
         assert forall|d: Map<nat, ExprSpec>, t: ExprSpec| lctx_wf(dty, denv, d) && sub(rctx(g, major), d) && #[trigger] typed(dty, denv, d, major, t)
             implies exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, nc, t2) && tconv(dty, denv, d, t2, t) by {
+            if denv.full {
+                assert(rtyped(dty, denv, d, major));
+                k_full_at(dty, denv, g, d, major, mty, nc, ind, cid, ls, params, rest);
+                rtyped_closed(dty, denv, d, major);
+                sub_trans(rctx(g, nc), rctx(g, major), d);
+                assert(jconv(dty, denv, d, major, nc));
+                jconv_at(dty, denv, d, major, nc, t);
+                tconv_refl(dty, denv, d, t);
+            } else {
             let sig = jsig(dty, denv, d);
             crate::jkernel::kh_at(dty, denv, d);
             assert(rtyped(dty, denv, d, major));
@@ -2300,6 +2361,7 @@ pub proof fn cwh_k(
             assert(jconv(dty, denv, d, major, nc));
             jconv_at(dty, denv, d, major, nc, t);
             tconv_refl(dty, denv, d, t);
+            }
         }
     }
 }

@@ -216,4 +216,80 @@ pub proof fn params_along(sig: Sig, g: Ctx, s: u64, ylv: Seq<LevelSpec>, ps: Seq
     }
 }
 
+/// A typed spine's prefixes are typed, each at a Pi when it takes an
+/// argument.
+pub proof fn spine_prefix_typed(sig: Sig, g: Ctx, h: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec, m: nat) -> (r: (ExprSpec, ExprSpec, ExprSpec))
+    requires
+        derivable(sig, eq(g, spine_app(h, xs), spine_app(h, xs), t)),
+        m <= xs.len(),
+    ensures
+        derivable(sig, eq(g, spine_app(h, xs.subrange(0, m as int)), spine_app(h, xs.subrange(0, m as int)), r.0)),
+        m < xs.len() ==> r.0 == crate::ti_syntax::pi(r.1, r.2),
+    decreases xs.len(),
+{
+    if m == xs.len() {
+        assert(xs.subrange(0, m as int) =~= xs);
+        return (t, t, t);
+    }
+    let n = xs.len() - 1;
+    let init = xs.subrange(0, n);
+    crate::dom_bound::spine_push(h, xs);
+    let d = get(sig, eq(g, spine_app(h, xs), spine_app(h, xs), t));
+    crate::ti_gen::gen(sig, d);
+    let f = spine_app(h, init);
+    let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, b, l2, l2)
+        && derivable(sig, eq(g, f, f, crate::ti_syntax::pi(a, b))) && derivable(sig, eq(g, xs.last(), xs.last(), a))
+        && crate::ti_gen::typ(sig, g.push(a), b, l2) && crate::ti_chain::tchain(sig, g, t, crate::subst_algebra::inst(0, xs.last(), b));
+    if m == n {
+        assert(xs.subrange(0, m as int) =~= init);
+        return (crate::ti_syntax::pi(a, b), a, b);
+    }
+    assert(init.subrange(0, m as int) =~= xs.subrange(0, m as int));
+    spine_prefix_typed(sig, g, h, init, crate::ti_syntax::pi(a, b), m)
+}
+
+/// Fewer domains of a telescope are there when more are.
+pub proof fn tdoms_len_mono(t: ExprSpec, m: nat, n: nat)
+    requires
+        m <= n,
+        tdoms(t, n).len() == n,
+    ensures
+        tdoms(t, m).len() == m,
+    decreases m,
+{
+    if m > 0 {
+        let b = *t->Bind_2;
+        assert(tdoms(t, n) == seq![*t->Bind_1] + tdoms(b, (n - 1) as nat));
+        tdoms_len_mono(b, (m - 1) as nat, (n - 1) as nat);
+    }
+}
+
+/// A TYPE FORMER TAKES NO MORE ARGUMENTS THAN ITS ARITY: past it, its
+/// application is a sort, and a sort is no Pi.
+pub proof fn spine_arity(sig: Sig, g: Ctx, s: u64, ylv: Seq<LevelSpec>, xs: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        crate::jkernel::lev_ok(sig),
+        crate::meta_hyp::meta_ok(sig),
+        derivable(sig, Jd::Wf(g)),
+        sig.consts.contains_key(s),
+        ylv.len() == sig.consts[s].lps.len(),
+        tdoms(sig.consts[s].ty, crate::rec_canon::tarity(sig.consts[s].ty)).len() == crate::rec_canon::tarity(sig.consts[s].ty),
+        crate::rec_canon::tbody(sig.consts[s].ty, crate::rec_canon::tarity(sig.consts[s].ty)) is Sort,
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(s, ylv), xs), spine_app(ExprSpec::Const(s, ylv), xs), t)),
+    ensures
+        xs.len() <= crate::rec_canon::tarity(sig.consts[s].ty),
+{
+    let ar = crate::rec_canon::tarity(sig.consts[s].ty);
+    if xs.len() > ar {
+        let h = ExprSpec::Const(s, ylv);
+        let (tq, a, b) = spine_prefix_typed(sig, g, h, xs, t, ar);
+        let q = xs.subrange(0, ar as int);
+        assert(q.len() == ar);
+        crate::full_eta::ind_sort(sig, g, s, ylv, q, tq);
+        crate::meta_hyp::pi_sort_m(sig, g, a, b, crate::level_model::subst_level_spec(
+            crate::rec_canon::tbody(sig.consts[s].ty, ar)->Sort_0, sig.consts[s].lps, ylv));
+    }
+}
+
 } // verus!

@@ -2462,7 +2462,9 @@ prefixes, which nothing proves.
   Restricted to `!denv.full`, since their arguments are the fragment's
   (untypable literals, canonical recursors, the model's structures):
   `kclaims::{untypable_untyped, cw_of_untypable, tp_of_untypable,
-  cwh_to_lit, cwh_k, k_rec_canon}` and
+  cwh_to_lit}` (vacuity in the fragment: literals are untypable there;
+  the kernel sites using them need full-mode replacements at the
+  dual-contract stage) and
   `proj_reg::{ci_proj, cc_proj}` with their walk lemmas. Closed in both
   worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
   `nat_ext::cr_ext` -- the fold-free environment's syntactic
@@ -2488,7 +2490,11 @@ prefixes, which nothing proves.
   lambdas inverted and `C`, the parameters substituted type `C ps`
   wherever `S ps` is typed. Used by `cwh_eta_exp` (the kernel's eta
   expansion, which nanoda performs only on never-`Prop` structures:
-  `never_prop_at`).
+  `never_prop_at`) and by `cwh_k` (K-like reduction: the constructor the
+  kernel puts for the major is typed -- its parameters fit the
+  inductive's arity because past it a type former's application is a
+  sort and no sort is a Pi, `full_e2::spine_arity` -- so proof
+  irrelevance applies).
 - **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
   `declar_cert_at` claim also at the flagged environment -- with full
   versions of the lemmas above.
