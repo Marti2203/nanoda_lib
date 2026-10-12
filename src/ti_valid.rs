@@ -94,6 +94,12 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
             reveal(crate::ti_syntax::rec_eta_ok);
             d_ty(sig, ps[0]);
         },
+        Rule::ProjG(l) => {
+            reveal(crate::ti_syntax::proj_g_ok);
+            mk_d(sig, ps[1]);
+            let r = get(sig, eq(g, t, t, sort(l)));
+            mk_t(sig, r, l);
+        },
         Rule::ProjCong(l) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             mk_d(sig, ps[1]);
@@ -372,7 +378,7 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             assert(sig.locals.contains_key(k));
         },
         Rule::RedG(_) => {
-            crate::full_red::full_red_sub(sig, sig2, j->Eq_1, j->Eq_2);
+            crate::full_red::full_conv_sub(sig, sig2, j->Eq_1, j->Eq_2, j->Eq_3);
         },
         Rule::Iota(_) => {
             let m = j->Eq_1;
@@ -384,6 +390,11 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             canon_grow(sig, sig2, rid);
             reveal(crate::ti_hred::fire_inst);
             reveal(crate::ti_hred::rec_smash);
+        },
+        Rule::ProjG(_) => {
+            reveal(crate::ti_syntax::proj_g_ok);
+            let st = concl(ps[0])->Eq_3;
+            crate::full_red::gproj_congr(sig, sig2, st, j->Eq_1->Proj_0 as nat, *j->Eq_1->Proj_1);
         },
         Rule::ProjCong(_) => {
             reveal(crate::ti_syntax::proj_cong_ok);

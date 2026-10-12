@@ -255,6 +255,7 @@ pub proof fn d_wf_init(sig: Sig, d: Deriv) -> (r: Deriv)
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_g_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
     reveal(crate::ti_syntax::rec_eta_ok);

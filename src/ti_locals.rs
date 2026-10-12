@@ -687,13 +687,24 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
         Rule::RedG(_) => {
-            crate::full_red::full_red_fswap(sig, j->Eq_1, j->Eq_2, x, y);
+            crate::full_red::full_conv_fswap(sig, j->Eq_1, j->Eq_2, j->Eq_3, x, y);
             assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
             assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
             assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
         Rule::ProjCong(_) | Rule::ProjIota(_) => step_swap_proj(sig, r, j, ps, x, y),
+        Rule::ProjG(_) => {
+            reveal(crate::ti_syntax::proj_g_ok);
+            let m = j->Eq_1;
+            let st = concl(ps[0])->Eq_3;
+            let i = m->Proj_0 as nat;
+            crate::full_red::gproj_ty_fswap(sig, st, i, *m->Proj_1, x, y);
+            crate::full_red::gproj_same(sig, s2, crate::swap_model::fswap(st, x, y), i, crate::swap_model::fswap(*m->Proj_1, x, y));
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs)) by { reveal(crate::ti_syntax::proj_g_ok); }
+        },
         Rule::StructEta(_) => step_swap_seta(sig, r, j, ps, x, y),
         Rule::RecEta(_) => step_swap_reta(sig, r, j, ps, x, y),
         Rule::Delta(_) => {
@@ -861,6 +872,20 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
         step_close_bind(sig, k, a, r, j, ps);
     } else if r is Iota {
         step_close_iota(sig, k, a, r, j, ps);
+    } else if r is ProjG {
+        let s1 = sig_with(sig, k, a);
+        let qs = pclose(sig, k, a, ps);
+        assert(qs.len() == ps.len());
+        reveal(crate::ti_syntax::proj_g_ok);
+        let m = j->Eq_1;
+        let st = concl(ps[0])->Eq_3;
+        let i = m->Proj_0 as nat;
+        let c = j->Eq_0.len();
+        crate::full_red::gproj_same(s1, sig, st, i, *m->Proj_1);
+        crate::full_red::gproj_ty_fclose(sig, st, i, *m->Proj_1, k, c);
+        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+        assert(step_ok(sig, r, jclose(k, a, j), qs)) by { reveal(crate::ti_syntax::proj_g_ok); }
     } else if r is LitTy {
         let qs = pclose(sig, k, a, ps);
         assert(qs.len() == ps.len());
@@ -872,7 +897,7 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
     } else if r is RedG {
         let qs = pclose(sig, k, a, ps);
         assert(qs.len() == ps.len());
-        crate::full_red::full_red_fclose(sig, k, j->Eq_0.len(), j->Eq_1, j->Eq_2);
+        crate::full_red::full_conv_fclose(sig, k, j->Eq_0.len(), j->Eq_1, j->Eq_2, j->Eq_3);
         assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
         assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
         assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));

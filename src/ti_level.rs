@@ -58,6 +58,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::Iota(l) => Rule::Iota(ll_(l, ks, vs)),
         Rule::RedG(l) => Rule::RedG(ll_(l, ks, vs)),
         Rule::ProjCong(l) => Rule::ProjCong(ll_(l, ks, vs)),
+        Rule::ProjG(l) => Rule::ProjG(ll_(l, ks, vs)),
         Rule::ProjIota(l) => Rule::ProjIota(ll_(l, ks, vs)),
         Rule::StructEta(l) => Rule::StructEta(ll_(l, ks, vs)),
         Rule::RecEta(l) => Rule::RecEta(ll_(l, ks, vs)),
@@ -540,7 +541,7 @@ proof fn step_ls_redg(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
 {
     let qs = pls(sig, ps, ks, vs);
     assert(qs.len() == ps.len());
-    crate::full_red::full_red_ls(sig, j->Eq_1, j->Eq_2, ks, vs);
+    crate::full_red::full_conv_ls(sig, j->Eq_1, j->Eq_2, j->Eq_3, ks, vs);
     assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
     assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
     assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
@@ -687,6 +688,19 @@ pub proof fn d_ls(sig: Sig, d: Deriv, ks: Seq<u64>, vs: Seq<LevelSpec>)
         step_ls_redg(sig, r, j, ps, ks, vs);
     } else if r is ProjCong || r is ProjIota {
         step_ls_proj(sig, r, j, ps, ks, vs);
+    } else if r is ProjG {
+        reveal(crate::ti_syntax::proj_g_ok);
+        let l = r->ProjG_0;
+        let m = j->Eq_1;
+        let (i, x) = (m->Proj_0 as nat, *m->Proj_1);
+        let st = concl(ps[0])->Eq_3;
+        crate::full_red::gproj_ty_ls(sig, st, i, x, ks, vs);
+        if crate::ti_syntax::proj_prop(sig, subst_expr_levels(st, ks, vs)) {
+            ls_is_zero(l, ks, vs);
+        }
+        assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+        assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+        assert(step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), qs)) by { reveal(crate::ti_syntax::proj_g_ok); }
     } else if r is StructEta {
         step_ls_seta(sig, r, j, ps, ks, vs);
     } else if r is RecEta {
@@ -773,6 +787,7 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
     valid_prems(sig, d);
     let Deriv::Node(r, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_g_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
     let k = ps.len();

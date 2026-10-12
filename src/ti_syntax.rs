@@ -205,11 +205,15 @@ pub enum Rule {
     /// type at the given sort (a proposition for a recursor into Prop).
     Iota(LevelSpec),
     /// A kernel reduction (`full_red::full_red`: iota by the environment's
-    /// own rule, Nat folding, quotients, projections, literals), where both
-    /// sides are typed, in the full judgment.
+    /// own rule, Nat folding, quotients, projections, literals), structure
+    /// eta, or unit eta (`full_red::full_conv`), where both sides are typed,
+    /// in the full judgment.
     RedG(LevelSpec),
     /// A literal at its type (`Nat`, `String`), in the full judgment.
     LitTy(LevelSpec),
+    /// A projection of any structure (`full_red::gproj_ty`), in the full
+    /// judgment.
+    ProjG(LevelSpec),
     /// A projection, at its field's type over the parameters and the
     /// earlier projections (a proposition when the structure may be one).
     ProjCong(LevelSpec),
@@ -412,7 +416,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
         Rule::RedG(l) => match j {
-            Jd::Eq(g, m, n, t) => sig.full && crate::full_red::full_red(sig, m, n)
+            Jd::Eq(g, m, n, t) => sig.full && crate::full_red::full_conv(sig, m, n, t)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]),
             _ => false,
         },
@@ -422,6 +426,7 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
         Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),
+        Rule::ProjG(l) => proj_g_ok(sig, l, j, ps),
         Rule::ProjIota(l) => proj_iota_ok(sig, l, j, ps),
         Rule::StructEta(l) => struct_eta_ok(sig, l, j, ps),
         Rule::RecEta(l) => rec_eta_ok(sig, l, j, ps),
@@ -557,6 +562,20 @@ pub open spec fn proj_cong_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
             let st = concl(ps[0])->Eq_3;
             let (x, x2) = (*m->Proj_1, *n->Proj_1);
             proj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
+                && prems(ps, seq![eq(g, x, x2, st), eq(g, t, t, sort(l))])
+        },
+        _ => false,
+    }
+}
+
+/// Rule `ProjG`'s instance: `ProjCong` at any structure.
+#[verifier::opaque]
+pub open spec fn proj_g_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
+    match j {
+        Jd::Eq(g, m, n, t) => sig.full && m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
+            let st = concl(ps[0])->Eq_3;
+            let (x, x2) = (*m->Proj_1, *n->Proj_1);
+            crate::full_red::gproj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, x, x2, st), eq(g, t, t, sort(l))])
         },
         _ => false,

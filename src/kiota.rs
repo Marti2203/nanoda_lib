@@ -867,6 +867,7 @@ pub proof fn kproj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec)
     let cid = spine_head(x)->Const_0;
     let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
     crate::ti_gen::gen(sig, dm);
+    assert(!sig.full) by { reveal(crate::ti_syntax::iota_ok); }
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some;
     reveal(crate::ti_syntax::proj_ty);
@@ -915,6 +916,7 @@ pub proof fn proj_cong_d(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, 
     let m2 = ExprSpec::Proj(i, Box::new(x2));
     let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
     crate::ti_gen::gen(sig, dm);
+    assert(!sig.full) by { reveal(crate::ti_syntax::iota_ok); }
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some
         && crate::ti_gen::typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0, l)
@@ -962,6 +964,7 @@ pub proof fn proj_step_d(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec)
     kproj_fire(sig, g, i, x, t);
     let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
     crate::ti_gen::gen(sig, dm);
+    assert(!sig.full) by { reveal(crate::ti_syntax::iota_ok); }
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some
         && crate::ti_gen::typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0, l)
@@ -980,9 +983,18 @@ pub proof fn proj_subj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec) -> 
     let m = ExprSpec::Proj(i, Box::new(x));
     let dm = crate::ti_sub::get(sig, eq(g, m, m, t));
     crate::ti_gen::gen(sig, dm);
-    let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
-        && derivable(sig, eq(g, x, x, st));
-    st
+    if crate::ti_gen::gen_proj(sig, g, i as nat, x, t) {
+        let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
+            && derivable(sig, eq(g, x, x, st));
+        st
+    } else {
+        let (st, l, y) = choose|st: ExprSpec, l: LevelSpec, y: ExprSpec| #[trigger] crate::ti_gen::gmark(st, y, l, l)
+            && derivable(sig, eq(g, y, x, st));
+        let d = crate::ti_sub::get(sig, eq(g, y, x, st));
+        let dr = crate::ti_meta::d_right(sig, d);
+        crate::ti_meta::mk_d(sig, dr);
+        st
+    }
 }
 
 } // verus!

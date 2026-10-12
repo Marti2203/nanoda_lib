@@ -219,8 +219,9 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::ProjIota(_) => adeq_piota(sig, d, rho, dl, s, s2, n, u, a),
         Rule::StructEta(_) => adeq_seta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::RecEta(_) => adeq_reta(sig, d, rho, dl, s, s2, n, u, a),
-        Rule::RedG(_) | Rule::LitTy(_) => {
+        Rule::RedG(_) | Rule::LitTy(_) | Rule::ProjG(_) => {
             reveal(crate::ti_syntax::iota_ok);
+            reveal(crate::ti_syntax::proj_g_ok);
         },
         _ => {},
     }

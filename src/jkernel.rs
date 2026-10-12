@@ -783,7 +783,11 @@ pub proof fn lveq_conv(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
         },
         ExprSpec::Bind(bk, a, b) => lveq_bind(sig, g, bk, *a, *b, *m2->Bind_1, *m2->Bind_2, t),
         ExprSpec::Let(a, v, b) => lveq_let(sig, g, *a, *v, *b, *m2->Let_0, *m2->Let_1, *m2->Let_2, t),
-        ExprSpec::Proj(i, x) => lveq_proj(sig, g, i, *x, *m2->Proj_1, t),
+        ExprSpec::Proj(i, x) => if crate::ti_gen::gen_proj(sig, g, i as nat, *x, t) {
+            lveq_proj(sig, g, i, *x, *m2->Proj_1, t)
+        } else {
+            lveq_gproj(sig, g, i, *x, *m2->Proj_1, t)
+        },
         _ => {},
     }
 }
@@ -817,6 +821,52 @@ proof fn lveq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, t: Exp
     }
     valid_node(sig, Rule::ProjCong(l), j, ps);
     mk_d(sig, node(Rule::ProjCong(l), j, ps));
+    conv_to(sig, g, m, m2, ty, t);
+}
+
+/// A projection of any structure (the full judgment): through a subject
+/// the generation names.
+#[verifier::spinoff_prover]
+proof fn lveq_gproj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        lev_ok(sig),
+        sig.full,
+        crate::ti_gen::gen_gproj(sig, g, i as nat, x, t),
+        crate::conv_cr::lveq(x, x2),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)), t)),
+    decreases crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 0int,
+{
+    let (st, l, y) = choose|st: ExprSpec, l: LevelSpec, y: ExprSpec| #[trigger] gmark(st, y, l, l)
+        && derivable(sig, eq(g, y, x, st)) && crate::full_red::gproj_ty(sig, st, i as nat, y) is Some
+        && typ(sig, g, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0, l)
+        && (crate::ti_syntax::proj_prop(sig, st) ==> is_zero(l))
+        && tchain(sig, g, t, crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0);
+    let ty = crate::full_red::gproj_ty(sig, st, i as nat, y)->Some_0;
+    let (my, m, m2) = (ExprSpec::Proj(i, Box::new(y)), ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x2)));
+    let dyx = get(sig, eq(g, y, x, st));
+    let dx = crate::ti_meta::d_right(sig, dyx);
+    mk_d(sig, dx);
+    lveq_conv(sig, g, x, x2, st);
+    let dxx2 = get(sig, eq(g, x, x2, st));
+    let dyx2 = crate::ti_meta::d_trans(sig, dyx, dxx2);
+    let d1 = get(sig, eq(g, ty, ty, sort(l)));
+    let (ja, pa) = (eq(g, my, m2, ty), seq![dyx2, d1]);
+    assert(prems(pa, seq![eq(g, y, x2, st), eq(g, ty, ty, sort(l))]));
+    assert(step_ok(sig, Rule::ProjG(l), ja, pa)) by {
+        reveal(crate::ti_syntax::proj_g_ok);
+    }
+    valid_node(sig, Rule::ProjG(l), ja, pa);
+    let (jb, pb) = (eq(g, my, m, ty), seq![dyx, d1]);
+    assert(prems(pb, seq![eq(g, y, x, st), eq(g, ty, ty, sort(l))]));
+    assert(step_ok(sig, Rule::ProjG(l), jb, pb)) by {
+        reveal(crate::ti_syntax::proj_g_ok);
+    }
+    valid_node(sig, Rule::ProjG(l), jb, pb);
+    let zb = crate::ti_meta::d_sym(sig, node(Rule::ProjG(l), jb, pb));
+    let z = crate::ti_meta::d_trans(sig, zb, node(Rule::ProjG(l), ja, pa));
+    mk_d(sig, z);
     conv_to(sig, g, m, m2, ty, t);
 }
 

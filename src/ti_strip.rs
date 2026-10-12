@@ -385,6 +385,12 @@ pub proof fn strip_valid(sig: Sig, d: Deriv)
             }
         }
     }
+    if r is ProjG {
+        // no structure table: nothing projects
+        reveal(crate::ti_syntax::proj_g_ok);
+        reveal(crate::full_red::gproj_ty);
+        assert(false);
+    }
     assert forall|k: int| 0 <= k < ps.len() implies valid(sig, #[trigger] ps[k]) && iota_free(ps[k]) by {
         strip_valid(sig, ps[k]);
     }

@@ -2105,8 +2105,9 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             assert(crate::ti_syntax::iota_lv(sig, m));
             crate::dom_iota_sound::sound_iota(sig, g, m, a, rho);
         },
-        Rule::RedG(_) | Rule::LitTy(_) => {
+        Rule::RedG(_) | Rule::LitTy(_) | Rule::ProjG(_) => {
             reveal(crate::ti_syntax::iota_ok);
+            reveal(crate::ti_syntax::proj_g_ok);
         },
         _ => {},
     }

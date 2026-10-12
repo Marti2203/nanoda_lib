@@ -371,6 +371,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::Iota(_) => d_sub_iota(sig, d, dl, s, s2),
         Rule::RedG(_) => d_sub_redg(sig, d, dl, s, s2),
         Rule::ProjCong(_) => d_sub_pcong(sig, d, dl, s, s2),
+        Rule::ProjG(_) => d_sub_pg(sig, d, dl, s, s2),
         Rule::ProjIota(_) => d_sub_piota(sig, d, dl, s, s2),
         Rule::StructEta(_) => d_sub_seta(sig, d, dl, s, s2),
         Rule::RecEta(_) => d_sub_reta(sig, d, dl, s, s2),
@@ -1217,6 +1218,44 @@ proof fn d_sub_iota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
 }
 
 #[verifier::spinoff_prover]
+proof fn d_sub_pg(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        spair(sig, concl(d)->Eq_0, dl, s, s2),
+        d->Node_0 is ProjG,
+    ensures
+        derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
+        tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, n, a) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    let l = rule->ProjG_0;
+    reveal(crate::ti_syntax::proj_g_ok);
+    let st = concl(ps[0])->Eq_3;
+    let (i, x, x2) = (m->Proj_0, *m->Proj_1, *n->Proj_1);
+    spair_left(sig, g, dl, s, s2);
+    d_sub(sig, ps[0], dl, s, s2);
+    d_sub(sig, ps[1], dl, s, s);
+    d_sub(sig, ps[1], dl, s, s2);
+    crate::full_red::gproj_ty_psub(sig, st, i as nat, x, s);
+    let q0 = get(sig, eq(dl, psub(x, s), psub(x2, s2), psub(st, s)));
+    let q1 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));
+    let (m2, n2) = (ExprSpec::Proj(i, Box::new(psub(x, s))), ExprSpec::Proj(i, Box::new(psub(x2, s2))));
+    assert(psub(m, s) == m2 && psub(n, s2) == n2);
+    let ij = eq(dl, m2, n2, psub(a, s));
+    let ip = seq![q0, q1];
+    assert(prems(ip, seq![eq(dl, psub(x, s), psub(x2, s2), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l))]));
+    assert(step_ok(sig, Rule::ProjG(l), ij, ip)) by { reveal(crate::ti_syntax::proj_g_ok); }
+    valid_node(sig, Rule::ProjG(l), ij, ip);
+    mk_d(sig, node(Rule::ProjG(l), ij, ip));
+    let t = get(sig, eq(dl, psub(a, s), psub(a, s2), sort(l)));
+    mk_t(sig, t, l);
+}
+
+#[verifier::spinoff_prover]
 proof fn d_sub_redg(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     requires
         valid(sig, d),
@@ -1241,7 +1280,7 @@ proof fn d_sub_redg(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[1], dl, s, s2);
     d_sub(sig, ps[2], dl, s, s);
     assert(psub(sort(l), s) == sort(l));
-    crate::full_red::full_red_psub(sig, m, n, s);
+    crate::full_red::full_conv_psub(sig, m, n, a, s);
     let q0 = get(sig, eq(dl, psub(m, s), psub(m, s), psub(a, s)));
     let q1 = get(sig, eq(dl, psub(n, s), psub(n, s), psub(a, s)));
     let q2 = get(sig, eq(dl, psub(a, s), psub(a, s), sort(l)));

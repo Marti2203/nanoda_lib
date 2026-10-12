@@ -656,6 +656,7 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
 {
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
+    assert(!sig.full) by { reveal(crate::ti_syntax::iota_ok); }
     let w = d_wf(sig, dm);
     mk_d(sig, w);
     match m {

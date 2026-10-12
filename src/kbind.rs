@@ -115,6 +115,7 @@ pub proof fn wf_last(sig: Sig, w: Deriv) -> (l: LevelSpec)
     crate::ti_meta::valid_prems(sig, w);
     let Deriv::Node(rule, j, ps) = w;
     reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_g_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
     reveal(crate::ti_syntax::rec_eta_ok);

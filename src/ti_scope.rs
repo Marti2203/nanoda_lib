@@ -230,7 +230,7 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
             crate::full_red::lit_ty_closed(sig, j->Eq_1);
             assert(scoped(j));
         },
-        Rule::Iota(_) | Rule::RedG(_) | Rule::ProjCong(_) | Rule::ProjIota(_) | Rule::StructEta(_) | Rule::RecEta(_) => d_scope_red(sig, d),
+        Rule::Iota(_) | Rule::RedG(_) | Rule::ProjG(_) | Rule::ProjCong(_) | Rule::ProjIota(_) | Rule::StructEta(_) | Rule::RecEta(_) => d_scope_red(sig, d),
     }
 }
 
@@ -239,7 +239,7 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
 proof fn d_scope_red(sig: Sig, d: Deriv)
     requires
         valid(sig, d),
-        d->Node_0 is Iota || d->Node_0 is RedG || d->Node_0 is ProjCong || d->Node_0 is ProjIota || d->Node_0 is StructEta || d->Node_0 is RecEta,
+        d->Node_0 is Iota || d->Node_0 is RedG || d->Node_0 is ProjG || d->Node_0 is ProjCong || d->Node_0 is ProjIota || d->Node_0 is StructEta || d->Node_0 is RecEta,
     ensures
         scoped(concl(d)),
     decreases d, 0int,
@@ -247,6 +247,7 @@ proof fn d_scope_red(sig: Sig, d: Deriv)
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_g_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
     reveal(crate::ti_syntax::rec_eta_ok);

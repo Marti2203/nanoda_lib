@@ -2420,6 +2420,18 @@ swap/close, scope, generation, extension) carry the new rules directly.
   for the fragment. Generic lemmas move to `meta_ok` (`ti_spine`'s `_m`
   forms so far). Subject reduction for `RedG` is the remaining hypothesis
   to state.
-- **Next:** structure eta and unit eta for any structure, projection
-  typing for any structure; then the claims at `Sig { full: !frag_env,
-  ..jsig }`.
+- **Structure and unit eta -- DONE.** `RedG`'s side condition is
+  `full_conv`: a reduction, or `eta_g` (the other side is a structure's
+  constructor applied to parameters and this side's projections), or a
+  unit-like type (a structure without fields). Levels and parameters are
+  left free: both sides typed alike pins them, as in Lean.
+- **`ProjG` -- DONE.** `ProjCong` at any structure (`gstruct`: a
+  structure-table entry whose constructor shares its level parameters,
+  closed type): the field is the constructor type's binder at the
+  instance, over the parameters and the subject's earlier projections
+  (`gproj_ty`, the kernel's `infer_proj` walk), with Lean's Prop
+  restriction (`proj_prop ==> is_zero`). Generation records a subject
+  convertible to the projected term, since a dependent field's type
+  mentions the subject.
+- **Next:** the claims at `Sig { full: !frag_env, ..jsig }` -- outside the
+  fragment, each kernel claim from `meta_ok` plus subject reduction.

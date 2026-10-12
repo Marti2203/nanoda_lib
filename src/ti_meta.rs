@@ -148,6 +148,10 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
             reveal(crate::ti_syntax::proj_cong_ok);
             d_wf(sig, ps[0])
         },
+        Rule::ProjG(_) => {
+            reveal(crate::ti_syntax::proj_g_ok);
+            d_wf(sig, ps[0])
+        },
         Rule::ProjIota(_) => {
             reveal(crate::ti_syntax::proj_iota_ok);
             d_wf(sig, ps[0])
@@ -183,6 +187,7 @@ pub proof fn d_wf_last(sig: Sig, d: Deriv) -> (r: (LevelSpec, Deriv))
     valid_prems(sig, d);
     let Deriv::Node(rule, j, ps) = d;
     reveal(crate::ti_syntax::proj_cong_ok);
+    reveal(crate::ti_syntax::proj_g_ok);
     reveal(crate::ti_syntax::proj_iota_ok);
     reveal(crate::ti_syntax::struct_eta_ok);
     reveal(crate::ti_syntax::rec_eta_ok);
@@ -324,6 +329,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::Iota(_) => d_ren_iota(sig, d, w, dl, r),
         Rule::RedG(_) => d_ren_redg(sig, d, w, dl, r),
         Rule::ProjCong(_) => d_ren_pcong(sig, d, w, dl, r),
+        Rule::ProjG(_) => d_ren_pg(sig, d, w, dl, r),
         Rule::ProjIota(_) => d_ren_piota(sig, d, w, dl, r),
         Rule::StructEta(_) => d_ren_seta(sig, d, w, dl, r),
         Rule::RecEta(_) => d_ren_reta(sig, d, w, dl, r),
@@ -665,6 +671,40 @@ proof fn d_ren_irr(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             node(Rule::Irr(l), j2, ps2)
 }
 
+/// A general projection, renamed.
+#[verifier::spinoff_prover]
+proof fn d_ren_pg(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
+    requires
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is ProjG,
+        valid(sig, w),
+        concl(w) == Jd::Wf(dl),
+        ren_ok(concl(d)->Eq_0, dl, r),
+    ensures
+        valid(sig, res),
+        concl(res) == eq(dl, psub(concl(d)->Eq_1, rn(r)), psub(concl(d)->Eq_2, rn(r)), psub(concl(d)->Eq_3, rn(r))),
+    decreases d, 0int,
+{
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (m, n, a) = (j->Eq_1, j->Eq_2, j->Eq_3);
+    let q = rn(r);
+    let l = rule->ProjG_0;
+    reveal(crate::ti_syntax::proj_g_ok);
+    let st = concl(ps[0])->Eq_3;
+    let (i, x, x2) = (m->Proj_0, *m->Proj_1, *n->Proj_1);
+    let d0 = d_ren(sig, ps[0], w, dl, r);
+    let d1 = d_ren(sig, ps[1], w, dl, r);
+    crate::full_red::gproj_ty_psub(sig, st, i as nat, x, q);
+    let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
+    let ps2 = seq![d0, d1];
+    assert(prems(ps2, seq![eq(dl, psub(x, q), psub(x2, q), psub(st, q)), eq(dl, psub(a, q), psub(a, q), sort(l))]));
+    assert(step_ok(sig, Rule::ProjG(l), j2, ps2)) by { reveal(crate::ti_syntax::proj_g_ok); }
+    valid_node(sig, Rule::ProjG(l), j2, ps2);
+    node(Rule::ProjG(l), j2, ps2)
+}
+
 /// A projection's congruence, renamed.
 proof fn d_ren_pcong(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat) -> (res: Deriv)
     requires
@@ -929,7 +969,7 @@ proof fn d_ren_redg(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> na
     let d1 = d_ren(sig, ps[1], w, dl, r);
     let d2 = d_ren(sig, ps[2], w, dl, r);
     assert(psub(sort(l), q) == sort(l));
-    crate::full_red::full_red_psub(sig, m, n, q);
+    crate::full_red::full_conv_psub(sig, m, n, a, q);
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
     let ps2 = seq![d0, d1, d2];
     assert(prems(ps2, seq![
