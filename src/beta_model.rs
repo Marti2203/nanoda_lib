@@ -241,7 +241,14 @@ pub proof fn const_expr_no_levels_canonical(e: ExprSpec, id: u64)
 
 /// The names a string literal's expansion is built from, in an export (by
 /// name id): `Char`, `Char.ofNat`, `List.nil`, `List.cons`, `String.ofList`.
-pub uninterp spec fn string_names(export: nat) -> (u64, u64, u64, u64, u64);
+#[verifier::opaque]
+pub open spec fn string_names(export: nat) -> (u64, u64, u64, u64, u64) {
+    (crate::expr_arena_bridge::name_id_of(export, crate::util::N_CHAR@),
+        crate::expr_arena_bridge::name_id_of(export, crate::util::N_CHAR_OF_NAT@),
+        crate::expr_arena_bridge::name_id_of(export, crate::util::N_LIST_NIL@),
+        crate::expr_arena_bridge::name_id_of(export, crate::util::N_LIST_CONS@),
+        crate::expr_arena_bridge::name_id_of(export, crate::util::N_STRING_OF_LIST@))
+}
 
 /// `chars` as a `List Char`: `@List.cons.{0} Char (Char.ofNat c) rest` per
 /// character, ending in `@List.nil.{0} Char`.

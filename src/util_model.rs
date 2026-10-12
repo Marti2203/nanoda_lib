@@ -152,14 +152,6 @@ pub assume_specification<'a>[ crate::util::LeanDag::<'a>::new ](config: &crate::
         result.fresh(),
 ;
 
-/// The name cache is the export file's: its arena tag is the dag's id. Its
-/// slots (which names are `Nat.succ`, `Quot.mk`, ...) are found by their
-/// text, which the model does not carry; that identification is
-/// `NameCache`'s type invariant, assumed of this unverified constructor.
-pub assume_specification<'a>[ crate::util::LeanDag::<'a>::mk_name_cache ](dag: &crate::util::LeanDag<'a>) -> (result: crate::util::NameCache<'a>)
-    ensures
-        result.arena_id() == dag.id(),
-;
 
 /// Pointers owned by one arena pair obey the hash-table key model: same raw
 /// index, same arena, same pointer.

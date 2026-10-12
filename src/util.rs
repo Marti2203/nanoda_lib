@@ -2243,6 +2243,520 @@ pub open spec fn level_kid_in<'a>(e: LevelPtr<'a>, own: nat, ext: nat) -> bool {
     if crate::util_model::ptr_is_tc(e) { crate::name_arena_bridge::ptr_index(e) < own } else { crate::name_arena_bridge::ptr_index(e) < ext }
 }
 
+/// WHAT A NAME SPELLS: position `i` of arena `a`'s names is `Name.str`
+/// nodes, one per component, down to the anonymous name, each suffix (a
+/// string of the same arena) with the component's text, each prefix at an
+/// earlier position. `find_name` reads `"Nat.zero"` as `["Nat", "zero"]`.
+pub open spec fn spells(a: nat, i: int, comps: Seq<Seq<char>>) -> bool
+    decreases comps.len(),
+{
+    let h = crate::arena_history::arena_hist::<Name<'static>>(a);
+    &&& 0 <= i < h.len()
+    &&& if comps.len() == 0 {
+        h[i] is Anon
+    } else {
+        h[i] matches Name::Str(p, s, _)
+            && !crate::util_model::ptr_is_tc(p) && arena_of(p) == a && crate::name_arena_bridge::ptr_index(p) < i
+            && !crate::util_model::ptr_is_tc(s) && arena_of(s) == a && str_at(s)@ == comps.last()
+            && spells(a, crate::name_arena_bridge::ptr_index(p) as int, comps.drop_last())
+    }
+}
+
+/// The first position spelling `comps` (an export position: below 2^31).
+pub open spec fn spells_first(a: nat, i: int, comps: Seq<Seq<char>>) -> bool {
+    &&& spells(a, i, comps)
+    &&& i < 0x8000_0000
+    &&& forall|j: int| 0 <= j < i ==> !#[trigger] spells(a, j, comps)
+}
+
+/// The id of the name arena `a` spells `comps` first, if it does.
+pub open spec fn spelled_id(a: nat, comps: Seq<Seq<char>>) -> Option<u64> {
+    if exists|i: int| #[trigger] spells_first(a, i, comps) {
+        Some((choose|i: int| #[trigger] spells_first(a, i, comps)) as u64)
+    } else {
+        None
+    }
+}
+
+/// One position spells one thing.
+pub proof fn spells_det(a: nat, i: int, c1: Seq<Seq<char>>, c2: Seq<Seq<char>>)
+    requires
+        spells(a, i, c1),
+        spells(a, i, c2),
+    ensures
+        c1 == c2,
+    decreases c1.len(),
+{
+    let h = crate::arena_history::arena_hist::<Name<'static>>(a);
+    if c1.len() > 0 && c2.len() > 0 {
+        if let Name::Str(p, _, _) = h[i] {
+            spells_det(a, crate::name_arena_bridge::ptr_index(p) as int, c1.drop_last(), c2.drop_last());
+            assert(c1 =~= c1.drop_last().push(c1.last()));
+            assert(c2 =~= c2.drop_last().push(c2.last()));
+        }
+    } else if c1.len() == 0 && c2.len() == 0 {
+        assert(c1 =~= c2);
+    }
+}
+
+/// An export name spelling `cs` first is `cs`'s spelled id.
+pub proof fn spelled_at<'a>(a: nat, p: NamePtr<'a>, cs: Seq<Seq<char>>)
+    requires
+        !crate::util_model::ptr_is_tc(p),
+        spells_first(a, crate::name_arena_bridge::ptr_index(p) as int, cs),
+    ensures
+        spelled_id(a, cs) == Some(crate::level_arena_bridge::name_id(p)),
+{
+    let i = crate::name_arena_bridge::ptr_index(p) as int;
+    assert(spells_first(a, i, cs));
+    let c = choose|j: int| #[trigger] spells_first(a, j, cs);
+    if c < i {
+        assert(!spells(a, c, cs));
+    } else if i < c {
+        assert(!spells(a, i, cs));
+    }
+    let r = crate::util_model::ptr_raw(p);
+    crate::util_model::ptr_is_tc_agree(p);
+    assert((r & 0x7FFF_FFFFu32) == r) by (bit_vector)
+        requires r < 0x8000_0000u32;
+}
+
+/// Different spellings have different ids.
+pub proof fn spelled_distinct(a: nat, c1: Seq<Seq<char>>, c2: Seq<Seq<char>>)
+    requires
+        c1 != c2,
+    ensures
+        spelled_id(a, c1) is None || spelled_id(a, c1) != spelled_id(a, c2),
+{
+    if spelled_id(a, c1) is Some && spelled_id(a, c1) == spelled_id(a, c2) {
+        let i = choose|j: int| #[trigger] spells_first(a, j, c1);
+        let k = choose|j: int| #[trigger] spells_first(a, j, c2);
+        assert(i as u64 == k as u64);
+        assert(spells(a, i, c1));
+        assert(spells(a, k, c2));
+        spells_det(a, i, c1, c2);
+    }
+}
+
+#[verifier::spinoff_prover]
+proof fn quot_code_0(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_QUOT_LIFT@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::quot_kind_of(a, id) == Some(0u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::quot_kind_of);
+}
+
+#[verifier::spinoff_prover]
+proof fn quot_code_1(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_QUOT_IND@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::quot_kind_of(a, id) == Some(1u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::quot_kind_of);
+    assert(comps_of(N_QUOT_LIFT@)[1] != comps_of(N_QUOT_IND@)[1]);
+    spelled_distinct(a, comps_of(N_QUOT_LIFT@), comps_of(N_QUOT_IND@));
+}
+
+#[verifier::spinoff_prover]
+proof fn quot_code_2(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_QUOT_MK@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::quot_kind_of(a, id) == Some(2u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::quot_kind_of);
+    assert(comps_of(N_QUOT_LIFT@)[1] != comps_of(N_QUOT_MK@)[1]);
+    spelled_distinct(a, comps_of(N_QUOT_LIFT@), comps_of(N_QUOT_MK@));
+    assert(comps_of(N_QUOT_IND@)[1] != comps_of(N_QUOT_MK@)[1]);
+    spelled_distinct(a, comps_of(N_QUOT_IND@), comps_of(N_QUOT_MK@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_0(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_ADD@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(0u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_1(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_SUB@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(1u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_SUB@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_SUB@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_2(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_MUL@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(2u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_MUL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_MUL@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_MUL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_MUL@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_3(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_DIV@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(3u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_DIV@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_DIV@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_DIV@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_DIV@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_DIV@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_DIV@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_4(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_MOD@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(4u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_MOD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_MOD@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_MOD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_MOD@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_MOD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_MOD@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_MOD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_MOD@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_5(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_POW@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(5u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_POW@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_POW@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_POW@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_POW@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_POW@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_POW@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_POW@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_POW@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_POW@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_POW@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_6(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_GCD@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(6u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_GCD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_GCD@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_GCD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_GCD@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_GCD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_GCD@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_GCD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_GCD@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_GCD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_GCD@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_GCD@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_GCD@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_7(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_BEQ@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(7u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_BEQ@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_BEQ@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_BEQ@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_BEQ@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_BEQ@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_BEQ@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_BEQ@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_BEQ@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_8(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_BLE@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(8u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_BLE@));
+    assert(comps_of(N_NAT_BEQ@)[1] != comps_of(N_NAT_BLE@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BEQ@), comps_of(N_NAT_BLE@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_9(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_LAND@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(9u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_BEQ@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BEQ@), comps_of(N_NAT_LAND@));
+    assert(comps_of(N_NAT_BLE@)[1] != comps_of(N_NAT_LAND@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BLE@), comps_of(N_NAT_LAND@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_10(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_LOR@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(10u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_BEQ@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BEQ@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_BLE@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BLE@), comps_of(N_NAT_LOR@));
+    assert(comps_of(N_NAT_LAND@)[1] != comps_of(N_NAT_LOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LAND@), comps_of(N_NAT_LOR@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_11(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_XOR@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(11u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_BEQ@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BEQ@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_BLE@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BLE@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_LAND@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LAND@), comps_of(N_NAT_XOR@));
+    assert(comps_of(N_NAT_LOR@)[1] != comps_of(N_NAT_XOR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LOR@), comps_of(N_NAT_XOR@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_12(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_SHL@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(12u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_BEQ@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BEQ@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_BLE@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BLE@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_LAND@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LAND@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_LOR@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LOR@), comps_of(N_NAT_SHL@));
+    assert(comps_of(N_NAT_XOR@)[1] != comps_of(N_NAT_SHL@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_XOR@), comps_of(N_NAT_SHL@));
+}
+
+#[verifier::spinoff_prover]
+proof fn op_code_13(a: nat, id: u64)
+    requires
+        spelled_id(a, comps_of(N_NAT_SHR@)) == Some(id),
+    ensures
+        crate::expr_arena_bridge::nat_bin_op_of(a, id) == Some(13u8),
+{
+    broadcast use vstd::string::group_string_axioms;
+    reveal(crate::expr_arena_bridge::nat_bin_op_of);
+    assert(comps_of(N_NAT_ADD@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_ADD@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_SUB@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SUB@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_MUL@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MUL@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_DIV@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_DIV@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_MOD@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_MOD@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_POW@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_POW@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_GCD@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_GCD@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_BEQ@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BEQ@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_BLE@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_BLE@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_LAND@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LAND@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_LOR@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_LOR@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_XOR@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_XOR@), comps_of(N_NAT_SHR@));
+    assert(comps_of(N_NAT_SHL@)[1] != comps_of(N_NAT_SHR@)[1]);
+    spelled_distinct(a, comps_of(N_NAT_SHL@), comps_of(N_NAT_SHR@));
+}
+
+/// A name's components as texts.
+pub open spec fn comps_of(cs: Seq<&str>) -> Seq<Seq<char>> {
+    cs.map_values(|x: &str| x@)
+}
+
+/// The cached names' components (shared by `mk_name_cache` and the model's
+/// name ids, `expr_arena_bridge::nat_zero_id` and the rest).
+pub const N_EAGER_REDUCE: [&'static str; 1] = ["eagerReduce"];
+pub const N_QUOT: [&'static str; 1] = ["Quot"];
+pub const N_QUOT_MK: [&'static str; 2] = ["Quot", "mk"];
+pub const N_QUOT_LIFT: [&'static str; 2] = ["Quot", "lift"];
+pub const N_QUOT_IND: [&'static str; 2] = ["Quot", "ind"];
+pub const N_STRING: [&'static str; 1] = ["String"];
+pub const N_STRING_OF_LIST: [&'static str; 2] = ["String", "ofList"];
+pub const N_NAT: [&'static str; 1] = ["Nat"];
+pub const N_NAT_ZERO: [&'static str; 2] = ["Nat", "zero"];
+pub const N_NAT_SUCC: [&'static str; 2] = ["Nat", "succ"];
+pub const N_NAT_ADD: [&'static str; 2] = ["Nat", "add"];
+pub const N_NAT_SUB: [&'static str; 2] = ["Nat", "sub"];
+pub const N_NAT_MUL: [&'static str; 2] = ["Nat", "mul"];
+pub const N_NAT_POW: [&'static str; 2] = ["Nat", "pow"];
+pub const N_NAT_MOD: [&'static str; 2] = ["Nat", "mod"];
+pub const N_NAT_DIV: [&'static str; 2] = ["Nat", "div"];
+pub const N_NAT_BEQ: [&'static str; 2] = ["Nat", "beq"];
+pub const N_NAT_BLE: [&'static str; 2] = ["Nat", "ble"];
+pub const N_NAT_GCD: [&'static str; 2] = ["Nat", "gcd"];
+pub const N_NAT_XOR: [&'static str; 2] = ["Nat", "xor"];
+pub const N_NAT_LAND: [&'static str; 2] = ["Nat", "land"];
+pub const N_NAT_LOR: [&'static str; 2] = ["Nat", "lor"];
+pub const N_NAT_SHL: [&'static str; 2] = ["Nat", "shiftLeft"];
+pub const N_NAT_SHR: [&'static str; 2] = ["Nat", "shiftRight"];
+pub const N_BOOL_TRUE: [&'static str; 2] = ["Bool", "true"];
+pub const N_BOOL_FALSE: [&'static str; 2] = ["Bool", "false"];
+pub const N_CHAR: [&'static str; 1] = ["Char"];
+pub const N_CHAR_OF_NAT: [&'static str; 2] = ["Char", "ofNat"];
+pub const N_LIST: [&'static str; 1] = ["List"];
+pub const N_LIST_NIL: [&'static str; 2] = ["List", "nil"];
+pub const N_LIST_CONS: [&'static str; 2] = ["List", "cons"];
+
+/// A `Name.str` node's suffix string is among the first `ns` strings.
+pub open spec fn name_sfx_in<'a>(n: Name<'a>, ns: nat) -> bool {
+    n matches Name::Str(_, s, _) ==> crate::name_arena_bridge::ptr_index(s) < ns
+}
+
 /// A name's prefix, when it is in the export file's tier, is among the
 /// first `np` (what the export file stores).
 pub open spec fn name_export_kids_in<'a>(n: Name<'a>, np: nat) -> bool {
@@ -2286,6 +2800,8 @@ impl<'a> LeanDag<'a> {
             ==> serial_below(#[trigger] crate::indexmap_model::iset_keys(&self.exprs)[i], t.ubound)
         &&& forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.strings).len()
             ==> (#[trigger] crate::indexmap_model::iset_keys(&self.strings)[i]) is Owned
+        &&& !t.is_tc ==> forall|i: int| 0 <= i < crate::indexmap_model::iset_keys(&self.names).len()
+            ==> name_sfx_in(#[trigger] crate::indexmap_model::iset_keys(&self.names)[i], crate::indexmap_model::iset_keys(&self.strings).len())
         &&& forall|i: int, j: int| 0 <= i < crate::indexmap_model::iset_keys(&self.uparams).len()
             && 0 <= j < crate::indexmap_model::iset_keys(&self.uparams)[i]@.len()
             ==> level_kid_in(#[trigger] crate::indexmap_model::iset_keys(&self.uparams)[i]@[j], crate::indexmap_model::iset_keys(&self.levels).len(),
@@ -2390,6 +2906,292 @@ impl<'a> LeanDag<'a> {
     {
         let ks = crate::indexmap_model::iset_keys(&self.strings);
         crate::util_model::owned_cowstr_text_eq(ks[i], ks[j]);
+        assert(ks.no_duplicates());
+    }
+
+    /// Find e.g. `Quot.lift` from `["Quot", "lift"]`: the stored name
+    /// spelling the components, the first that does.
+    ///
+    /// Verified. VERUS-REWRITE(find-name-comps): the name is given as its
+    /// components rather than a dotted `&str` split at the dots, and each
+    /// component's string is looked up as an `Owned` string (the arena's key
+    /// type) rather than by `&str`; the cached names have no numeric
+    /// component, for which the original looked up `Name.num`. Same
+    /// lookups, same `None` when one fails.
+    pub(crate) fn find_name(&self, comps: &[&'static str]) -> (result: Option<NamePtr<'a>>)
+        requires
+            !self.is_tc(),
+            self.partner() == self.id(),
+            crate::indexmap_model::iset_keys(&self.names).len() >= 1,
+            crate::indexmap_model::iset_keys(&self.names)[0] == Name::Anon,
+        ensures
+            result matches Some(p) ==> crate::util_model::export_tagged(self.id(), p)
+                && crate::name_arena_bridge::ptr_index(p) < self.n_names()
+                && spells_first(self.id(), crate::name_arena_bridge::ptr_index(p) as int, comps_of(comps@)),
+    {
+        proof {
+            use_type_invariant(self);
+            self.lemma_hist();
+            broadcast use vstd::string::group_string_axioms;
+            broadcast use vstd::std_specs::hash::group_hash_axioms;
+            crate::util_model::build_hasher_default_valid_unique();
+            crate::util_model::build_hasher_default_valid_fx();
+        }
+        let ghost cs = comps_of(comps@);
+        let ghost ids = (self.id(), self.id());
+        let mut pfx = self.anonymous();
+        let mut k: usize = 0;
+        proof {
+            assert(cs.subrange(0, 0) =~= Seq::<Seq<char>>::empty());
+        }
+        while k < comps.len()
+            invariant
+                k <= comps@.len(),
+                cs == comps_of(comps@),
+                ids == (self.id(), self.id()),
+                !self.is_tc(),
+                self.partner() == self.id(),
+                crate::util_model::export_tagged(self.id(), pfx),
+                crate::name_arena_bridge::ptr_index(pfx) < self.n_names(),
+                spells(self.id(), crate::name_arena_bridge::ptr_index(pfx) as int, cs.subrange(0, k as int)),
+            decreases comps@.len() - k,
+        {
+            let key: CowStr<'a> = CowStr::Owned(comps[k].to_string());
+            let ghost sk = crate::indexmap_model::iset_keys(&self.strings);
+            proof {
+                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                crate::util_model::build_hasher_default_valid_unique();
+                crate::util_model::build_hasher_default_valid_fx();
+                use_type_invariant(self);
+                assert forall|x: CowStr<'a>| #[trigger] sk.to_set().insert(key).contains(x) implies x is Owned by {
+                    if x != key {
+                        let i = choose|i: int| 0 <= i < sk.len() && sk[i] == x;
+                    }
+                }
+                crate::util_model::owned_cowstrs_obey_key_model(sk.to_set().insert(key));
+            }
+            let sidx = match self.strings.get_index_of(&key) {
+                Some(i) => i,
+                None => return None,
+            };
+            let sfx: StringPtr<'a> = Ptr::from_in(DagMarker::ExportFile, sidx, Ghost(self.id()));
+            let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
+            let n = Name::Str(pfx, sfx, hash);
+            let ghost nk = crate::indexmap_model::iset_keys(&self.names);
+            proof {
+                use_type_invariant(self);
+                crate::util_model::ptr_is_tc_agree(pfx);
+                crate::util_model::ptr_is_tc_agree(sfx);
+                assert forall|m: Name<'a>| #[trigger] nk.to_set().insert(n).contains(m)
+                    implies crate::name_arena_bridge::name_parts_owned_in(ids, m) by {
+                    if m != n {
+                        let i = choose|i: int| 0 <= i < nk.len() && nk[i] == m;
+                        assert(crate::name_arena_bridge::name_node_ok(nk[i], i as nat, false, self.id(), self.partner()));
+                    }
+                }
+                crate::name_arena_bridge::owned_names_keys_obey_model(ids, nk.to_set().insert(n));
+            }
+            let idx = match self.names.get_index_of(&n) {
+                Some(i) => i,
+                None => return None,
+            };
+            let next: NamePtr<'a> = Ptr::from_in(DagMarker::ExportFile, idx, Ghost(self.id()));
+            proof {
+                broadcast use vstd::std_specs::hash::group_hash_axioms;
+                broadcast use vstd::string::group_string_axioms;
+                use_type_invariant(self);
+                self.lemma_hist();
+                assert(nk[idx as int] == n);
+                assert(crate::name_arena_bridge::name_node_ok(nk[idx as int], idx as nat, false, self.id(), self.partner()));
+                crate::util_model::ptr_is_tc_agree(next);
+                assert(sk[sidx as int] == key);
+                assert(str_at(sfx) == key);
+                assert(cs.subrange(0, k + 1).drop_last() =~= cs.subrange(0, k as int));
+                assert(cs.subrange(0, k + 1).last() == cs[k as int]);
+                assert(cs[k as int] == comps@[k as int]@);
+            }
+            pfx = next;
+            k = k + 1;
+        }
+        proof {
+            use_type_invariant(self);
+            assert(cs.subrange(0, comps@.len() as int) =~= cs);
+            let i = crate::name_arena_bridge::ptr_index(pfx) as int;
+            let r = crate::util_model::ptr_raw(pfx);
+            assert((r & 0x7FFF_FFFFu32) < 0x8000_0000u32) by (bit_vector);
+            assert forall|j: int| 0 <= j < i implies !#[trigger] spells(self.id(), j, cs) by {
+                if spells(self.id(), j, cs) {
+                    self.spells_unique(j, i, cs);
+                }
+            }
+        }
+        Some(pfx)
+    }
+
+    /// If these names are present in the export file, we want to cache
+    /// them since we need to retrieve them quite frequently.
+    ///
+    /// Verified (it was an `assume_specification`): each slot holds the
+    /// export name that spells it first (`find_name`), which is what the
+    /// model's name ids are (`expr_arena_bridge::nat_zero_id` and the rest),
+    /// so the cache's invariant holds. VERUS-REWRITE(find-name-comps): the
+    /// names are given as their components (`N_NAT_ZERO`, ...).
+    pub(crate) fn mk_name_cache(&self) -> (result: NameCache<'a>)
+        requires
+            !self.is_tc(),
+            self.partner() == self.id(),
+            crate::indexmap_model::iset_keys(&self.names).len() >= 1,
+            crate::indexmap_model::iset_keys(&self.names)[0] == Name::Anon,
+        ensures
+            result.arena_id() == self.id(),
+    {
+        let eager_reduce = self.find_name(&N_EAGER_REDUCE);
+        let quot = self.find_name(&N_QUOT);
+        let quot_mk = self.find_name(&N_QUOT_MK);
+        let quot_lift = self.find_name(&N_QUOT_LIFT);
+        let quot_ind = self.find_name(&N_QUOT_IND);
+        let string = self.find_name(&N_STRING);
+        let string_of_list = self.find_name(&N_STRING_OF_LIST);
+        let nat_ = self.find_name(&N_NAT);
+        let nat_zero = self.find_name(&N_NAT_ZERO);
+        let nat_succ = self.find_name(&N_NAT_SUCC);
+        let nat_add = self.find_name(&N_NAT_ADD);
+        let nat_sub = self.find_name(&N_NAT_SUB);
+        let nat_mul = self.find_name(&N_NAT_MUL);
+        let nat_pow = self.find_name(&N_NAT_POW);
+        let nat_mod = self.find_name(&N_NAT_MOD);
+        let nat_div = self.find_name(&N_NAT_DIV);
+        let nat_beq = self.find_name(&N_NAT_BEQ);
+        let nat_ble = self.find_name(&N_NAT_BLE);
+        let nat_gcd = self.find_name(&N_NAT_GCD);
+        let nat_xor = self.find_name(&N_NAT_XOR);
+        let nat_land = self.find_name(&N_NAT_LAND);
+        let nat_lor = self.find_name(&N_NAT_LOR);
+        let nat_shl = self.find_name(&N_NAT_SHL);
+        let nat_shr = self.find_name(&N_NAT_SHR);
+        let bool_true = self.find_name(&N_BOOL_TRUE);
+        let bool_false = self.find_name(&N_BOOL_FALSE);
+        let char = self.find_name(&N_CHAR);
+        let char_of_nat = self.find_name(&N_CHAR_OF_NAT);
+        let list = self.find_name(&N_LIST);
+        let list_nil = self.find_name(&N_LIST_NIL);
+        let list_cons = self.find_name(&N_LIST_CONS);
+        proof {
+            broadcast use vstd::string::group_string_axioms;
+            reveal(crate::expr_arena_bridge::quot_kind_of);
+            reveal(crate::expr_arena_bridge::nat_bin_op_of);
+            reveal(crate::expr_arena_bridge::nat_zero_id);
+            reveal(crate::expr_arena_bridge::nat_succ_id);
+            reveal(crate::expr_arena_bridge::nat_type_id);
+            reveal(crate::expr_arena_bridge::string_type_id);
+            reveal(crate::expr_arena_bridge::bool_true_id);
+            reveal(crate::expr_arena_bridge::bool_false_id);
+            reveal(crate::beta_model::string_names);
+            if let Some(n) = eager_reduce { spelled_at(self.id(), n, comps_of(N_EAGER_REDUCE@)); }
+            if let Some(n) = quot { spelled_at(self.id(), n, comps_of(N_QUOT@)); }
+            if let Some(n) = quot_mk { spelled_at(self.id(), n, comps_of(N_QUOT_MK@)); quot_code_2(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = quot_lift { spelled_at(self.id(), n, comps_of(N_QUOT_LIFT@)); quot_code_0(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = quot_ind { spelled_at(self.id(), n, comps_of(N_QUOT_IND@)); quot_code_1(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = string { spelled_at(self.id(), n, comps_of(N_STRING@)); }
+            if let Some(n) = string_of_list { spelled_at(self.id(), n, comps_of(N_STRING_OF_LIST@)); }
+            if let Some(n) = nat_ { spelled_at(self.id(), n, comps_of(N_NAT@)); }
+            if let Some(n) = nat_zero { spelled_at(self.id(), n, comps_of(N_NAT_ZERO@)); }
+            if let Some(n) = nat_succ { spelled_at(self.id(), n, comps_of(N_NAT_SUCC@)); }
+            if let Some(n) = nat_add { spelled_at(self.id(), n, comps_of(N_NAT_ADD@)); op_code_0(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_sub { spelled_at(self.id(), n, comps_of(N_NAT_SUB@)); op_code_1(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_mul { spelled_at(self.id(), n, comps_of(N_NAT_MUL@)); op_code_2(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_pow { spelled_at(self.id(), n, comps_of(N_NAT_POW@)); op_code_5(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_mod { spelled_at(self.id(), n, comps_of(N_NAT_MOD@)); op_code_4(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_div { spelled_at(self.id(), n, comps_of(N_NAT_DIV@)); op_code_3(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_beq { spelled_at(self.id(), n, comps_of(N_NAT_BEQ@)); op_code_7(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_ble { spelled_at(self.id(), n, comps_of(N_NAT_BLE@)); op_code_8(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_gcd { spelled_at(self.id(), n, comps_of(N_NAT_GCD@)); op_code_6(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_xor { spelled_at(self.id(), n, comps_of(N_NAT_XOR@)); op_code_11(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_land { spelled_at(self.id(), n, comps_of(N_NAT_LAND@)); op_code_9(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_lor { spelled_at(self.id(), n, comps_of(N_NAT_LOR@)); op_code_10(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_shl { spelled_at(self.id(), n, comps_of(N_NAT_SHL@)); op_code_12(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = nat_shr { spelled_at(self.id(), n, comps_of(N_NAT_SHR@)); op_code_13(self.id(), crate::level_arena_bridge::name_id(n)); }
+            if let Some(n) = bool_true { spelled_at(self.id(), n, comps_of(N_BOOL_TRUE@)); }
+            if let Some(n) = bool_false { spelled_at(self.id(), n, comps_of(N_BOOL_FALSE@)); }
+            if let Some(n) = char { spelled_at(self.id(), n, comps_of(N_CHAR@)); }
+            if let Some(n) = char_of_nat { spelled_at(self.id(), n, comps_of(N_CHAR_OF_NAT@)); }
+            if let Some(n) = list { spelled_at(self.id(), n, comps_of(N_LIST@)); }
+            if let Some(n) = list_nil { spelled_at(self.id(), n, comps_of(N_LIST_NIL@)); }
+            if let Some(n) = list_cons { spelled_at(self.id(), n, comps_of(N_LIST_CONS@)); }
+        }
+        NameCache {
+            eager_reduce,
+            quot,
+            quot_mk,
+            quot_lift,
+            quot_ind,
+            string,
+            string_of_list,
+            nat: nat_,
+            nat_zero,
+            nat_succ,
+            nat_add,
+            nat_sub,
+            nat_mul,
+            nat_pow,
+            nat_mod,
+            nat_div,
+            nat_beq,
+            nat_ble,
+            nat_gcd,
+            nat_xor,
+            nat_land,
+            nat_lor,
+            nat_shl,
+            nat_shr,
+            bool_true,
+            bool_false,
+            char,
+            char_of_nat,
+            list,
+            list_nil,
+            list_cons,
+            arena: Ghost(self.id()),
+        }
+    }
+
+    /// STORED NAMES SPELL DISTINCTLY: in an export file's dag, two stored
+    /// names spelling the same components are at one position (strings are
+    /// stored once by text, nodes carry canonical hashes and are stored once).
+    pub(crate) proof fn spells_unique(self, i: int, j: int, comps: Seq<Seq<char>>)
+        requires
+            self.ok(),
+            !self.is_tc(),
+            0 <= i < self.n_names(),
+            0 <= j < self.n_names(),
+            spells(self.id(), i, comps),
+            spells(self.id(), j, comps),
+        ensures
+            i == j,
+        decreases comps.len(),
+    {
+        self.lemma_hist_of();
+        let ks = crate::indexmap_model::iset_keys(&self.names);
+        assert(ks[i] == crate::arena_history::arena_hist::<Name<'a>>(self.id())[i]);
+        assert(ks[j] == crate::arena_history::arena_hist::<Name<'a>>(self.id())[j]);
+        assert(crate::name_arena_bridge::name_node_ok(ks[i], i as nat, false, self.id(), self.partner()));
+        assert(crate::name_arena_bridge::name_node_ok(ks[j], j as nat, false, self.id(), self.partner()));
+        if comps.len() > 0 {
+            if let (Name::Str(p1, s1, _), Name::Str(p2, s2, _)) = (ks[i], ks[j]) {
+                self.spells_unique(crate::name_arena_bridge::ptr_index(p1) as int, crate::name_arena_bridge::ptr_index(p2) as int, comps.drop_last());
+                raw_index_tier(crate::util_model::ptr_raw(p1), crate::util_model::ptr_raw(p2));
+                ptr_ext(p1, p2);
+                assert(name_sfx_in(ks[i], self.n_strings()));
+                assert(name_sfx_in(ks[j], self.n_strings()));
+                let (a1, a2) = (crate::name_arena_bridge::ptr_index(s1) as int, crate::name_arena_bridge::ptr_index(s2) as int);
+                let sk = crate::indexmap_model::iset_keys(&self.strings);
+                assert(sk[a1] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[a1]);
+                assert(sk[a2] == crate::arena_history::arena_hist::<CowStr<'a>>(self.id())[a2]);
+                self.strings_text_distinct(a1, a2);
+                raw_index_tier(crate::util_model::ptr_raw(s1), crate::util_model::ptr_raw(s2));
+                ptr_ext(s1, s2);
+            }
+        }
         assert(ks.no_duplicates());
     }
 
@@ -2533,6 +3335,7 @@ impl<'a> LeanDag<'a> {
             !old(self).is_tc(),
             old(self).partner() == old(self).id(),
             crate::name_arena_bridge::name_node_ok(n, crate::indexmap_model::iset_keys(&old(self).names).len(), false, old(self).id(), old(self).id()),
+            name_sfx_in(n, crate::indexmap_model::iset_keys(&old(self).strings).len()),
         ensures
             final(self).pnames() == old(self).pnames(),
             final(self).plevels() == old(self).plevels(),
@@ -2571,6 +3374,16 @@ impl<'a> LeanDag<'a> {
                 }
             }
             crate::name_arena_bridge::owned_names_keys_obey_model(ids, tk.to_set().insert(n));
+            let ns = crate::indexmap_model::iset_keys(&self.strings).len();
+            assert(forall|i: int| 0 <= i < tk.len() ==> name_sfx_in(#[trigger] tk[i], ns));
+            assert forall|i: int| 0 <= i < tk.push(n).len() implies name_sfx_in(#[trigger] tk.push(n)[i], ns) by {
+                if i < tk.len() {
+                    assert(tk.push(n)[i] == tk[i]);
+                } else {
+                    assert(tk.push(n)[i] == n);
+                    assert(crate::indexmap_model::iset_keys(&old(self).strings).len() == ns);
+                }
+            }
         }
         let r = crate::arena_history::arena_insert(&mut self.names, Tracked(&mut self.toks.borrow_mut().names), n);
         proof {
@@ -2934,71 +3747,7 @@ impl<'a> LeanDag<'a> {
         out
     }
 
-    /// Used for constructing the name cache;
-    fn get_string_ptr(&self, s: &str) -> Option<StringPtr<'a>> {
-        self.strings.get_index_of(s).map(|idx| Ptr::from(DagMarker::ExportFile, idx))
-    }
 
-    // Find e.g. `Quot.lift` from "Quot.lift"
-    fn find_name(&self, dot_separated_name: &str) -> Option<NamePtr<'a>> {
-        let mut pfx = self.anonymous();
-        for s in dot_separated_name.split('.') {
-            if let Ok(num) = s.parse::<u64>() {
-                let hash = hash64!(crate::name::NUM_HASH, pfx, num);
-                if let Some(idx) = self.names.get_index_of(&Name::Num(pfx, num, hash)) {
-                    pfx = Ptr::from(DagMarker::ExportFile, idx);
-                    continue;
-                }
-            } else if let Some(sfx) = self.get_string_ptr(s) {
-                let hash = hash64!(crate::name::STR_HASH, pfx, sfx);
-                if let Some(idx) = self.names.get_index_of(&Name::Str(pfx, sfx, hash)) {
-                    pfx = Ptr::from(DagMarker::ExportFile, idx);
-                    continue;
-                }
-            }
-            return None;
-        }
-        Some(pfx)
-    }
-
-    /// If these names are present in the export file, we want to cache
-    /// them since we need to retrieve them quite frequently.
-    pub(crate) fn mk_name_cache(&self) -> NameCache<'a> {
-        NameCache {
-            eager_reduce: self.find_name("eagerReduce"),
-            quot: self.find_name("Quot"),
-            quot_mk: self.find_name("Quot.mk"),
-            quot_lift: self.find_name("Quot.lift"),
-            quot_ind: self.find_name("Quot.ind"),
-            string: self.find_name("String"),
-            string_of_list: self.find_name("String.ofList"),
-            nat: self.find_name("Nat"),
-            nat_zero: self.find_name("Nat.zero"),
-            nat_succ: self.find_name("Nat.succ"),
-            nat_add: self.find_name("Nat.add"),
-            nat_sub: self.find_name("Nat.sub"),
-            nat_mul: self.find_name("Nat.mul"),
-            nat_pow: self.find_name("Nat.pow"),
-            nat_mod: self.find_name("Nat.mod"),
-            nat_div: self.find_name("Nat.div"),
-            nat_beq: self.find_name("Nat.beq"),
-            nat_ble: self.find_name("Nat.ble"),
-            nat_gcd: self.find_name("Nat.gcd"),
-            nat_xor: self.find_name("Nat.xor"),
-            nat_land: self.find_name("Nat.land"),
-            nat_lor: self.find_name("Nat.lor"),
-            nat_shl: self.find_name("Nat.shiftLeft"),
-            nat_shr: self.find_name("Nat.shiftRight"),
-            bool_true: self.find_name("Bool.true"),
-            bool_false: self.find_name("Bool.false"),
-            char: self.find_name("Char"),
-            char_of_nat: self.find_name("Char.ofNat"),
-            list: self.find_name("List"),
-            list_nil: self.find_name("List.nil"),
-            list_cons: self.find_name("List.cons"),
-            arena: vstd::prelude::Ghost::assume_new(),
-        }
-    }
 }
 
 ::vstd::prelude::verus! {

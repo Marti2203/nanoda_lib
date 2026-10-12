@@ -373,6 +373,7 @@ impl<'a> ExportBuilder<'a> {
     fn insert_name(&mut self, n: Name<'a>) -> (result: (usize, bool))
         requires
             old(self).wf(),
+            crate::util::name_sfx_in(n, crate::indexmap_model::iset_keys(&old(self).dag.strings).len()),
             crate::name_arena_bridge::name_node_ok(n, old(self).names_len(), false, old(self).arena(), old(self).arena()),
         ensures
             final(self).wf(),
@@ -431,6 +432,7 @@ impl<'a> ExportBuilder<'a> {
             final(self).same_decls(*old(self)),
             final(self).same_nodes(*old(self)),
             text_at(final(self).arena(), result) == t@,
+            crate::name_arena_bridge::ptr_index(result) < crate::indexmap_model::iset_keys(&final(self).dag.strings).len(),
     {
         let (idx, _) = self.dag.insert_export_string(t);
         proof {

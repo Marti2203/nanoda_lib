@@ -31,7 +31,8 @@ the like, which promise nothing). The vstd specifications come from the
 Verus fork nanoda builds against (Cargo.toml's `vstd` path); its additions
 are listed in docs/VSTD_GAPS.md, "The fork today".
 
-On 2026-10-12: 53 claiming items and 34 claim-free. The kernel's
+On 2026-10-12: 53 claiming items and 34 claim-free; no own-code
+function is trusted except `LeanDag::new`, which mints the arena tokens. The kernel's
 `nat_sub`, `nat_div`, `nat_mod`, `nat_shl` and `nat_shr` are verified in
 place (they were five claims); verifying the parser's decimal reader
 added two library ones (`BigUint::parse_bytes`, `&BigUint * &BigUint`).
@@ -58,7 +59,12 @@ string's characters now defined as its text); this added one library
 specification (`BigUint::from(u32)`) and five slots to the name cache's
 assumed invariant (`Char`, `Char.ofNat`, `List.nil`, `List.cons`,
 `String.ofList` are the names the model's expansion uses), the same kind
-of fact the cache already carries for `Nat.zero` and the rest.
+of fact the cache already carries for `Nat.zero` and the rest. The
+name cache itself is now verified: `mk_name_cache` finds each name by its
+components (`find_name`), the model's name ids (`nat_zero_id`,
+`nat_bin_op_of`, `string_names`, ...) are defined as the export name
+spelling them first (`util::spelled_id`), and the cache's invariant (each
+slot is that name) is proved, not assumed.
 The key model for strings was false as stated (`Cow<str>` obeys the hash
 key model): runtime `==` equates a `Borrowed` and an `Owned` string with
 one text, which the model keeps apart. It is restated for `Owned`

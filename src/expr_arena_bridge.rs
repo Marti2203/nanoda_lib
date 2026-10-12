@@ -1413,9 +1413,28 @@ pub(crate) fn get_dbj_level_counter<'t, 'p: 't>(ctx: &TcCtx<'t, 'p>) -> (result:
 /// this codebase already treats identity globally rather than per-`ctx`.
 /// `None` covers the real function's only failure mode (the name isn't
 /// present in this export file's cache at all).
-pub uninterp spec fn bool_true_id(export: nat) -> u64;
+/// THE MODEL'S NAME FOR A SPELLING: the id of the export name that spells
+/// `cs` first (`util::spelled_id`), or an unknown id when none does. The name
+/// cache finds exactly these (`LeanDag::mk_name_cache`).
+pub open spec fn name_id_of(export: nat, cs: Seq<&str>) -> u64 {
+    match crate::util::spelled_id(export, crate::util::comps_of(cs)) {
+        Some(i) => i,
+        None => unknown_name_id(export, cs),
+    }
+}
 
-pub uninterp spec fn bool_false_id(export: nat) -> u64;
+pub uninterp spec fn unknown_name_id(export: nat, cs: Seq<&str>) -> u64;
+
+/// The export's `Bool.true`/`Bool.false`.
+#[verifier::opaque]
+pub open spec fn bool_true_id(export: nat) -> u64 {
+    name_id_of(export, crate::util::N_BOOL_TRUE@)
+}
+
+#[verifier::opaque]
+pub open spec fn bool_false_id(export: nat) -> u64 {
+    name_id_of(export, crate::util::N_BOOL_FALSE@)
+}
 
 /// `expr.rs::TcCtx::c_bool_true`'s result identity, same "`Const(name_
 /// cache.bool_true, [])`" shape as `bool_to_expr`'s `true` branch --
@@ -1436,11 +1455,28 @@ pub uninterp spec fn bool_false_id(export: nat) -> u64;
 /// 1 `Quot.ind`, 2 `Quot.mk`), tied to the real name cache by the
 /// `quot_kind_code` specification below -- same convention as
 /// `nat_bin_op_of`.
-pub uninterp spec fn quot_kind_of(export: nat, id: u64) -> Option<u8>;
+#[verifier::opaque]
+pub open spec fn quot_kind_of(export: nat, id: u64) -> Option<u8> {
+    if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_QUOT_LIFT@)) == Some(id) {
+        Some(0u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_QUOT_IND@)) == Some(id) {
+        Some(1u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_QUOT_MK@)) == Some(id) {
+        Some(2u8)
+    } else {
+        None
+    }
+}
 
-pub uninterp spec fn nat_zero_id(export: nat) -> u64;
+#[verifier::opaque]
+pub open spec fn nat_zero_id(export: nat) -> u64 {
+    name_id_of(export, crate::util::N_NAT_ZERO@)
+}
 
-pub uninterp spec fn nat_succ_id(export: nat) -> u64;
+#[verifier::opaque]
+pub open spec fn nat_succ_id(export: nat) -> u64 {
+    name_id_of(export, crate::util::N_NAT_SUCC@)
+}
 
 
 
@@ -1451,7 +1487,40 @@ pub uninterp spec fn nat_succ_id(export: nat) -> u64;
 /// id per export" trust as `nat_zero_id` above.
 /// Op codes: 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 gcd, 7 beq,
 /// 8 ble (`land`/`lor`/`xor`/`shl`/`shr` are NOT modeled: `None`).
-pub uninterp spec fn nat_bin_op_of(export: nat, id: u64) -> Option<u8>;
+#[verifier::opaque]
+pub open spec fn nat_bin_op_of(export: nat, id: u64) -> Option<u8> {
+    if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_ADD@)) == Some(id) {
+        Some(0u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_SUB@)) == Some(id) {
+        Some(1u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_MUL@)) == Some(id) {
+        Some(2u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_DIV@)) == Some(id) {
+        Some(3u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_MOD@)) == Some(id) {
+        Some(4u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_POW@)) == Some(id) {
+        Some(5u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_GCD@)) == Some(id) {
+        Some(6u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_BEQ@)) == Some(id) {
+        Some(7u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_BLE@)) == Some(id) {
+        Some(8u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_LAND@)) == Some(id) {
+        Some(9u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_LOR@)) == Some(id) {
+        Some(10u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_XOR@)) == Some(id) {
+        Some(11u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_SHL@)) == Some(id) {
+        Some(12u8)
+    } else if crate::util::spelled_id(export, crate::util::comps_of(crate::util::N_NAT_SHR@)) == Some(id) {
+        Some(13u8)
+    } else {
+        None
+    }
+}
 
 /// RECURSOR DATA: what `pstep`'s recursor-iota rule needs about a
 /// recursor, read from `EnvSpec::recs`. Rules are keyed by constructor id; `nfields` is the
@@ -2077,9 +2146,15 @@ pub fn verified_nat_lit_to_constructor<'t, 'p: 't>(
 /// these set consistently with which literal shapes it actually contains,
 /// same "don't model environment-level config" convention as everywhere
 /// else in this arc.
-pub uninterp spec fn nat_type_id(export: nat) -> u64;
+#[verifier::opaque]
+pub open spec fn nat_type_id(export: nat) -> u64 {
+    name_id_of(export, crate::util::N_NAT@)
+}
 
-pub uninterp spec fn string_type_id(export: nat) -> u64;
+#[verifier::opaque]
+pub open spec fn string_type_id(export: nat) -> u64 {
+    name_id_of(export, crate::util::N_STRING@)
+}
 
 /// `NatLit`'s bignum payload, same trust-boundary shape as `Const`'s
 /// `const_id`/`const_levels_vec`: `is_nat_lit_shape` marks a `NatLit`-
