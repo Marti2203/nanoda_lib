@@ -2462,7 +2462,7 @@ prefixes, which nothing proves.
   Restricted to `!denv.full`, since their arguments are the fragment's
   (untypable literals, canonical recursors, the model's structures):
   `kclaims::{untypable_untyped, cw_of_untypable, tp_of_untypable,
-  cwh_to_lit, cwh_k, k_rec_canon, cw_eta, cwh_eta_exp}` and
+  cwh_to_lit, cwh_k, k_rec_canon, cwh_eta_exp}` and
   `proj_reg::{ci_proj, cc_proj}` with their walk lemmas. Closed in both
   worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
   `nat_ext::cr_ext` -- the fold-free environment's syntactic
@@ -2470,6 +2470,21 @@ prefixes, which nothing proves.
   Lean's kernel rests on -- so untyped conversion joins with folding off
   and lifts back), `cwh_quot_leaf` (a parallel step, typed by subject
   reduction), `ci_lit` (a `LitTy` node at the declared `Nat`/`String`).
+  `cw_eta` (structure eta, `full_eta`): along the certified constructor
+  telescope (`ctor_typing::struct_ok`, `ctor_form`, both in `kh_full`)
+  `x`'s projections are typed in turn, so its eta expansion is typed,
+  converts with `x` (`RedG`) and field by field with `y`; for a
+  structure always in `Prop`, proof irrelevance. Open: a
+  universe-polymorphic structure whose sort may but need not be `Prop`
+  (`eta_sort_ok`) -- nanoda types no data projection of it, so its
+  expansion is not typed in this judgment.
+- **Next gap: constructor typing at the inductive's parameters.**
+  `cwh_eta_exp` and K need `C ps` typed whenever `S ps` is; Lean checks
+  the constructor's parameter binders against the inductive's only up to
+  conversion, which the kernel certifies through E2' (`ctor_e2_cert`'s
+  typed lambda term) -- in the fragment mode only, and nothing inverts
+  it yet. Needs: E2' at the full judgment (dual certificate) and its
+  inversion.
 - **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
   `declar_cert_at` claim also at the flagged environment -- with full
   versions of the lemmas above.

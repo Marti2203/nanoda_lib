@@ -65,6 +65,8 @@ pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
     &&& fv_free(dty, denv) && crate::swap_model::env_fv_free(denv) && crate::conv_frag::env_rules_ok(denv)
         && crate::subst_algebra::env_bv_free(denv)
     &&& crate::nat_ext::cr_ext(denv)
+    &&& crate::ctor_typing::struct_ok(dty, denv)
+    &&& ctor_forms(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
     &&& crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
@@ -1462,17 +1464,22 @@ pub proof fn cw_eta(
     nf: nat,
 )
     requires
-        !denv.full,
         ci(dty, denv, g, x, a),
         ci(dty, denv, g, y, b),
         cw(dty, denv, g, a, b),
         eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
         nlbv(x) <= 0,
         forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
+        denv.full ==> eta_sort_ok(dty, ind, ylv),
     ensures
         cw(dty, denv, g, x, y),
 {
-    if kh(dty, denv) {
+    if kh(dty, denv) && denv.full {
+        assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
+            implies #[trigger] jconv(dty, denv, d, x, y) by {
+            eta_full_at(dty, denv, g, d, x, y, a, b, ind, cid, ylv, am, np, nf);
+        }
+    } else if kh(dty, denv) {
         let hy = ExprSpec::Const(cid, ylv);
         crate::beta_model::spine_destruct_app(hy, am);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, x), d) && sub(rctx(g, y), d) && rtyped(dty, denv, d, x) && rtyped(dty, denv, d, y)
@@ -1535,6 +1542,267 @@ pub proof fn cw_eta(
     }
 }
 
+
+/// The structure's sort at the instance is never zero or always zero
+/// (full-mode eta is proved for these; a universe-polymorphic structure
+/// whose sort may but need not be `Prop` is the documented gap).
+pub open spec fn eta_sort_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, ind: u64, ylv: Seq<LevelSpec>) -> bool {
+    let ti = dty[ind].1;
+    let l = crate::level_model::subst_level_spec(crate::rec_canon::tbody(ti, crate::rec_canon::tarity(ti))->Sort_0, dty[ind].0, ylv);
+    crate::ti_syntax::never_zero(l) || crate::ti_syntax::is_zero(l)
+}
+
+/// The certified structure facts, in the full judgment's terms.
+#[verifier::spinoff_prover]
+proof fn eta_setup(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    y: ExprSpec,
+    b: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ylv: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    np: nat,
+    nf: nat,
+) -> (ds: Seq<ExprSpec>)
+    requires
+        kh_full(dty, denv),
+        eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
+        typed(dty, denv, d, y, b),
+    ensures ({
+        let sig = jsig(dty, denv, d);
+        &&& crate::full_eta::eta_ctx(sig, Seq::empty(), ind, cid, ylv, am, ds)
+        &&& sig.ienv.ctor_np[cid] == np && sig.ienv.ctor_nf[cid] == nf
+        &&& sig.consts[ind].ty == dty[ind].1 && sig.consts[ind].lps == dty[ind].0
+        &&& crate::rec_canon::tarity(dty[ind].1) == np
+        &&& crate::rec_canon::tdoms(dty[ind].1, np).len() == np
+        &&& crate::rec_canon::tbody(dty[ind].1, np) is Sort
+        &&& sig == crate::ti_syntax::Sig { locals: d, ..jsig(dty, denv, Map::empty()) }
+    }),
+{
+    let sig = jsig(dty, denv, d);
+    let s0 = jsig(dty, denv, Map::empty());
+    let g0 = Seq::<ExprSpec>::empty();
+    let hy = ExprSpec::Const(cid, ylv);
+    let n = np + nf;
+    crate::jkernel::kh_at(dty, denv, d);
+    kh_meta(dty, denv, d);
+    crate::jkernel::jsig_locals(dty, denv, d);
+    crate::beta_model::spine_destruct_app(hy, am);
+    assert(denv.struct_ctor.contains_key(ind) && denv.ctor_np.contains_key(denv.struct_ctor[ind]));
+    assert(crate::ctor_typing::struct_ok1(dty, denv, ind, cid));
+    let ils = choose|ils: Seq<LevelSpec>| #[trigger] crate::ctor_typing::ctor_cod(dty, denv, ind, cid, ils);
+    let ct = dty[cid].1;
+    let lps = dty[cid].0;
+    let body = spine_app(ExprSpec::Const(ind, ils), crate::ctor_typing::cod_vars(np, n));
+    crate::full_eta::pi_spine_split(ct, n);
+    let ds = crate::rec_canon::tdoms(ct, n);
+    assert(ils =~= crate::rec_canon::plevels(lps));
+    assert(ctor_form(s0, cid));
+    crate::jkernel::wf_nil(sig);
+    let ht = crate::jkernel::head_typed(sig, g0, y, b);
+    let dh = crate::ti_sub::get(sig, eq(g0, hy, hy, ht));
+    crate::ti_gen::gen(sig, dh);
+    assert(crate::dom_levels::lps_distinct(lps));
+    // the structure's type: its parameters' telescope over a sort
+    let ti = dty[ind].1;
+    crate::dom_rec_shape::tarity_binds(ds, body);
+    crate::dom_iota::tbody_binds(ds, body);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ils), crate::ctor_typing::cod_vars(np, n));
+    assert(crate::rec_canon::tarity(ti) == np);
+    assert(crate::full_eta::eta_ctx(sig, g0, ind, cid, ylv, am, ds));
+    ds
+}
+
+/// STRUCTURE ETA IN THE FULL JUDGMENT, at one context (`full_eta`).
+#[verifier::spinoff_prover]
+proof fn eta_full_at(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    d: Map<nat, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    a: ExprSpec,
+    b: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ylv: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    np: nat,
+    nf: nat,
+)
+    requires
+        kh_full(dty, denv),
+        ci(dty, denv, g, x, a),
+        ci(dty, denv, g, y, b),
+        cw(dty, denv, g, a, b),
+        eta_facts(dty, denv, y, ind, cid, ylv, am, np, nf),
+        forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
+        eta_sort_ok(dty, ind, ylv),
+        lctx_wf(dty, denv, d),
+        sub(rctx(g, x), d),
+        sub(rctx(g, y), d),
+        rtyped(dty, denv, d, x),
+        rtyped(dty, denv, d, y),
+    ensures
+        jconv(dty, denv, d, x, y),
+{
+    let sig = jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    ci_use(dty, denv, g, d, x, a);
+    ci_use(dty, denv, g, d, y, b);
+    assert(jconv(dty, denv, d, a, b));
+    typed_move(dty, denv, d, x, a, b);
+    let ds = eta_setup(dty, denv, d, y, b, ind, cid, ylv, am, np, nf);
+    crate::full_eta::y_typed(sig, g0, ind, cid, ylv, am, ds, b);
+    let st = spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int));
+    crate::ti_chain::conv_chain(sig, g0, x, x, b, st);
+    crate::ti_chain::conv_chain(sig, g0, y, y, b, st);
+    if !crate::ti_syntax::proj_prop(sig, st) {
+        eta_never_prop(dty, denv, g, d, x, y, b, ind, cid, ylv, am, np, nf, ds);
+    } else {
+        eta_prop(dty, denv, d, x, y, ind, ylv, am, np);
+    }
+}
+
+/// Never a proposition: through the eta expansion.
+#[verifier::spinoff_prover]
+proof fn eta_never_prop(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    d: Map<nat, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    b: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ylv: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    np: nat,
+    nf: nat,
+    ds: Seq<ExprSpec>,
+)
+    requires
+        kh_full(dty, denv),
+        crate::full_eta::eta_ctx(jsig(dty, denv, d), Seq::empty(), ind, cid, ylv, am, ds),
+        jsig(dty, denv, d).ienv.ctor_np[cid] == np && jsig(dty, denv, d).ienv.ctor_nf[cid] == nf,
+        y == spine_app(ExprSpec::Const(cid, ylv), am),
+        typed(dty, denv, d, y, b),
+        typed(dty, denv, d, x, spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        typed(dty, denv, d, y, spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        !crate::ti_syntax::proj_prop(jsig(dty, denv, d), spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        forall|k: int| np <= k < np + nf ==> #[trigger] cw(dty, denv, g, ExprSpec::Proj((k - np) as usize, Box::new(x)), am[k]),
+        lctx_wf(dty, denv, d),
+        sub(rctx(g, x), d),
+        sub(rctx(g, y), d),
+    ensures
+        jconv(dty, denv, d, x, y),
+{
+    let sig = jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    let hy = ExprSpec::Const(cid, ylv);
+    let st = spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int));
+    crate::full_eta::y_typed(sig, g0, ind, cid, ylv, am, ds, b);
+    crate::full_eta::projs_typed(sig, g0, ind, cid, ylv, am, ds, x, b, nf);
+    assert forall|k: int| 0 <= k < nf implies derivable(sig, eq(g0, ExprSpec::Proj(k as usize, Box::new(x)), am[np + k],
+        #[trigger] crate::full_eta::fty(sig, cid, ylv, ds, am, x, k as nat))) by {
+        let px = ExprSpec::Proj(k as usize, Box::new(x));
+        let f = am[np + k];
+        let tq = crate::full_eta::fty(sig, cid, ylv, ds, am, x, k as nat);
+        assert(cw(dty, denv, g, ExprSpec::Proj(((np + k) - np) as usize, Box::new(x)), am[np + k]));
+        assert(((np + k) - np) as usize == k as usize);
+        rctx_mono(g, px, x);
+        sub_trans(rctx(g, px), rctx(g, x), d);
+        spine_arg_fv(hy, am, np + k);
+        rctx_mono(g, f, y);
+        sub_trans(rctx(g, f), rctx(g, y), d);
+        assert(typed(dty, denv, d, f, crate::ti_spine::sdom(crate::full_eta::ctor_t(sig, cid, ylv, ds), am, np + k)));
+        assert(typed(dty, denv, d, px, tq));
+        assert(jconv(dty, denv, d, px, f));
+        jconv_at(dty, denv, d, px, f, tq);
+    }
+    crate::full_eta::eta_expansion(sig, g0, ind, cid, ylv, am, ds, x, b);
+    let xs = crate::full_eta::xsk(am, np, x, nf);
+    let z = spine_app(hy, xs);
+    crate::beta_model::spine_destruct_app(hy, xs);
+    assert(xs.subrange(np as int, xs.len() as int) =~= crate::tc_model::eta_projs(x, nf));
+    assert(sig.ienv == denv);
+    assert(crate::full_red::eta_g(sig, x, z));
+    let dx = crate::ti_sub::get(sig, eq(g0, x, x, st));
+    crate::ti_valid::d_ty(sig, dx);
+    let (lt, dt) = crate::ti_sub::get_t(sig, g0, st, st);
+    let dz = crate::ti_sub::get(sig, eq(g0, z, z, st));
+    let j = eq(g0, x, z, st);
+    let ps = seq![dx, dz, dt];
+    assert(crate::ti_syntax::prems(ps, seq![eq(g0, x, x, st), eq(g0, z, z, st), eq(g0, st, st, crate::ti_syntax::sort(lt))]));
+    crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::RedG(lt), j, ps);
+    crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::RedG(lt), j, ps));
+    crate::dom_adeq_syn::dtrans(sig, g0, x, z, y, st);
+}
+
+/// Always a proposition: proof irrelevance.
+#[verifier::spinoff_prover]
+proof fn eta_prop(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    d: Map<nat, ExprSpec>,
+    x: ExprSpec,
+    y: ExprSpec,
+    ind: u64,
+    ylv: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    np: nat,
+)
+    requires
+        kh_full(dty, denv),
+        jsig(dty, denv, d).consts.contains_key(ind),
+        jsig(dty, denv, d).consts[ind].ty == dty[ind].1 && jsig(dty, denv, d).consts[ind].lps == dty[ind].0,
+        ylv.len() == dty[ind].0.len(),
+        crate::rec_canon::tarity(dty[ind].1) == np,
+        crate::rec_canon::tdoms(dty[ind].1, np).len() == np,
+        crate::rec_canon::tbody(dty[ind].1, np) is Sort,
+        am.len() >= np,
+        typed(dty, denv, d, x, spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        typed(dty, denv, d, y, spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        crate::ti_syntax::proj_prop(jsig(dty, denv, d), spine_app(ExprSpec::Const(ind, ylv), am.subrange(0, np as int))),
+        eta_sort_ok(dty, ind, ylv),
+    ensures
+        jconv(dty, denv, d, x, y),
+{
+    let sig = jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    let ps = am.subrange(0, np as int);
+    let st = spine_app(ExprSpec::Const(ind, ylv), ps);
+    crate::jkernel::kh_at(dty, denv, d);
+    kh_meta(dty, denv, d);
+    crate::jkernel::wf_nil(sig);
+    let dx = crate::ti_sub::get(sig, eq(g0, x, x, st));
+    crate::ti_valid::d_ty(sig, dx);
+    let (lt, dt) = crate::ti_sub::get_t(sig, g0, st, st);
+    crate::ti_meta::mk_d(sig, dt);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ylv), ps);
+    crate::full_eta::ind_sort(sig, g0, ind, ylv, ps, crate::ti_syntax::sort(lt));
+    let l0 = crate::level_model::subst_level_spec(crate::rec_canon::tbody(dty[ind].1, np)->Sort_0, dty[ind].0, ylv);
+    assert(crate::ti_syntax::is_zero(l0)) by {
+        reveal(crate::ti_syntax::proj_prop);
+    }
+    crate::meta_hyp::sort_inj_m(sig, g0, lt, l0);
+    assert(crate::ti_syntax::is_zero(lt)) by {
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(lt, rho) == 0 by {
+            assert(crate::level_model::interp(l0, rho) == 0);
+        }
+    }
+    let dys = crate::ti_sub::get(sig, eq(g0, y, y, st));
+    let j = eq(g0, x, y, st);
+    let ps2 = seq![dt, dx, dys];
+    assert(crate::ti_syntax::prems(ps2, seq![eq(g0, st, st, crate::ti_syntax::sort(lt)), eq(g0, x, x, st), eq(g0, y, y, st)]));
+    crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::Irr(lt), j, ps2);
+    crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::Irr(lt), j, ps2));
+}
 
 /// TYPE-PRESERVING TRANSFER: wherever `x` has a type, `y` has a
 /// convertible one (subject reduction, and the kernel's structure steps).
