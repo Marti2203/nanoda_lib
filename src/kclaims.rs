@@ -1810,7 +1810,7 @@ proof fn k_full_at(
 
 /// The certified structure facts, in the full judgment's terms.
 #[verifier::spinoff_prover]
-proof fn eta_setup(
+pub proof fn eta_setup(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     d: Map<nat, ExprSpec>,

@@ -190,6 +190,7 @@ pub proof fn ctor_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, a
         eta_ctx(sig, g, s, c, ylv, am, ds),
     ensures
         derivable(sig, eq(g, ExprSpec::Const(c, ylv), ExprSpec::Const(c, ylv), ctor_t(sig, c, ylv, ds))),
+        crate::ti_syntax::dty_at(sig, c, ylv) == ctor_t(sig, c, ylv, ds),
         sls(ds, sig.consts[c].lps, ylv).len() == ds.len(),
 {
     let lps = sig.consts[c].lps;

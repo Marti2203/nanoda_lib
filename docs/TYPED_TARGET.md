@@ -2464,8 +2464,7 @@ prefixes, which nothing proves.
   `kclaims::{untypable_untyped, cw_of_untypable, tp_of_untypable,
   cwh_to_lit}` (vacuity in the fragment: literals are untypable there;
   the kernel sites using them need full-mode replacements at the
-  dual-contract stage) and
-  `proj_reg::{ci_proj, cc_proj}` with their walk lemmas. Closed in both
+  dual-contract stage). Closed in both
   worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
   `nat_ext::cr_ext` -- the fold-free environment's syntactic
   confluence conditions and `h_nat_ext`, the Nat-extension agreement
@@ -2494,7 +2493,18 @@ prefixes, which nothing proves.
   kernel puts for the major is typed -- its parameters fit the
   inductive's arity because past it a type former's application is a
   sort and no sort is a Pi, `full_e2::spine_arity` -- so proof
-  irrelevance applies).
+  irrelevance applies) and by `proj_reg` (the kernel's projection walk:
+  its stages convert to the constructor's telescope as before, the
+  parameters typed by E2', the earlier projections by
+  `full_eta::projs_typed`).
+- **Open in full mode: `Prop` structures.** Eta for a structure whose sort
+  may but need not be `Prop` (`eta_sort_ok`), and projection claims for
+  structures that may be `Prop` (`never_prop_at` on `ci_proj`/`cc_proj`;
+  `And.left` is one): typing a field's type along the telescope types
+  every earlier projection, but nanoda checks only the earlier fields the
+  later types depend on (`infer_proj prop`), so a non-dependent earlier
+  data field leaves the walk without its typing. Needs a strengthening
+  argument (an unused telescope argument is irrelevant).
 - **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
   `declar_cert_at` claim also at the flagged environment -- with full
   versions of the lemmas above.
