@@ -298,7 +298,35 @@ pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, 
     assert(*p->Bind_1 == tj);
     crate::ti_spine::pi_typed_of(sig, g, spine_app(ExprSpec::Const(c, ylv), xs), tj, *p->Bind_2);
     let (lj, dt) = crate::ti_sub::get_t(sig, g, tj, tj);
-    // the projection, by ProjG
+    mk_d(sig, dt);
+    assert(j < nf && nf > 0);
+    assert(!crate::ti_syntax::proj_prop(sig, st));
+    proj_g_at(sig, g, s, c, ylv, am, ds, x, j, lj);
+}
+
+/// THE PROJECTION RULE at field `j`: the subject typed at the structure
+/// application, field `j`'s type a type at a level zero when the structure
+/// may be a proposition.
+pub proof fn proj_g_at(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, am: Seq<ExprSpec>, ds: Seq<ExprSpec>, x: ExprSpec, j: nat, lj: LevelSpec)
+    requires
+        eta_ctx(sig, g, s, c, ylv, am, ds),
+        j < sig.ienv.ctor_nf[c],
+        derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))),
+        derivable(sig, eq(g, fty(sig, c, ylv, ds, am, x, j), fty(sig, c, ylv, ds, am, x, j), sort(lj))),
+        crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))
+            ==> crate::ti_syntax::is_zero(lj),
+    ensures
+        derivable(sig, eq(g, ExprSpec::Proj(j as usize, Box::new(x)), ExprSpec::Proj(j as usize, Box::new(x)),
+            fty(sig, c, ylv, ds, am, x, j))),
+{
+    let lps = sig.consts[c].lps;
+    let np = sig.ienv.ctor_np[c] as nat;
+    let nf = sig.ienv.ctor_nf[c] as nat;
+    let dsy = sls(ds, lps, ylv);
+    let st = spine_app(ExprSpec::Const(s, ylv), am.subrange(0, np as int));
+    let xs = xsk(am, np, x, j);
+    let tj = fty(sig, c, ylv, ds, am, x, j);
+    let dt = get(sig, eq(g, tj, tj, sort(lj)));
     crate::beta_model::spine_destruct_app(ExprSpec::Const(s, ylv), am.subrange(0, np as int));
     tdoms_prefix(ds, spine_app(ExprSpec::Const(s, plevels(lps)), cod_vars(np, np + nf)), np + j + 1);
     assert(crate::full_red::gproj_ty(sig, st, j, x) == Some(tj)) by {

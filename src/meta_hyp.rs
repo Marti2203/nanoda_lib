@@ -50,6 +50,29 @@ pub open spec fn h_sr_red(sig: Sig) -> bool {
         derivable(sig, eq(g, m, m, t)) && crate::full_red::full_red(sig, m, n) ==> derivable(sig, eq(g, n, n, t))
 }
 
+/// STRENGTHENING, for closed terms: a closed term typed at a closed type
+/// under one binder is typed so without it (the binder is unused).
+#[verifier::opaque]
+pub open spec fn h_str(sig: Sig) -> bool {
+    forall|a: ExprSpec, m: ExprSpec, t: ExprSpec|
+        #![trigger derivable(sig, eq(Seq::<ExprSpec>::empty().push(a), m, m, t))]
+        derivable(sig, eq(Seq::<ExprSpec>::empty().push(a), m, m, t))
+            && crate::expr_model::nlbv(m) <= 0 && crate::expr_model::nlbv(t) <= 0
+            ==> derivable(sig, eq(Seq::empty(), m, m, t))
+}
+
+pub proof fn str_h(sig: Sig, a: ExprSpec, m: ExprSpec, t: ExprSpec)
+    requires
+        h_str(sig),
+        derivable(sig, eq(Seq::<ExprSpec>::empty().push(a), m, m, t)),
+        crate::expr_model::nlbv(m) <= 0,
+        crate::expr_model::nlbv(t) <= 0,
+    ensures
+        derivable(sig, eq(Seq::empty(), m, m, t)),
+{
+    reveal(h_str);
+}
+
 /// THE HYPOTHESES, together.
 #[verifier::opaque]
 pub open spec fn meta_ok(sig: Sig) -> bool {

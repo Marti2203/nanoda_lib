@@ -2106,6 +2106,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|k: int| 0 <= k < pi ==> #[trigger] kcwh(env0, cs[k], ws[k]),
                 forall|k: int| 0 <= k < pi ==> (#[trigger] ws[k]) is Bind && ws[k]->Bind_0 == BinderKind::Pi,
                 forall|k: int| #![trigger ws[k]] 0 <= k < pi ==> cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(ws[k]), seq![crate::proj_reg::psq(am, np as nat, s_m, idx as nat)[k]], 0),
+                forall|k: int| #![trigger ws[k]] 0 <= k < pi ==> (cs[k] is Bind ==> ws[k] == cs[k]),
                 forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
                     dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(pi), (np - pi) as nat, 0, idx as nat, s_m, tt,
                 ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
@@ -2115,6 +2116,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             let ghost ct0 = ctor_ty;
             ctor_ty = self.whnf(ctor_ty);
+            let ghost red = to_model_expr(ctor_ty);
             proof {
                 assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ct0), L, c0));
             }
@@ -2146,6 +2148,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             );
                         }
                         crate::proj_reg::psq_at(am, np as nat, s_m, idx as nat, pi);
+                        // a stage already a binder is its own whnf
+                        assert(red == wb);
                         ws = ws.push(wb);
                         cs = cs.push(to_model_expr(ctor_ty));
                         H = H2;
@@ -2209,6 +2213,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 forall|k: int| 0 <= k < np as nat + fi ==> #[trigger] kcwh(env0, cs[k], ws[k]),
                 forall|k: int| 0 <= k < np as nat + fi ==> (#[trigger] ws[k]) is Bind && ws[k]->Bind_0 == BinderKind::Pi,
                 forall|k: int| #![trigger ws[k]] 0 <= k < np as nat + fi ==> cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(ws[k]), seq![crate::proj_reg::psq(am, np as nat, s_m, idx as nat)[k]], 0),
+                forall|k: int| #![trigger ws[k]] 0 <= k < np as nat + fi ==> (cs[k] is Bind ==> ws[k] == cs[k]),
+                structure_ty_may_be_prop ==> forall|k: int| #![trigger ws[k]] np as nat <= k < np as nat + fi
+                    && crate::expr_model::nlbv(crate::proj_reg::pbod(ws[k])) > 0 ==> kcprop(env0, crate::ctor_typing::pdom(ws[k])),
                 forall|tt: ExprSpec, h: nat| h >= H && #[trigger] crate::tc_model::proj_field_type(
                     dty, denv, lctx, crate::tc_model::IoMode::Infer, h, to_model_expr(ctor_ty), am.skip(np as int), 0, fi as usize, (idx - fi) as nat, s_m, tt,
                 ) ==> crate::tc_model::proj_field_type(dty, denv, lctx, crate::tc_model::IoMode::Infer, h, ctm, am, np as nat, 0, idx as nat, s_m, tt),
@@ -2218,6 +2225,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             let ghost ct0 = ctor_ty;
             ctor_ty = self.whnf(ctor_ty);
+            let ghost red = to_model_expr(ctor_ty);
             proof {
                 assert(crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(ct0), L, c0));
             }
@@ -2234,6 +2242,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                         }
                         if structure_ty_may_be_prop && !self.is_prop(binder_type).0 {
                             panic!("infer_proj prop")
+                        }
+                        proof {
+                            // a field the rest mentions: a proposition, when the structure may be one
+                            if structure_ty_may_be_prop {
+                                kcprop_of_kprop(env0, to_model_expr(binder_type));
+                            }
                         }
                         let arg = self.ctx.mk_proj(inductive_info.name, i, structure);
                         ctor_ty = self.ctx.inst(body, &[arg]);
@@ -2265,6 +2279,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             );
                         }
                         crate::proj_reg::psq_at(am, np as nat, s_m, idx as nat, np as nat + fi);
+                        assert(red == wb);
                         ws = ws.push(wb);
                         cs = cs.push(to_model_expr(ctor_ty));
                         H = H2;
@@ -2290,6 +2305,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     panic!("infer_proj prop")
                 }
                 proof {
+                    if structure_ty_may_be_prop {
+                        kcprop_of_kprop(env0, to_model_expr(binder_type));
+                    }
                     assert(crate::expr_model::nlbv(to_model_expr(binder_type)) <= 0);
                     scope_pres_of_occ(crate::env_model::env_arena_ids(*self.env), to_model_expr(structure), to_model_expr(binder_type), c0);
                     // the field type: the last binder, then the projection rule
@@ -2330,7 +2348,21 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     assert forall|k: int| #![trigger wsf[k]] 0 <= k < m implies cs[k + 1] == crate::expr_model::subst_full(crate::proj_reg::pbod(wsf[k]), seq![crate::proj_reg::psq(am, np as nat, s_m, idx as nat)[k]], 0) by {
                         assert(wsf[k] == ws[k]);
                     }
+                    assert forall|k: int| #![trigger wsf[k]] 0 <= k <= m implies (cs[k] is Bind ==> wsf[k] == cs[k]) by {
+                        if k < m {
+                            assert(wsf[k] == ws[k]);
+                        }
+                    }
                     let lv = to_model_expr(mbp.1)->Sort_0;
+                    // a structure that may be a proposition: the kernel's checks
+                    if !crate::ti_syntax::never_zero(lv) {
+                        assert(structure_ty_may_be_prop);
+                        assert forall|k: int| #![trigger wsf[k]] np as nat <= k < m && crate::expr_model::nlbv(crate::proj_reg::pbod(wsf[k])) > 0
+                            implies crate::kclaims::cprop(dty, denv, lctx, crate::ctor_typing::pdom(wsf[k])) by {
+                            assert(wsf[k] == ws[k]);
+                        }
+                        assert(crate::proj_reg::pprop_ok(dty, denv, lctx, idx, ctor_id, wsf, btm));
+                    }
                     crate::proj_reg::ci_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm, lv);
                     if flag == Check {
                         crate::proj_reg::cc_proj(dty, denv, lctx, idx, s_m, ind_id, ctor_id, ls, am, cs, wsf, btm, lv);
@@ -9324,6 +9356,18 @@ pub open spec fn nullary_marker(cid: u64, ind: u64, ls: Seq<crate::level_model::
 pub open spec fn kprop_claim<'x, 't>(env: Env<'x, 't>, a: ExprSpec) -> bool {
     exists|l: crate::level_model::LevelSpec| #[trigger] kinfer_claim(env, a, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>|
         #[trigger] crate::level_model::interp(l, rho) <= 0)
+}
+
+/// The kernel's proposition test gives the claim it rests on.
+pub proof fn kcprop_of_kprop<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
+    requires
+        kprop_claim(env, a),
+    ensures
+        kcprop(env, a),
+{
+    let l = choose|l: crate::level_model::LevelSpec| #[trigger] kinfer_claim(env, a, ExprSpec::Sort(l)) && (forall|rho: Map<nat, nat>|
+        #[trigger] crate::level_model::interp(l, rho) <= 0);
+    assert(kci(env, a, ExprSpec::Sort(l)));
 }
 
 /// PROOF IRRELEVANCE from the kernel's facts: `x : A`, `y : B`, both

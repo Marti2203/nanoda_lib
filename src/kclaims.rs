@@ -62,6 +62,7 @@ pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
     &&& denv.full
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] crate::meta_hyp::meta_ok(crate::metatheory::jsig(dty, denv, d))
         && crate::meta_hyp::h_sr_red(crate::metatheory::jsig(dty, denv, d))
+        && crate::meta_hyp::h_str(crate::metatheory::jsig(dty, denv, d))
     &&& fv_free(dty, denv) && crate::swap_model::env_fv_free(denv) && crate::conv_frag::env_rules_ok(denv)
         && crate::subst_algebra::env_bv_free(denv)
     &&& crate::nat_ext::cr_ext(denv)

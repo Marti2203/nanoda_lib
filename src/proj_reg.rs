@@ -89,8 +89,9 @@ pub open spec fn pw_rem(j: nat, np: nat, idx: nat) -> nat {
 
 /// THE KERNEL'S WALK, as `infer_proj` records it: the constructor type at
 /// the structure's universes, each stage `cs[k]` reduced to the Pi `ws[k]`
-/// (a reduction claim), the next stage its body at `psq[k]`, the field type
-/// the last Pi's domain; and the structure's inference claim.
+/// (a reduction claim; a stage already a binder is its own), the next stage
+/// its body at `psq[k]`, the field type the last Pi's domain; and the
+/// structure's inference claim.
 pub open spec fn pwalk_ok(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
@@ -121,10 +122,29 @@ pub open spec fn pwalk_ok(
     &&& forall|k: int| 0 <= k <= m ==> #[trigger] cwh(dty, denv, g, cs[k], ws[k])
     &&& forall|k: int| 0 <= k <= m ==> (#[trigger] ws[k]) is Bind && ws[k]->Bind_0 == BinderKind::Pi
     &&& forall|k: int| #![trigger ws[k]] 0 <= k < m ==> cs[k + 1] == subst_full(pbod(ws[k]), seq![sq[k]], 0)
+    &&& forall|k: int| #![trigger ws[k]] 0 <= k <= m ==> (cs[k] is Bind ==> ws[k] == cs[k])
     &&& pdom(ws[m as int]) == btm
     &&& ci(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am))
     &&& nlbv(s) <= 0
     &&& forall|k: int| 0 <= k < am.len() ==> nlbv(#[trigger] am[k]) <= 0
+}
+
+/// THE KERNEL'S PROPOSITION CHECKS, when the structure may be a
+/// proposition (`infer_proj prop`): each field the rest of the walk
+/// mentions is a proposition, and so is the projected field.
+pub open spec fn pprop_ok(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    cid: u64,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+) -> bool {
+    let np = denv.ctor_np[cid] as nat;
+    &&& forall|k: int| #![trigger ws[k]] np <= k < np + idx as nat && nlbv(pbod(ws[k])) > 0
+        ==> crate::kclaims::cprop(dty, denv, g, pdom(ws[k]))
+    &&& crate::kclaims::cprop(dty, denv, g, btm)
 }
 
 /// THE WALK'S STAGES are closed and reach only what the projection
@@ -310,7 +330,7 @@ proof fn walk_facts(
 /// at its arity, the constructor's type the certified telescope, the
 /// parameters typed along it by E2' (`kclaims::ctor_at_params`).
 #[verifier::spinoff_prover]
-proof fn walk_facts_full(
+proof fn walk_facts_core(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
     denv: EnvSpec,
     g: Map<nat, ExprSpec>,
@@ -324,12 +344,10 @@ proof fn walk_facts_full(
     ws: Seq<ExprSpec>,
     btm: ExprSpec,
     d: Map<nat, ExprSpec>,
-    lv: LevelSpec,
 ) -> (ds: Seq<ExprSpec>)
     requires
         crate::kclaims::kh_full(dty, denv),
         walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
-        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
     ensures ({
         let sig = crate::metatheory::jsig(dty, denv, d);
         let g0 = Seq::<ExprSpec>::empty();
@@ -343,9 +361,12 @@ proof fn walk_facts_full(
         &&& crate::full_eta::params_typed(sig, g0, cid, ls, am2, ds)
         &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g0, s, s, ety))
         &&& am2.subrange(0, np as int) == am
-        &&& !crate::ti_syntax::proj_prop(sig, ety)
         &&& crate::ti_syntax::dty_at(sig, cid, ls) == crate::full_eta::ctor_t(sig, cid, ls, ds)
         &&& sig.ienv.ctor_np[cid] == np && sig.ienv.ctor_nf[cid] == nf
+        &&& sig.consts.contains_key(ind) && ls.len() == sig.consts[ind].lps.len()
+        &&& crate::rec_canon::tdoms(sig.consts[ind].ty, np).len() == np
+        &&& crate::rec_canon::tbody(sig.consts[ind].ty, np) is Sort
+        &&& crate::rec_canon::tarity(sig.consts[ind].ty) == np
     }),
 {
     let sig = crate::metatheory::jsig(dty, denv, d);
@@ -391,6 +412,59 @@ proof fn walk_facts_full(
         assert(am2p[i] == am[i]);
         assert(am2p.subrange(0, i) =~= am.subrange(0, i));
     }
+    assert(am2p.subrange(0, np as int) =~= am);
+    ds
+}
+
+/// The same, and the structure never a proposition: the kernel's sort for
+/// the structure application, never zero, is the structure's at the
+/// instance.
+#[verifier::spinoff_prover]
+proof fn walk_facts_full(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+    d: Map<nat, ExprSpec>,
+    lv: LevelSpec,
+) -> (ds: Seq<ExprSpec>)
+    requires
+        crate::kclaims::kh_full(dty, denv),
+        walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
+        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
+    ensures ({
+        let sig = crate::metatheory::jsig(dty, denv, d);
+        let g0 = Seq::<ExprSpec>::empty();
+        let np = denv.ctor_np[cid] as nat;
+        let nf = denv.ctor_nf[cid] as nat;
+        let am2 = am + crate::tc_model::eta_projs(s, nf);
+        let ety = spine_app(ExprSpec::Const(ind, ls), am);
+        &&& crate::meta_hyp::meta_ok(sig)
+        &&& am.len() == np
+        &&& crate::full_eta::eta_ctx(sig, g0, ind, cid, ls, am2, ds)
+        &&& crate::full_eta::params_typed(sig, g0, cid, ls, am2, ds)
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g0, s, s, ety))
+        &&& am2.subrange(0, np as int) == am
+        &&& !crate::ti_syntax::proj_prop(sig, ety)
+        &&& crate::ti_syntax::dty_at(sig, cid, ls) == crate::full_eta::ctor_t(sig, cid, ls, ds)
+        &&& sig.ienv.ctor_np[cid] == np && sig.ienv.ctor_nf[cid] == nf
+    }),
+{
+    let ds = walk_facts_core(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let sig = crate::metatheory::jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    let np = denv.ctor_np[cid] as nat;
+    let ety = spine_app(ExprSpec::Const(ind, ls), am);
+    crate::jkernel::kh_at(dty, denv, d);
+    crate::jkernel::wf_nil(sig);
     // never a proposition: the kernel's sort for the structure
     // application, never zero, is the structure's at the instance
     let p = ExprSpec::Proj(idx, Box::new(s));
@@ -410,7 +484,6 @@ proof fn walk_facts_full(
             assert(crate::level_model::interp(lv, rho) > 0);
         }
     }
-    assert(am2p.subrange(0, np as int) =~= am);
     ds
 }
 
@@ -479,6 +552,307 @@ proof fn walk_arg_full(
             assert(sq.subrange(0, j) =~= sq);
         }
     }
+}
+
+/// A parameter is typed at the telescope's domain, by E2'.
+#[verifier::spinoff_prover]
+proof fn walk_param_full(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+    d: Map<nat, ExprSpec>,
+    j: int,
+)
+    requires
+        crate::kclaims::kh_full(dty, denv),
+        walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
+        0 <= j < denv.ctor_np[cid] as nat,
+    ensures ({
+        let sig = crate::metatheory::jsig(dty, denv, d);
+        let sq = psq(am, denv.ctor_np[cid] as nat, s, idx as nat);
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), sq[j], sq[j],
+            crate::ti_spine::sdom(crate::ti_syntax::dty_at(sig, cid, ls), sq, j)))
+    }),
+{
+    let np = denv.ctor_np[cid] as nat;
+    let nf = denv.ctor_nf[cid] as nat;
+    let sq = psq(am, np, s, idx as nat);
+    let ds = walk_facts_core(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let am2 = am + crate::tc_model::eta_projs(s, nf);
+    let dsy = crate::dom_rec_shape::sls(ds, dty[cid].0, ls);
+    let bodyy = spine_app(ExprSpec::Const(ind, ls), crate::ctor_typing::cod_vars(np, np + nf));
+    assert(sq.len() == np + idx as nat);
+    crate::ti_spine::tel_next(dsy, bodyy, sq, j);
+    psq_at(am, np, s, idx as nat, j);
+    assert(sq.subrange(0, j) =~= am2.subrange(0, j));
+    crate::ti_spine::tel_next(dsy, bodyy, am2, j);
+    assert(am2[j] == am[j]);
+}
+
+/// THE STAGES ARE THE TELESCOPE'S, in the full judgment: the constructor's
+/// type is a Pi telescope, so each stage is a binder, its own `whnf`, and
+/// the next stage its body at the next argument.
+#[verifier::spinoff_prover]
+proof fn walk_stage_eq(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+    d: Map<nat, ExprSpec>,
+    k: int,
+)
+    requires
+        crate::kclaims::kh_full(dty, denv),
+        walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
+        0 <= k <= denv.ctor_np[cid] as nat + idx as nat,
+    ensures ({
+        let sig = crate::metatheory::jsig(dty, denv, d);
+        let sq = psq(am, denv.ctor_np[cid] as nat, s, idx as nat);
+        &&& cs[k] == crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), sq.subrange(0, k))
+        &&& crate::ti_spine::is_pi(cs[k])
+        &&& ws[k] == cs[k]
+    }),
+    decreases k,
+{
+    let sig = crate::metatheory::jsig(dty, denv, d);
+    let np = denv.ctor_np[cid] as nat;
+    let nf = denv.ctor_nf[cid] as nat;
+    let sq = psq(am, np, s, idx as nat);
+    let tyc = crate::ti_syntax::dty_at(sig, cid, ls);
+    let ds = walk_facts_core(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let dsy = crate::dom_rec_shape::sls(ds, dty[cid].0, ls);
+    let bodyy = spine_app(ExprSpec::Const(ind, ls), crate::ctor_typing::cod_vars(np, np + nf));
+    assert(sq.len() == np + idx as nat);
+    crate::ti_spine::tel_next(dsy, bodyy, sq, k);
+    if k == 0 {
+        assert(sq.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        assert(cs[0] == tyc);
+    } else {
+        let j = k - 1;
+        walk_stage_eq(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
+        walk_scope(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, j);
+        let x = sq[j];
+        psq_at(am, np, s, idx as nat, j);
+        let b = pbod(ws[j]);
+        assert(nlbv(b) <= 1);
+        assert(nlbv(x) <= 0);
+        crate::kclaims::sf_inst(b, x);
+        crate::dom_con_rel::trest_push(tyc, sq.subrange(0, j), x);
+        assert(sq.subrange(0, j).push(x) =~= sq.subrange(0, k));
+    }
+}
+
+/// A domain the kernel found a proposition is one wherever it is a type.
+proof fn prop_level(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    d: Map<nat, ExprSpec>,
+    a: ExprSpec,
+    l1: LevelSpec,
+)
+    requires
+        kh(dty, denv),
+        lctx_wf(dty, denv, d),
+        crate::kclaims::cprop(dty, denv, g, a),
+        sub(rctx(g, a), d),
+        crate::ti_syntax::derivable(crate::metatheory::jsig(dty, denv, d), crate::ti_syntax::eq(Seq::empty(), a, a, crate::ti_syntax::sort(l1))),
+    ensures
+        crate::ti_syntax::is_zero(l1),
+{
+    let sig = crate::metatheory::jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    let l0 = choose|l: LevelSpec| #[trigger] ci(dty, denv, g, a, ExprSpec::Sort(l))
+        && (forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) <= 0);
+    assert(crate::metatheory::typed(dty, denv, d, a, ExprSpec::Sort(l1)));
+    assert(rtyped(dty, denv, d, a));
+    crate::kclaims::ci_use(dty, denv, g, d, a, ExprSpec::Sort(l0));
+    crate::kclaims::kh_meta(dty, denv, d);
+    crate::meta_hyp::uniq_m(sig, g0, a, crate::ti_syntax::sort(l1), crate::ti_syntax::sort(l0));
+    crate::meta_hyp::sort_inj_m(sig, g0, l1, l0);
+    assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, rho) == 0 by {
+        assert(crate::level_model::interp(l0, rho) <= 0);
+        assert(crate::level_model::interp(l1, rho) == crate::level_model::interp(l0, rho));
+    }
+}
+
+/// THE STAGES ARE TYPES when the structure may be a proposition: a field
+/// the rest mentions is a proposition (the kernel's check), so its
+/// projection is typed and instantiates the stage; a field it does not
+/// mention leaves a closed body, a type without the binder (`h_str`).
+#[verifier::spinoff_prover]
+proof fn walk_prop_ty(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+    d: Map<nat, ExprSpec>,
+    k: int,
+) -> (l: LevelSpec)
+    requires
+        crate::kclaims::kh_full(dty, denv),
+        walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
+        pprop_ok(dty, denv, g, idx, cid, ws, btm),
+        0 <= k <= denv.ctor_np[cid] as nat + idx as nat,
+    ensures
+        crate::ti_syntax::derivable(crate::metatheory::jsig(dty, denv, d), crate::ti_syntax::eq(Seq::empty(), cs[k], cs[k], crate::ti_syntax::sort(l))),
+    decreases k,
+{
+    let sig = crate::metatheory::jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    let np = denv.ctor_np[cid] as nat;
+    let nf = denv.ctor_nf[cid] as nat;
+    let sq = psq(am, np, s, idx as nat);
+    let tyc = crate::ti_syntax::dty_at(sig, cid, ls);
+    let p = ExprSpec::Proj(idx, Box::new(s));
+    crate::jkernel::kh_at(dty, denv, d);
+    walk_stage_eq(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, k);
+    if k == 0 {
+        crate::jkernel::wf_nil(sig);
+        crate::ti_ls2::levs_eq_refl(ls);
+        crate::jkernel::const_d(sig, g0, cid, ls, ls);
+        let dc = crate::ti_sub::get(sig, crate::ti_syntax::eq(g0, ExprSpec::Const(cid, ls), ExprSpec::Const(cid, ls), tyc));
+        crate::ti_valid::d_ty(sig, dc);
+        let (l0, dt) = crate::ti_sub::get_t(sig, g0, tyc, tyc);
+        crate::ti_meta::mk_d(sig, dt);
+        assert(sq.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
+        l0
+    } else {
+        let j = k - 1;
+        let lj = walk_prop_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
+        walk_stage_eq(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
+        walk_scope(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, j);
+        let (a, b) = (*cs[j]->Bind_1, *cs[j]->Bind_2);
+        assert(cs[j] == crate::ti_syntax::pi(a, b));
+        let dj = crate::ti_sub::get(sig, crate::ti_syntax::eq(g0, cs[j], cs[j], crate::ti_syntax::sort(lj)));
+        crate::ti_gen::gen(sig, dj);
+        let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, b, l1, l2)
+            && crate::ti_gen::typ(sig, g0, a, l1) && crate::ti_gen::typ(sig, g0.push(a), b, l2);
+        let x = sq[j];
+        psq_at(am, np, s, idx as nat, j);
+        assert(pbod(ws[j]) == b);
+        assert(cs[k] == subst_full(b, seq![x], 0));
+        if j >= np && nlbv(b) <= 0 {
+            // an unused field: the body is closed
+            crate::expr_model::subst_full_noop(b, seq![x], 0);
+            assert(crate::meta_hyp::meta_ok(sig));
+            crate::meta_hyp::str_h(sig, a, b, crate::ti_syntax::sort(l2));
+            l2
+        } else {
+            if j < np {
+                walk_param_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, j);
+            } else {
+                // a used field: the kernel found it a proposition
+                let q = (j - np) as nat;
+                assert(nlbv(pbod(ws[j])) > 0);
+                assert(crate::kclaims::cprop(dty, denv, g, pdom(ws[j])));
+                rctx_mono(g, a, cs[j]);
+                crate::kclaims::sub_trans(rctx(g, cs[j]), rctx(g, p), d);
+                crate::kclaims::sub_trans(rctx(g, a), rctx(g, cs[j]), d);
+                prop_level(dty, denv, g, d, a, l1);
+                let ds = walk_facts_core(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+                let am2 = am + crate::tc_model::eta_projs(s, nf);
+                let dsy = crate::dom_rec_shape::sls(ds, dty[cid].0, ls);
+                let bodyy = spine_app(ExprSpec::Const(ind, ls), crate::ctor_typing::cod_vars(np, np + nf));
+                assert(sq.len() == np + idx as nat);
+                crate::ti_spine::tel_next(dsy, bodyy, sq, j);
+                assert(sq.subrange(0, j) =~= crate::full_eta::xsk(am2, np, s, q));
+                assert(crate::full_eta::fty(sig, cid, ls, ds, am2, s, q) == a);
+                crate::full_eta::proj_g_at(sig, g0, ind, cid, ls, am2, ds, s, q, l1);
+                assert(x == ExprSpec::Proj(q as usize, Box::new(s)));
+            }
+            crate::ti_chain::inst_tm(sig, g0, a, b, b, crate::ti_syntax::sort(l2), x);
+            crate::kclaims::sf_inst(b, x);
+            assert(crate::subst_algebra::inst(0, x, crate::ti_syntax::sort(l2)) == crate::ti_syntax::sort(l2));
+            l2
+        }
+    }
+}
+
+/// THE PROJECTION OUT OF A POSSIBLE PROPOSITION, in the full judgment: the
+/// last stage is a type, its domain the projected field's type, which the
+/// kernel found a proposition, so the projection rule types it there.
+#[verifier::spinoff_prover]
+proof fn walk_prop_at(
+    dty: Map<u64, (Seq<u64>, ExprSpec)>,
+    denv: EnvSpec,
+    g: Map<nat, ExprSpec>,
+    idx: usize,
+    s: ExprSpec,
+    ind: u64,
+    cid: u64,
+    ls: Seq<LevelSpec>,
+    am: Seq<ExprSpec>,
+    cs: Seq<ExprSpec>,
+    ws: Seq<ExprSpec>,
+    btm: ExprSpec,
+    d: Map<nat, ExprSpec>,
+)
+    requires
+        crate::kclaims::kh_full(dty, denv),
+        walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d),
+        pprop_ok(dty, denv, g, idx, cid, ws, btm),
+    ensures
+        ci_at(dty, denv, d, ExprSpec::Proj(idx, Box::new(s)), btm),
+{
+    let sig = crate::metatheory::jsig(dty, denv, d);
+    let g0 = Seq::<ExprSpec>::empty();
+    let np = denv.ctor_np[cid] as nat;
+    let nf = denv.ctor_nf[cid] as nat;
+    let m = (np + idx as nat) as int;
+    let sq = psq(am, np, s, idx as nat);
+    let p = ExprSpec::Proj(idx, Box::new(s));
+    crate::jkernel::kh_at(dty, denv, d);
+    let lm = walk_prop_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m);
+    walk_stage_eq(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m);
+    walk_scope(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, m);
+    let (a, b) = (*cs[m]->Bind_1, *cs[m]->Bind_2);
+    assert(cs[m] == crate::ti_syntax::pi(a, b));
+    let dm = crate::ti_sub::get(sig, crate::ti_syntax::eq(g0, cs[m], cs[m], crate::ti_syntax::sort(lm)));
+    crate::ti_gen::gen(sig, dm);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, b, l1, l2)
+        && crate::ti_gen::typ(sig, g0, a, l1) && crate::ti_gen::typ(sig, g0.push(a), b, l2);
+    assert(btm == a);
+    rctx_mono(g, a, cs[m]);
+    crate::kclaims::sub_trans(rctx(g, cs[m]), rctx(g, p), d);
+    crate::kclaims::sub_trans(rctx(g, a), rctx(g, cs[m]), d);
+    prop_level(dty, denv, g, d, a, l1);
+    let ds = walk_facts_core(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+    let am2 = am + crate::tc_model::eta_projs(s, nf);
+    let dsy = crate::dom_rec_shape::sls(ds, dty[cid].0, ls);
+    let bodyy = spine_app(ExprSpec::Const(ind, ls), crate::ctor_typing::cod_vars(np, np + nf));
+    assert(sq.len() == m);
+    crate::ti_spine::tel_next(dsy, bodyy, sq, m);
+    assert(sq.subrange(0, m) =~= crate::full_eta::xsk(am2, np, s, idx as nat));
+    assert(crate::full_eta::fty(sig, cid, ls, ds, am2, s, idx as nat) == a);
+    crate::full_eta::proj_g_at(sig, g0, ind, cid, ls, am2, ds, s, idx as nat, l1);
+    assert(crate::metatheory::typed(dty, denv, d, p, btm));
+    crate::kclaims::is_type_of_sort(dty, denv, d, a, l1);
 }
 
 /// The walk's arguments are typed at the constructor's telescope's
@@ -723,7 +1097,8 @@ pub proof fn ci_proj(
     lv: LevelSpec,
 )
     requires
-        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv))
+            && (crate::ti_syntax::never_zero(lv) || pprop_ok(dty, denv, g, idx, cid, ws, btm)),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
     ensures
         ci(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
@@ -754,16 +1129,22 @@ pub proof fn ci_proj(
             assert(crate::metatheory::typed(dty, denv, d, s, st));
             assert(rtyped(dty, denv, d, s));
             crate::kclaims::ci_use(dty, denv, g, d, s, ety);
-            let lm = walk_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lv);
-            let (l1, l2) = walk_pi(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lm, lv);
-            walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lv);
-            let a = *ws[m]->Bind_1;
-            assert(btm == a);
-            let tr = crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), psq(am, np, s, idx as nat).subrange(0, m));
-            assert(psq(am, np, s, idx as nat).subrange(0, m) =~= psq(am, np, s, idx as nat));
-            crate::ti_chain::tchain_sym(sig, g0, a, *tr->Bind_1);
-            crate::ti_chain::conv_chain(sig, g0, p, p, *tr->Bind_1, a);
-            crate::kclaims::is_type_of_sort(dty, denv, d, a, l1);
+            if denv.full && !crate::ti_syntax::never_zero(lv) {
+                // a structure that may be a proposition: the kernel's checks
+                assert(crate::kclaims::kh_full(dty, denv));
+                walk_prop_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+            } else {
+                let lm = walk_ty(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lv);
+                let (l1, l2) = walk_pi(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lm, lv);
+                walk_arg(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, m, lv);
+                let a = *ws[m]->Bind_1;
+                assert(btm == a);
+                let tr = crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, cid, ls), psq(am, np, s, idx as nat).subrange(0, m));
+                assert(psq(am, np, s, idx as nat).subrange(0, m) =~= psq(am, np, s, idx as nat));
+                crate::ti_chain::tchain_sym(sig, g0, a, *tr->Bind_1);
+                crate::ti_chain::conv_chain(sig, g0, p, p, *tr->Bind_1, a);
+                crate::kclaims::is_type_of_sort(dty, denv, d, a, l1);
+            }
         }
     }
 }
@@ -788,7 +1169,8 @@ pub proof fn cc_proj(
     lv: LevelSpec,
 )
     requires
-        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
+        denv.full ==> crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv))
+            && (crate::ti_syntax::never_zero(lv) || pprop_ok(dty, denv, g, idx, cid, ws, btm)),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
         crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
     ensures
@@ -839,7 +1221,9 @@ pub proof fn cc_proj(
 
 /// The check claim in the full judgment, at one context: the subject
 /// checks, so it is typed at the structure application, and the
-/// projection is typed along the constructor's telescope (`full_eta`).
+/// projection is typed along the constructor's telescope (`full_eta`), or,
+/// when the structure may be a proposition, along the kernel's checked
+/// walk (`walk_prop_at`).
 #[verifier::spinoff_prover]
 proof fn cc_proj_full_at(
     dty: Map<u64, (Seq<u64>, ExprSpec)>,
@@ -859,7 +1243,8 @@ proof fn cc_proj_full_at(
 )
     requires
         crate::kclaims::kh_full(dty, denv),
-        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
+        crate::kclaims::ci(dty, denv, g, spine_app(ExprSpec::Const(ind, ls), am), ExprSpec::Sort(lv)),
+        crate::ti_syntax::never_zero(lv) || pprop_ok(dty, denv, g, idx, cid, ws, btm),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
         crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
         crate::kclaims::frag_term(ExprSpec::Proj(idx, Box::new(s))),
@@ -881,6 +1266,11 @@ proof fn cc_proj_full_at(
     crate::kclaims::cc_use(dty, denv, g, d, s, ety);
     crate::kclaims::ci_use(dty, denv, g, d, s, ety);
     assert(walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d));
+    if !crate::ti_syntax::never_zero(lv) {
+        walk_prop_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d);
+        crate::kclaims::tconv_refl(dty, denv, d, btm);
+        return;
+    }
     let ds = walk_facts_full(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d, lv);
     let am2 = am + crate::tc_model::eta_projs(s, nf);
     crate::full_eta::projs_typed(sig, g0, ind, cid, ls, am2, ds, s, (idx + 1) as nat);

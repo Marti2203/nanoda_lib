@@ -2444,8 +2444,9 @@ prefixes, which nothing proves.
   stays in one world. In full mode `jsig` is `jsig_raw` -- Lean's
   declarations as they are, without the canonical twin the model needs,
   so no `twin_ok`.
-- **The full hypotheses -- `kclaims::kh_full`.** `meta_ok` and `h_sr_red`
-  (subject reduction for `full_red`) at every locals, with the
+- **The full hypotheses -- `kclaims::kh_full`.** `meta_ok`, `h_sr_red`
+  (subject reduction for `full_red`) and `h_str` (strengthening for
+  closed terms) at every locals, with the
   environment facts the checker certifies (`fv_free`, `env_wf`, `sig_wf`,
   `lev_ok`, level-parameter facts, closed rules); no Church-Rosser
   (`cr_env`'s confluence is false for real exports) and no twin.
@@ -2510,12 +2511,20 @@ prefixes, which nothing proves.
 - **The kernel's own `Prop` test.** `may_be_prop` now carries its claim
   (the inferred sort, never zero when it answers no); the eta expansion
   and the projection claims take their full-mode condition from it.
-- **Open in full mode: projections out of possibly-`Prop` structures**
-  (`And.left` is one): typing a field's type along the telescope types
-  every earlier projection, but nanoda checks only the earlier fields the
-  later types depend on (`infer_proj prop`), so a non-dependent earlier
-  data field leaves the walk without its typing. Needs a strengthening
-  argument (an unused telescope argument is irrelevant).
+- **Projections out of possibly-`Prop` structures** (`And.left` is one)
+  **-- DONE, under strengthening.** nanoda checks only the earlier fields
+  the rest of the walk mentions (`infer_proj prop`), so a non-dependent
+  earlier data field has no typed projection. The constructor's type is
+  a Pi telescope, so each stage of the walk is its own `whnf`
+  (`keeps_bind`, recorded in `proj_reg::pwalk_ok`) and the stages are the
+  telescope's syntactically. Then each stage is a type
+  (`proj_reg::walk_prop_ty`): a mentioned field is a proposition by the
+  kernel's check (`pprop_ok`, recorded in `infer_proj`), so its
+  projection is typed (`ProjG`) and instantiates the stage; an unmentioned
+  field leaves a closed body, a type without the binder by `h_str` --
+  strengthening for closed terms, a metatheory hypothesis in `kh_full`
+  next to `h_sr_red`. The projected field is a proposition too, so the
+  projection rule types it at the kernel's field type (`walk_prop_at`).
 - **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
   `declar_cert_at` claim also at the flagged environment -- with full
   versions of the lemmas above.
