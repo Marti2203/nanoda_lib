@@ -4794,10 +4794,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             match self.ctx.read_expr(e_type_f) {
                 Const { name, .. } if name == ind_name => {
                     // If it's a prop, return the original `e`
-                    if self.may_be_prop(e_type).0 {
+                    // VERUS-REWRITE(bound-result): `may_be_prop`'s result is bound
+                    // to `mbp` so its claim (the type's sort, never zero when it
+                    // answers no) reaches the expansion; same call.
+                    let mbp = self.may_be_prop(e_type);
+                    if mbp.0 {
                         e
                     } else {
                         // if it's not a prop, try to eta expand
+                        proof {
+                            assert(kci(*self.env, to_model_expr(e_type), ExprSpec::Sort(to_model_expr(mbp.1)->Sort_0)));
+                        }
                         let r = self.expand_eta_struct_aux(e_type, e).unwrap_or(e);
                         proof {
                             assert(crate::expr_model::nlbv(to_model_expr(e)) <= 0 ==> crate::expr_model::nlbv(to_model_expr(e_type)) <= 0);
@@ -5767,6 +5774,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
             scope_pres(crate::env_model::env_arena_ids(*(*final(self)).env), to_model_expr(e), to_model_expr(result.1)),
+            kinfer_claim(*old(self).env, to_model_expr(e), to_model_expr(result.1)),
+            !result.0 ==> to_model_expr(result.1) is Sort
+                && crate::ti_syntax::never_zero(to_model_expr(result.1)->Sort_0),
     {
         let ty = self.infer_then_whnf(e, InferOnly);
         match self.ctx.read_expr(ty) {
@@ -11658,6 +11668,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
             crate::util_model::owns(*(*old(self)).ctx, e_type),
             crate::util_model::owns(*(*old(self)).ctx, e),
             tc_wf(*old(self)),
+            // the type is never a proposition (`may_be_prop`'s answer)
+            exists|lv: crate::level_model::LevelSpec| #[trigger] kci(*old(self).env, to_model_expr(e_type), ExprSpec::Sort(lv))
+                && crate::ti_syntax::never_zero(lv),
         ensures
             mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
             result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
@@ -11877,9 +11890,11 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                     if crate::expr_model::nlbv(em) <= 0 {
                         assert(kci(env0, em, etm));
                         assert(crate::expr_model::nlbv(etm) <= 0);
+                        let lv = choose|lv: crate::level_model::LevelSpec| #[trigger] kci(env0, etm, ExprSpec::Sort(lv))
+                            && crate::ti_syntax::never_zero(lv);
                         crate::kclaims::cwh_eta_exp(kd, ke, kg, em, etm,
                             crate::level_arena_bridge::name_id(c_name), crate::level_arena_bridge::name_id(ctor_name0),
-                            crate::expr_arena_bridge::const_levels_vec(_f), am, np as nat, nf as nat, to_model_expr(out));
+                            crate::expr_arena_bridge::const_levels_vec(_f), am, np as nat, nf as nat, to_model_expr(out), lv);
                     } else {
                         crate::kclaims::cwh_open(kd, ke, kg, em, to_model_expr(out));
                     }

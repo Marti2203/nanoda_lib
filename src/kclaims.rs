@@ -1672,10 +1672,13 @@ proof fn eta_exp_full_at(
     nf: nat,
     r: ExprSpec,
     t: ExprSpec,
+    lv: LevelSpec,
 )
     requires
         kh_full(dty, denv),
         ci(dty, denv, g, e, ety),
+        ci(dty, denv, g, ety, ExprSpec::Sort(lv)),
+        crate::ti_syntax::never_zero(lv),
         ety == spine_app(ExprSpec::Const(ind, ls), args),
         denv.struct_ctor(ind) == Some(cid),
         denv.ctor_num_params(cid) == Some(np as u16),
@@ -1683,7 +1686,6 @@ proof fn eta_exp_full_at(
         np < 0x1_0000 && nf < 0x1_0000,
         np == args.len(),
         r == spine_app(ExprSpec::Const(cid, ls), args + eta_projs(e, nf)),
-        never_prop_at(dty, ind, ls),
         nlbv(e) <= 0,
         nlbv(ety) <= 0,
         lctx_wf(dty, denv, d),
@@ -1736,9 +1738,21 @@ proof fn eta_exp_full_at(
     assert(crate::full_eta::params_typed(sig, g0, cid, ls, cargs, ds));
     // the expansion
     assert(cargs.subrange(0, np as int) =~= args);
+    // never a proposition: the kernel's sort for the type, never zero, is
+    // the structure's at the instance
+    sub_trans(rctx(g, ety), rctx(g, e), d);
+    assert(rtyped(dty, denv, d, ety));
+    ci_use(dty, denv, g, d, ety, ExprSpec::Sort(lv));
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), args);
+    crate::full_eta::ind_sort(sig, g0, ind, ls, args, ExprSpec::Sort(lv));
+    let ti = dty[ind].1;
+    let l0 = crate::level_model::subst_level_spec(crate::rec_canon::tbody(ti, np)->Sort_0, dty[ind].0, ls);
+    crate::meta_hyp::sort_inj_m(sig, g0, lv, l0);
     assert(!crate::ti_syntax::proj_prop(sig, ety)) by {
         reveal(crate::ti_syntax::proj_prop);
-        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, ls), args);
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l0, rho) > 0 by {
+            assert(crate::level_model::interp(lv, rho) > 0);
+        }
     }
     crate::full_eta::expansion_typed(sig, g0, ind, cid, ls, cargs, ds, e);
     assert(crate::full_eta::xsk(cargs, np, e, nf) =~= cargs);
@@ -2409,6 +2423,7 @@ pub proof fn cwh_eta_exp(
     np: nat,
     nf: nat,
     r: ExprSpec,
+    lv: LevelSpec,
 )
     requires
         ci(dty, denv, g, e, ety),
@@ -2421,7 +2436,7 @@ pub proof fn cwh_eta_exp(
         np < 0x1_0000 && nf < 0x1_0000,
         np == args.len(),
         r == spine_app(ExprSpec::Const(cid, ls), args + eta_projs(e, nf)),
-        denv.full ==> never_prop_at(dty, ind, ls),
+        denv.full ==> ci(dty, denv, g, ety, ExprSpec::Sort(lv)) && crate::ti_syntax::never_zero(lv),
     ensures
         cwh(dty, denv, g, e, r),
 {
@@ -2458,7 +2473,7 @@ pub proof fn cwh_eta_exp(
             implies typed(dty, denv, d, r, ety) && tconv(dty, denv, d, ety, t)
                 && derivable(jsig(dty, denv, d), eq(Seq::empty(), e, r, ety)) by {
             if denv.full {
-                eta_exp_full_at(dty, denv, g, d, e, ety, ind, cid, ls, args, np, nf, r, t);
+                eta_exp_full_at(dty, denv, g, d, e, ety, ind, cid, ls, args, np, nf, r, t, lv);
             } else {
             let sig = jsig(dty, denv, d);
             let g0 = Seq::<ExprSpec>::empty();
