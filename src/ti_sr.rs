@@ -176,7 +176,7 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
     let db = get(sig, eq(g, m, m, tb));
     gen(sig, da);
     gen(sig, db);
-    assert(!sig.full) by {
+    assert(!sig.ienv.full) by {
         reveal(crate::ti_syntax::iota_ok);
     }
     match m {
@@ -656,7 +656,7 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
 {
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
-    assert(!sig.full) by { reveal(crate::ti_syntax::iota_ok); }
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let w = d_wf(sig, dm);
     mk_d(sig, w);
     match m {

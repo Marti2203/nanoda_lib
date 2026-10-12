@@ -2387,20 +2387,24 @@ the kernel's reductions), which are open for full Lean. Inside the
 fragment the domain model still discharges them; outside, they are
 assumptions, stated once.
 
-Design: the signature carries a flag `Sig.full`. Lean's rules that the
-model does not interpret (`IotaG`: iota at any recursor, by the
-environment's own rule; later K, `Quot`, literals, general structures) fire
-only when `full` holds; `iota_ok` (what the model needs) includes
-`!full`, so every model proof sees them as vacuous. `jsig` keeps
-`full: false`, so every existing result is unchanged; the conditional
-theorem is stated at `Sig { full: true, ..jsig }`, into which every
-fragment derivation transfers (the old rules do not read the flag). Its
-shape: `frag_env || H_meta(full sig) ==> kernel claims at the full sig`.
+Design: the environment carries a ghost flag `EnvSpec.full`, which the
+kernel's own relations ignore. Lean's rules that the model does not
+interpret (`RedG`, `LitTy`, `ProjG` below) fire only when
+`sig.ienv.full` holds; `iota_ok` (what the model needs) includes
+`!full`, so every model proof sees them as vacuous. The kernel's model
+environments keep `full: false`, so every existing result is unchanged.
+The flag rides in the environment rather than the signature so that
+every signature operation (`strip_below`, `sig_with`, `sig_swap`, `twin`)
+and `EnvSpec::sub` (which asks equal flags) preserve it, and the
+structural lemmas carry the new rules directly.
 
-Unlike gating on a semantic predicate, the flag is preserved by every
-signature operation (`strip_below`, `sig_with`, `sig_swap`, `twin`), so
-the structural lemmas (renaming, substitution, level instances, local
-swap/close, scope, generation, extension) carry the new rules directly.
+The claims stay per mode: the fragment's at `jsig` under `kh`, the full
+judgment's at `jsig` over the flagged environment under the hypotheses
+`khF`. Mode is fixed per export, not per prefix: switching `jsig` to the
+full judgment exactly where `frag_env` fails was tried and dropped
+(target/work/jsig_switch_experiment.patch), since weakening a derivation
+from an earlier prefix then needs the fragment to be closed under
+prefixes, which nothing proves.
 
 - **`RedG` -- DONE.** One rule for the kernel's contractions beyond
   beta/delta/zeta, `full_red::full_red`: iota by the environment's own
@@ -2433,5 +2437,5 @@ swap/close, scope, generation, extension) carry the new rules directly.
   restriction (`proj_prop ==> is_zero`). Generation records a subject
   convertible to the projected term, since a dependent field's type
   mentions the subject.
-- **Next:** the claims at `Sig { full: !frag_env, ..jsig }` -- outside the
-  fragment, each kernel claim from `meta_ok` plus subject reduction.
+- **Next:** the full-mode claims (`cwF`, `ccF`, ... under `khF`) beside
+  the fragment's, each from `meta_ok` plus subject reduction.

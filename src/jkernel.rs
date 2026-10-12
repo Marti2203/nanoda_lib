@@ -831,7 +831,7 @@ proof fn lveq_gproj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, t: Ex
     requires
         crate::ti_sr::sig_wf(sig),
         lev_ok(sig),
-        sig.full,
+        sig.ienv.full,
         crate::ti_gen::gen_gproj(sig, g, i as nat, x, t),
         crate::conv_cr::lveq(x, x2),
     ensures

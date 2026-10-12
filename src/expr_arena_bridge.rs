@@ -1564,6 +1564,11 @@ pub ghost struct EnvSpec {
     /// turns it off to state that the extension agrees with the Nat
     /// definitions (`h_nat_ext`).
     pub nat_fold: bool,
+    /// Whether judgments over this environment are Lean's full judgment
+    /// (the typed rules the domain model does not interpret: `ti_syntax`'s
+    /// `RedG`, `LitTy`, `ProjG`) -- docs/TYPED_TARGET.md, "The conditional
+    /// theorem". The kernel's own relations do not read it.
+    pub full: bool,
 }
 
 impl EnvSpec {
@@ -1579,6 +1584,7 @@ impl EnvSpec {
             ctor_nf: Map::empty(),
             ctor_ind: Map::empty(),
             nat_fold: true,
+            full: false,
         }
     }
 
@@ -1615,6 +1621,7 @@ impl EnvSpec {
     pub open spec fn sub(self, other: EnvSpec) -> bool {
         &&& self.export == other.export
         &&& (self.nat_fold ==> other.nat_fold)
+        &&& self.full == other.full
         &&& forall|k: u64| #[trigger]
             self.defs.contains_key(k) ==> other.defs.contains_key(k) && self.defs[k] == other.defs[k]
         &&& forall|k: u64| #[trigger]

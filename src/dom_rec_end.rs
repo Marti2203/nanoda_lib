@@ -784,7 +784,6 @@ pub proof fn frag_congr(s1: Sig, s2: Sig)
     requires
         s1.consts == s2.consts,
         s1.ienv == s2.ienv,
-        s1.full == s2.full,
     ensures
         crate::ti_syntax::iota_ok(s1) == crate::ti_syntax::iota_ok(s2),
         forall|c: u64| #[trigger] rec_frag(s1, c) == rec_frag(s2, c),

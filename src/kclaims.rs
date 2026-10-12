@@ -65,6 +65,7 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
 /// What the fragment assumes: `frag_env` without the constructor tables,
 /// which the export certifies (`env_model::tables_ok_at`).
 pub open spec fn frag_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    &&& !denv.full
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& !dty.contains_key(crate::expr_arena_bridge::nat_zero_id(denv.export))

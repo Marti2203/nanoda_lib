@@ -31,7 +31,6 @@ pub open spec fn jsig_raw(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lc
         locals: lctx,
         rank: jrank(dty, denv),
         ienv: denv,
-        full: false,
     }
 }
 
@@ -52,7 +51,6 @@ pub open spec fn jsig_r(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, r: M
         locals: Map::empty(),
         rank: r,
         ienv: denv,
-        full: false,
     }
 }
 

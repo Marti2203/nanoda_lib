@@ -2552,6 +2552,31 @@ pub(crate) open spec fn rec_conv_old<'x, 't>(env: crate::env::Env<'x, 't>, nd: D
 
 /// One minor premise built: its witness.
 #[verifier::spinoff_prover]
+/// The minors so far, one more pushed.
+pub(crate) proof fn minors_pushed<'t>(aids: (nat, nat), st: InductiveCheckState<'t>, ctors: Seq<CtorHeader<'t>>, o0: Seq<ExprPtr<'t>>,
+    minor: ExprPtr<'t>, out: Seq<ExprPtr<'t>>)
+    requires
+        out == o0.push(minor),
+        o0.len() < ctors.len(),
+        forall|k: int| 0 <= k < o0.len() ==> minor_some(aids, st, crate::expr_arena_bridge::to_model(ctors[k].ty),
+            crate::level_arena_bridge::name_id(ctors[k].name), #[trigger] o0[k], o0.subrange(0, k)),
+        minor_some(aids, st, crate::expr_arena_bridge::to_model(ctors[o0.len() as int].ty),
+            crate::level_arena_bridge::name_id(ctors[o0.len() as int].name), minor, o0),
+    ensures
+        forall|k: int| 0 <= k < out.len() ==> minor_some(aids, st, crate::expr_arena_bridge::to_model(ctors[k].ty),
+            crate::level_arena_bridge::name_id(ctors[k].name), #[trigger] out[k], out.subrange(0, k)),
+{
+    assert forall|k: int| 0 <= k < out.len() implies minor_some(aids, st, crate::expr_arena_bridge::to_model(ctors[k].ty),
+        crate::level_arena_bridge::name_id(ctors[k].name), #[trigger] out[k], out.subrange(0, k)) by {
+        if k < o0.len() {
+            assert(out[k] == o0[k]);
+            assert(out.subrange(0, k) =~= o0.subrange(0, k));
+        } else {
+            assert(out.subrange(0, k) =~= o0);
+        }
+    }
+}
+
 pub(crate) proof fn minor_built<'t>(
     aids: (nat, nat),
     st: InductiveCheckState<'t>,
@@ -6484,16 +6509,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     all_ctor_args@, rec_ctor_args@, v@, ind_ty_idx as int, c_ser0, c_ser1, c_v0, c_v1, minor,
                     crate::expr_arena_bridge::to_model(stripd_instd_ctor_type), crate::expr_arena_bridge::to_model(c_app0),
                     crate::expr_arena_bridge::to_model(c_app), idx_seq, rev_rem, crate::expr_arena_bridge::to_model(minor_type0), o0);
-                assert forall|k: int| 0 <= k < out@.len() implies minor_some(aids, *st,
-                    crate::expr_arena_bridge::to_model(ctors@[k].ty), crate::level_arena_bridge::name_id(ctors@[k].name), #[trigger] out@[k],
-                    out@.subrange(0, k)) by {
-                    if k < o0.len() {
-                        assert(out@[k] == o0[k]);
-                        assert(out@.subrange(0, k) =~= o0.subrange(0, k));
-                    } else {
-                        assert(out@.subrange(0, k) =~= o0);
-                    }
-                }
+                minors_pushed(aids, *st, ctors@, o0, minor, out@);
                 assert forall|k: int| 0 <= k < out@.len() implies major_ok(*self.ctx, #[trigger] out@[k]) by {
                     if k < o0.len() { assert(out@[k] == o0[k]); }
                 }

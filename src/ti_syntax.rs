@@ -64,7 +64,7 @@ pub open spec fn no_recs(sig: Sig) -> bool {
 /// so the Iota rule can ask it.
 #[verifier::opaque]
 pub open spec fn iota_ok(sig: Sig) -> bool {
-    !sig.full && forall|rid: u64| #[trigger] sig.ienv.recs.contains_key(rid) ==> crate::dom_rec_end::rec_frag(sig, rid)
+    !sig.ienv.full && forall|rid: u64| #[trigger] sig.ienv.recs.contains_key(rid) ==> crate::dom_rec_end::rec_frag(sig, rid)
 }
 
 /// Each recursor of a signature meeting Iota's condition is in the
@@ -75,7 +75,7 @@ pub proof fn frag_of(sig: Sig, rid: u64)
         sig.ienv.recs.contains_key(rid),
     ensures
         crate::dom_rec_end::rec_frag(sig, rid),
-        !sig.full,
+        !sig.ienv.full,
 {
     reveal(iota_ok);
 }
@@ -97,10 +97,6 @@ pub ghost struct Sig {
     pub rank: Map<u64, nat>,
     /// The recursor and constructor tables the iota rule reads.
     pub ienv: crate::expr_arena_bridge::EnvSpec,
-    /// Lean's full rules apply (`RedG`, ...), not only the fragment the
-    /// domain model interprets (docs/TYPED_TARGET.md, "The conditional
-    /// theorem").
-    pub full: bool,
 }
 
 /// The highest rank of a constant `e` mentions, plus one (0 for none).
@@ -416,12 +412,12 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
             _ => false,
         },
         Rule::RedG(l) => match j {
-            Jd::Eq(g, m, n, t) => sig.full && crate::full_red::full_conv(sig, m, n, t)
+            Jd::Eq(g, m, n, t) => sig.ienv.full && crate::full_red::full_conv(sig, m, n, t)
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, t, t, sort(l))]),
             _ => false,
         },
         Rule::LitTy(l) => match j {
-            Jd::Eq(g, m, n, a) => sig.full && n == m && crate::full_red::lit_ty(sig, m) == Some(a)
+            Jd::Eq(g, m, n, a) => sig.ienv.full && n == m && crate::full_red::lit_ty(sig, m) == Some(a)
                 && prems(ps, seq![Jd::Wf(g), eq(g, a, a, sort(l))]),
             _ => false,
         },
@@ -572,7 +568,7 @@ pub open spec fn proj_cong_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> 
 #[verifier::opaque]
 pub open spec fn proj_g_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => sig.full && m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
+        Jd::Eq(g, m, n, t) => sig.ienv.full && m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
             let st = concl(ps[0])->Eq_3;
             let (x, x2) = (*m->Proj_1, *n->Proj_1);
             crate::full_red::gproj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
