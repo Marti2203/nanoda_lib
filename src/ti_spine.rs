@@ -69,12 +69,28 @@ pub proof fn spine_ty(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<ExprS
         derivable(sig, eq(g, spine_app(h, xs), spine_app(h, xs), trest(t0, xs))),
         tchain(sig, g, t, trest(t0, xs)),
         forall|i: int| 0 <= i < xs.len() ==> derivable(sig, eq(g, #[trigger] xs[i], xs[i], sdom(t0, xs, i))),
+{
+    crate::meta_hyp::meta_of(sig);
+    spine_ty_m(sig, g, h, t0, xs, t);
+}
+
+/// The same, under the metatheory hypotheses.
+pub proof fn spine_ty_m(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::meta_hyp::meta_ok(sig),
+        derivable(sig, eq(g, h, h, t0)),
+        derivable(sig, eq(g, spine_app(h, xs), spine_app(h, xs), t)),
+        forall|i: int| 0 <= i < xs.len() ==> #[trigger] is_pi(trest(t0, xs.subrange(0, i))),
+    ensures
+        derivable(sig, eq(g, spine_app(h, xs), spine_app(h, xs), trest(t0, xs))),
+        tchain(sig, g, t, trest(t0, xs)),
+        forall|i: int| 0 <= i < xs.len() ==> derivable(sig, eq(g, #[trigger] xs[i], xs[i], sdom(t0, xs, i))),
     decreases xs.len(),
 {
     if xs.len() == 0 {
         assert(spine_app(h, xs) == h);
         assert(trest(t0, xs) == t0);
-        crate::ti_sr::uniq(sig, g, h, t, t0);
+        crate::meta_hyp::uniq_m(sig, g, h, t, t0);
         return;
     }
     let n = xs.len() - 1;
@@ -91,14 +107,14 @@ pub proof fn spine_ty(sig: Sig, g: Ctx, h: ExprSpec, t0: ExprSpec, xs: Seq<ExprS
         assert(init.subrange(0, i) =~= xs.subrange(0, i));
         assert(is_pi(trest(t0, xs.subrange(0, i))));
     }
-    spine_ty(sig, g, h, t0, init, pi(a1, b1));
+    spine_ty_m(sig, g, h, t0, init, pi(a1, b1));
     assert(init.subrange(0, n) =~= init);
     assert(xs.subrange(0, n) =~= init);
     assert(is_pi(trest(t0, xs.subrange(0, n))));
     let p = trest(t0, init);
     let (a, b) = (*p->Bind_1, *p->Bind_2);
     assert(p == pi(a, b));
-    crate::dom_fund::pi_inj_chain(sig, g, a1, b1, a, b);
+    crate::meta_hyp::pi_inj_m(sig, g, a1, b1, a, b);
     conv_chain(sig, g, x, x, a1, a);
     pi_typed_of(sig, g, f, a, b);
     crate::ti_chain::tchain_refl(sig, g, p);
@@ -407,11 +423,25 @@ pub proof fn retype_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: Expr
         derivable(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t)),
     ensures
         derivable(sig, eq(g, spine_app(h2, xs), spine_app(h2, xs), t)),
+{
+    crate::meta_hyp::meta_of(sig);
+    retype_spine_m(sig, g, h1, h2, ty, xs, t);
+}
+
+/// The same, under the metatheory hypotheses.
+pub proof fn retype_spine_m(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::meta_hyp::meta_ok(sig),
+        derivable(sig, eq(g, h1, h1, ty)),
+        derivable(sig, eq(g, h2, h2, ty)),
+        derivable(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t)),
+    ensures
+        derivable(sig, eq(g, spine_app(h2, xs), spine_app(h2, xs), t)),
     decreases xs.len(),
 {
     if xs.len() == 0 {
         assert(spine_app(h1, xs) == h1 && spine_app(h2, xs) == h2);
-        crate::ti_sr::uniq(sig, g, h1, ty, t);
+        crate::meta_hyp::uniq_m(sig, g, h1, ty, t);
         conv_chain(sig, g, h2, h2, ty, t);
         return;
     }
@@ -427,7 +457,7 @@ pub proof fn retype_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: Expr
     let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] gmark(a, b, l2, l2)
         && derivable(sig, eq(g, f1, f1, pi(a, b))) && derivable(sig, eq(g, x, x, a)) && typ(sig, g.push(a), b, l2)
         && tchain(sig, g, t, inst(0, x, b));
-    retype_spine(sig, g, h1, h2, ty, init, pi(a, b));
+    retype_spine_m(sig, g, h1, h2, ty, init, pi(a, b));
     pi_typed_of(sig, g, f2, a, b);
     crate::ti_chain::tchain_refl(sig, g, pi(a, b));
     crate::dom_sem_rel::app_pair(sig, g, f2, f2, pi(a, b), a, b, x, x);
@@ -443,12 +473,25 @@ pub proof fn reconv_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: Expr
         derivable(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t)),
     ensures
         derivable(sig, eq(g, spine_app(h1, xs), spine_app(h2, xs), t)),
+{
+    crate::meta_hyp::meta_of(sig);
+    reconv_spine_m(sig, g, h1, h2, ty, xs, t);
+}
+
+/// The same, under the metatheory hypotheses.
+pub proof fn reconv_spine_m(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: ExprSpec, xs: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        crate::meta_hyp::meta_ok(sig),
+        derivable(sig, eq(g, h1, h2, ty)),
+        derivable(sig, eq(g, spine_app(h1, xs), spine_app(h1, xs), t)),
+    ensures
+        derivable(sig, eq(g, spine_app(h1, xs), spine_app(h2, xs), t)),
     decreases xs.len(),
 {
     if xs.len() == 0 {
         assert(spine_app(h1, xs) == h1 && spine_app(h2, xs) == h2);
         crate::dom_adeq_syn::dsym(sig, g, h1, h2, ty);
-        crate::ti_sr::uniq(sig, g, h1, ty, t);
+        crate::meta_hyp::uniq_m(sig, g, h1, ty, t);
         conv_chain(sig, g, h1, h2, ty, t);
         return;
     }
@@ -464,7 +507,7 @@ pub proof fn reconv_spine(sig: Sig, g: Ctx, h1: ExprSpec, h2: ExprSpec, ty: Expr
     let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] gmark(a, b, l2, l2)
         && derivable(sig, eq(g, f1, f1, pi(a, b))) && derivable(sig, eq(g, x, x, a)) && typ(sig, g.push(a), b, l2)
         && tchain(sig, g, t, inst(0, x, b));
-    reconv_spine(sig, g, h1, h2, ty, init, pi(a, b));
+    reconv_spine_m(sig, g, h1, h2, ty, init, pi(a, b));
     pi_typed_of(sig, g, f1, a, b);
     crate::ti_chain::tchain_refl(sig, g, pi(a, b));
     crate::dom_sem_rel::app_pair(sig, g, f1, f2, pi(a, b), a, b, x, x);
