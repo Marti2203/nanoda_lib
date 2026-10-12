@@ -2088,7 +2088,7 @@ pub(crate) open spec fn rec_cow<'t>() -> crate::util::CowStr<'t> {
 /// Where the context's one `"rec"` string sits: its tier (the export
 /// file's?) and position. The same over a context's life (`rec_key_same`).
 pub(crate) open spec fn rec_key<'t, 'p>(c: TcCtx<'t, 'p>) -> (bool, nat, Seq<crate::name::Name<'t>>) {
-    (crate::util::export_has_string(c, rec_cow()), crate::util::canon_str_index(c, rec_cow()), c.export_file.names_view())
+    (crate::util::export_has_string(c, rec_cow()@), crate::util::canon_str_index(c, rec_cow()@), c.export_file.names_view())
 }
 
 pub(crate) proof fn rec_key_same<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>)
@@ -2097,7 +2097,7 @@ pub(crate) proof fn rec_key_same<'t, 'p>(a: TcCtx<'t, 'p>, b: TcCtx<'t, 'p>)
     ensures
         rec_key(a) == rec_key(b),
 {
-    crate::util::canon_str_same(a, b, rec_cow());
+    crate::util::canon_str_same(a, b, rec_cow()@);
 }
 
 /// `rs` is the one `"rec"` string at key `rk`.
@@ -6905,7 +6905,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
             }
             proof {
-                crate::util::canon_str_same(c_it, *self.ctx, rec_cow());
+                crate::util::canon_str_same(c_it, *self.ctx, rec_cow()@);
                 assert(rec_str_canon(*self.ctx, rec_str_ptr));
                 if st.ind_consts@.len() == 1 {
                     assert(it_idx == 0);

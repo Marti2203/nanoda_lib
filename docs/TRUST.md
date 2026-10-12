@@ -59,6 +59,12 @@ specification (`BigUint::from(u32)`) and five slots to the name cache's
 assumed invariant (`Char`, `Char.ofNat`, `List.nil`, `List.cons`,
 `String.ofList` are the names the model's expansion uses), the same kind
 of fact the cache already carries for `Nat.zero` and the rest.
+The key model for strings was false as stated (`Cow<str>` obeys the hash
+key model): runtime `==` equates a `Borrowed` and an `Owned` string with
+one text, which the model keeps apart. It is restated for `Owned`
+strings, which is all the arenas store now (`alloc_string` makes its
+argument `Owned`), with "two `Owned` strings with one text are one"; the
+string facts the checker uses are stated by text.
 The parser's boundary with the libraries (reading a line, serde's
 decoding, the formatted messages, the axiom whitelist's name text) is
 claim-free helpers, so it promises nothing the proofs use.

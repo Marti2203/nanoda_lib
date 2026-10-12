@@ -421,6 +421,7 @@ impl<'a> ExportBuilder<'a> {
     fn string_ptr(&mut self, t: crate::util::CowStr<'a>) -> (result: StringPtr<'a>)
         requires
             old(self).wf(),
+            t is Owned,
         ensures
             final(self).wf(),
             crate::util_model::export_tagged(final(self).arena(), result),

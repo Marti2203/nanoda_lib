@@ -95,13 +95,28 @@ pub proof fn build_hasher_default_valid_fx()
 {
 }
 
-/// `Cow<str>`'s `==` compares the text and its `Hash` hashes the text, so
-/// runtime equality is equality: the key model std's `String` would have.
-/// The export file's string arena is keyed by it.
+/// `Cow<str>`'s `==` compares the text and its `Hash` hashes the text. On
+/// `Owned` strings that is equality: a `String` is its text
+/// (`owned_cowstr_text_eq`). (Not on a mix of `Borrowed` and `Owned`, which
+/// `==` equates and the model does not; the arenas store only `Owned`.)
 #[verifier::external_body]
-pub proof fn cowstr_obeys_key_model<'a>()
+pub proof fn owned_cowstrs_obey_key_model<'a>(s: Set<crate::util::CowStr<'a>>)
+    requires
+        forall|x: crate::util::CowStr<'a>| #[trigger] s.contains(x) ==> x is Owned,
     ensures
-        vstd::std_specs::hash::obeys_key_model::<crate::util::CowStr<'a>>(),
+        vstd::std_specs::hash::keys_obey_model::<crate::util::CowStr<'a>>(s),
+{
+}
+
+/// Two `Owned` strings with the same text are the same.
+#[verifier::external_body]
+pub proof fn owned_cowstr_text_eq<'a>(a: crate::util::CowStr<'a>, b: crate::util::CowStr<'a>)
+    requires
+        a is Owned,
+        b is Owned,
+        a@ == b@,
+    ensures
+        a == b,
 {
 }
 
