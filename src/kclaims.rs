@@ -44,10 +44,28 @@ verus! {
 /// Church-Rosser need (`export_sound::kh_hyp` names those the checker does
 /// not establish).
 pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    kh_frag(dty, denv)
+}
+
+/// In the fragment: the domain model discharges the metatheory.
+pub open spec fn kh_frag(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     frag_env(dty, denv) && fv_free(dty, denv) && crate::conv_frag::cr_env(denv)
         && crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
         && crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
         && crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
+}
+
+/// IN LEAN'S FULL JUDGMENT (docs/TYPED_TARGET.md, "The conditional
+/// theorem"): the metatheory as named hypotheses (`meta_hyp`), with the
+/// environment facts the checker certifies.
+pub open spec fn kh_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    &&& denv.full
+    &&& forall|d: Map<nat, ExprSpec>| #[trigger] crate::meta_hyp::meta_ok(crate::metatheory::jsig(dty, denv, d))
+        && crate::meta_hyp::h_sr_red(crate::metatheory::jsig(dty, denv, d))
+    &&& fv_free(dty, denv) && crate::swap_model::env_fv_free(denv) && crate::conv_frag::env_rules_ok(denv)
+    &&& crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
+    &&& crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
+    &&& crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
 }
 
 /// THE FRAGMENT: recursors the model interprets (so iota on typed terms

@@ -1621,7 +1621,7 @@ impl EnvSpec {
     pub open spec fn sub(self, other: EnvSpec) -> bool {
         &&& self.export == other.export
         &&& (self.nat_fold ==> other.nat_fold)
-        &&& self.full == other.full
+        &&& (self.full ==> other.full)
         &&& forall|k: u64| #[trigger]
             self.defs.contains_key(k) ==> other.defs.contains_key(k) && self.defs[k] == other.defs[k]
         &&& forall|k: u64| #[trigger]

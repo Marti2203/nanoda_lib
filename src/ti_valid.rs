@@ -141,7 +141,8 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& (forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(sig2, c, ls) ==> def_ok(sig2, c, ls))
         || (sig2.consts == sig.consts && sig2.rank == sig.rank)
     &&& sig.ienv.sub(sig2.ienv)
-    &&& iota_ok(sig2)
+    &&& sig.ienv.full == sig2.ienv.full
+    &&& (!sig2.ienv.full ==> iota_ok(sig2))
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_ind.contains_key(k) ==> sig2.ienv.ctor_ind.contains_key(k) && sig2.ienv.ctor_ind[k] == sig.ienv.ctor_ind[k]
     &&& forall|k: u64| #[trigger] sig.ienv.struct_ctor.contains_key(k) ==> sig2.ienv.struct_ctor.contains_key(k) && sig2.ienv.struct_ctor[k] == sig.ienv.struct_ctor[k]
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_nf.contains_key(k) ==> sig2.ienv.ctor_nf.contains_key(k) && sig2.ienv.ctor_nf[k] == sig.ienv.ctor_nf[k]
@@ -152,6 +153,7 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
 pub proof fn canon_grow(sig: Sig, sig2: Sig, r: u64)
     requires
         sig_ext(sig, sig2),
+        !sig.ienv.full,
         crate::rec_canon::rec_canon(sig, r),
     ensures
         crate::rec_canon::rec_canon(sig2, r),
@@ -188,6 +190,7 @@ pub proof fn canon_grow(sig: Sig, sig2: Sig, r: u64)
 pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
     requires
         sig_ext(sig, sig2),
+        !sig.ienv.full,
         crate::rec_canon::rec_canon(sig, r),
         crate::rec_canon::rec_ind(sig, r) == s,
     ensures
@@ -220,6 +223,7 @@ pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
 pub proof fn struct_grow(sig: Sig, sig2: Sig, s: u64)
     requires
         sig_ext(sig, sig2),
+        !sig.ienv.full,
         crate::ti_syntax::struct_of(sig, s),
     ensures
         crate::ti_syntax::struct_of(sig2, s),
@@ -262,6 +266,7 @@ pub proof fn struct_grow(sig: Sig, sig2: Sig, s: u64)
 pub proof fn proj_grow(sig: Sig, sig2: Sig, st: ExprSpec, i: nat, x: ExprSpec, m: ExprSpec)
     requires
         sig_ext(sig, sig2),
+        !sig.ienv.full,
     ensures
         crate::ti_syntax::proj_ty(sig, st, i, x) is Some ==> crate::ti_syntax::proj_ty(sig2, st, i, x) == crate::ti_syntax::proj_ty(sig, st, i, x)
             && crate::ti_syntax::proj_prop(sig2, st) == crate::ti_syntax::proj_prop(sig, st),

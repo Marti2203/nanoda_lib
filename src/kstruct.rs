@@ -220,6 +220,7 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         exists|lq: LevelSpec| #[trigger] derivable(sig, eq(g, spine_args(t)[q], spine_args(t)[q], sort(lq))),
         !crate::ti_syntax::proj_prop(sig, t),
 {
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let (s, us) = (spine_head(t)->Const_0, spine_head(t)->Const_1);
     let ps = spine_args(t);
     struct_type_arity(sig, g, t, l);
@@ -316,6 +317,7 @@ pub proof fn struct_ctor_typed(sig: Sig, g: Ctx, s: u64, y: ExprSpec, b: ExprSpe
 #[verifier::spinoff_prover]
 pub proof fn struct_eta_d(sig: Sig, g: Ctx, x: ExprSpec, y: ExprSpec, st: ExprSpec, l: LevelSpec)
     requires
+        !sig.ienv.full,
         crate::ti_syntax::struct_ty(sig, st),
         crate::dom_code::smash(sig, spine_head(st)->Const_0),
         derivable(sig, eq(g, x, x, st)),

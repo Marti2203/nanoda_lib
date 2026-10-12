@@ -152,6 +152,7 @@ pub proof fn proj_cong(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
         crate::ti_syntax::proj_ty(sig, crate::ti_eta::eta_st(sig, c, ls, xs), i as nat, z) == Some(xs[fq(sig, c, i)]),
         derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(z2)), xs[fq(sig, c, i)])),
 {
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let st = crate::ti_eta::eta_st(sig, c, ls, xs);
     side_facts(sig, g, c, ls, xs, th);
     crate::dom_psimple::der_diag(sig, g, z, z2, st);
@@ -193,6 +194,7 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         hred(sig, ExprSpec::Proj(i as usize, Box::new(z)), fa[i]),
         derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), fa[i], xs[fq(sig, c, i)])),
 {
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let sh = rshape(sig, c);
     let st = crate::ti_eta::eta_st(sig, c, ls, xs);
     let cid = sh.ctors[0];

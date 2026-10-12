@@ -94,7 +94,7 @@ pub open spec fn gen_ok(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> bool {
         ExprSpec::Bind(bk, a, b) => if bk == BinderKind::Pi { gen_pi(sig, g, *a, *b, t) } else { gen_lam(sig, g, *a, *b, t) },
         ExprSpec::App(f, x) => gen_app(sig, g, *f, *x, t),
         ExprSpec::Let(a, v, b) => gen_let(sig, g, *a, *v, *b, t),
-        ExprSpec::Proj(i, x) => gen_proj(sig, g, i as nat, *x, t) || (sig.ienv.full && gen_gproj(sig, g, i as nat, *x, t)),
+        ExprSpec::Proj(i, x) => (!sig.ienv.full && gen_proj(sig, g, i as nat, *x, t)) || (sig.ienv.full && gen_gproj(sig, g, i as nat, *x, t)),
         ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => sig.ienv.full && crate::full_red::lit_ty(sig, m) is Some
             && tchain(sig, g, t, crate::full_red::lit_ty(sig, m)->Some_0),
         _ => false,
@@ -154,7 +154,7 @@ pub proof fn gen_conv(sig: Sig, g: Ctx, m: ExprSpec, a: ExprSpec, t: ExprSpec)
             assert(gmark(tt, *v, l1, l1));
         },
         ExprSpec::Proj(i, x) => {
-            if gen_proj(sig, g, i as nat, *x, a) {
+            if !sig.ienv.full {
                 let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
                     && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some
                     && typ(sig, g, crate::ti_syntax::proj_ty(sig, st, i as nat, *x)->Some_0, l)

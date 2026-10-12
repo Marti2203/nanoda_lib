@@ -302,6 +302,7 @@ pub open spec fn rinst(rd: crate::expr_arena_bridge::RecDataSpec, m: ExprSpec, j
 #[verifier::spinoff_prover]
 proof fn iota_table(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, m: ExprSpec) -> (j: int)
     requires
+        !denv.full,
         crate::beta_model::rec_ready(denv, m),
     ensures
         crate::beta_model::rec_ready(jsig(dty, denv, lctx).ienv, m),
@@ -783,7 +784,7 @@ pub proof fn lveq_conv(sig: Sig, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
         },
         ExprSpec::Bind(bk, a, b) => lveq_bind(sig, g, bk, *a, *b, *m2->Bind_1, *m2->Bind_2, t),
         ExprSpec::Let(a, v, b) => lveq_let(sig, g, *a, *v, *b, *m2->Let_0, *m2->Let_1, *m2->Let_2, t),
-        ExprSpec::Proj(i, x) => if crate::ti_gen::gen_proj(sig, g, i as nat, *x, t) {
+        ExprSpec::Proj(i, x) => if !sig.ienv.full {
             lveq_proj(sig, g, i, *x, *m2->Proj_1, t)
         } else {
             lveq_gproj(sig, g, i, *x, *m2->Proj_1, t)
@@ -797,6 +798,7 @@ proof fn lveq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, x2: ExprSpec, t: Exp
     requires
         crate::ti_sr::sig_wf(sig),
         lev_ok(sig),
+        !sig.ienv.full,
         crate::ti_gen::gen_proj(sig, g, i as nat, x, t),
         crate::conv_cr::lveq(x, x2),
     ensures
@@ -989,13 +991,14 @@ pub proof fn jsig_locals(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lct
 pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
     requires
         crate::ti_sr::sig_wf(jsig(dty, denv, Map::empty())),
-        crate::ti_syntax::iota_ok(jsig(dty, denv, lctx)),
+        !denv.full ==> crate::ti_syntax::iota_ok(jsig(dty, denv, lctx)),
     ensures
         crate::ti_valid::sig_ext(jsig(dty, denv, Map::empty()), jsig(dty, denv, lctx)),
 {
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
     jsig_locals(dty, denv, lctx);
+    crate::dom_rec_end::frag_congr(s0, s1);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls) by {
         assert(is_def(s0, c, ls));
         assert(def_ok(s0, c, ls));
@@ -1004,20 +1007,29 @@ pub proof fn jsig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     }
 }
 
-/// WHAT THE KERNEL HYPOTHESES GIVE AT ANY LOCALS: the fragment's subject
-/// reduction and level conversion apply.
+/// WHAT THE KERNEL HYPOTHESES GIVE AT ANY LOCALS: level conversion and the
+/// definitions' typings; in the fragment its subject reduction, in the
+/// full judgment the metatheory hypotheses.
 pub proof fn kh_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
     requires
         crate::kclaims::kh(dty, denv),
     ensures
-        frag_ok(dty, denv, lctx),
+        crate::kclaims::kh_frag(dty, denv) ==> frag_ok(dty, denv, lctx) && crate::conv_frag::cr_env(denv),
+        crate::kclaims::kh_full(dty, denv) ==> crate::meta_hyp::meta_ok(jsig(dty, denv, lctx))
+            && crate::meta_hyp::h_sr_red(jsig(dty, denv, lctx)),
         lev_ok(jsig(dty, denv, lctx)),
-        crate::conv_frag::cr_env(denv),
+        crate::ti_sr::sig_wf(jsig(dty, denv, lctx)),
+        defs_in(dty, denv),
 {
-    assert(crate::kclaims::frag_env(dty, denv));
     let s0 = jsig(dty, denv, Map::empty());
     let s1 = jsig(dty, denv, lctx);
-    assert(crate::kclaims::ind_ok(s1));
+    if crate::kclaims::kh_frag(dty, denv) {
+        assert(crate::kclaims::ind_ok(s1));
+    }
+    if crate::kclaims::kh_full(dty, denv) {
+        assert(crate::meta_hyp::meta_ok(s1));
+        assert(crate::meta_hyp::h_sr_red(s1));
+    }
     jsig_ext(dty, denv, lctx);
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] is_def(s1, c, ls) implies def_ok(s1, c, ls)
         && crate::expr_model::nlbv(dty_at(s1, c, ls)) == 0
@@ -1239,7 +1251,7 @@ proof fn natish_chain(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ch: Se
 /// WHAT A LITERAL REDUCES TO IS TYPED NOWHERE in the fragment.
 pub proof fn lit_reduct_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, n: crate::expr_model::NatLitPayload, e: ExprSpec, t: ExprSpec)
     requires
-        crate::kclaims::kh(dty, denv),
+        crate::kclaims::kh_frag(dty, denv),
         crate::beta_model::pstep_star(denv, ExprSpec::NatLit(n), e),
         derivable(jsig(dty, denv, lctx), eq(Seq::empty(), e, e, t)),
     ensures

@@ -32,13 +32,24 @@ verus! {
 pub proof fn jsig_fv_free(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>)
     requires
         crate::swap_typed::fv_free(dty, denv),
-        crate::kclaims::twin_ok(dty, denv),
+        !denv.full ==> crate::kclaims::twin_ok(dty, denv),
+        denv.full ==> crate::swap_model::env_fv_free(denv),
     ensures
         sig_fv_free(jsig(dty, denv, d)),
 {
     let s = jsig(dty, denv, d);
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     crate::jkernel::jsig_locals(dty, denv, d);
+    if denv.full {
+        assert forall|c: u64| #[trigger] s.consts.contains_key(c) implies !crate::expr_model::has_fv(s.consts[c].ty)
+            && (s.consts[c].val is Some ==> !crate::expr_model::has_fv(s.consts[c].val->Some_0)) by {
+            assert(dty.contains_key(c));
+            if s.consts[c].val is Some {
+                assert(denv.defs.contains_key(c));
+            }
+        }
+        return;
+    }
     assert forall|c: u64| #[trigger] s.consts.contains_key(c) implies !crate::expr_model::has_fv(s.consts[c].ty)
         && (s.consts[c].val is Some ==> !crate::expr_model::has_fv(s.consts[c].val->Some_0)) by {
         assert(dty.contains_key(c));

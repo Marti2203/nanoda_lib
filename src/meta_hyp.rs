@@ -42,6 +42,14 @@ pub open spec fn h_pi_sort(sig: Sig) -> bool {
     forall|g: Ctx, a: ExprSpec, b: ExprSpec, l: LevelSpec| !#[trigger] tchain(sig, g, pi(a, b), sort(l))
 }
 
+/// SUBJECT REDUCTION for the kernel's contractions beyond beta, delta and
+/// zeta (`full_red`): a typed redex's reduct is typed at its type.
+pub open spec fn h_sr_red(sig: Sig) -> bool {
+    forall|g: Ctx, m: ExprSpec, n: ExprSpec, t: ExprSpec|
+        #![trigger derivable(sig, eq(g, m, m, t)), crate::full_red::full_red(sig, m, n)]
+        derivable(sig, eq(g, m, m, t)) && crate::full_red::full_red(sig, m, n) ==> derivable(sig, eq(g, n, n, t))
+}
+
 /// THE HYPOTHESES, together.
 #[verifier::opaque]
 pub open spec fn meta_ok(sig: Sig) -> bool {

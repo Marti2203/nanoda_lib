@@ -15,9 +15,11 @@ use vstd::prelude::*;
 verus! {
 
 /// The signature of an environment: its constants (definitions with
-/// values), the local context's locals as axioms, and constant ranks.
+/// values), the local context's locals as axioms, and constant ranks. The
+/// fragment reads its canonical twin (the model interprets canonical
+/// recursors); Lean's full judgment reads the declarations as they are.
 pub open spec fn jsig(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> crate::ti_syntax::Sig {
-    crate::twin::twin(jsig_raw(dty, denv, lctx))
+    if denv.full { jsig_raw(dty, denv, lctx) } else { crate::twin::twin(jsig_raw(dty, denv, lctx)) }
 }
 
 /// The environment's signature as declared, before its canonical twin.

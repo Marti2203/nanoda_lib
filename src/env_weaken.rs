@@ -16,6 +16,7 @@ verus! {
 /// every declaration and table entry of the first, unchanged.
 pub open spec fn env_le(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2: Map<u64, (Seq<u64>, ExprSpec)>, denv2: EnvSpec) -> bool {
     &&& denv.sub(denv2)
+    &&& denv.full == denv2.full
     &&& forall|k: u64| #[trigger] dty.contains_key(k) ==> dty2.contains_key(k) && dty2[k] == dty[k]
     &&& forall|k: u64| #[trigger] denv.struct_ctor.contains_key(k) ==> denv2.struct_ctor.contains_key(k) && denv2.struct_ctor[k] == denv.struct_ctor[k]
     &&& forall|k: u64| #[trigger] denv.ctor_nf.contains_key(k) ==> denv2.ctor_nf.contains_key(k) && denv2.ctor_nf[k] == denv.ctor_nf[k]

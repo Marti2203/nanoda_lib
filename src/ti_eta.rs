@@ -433,6 +433,7 @@ pub proof fn eta_struct_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: S
         derivable(sig, eq(g, a0[(rshape(sig, rid).np + 1 + rshape(sig, rid).nmin()) as int], eta_cx(sig, rid, lv, a0),
             eta_st(sig, rid, lv, a0))),
 {
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let sh = rshape(sig, rid);
     eta_facts(sig, rid, lv, a0);
     eta_cx_typed(sig, g, rid, lv, a0);

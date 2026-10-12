@@ -554,7 +554,7 @@ pub open spec fn proj_result(sig: Sig, m: ExprSpec) -> ExprSpec {
 #[verifier::opaque]
 pub open spec fn proj_cong_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
+        Jd::Eq(g, m, n, t) => !sig.ienv.full && m is Proj && n is Proj && m->Proj_0 == n->Proj_0 && ps.len() == 2 && concl(ps[0]) is Eq && {
             let st = concl(ps[0])->Eq_3;
             let (x, x2) = (*m->Proj_1, *n->Proj_1);
             proj_ty(sig, st, m->Proj_0 as nat, x) == Some(t) && (proj_prop(sig, st) ==> is_zero(l))
@@ -582,7 +582,7 @@ pub open spec fn proj_g_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> boo
 #[verifier::opaque]
 pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => m is Proj && ps.len() == 5 && concl(ps[2]) is Eq && {
+        Jd::Eq(g, m, n, t) => !sig.ienv.full && m is Proj && ps.len() == 5 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
             proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
                 && crate::beta_model::spine_head(st)->Const_0 == sig.ienv.ctor_ind[crate::beta_model::spine_head(*m->Proj_1)->Const_0]
@@ -615,7 +615,7 @@ pub open spec fn struct_nf(sig: Sig, t: ExprSpec) -> nat {
 #[verifier::opaque]
 pub open spec fn struct_eta_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => struct_ty(sig, t) && crate::dom_code::smash(sig, crate::beta_model::spine_head(t)->Const_0)
+        Jd::Eq(g, m, n, t) => !sig.ienv.full && struct_ty(sig, t) && crate::dom_code::smash(sig, crate::beta_model::spine_head(t)->Const_0)
             && ps.len() == 3 + struct_nf(sig, t)
             && concl(ps[0]) == eq(g, m, m, t) && concl(ps[1]) == eq(g, n, n, t) && concl(ps[2]) == eq(g, t, t, sort(l))
             && forall|k: int| 0 <= k < struct_nf(sig, t) ==> #[trigger] concl(ps[3 + k])

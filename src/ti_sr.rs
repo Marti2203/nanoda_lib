@@ -557,6 +557,7 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
     ensures
         derivable(sig, eq(g, ExprSpec::Proj(i, Box::new(x)), crate::ti_syntax::proj_result(sig, ExprSpec::Proj(i, Box::new(x))), t)),
 {
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     use crate::beta_model::{spine_head, spine_args, spine_app};
     let m = ExprSpec::Proj(i, Box::new(x));
     let ty = crate::ti_syntax::proj_ty(sig, st, i as nat, x)->Some_0;

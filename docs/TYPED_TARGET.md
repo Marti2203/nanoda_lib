@@ -2437,5 +2437,18 @@ prefixes, which nothing proves.
   restriction (`proj_prop ==> is_zero`). Generation records a subject
   convertible to the projected term, since a dependent field's type
   mentions the subject.
-- **Next:** the full-mode claims (`cwF`, `ccF`, ... under `khF`) beside
-  the fragment's, each from `meta_ok` plus subject reduction.
+- **Two disjoint worlds -- DONE.** The fragment's structure rules
+  (`ProjCong`, `ProjIota`, `StructEta`; `Iota`/`RecEta` through `iota_ok`)
+  fire only in non-full environments, `ProjG`/`RedG`/`LitTy` only in full
+  ones; `sig_ext` and `env_weaken::env_le` ask equal flags, so weakening
+  stays in one world. In full mode `jsig` is `jsig_raw` -- Lean's
+  declarations as they are, without the canonical twin the model needs,
+  so no `twin_ok`.
+- **The full hypotheses -- `kclaims::kh_full`.** `meta_ok` and `h_sr_red`
+  (subject reduction for `full_red`) at every locals, with the
+  environment facts the checker certifies (`fv_free`, `env_wf`, `sig_wf`,
+  `lev_ok`, level-parameter facts, closed rules); no Church-Rosser
+  (`cr_env`'s confluence is false for real exports) and no twin.
+  `kh = kh_frag` still: switching to `kh_frag || kh_full` leaves 47
+  claim lemmas to prove in the full world (the kernel's contracts are
+  untouched -- they instantiate non-full environments).

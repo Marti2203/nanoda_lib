@@ -114,6 +114,7 @@ pub proof fn pfield_vsub(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>, xs: Seq<E
 pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t: ExprSpec, l: LevelSpec)
     requires
         proj_sem(sig),
+        !sig.ienv.full,
         crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
         crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l),
         derivable(sig, eq(dl, t, t, sort(l))),
@@ -289,6 +290,7 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     l: LevelSpec, u: Cpt, a: Cpt, v2: Cpt, b: Cpt)
     requires
         proj_sem(sig),
+        !sig.ienv.full,
         crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
         crate::ti_syntax::proj_ty(sig, sst, i as nat, xx) == Some(tt),
         spine_head(sst) == spine_head(st),
@@ -408,6 +410,7 @@ pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::E
     mm: ExprSpec, m2: ExprSpec, n1: ExprSpec, nn: ExprSpec, tt: ExprSpec, u: Cpt, a: Cpt, i: int)
     requires
         proj_sem(sig),
+        !sig.ienv.full,
         crate::ti_syntax::struct_ty(sig, t),
         crate::ti_syntax::struct_ty(sig, tt),
         spine_head(tt) == spine_head(t),
@@ -510,6 +513,7 @@ pub proof fn seta_tail(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::Env, t:
     mm: ExprSpec, m2: ExprSpec, n1: ExprSpec, nn: ExprSpec, tt: ExprSpec, u: Cpt, a: Cpt)
     requires
         proj_sem(sig),
+        !sig.ienv.full,
         crate::ti_syntax::struct_ty(sig, t),
         crate::ti_syntax::struct_ty(sig, tt),
         spine_head(tt) == spine_head(t),
