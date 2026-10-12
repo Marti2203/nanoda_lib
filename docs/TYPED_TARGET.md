@@ -2462,7 +2462,7 @@ prefixes, which nothing proves.
   Restricted to `!denv.full`, since their arguments are the fragment's
   (untypable literals, canonical recursors, the model's structures):
   `kclaims::{untypable_untyped, cw_of_untypable, tp_of_untypable,
-  cwh_to_lit, cwh_k, k_rec_canon, cwh_eta_exp}` and
+  cwh_to_lit, cwh_k, k_rec_canon}` and
   `proj_reg::{ci_proj, cc_proj}` with their walk lemmas. Closed in both
   worlds since: `cw_of_step`/`cw_of_ceq` (Church-Rosser: `kh_full` asks
   `nat_ext::cr_ext` -- the fold-free environment's syntactic
@@ -2478,13 +2478,17 @@ prefixes, which nothing proves.
   universe-polymorphic structure whose sort may but need not be `Prop`
   (`eta_sort_ok`) -- nanoda types no data projection of it, so its
   expansion is not typed in this judgment.
-- **Next gap: constructor typing at the inductive's parameters.**
-  `cwh_eta_exp` and K need `C ps` typed whenever `S ps` is; Lean checks
-  the constructor's parameter binders against the inductive's only up to
-  conversion, which the kernel certifies through E2' (`ctor_e2_cert`'s
-  typed lambda term) -- in the fragment mode only, and nothing inverts
-  it yet. Needs: E2' at the full judgment (dual certificate) and its
-  inversion.
+- **Constructor typing at the inductive's parameters -- DONE
+  (`full_e2`, `kclaims::ctor_at_params`).** Lean checks a constructor's
+  parameter binders against its inductive's only up to conversion; the
+  kernel certifies it through E2' (`tc::ctor_e2_cert`: `λ (f : C's type)
+  (S's parameter binders), f params` typed). `kh_full` asks it at every
+  constructor (`e2_ok`; certified per constructor -- in fragment mode
+  today, the full-mode certificate comes with the dual contracts); the
+  lambdas inverted and `C`, the parameters substituted type `C ps`
+  wherever `S ps` is typed. Used by `cwh_eta_exp` (the kernel's eta
+  expansion, which nanoda performs only on never-`Prop` structures:
+  `never_prop_at`).
 - **Next:** dual kernel contracts -- each `kcw`/`kcwh`/`kcc`/`kci`/
   `declar_cert_at` claim also at the flagged environment -- with full
   versions of the lemmas above.

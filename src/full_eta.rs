@@ -232,6 +232,11 @@ pub proof fn y_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, am: 
     cod_inst(ExprSpec::Const(s, ylv), am, np);
 }
 
+/// The parameters typed along the constructor's telescope.
+pub open spec fn params_typed(sig: Sig, g: Ctx, c: u64, ylv: Seq<LevelSpec>, am: Seq<ExprSpec>, ds: Seq<ExprSpec>) -> bool {
+    forall|i: int| 0 <= i < sig.ienv.ctor_np[c] ==> derivable(sig, eq(g, #[trigger] am[i], am[i], sdom(ctor_t(sig, c, ylv, ds), am, i)))
+}
+
 /// The domain at `np + k` of the telescope at `xsk(k)`: field `k`'s type.
 pub open spec fn fty(sig: Sig, c: u64, ylv: Seq<LevelSpec>, ds: Seq<ExprSpec>, am: Seq<ExprSpec>, x: ExprSpec, k: nat) -> ExprSpec {
     let np = sig.ienv.ctor_np[c] as nat;
@@ -240,10 +245,10 @@ pub open spec fn fty(sig: Sig, c: u64, ylv: Seq<LevelSpec>, ds: Seq<ExprSpec>, a
 
 /// THE PROJECTIONS ARE TYPED, the first `k`: each at its field's type,
 /// over the parameters and the earlier projections.
-pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, am: Seq<ExprSpec>, ds: Seq<ExprSpec>, x: ExprSpec, b: ExprSpec, k: nat)
+pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, am: Seq<ExprSpec>, ds: Seq<ExprSpec>, x: ExprSpec, k: nat)
     requires
         eta_ctx(sig, g, s, c, ylv, am, ds),
-        derivable(sig, eq(g, spine_app(ExprSpec::Const(c, ylv), am), spine_app(ExprSpec::Const(c, ylv), am), b)),
+        params_typed(sig, g, c, ylv, am, ds),
         derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))),
         !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
         k <= sig.ienv.ctor_nf[c],
@@ -256,7 +261,7 @@ pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, 
         return;
     }
     let j = (k - 1) as nat;
-    projs_typed(sig, g, s, c, ylv, am, ds, x, b, j);
+    projs_typed(sig, g, s, c, ylv, am, ds, x, j);
     let t = ctor_t(sig, c, ylv, ds);
     let lps = sig.consts[c].lps;
     let np = sig.ienv.ctor_np[c] as nat;
@@ -266,7 +271,6 @@ pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, 
     let st = spine_app(ExprSpec::Const(s, ylv), am.subrange(0, np as int));
     let xs = xsk(am, np, x, j);
     ctor_typed(sig, g, s, c, ylv, am, ds);
-    y_typed(sig, g, s, c, ylv, am, ds, b);
     // the prefix spine is typed, at a Pi whose domain is field `j`'s type
     assert forall|i: int| 0 <= i < xs.len() implies #[trigger] is_pi(trest(t, xs.subrange(0, i))) by {
         crate::ti_spine::tel_next(dsy, bodyy, xs, i);
@@ -313,8 +317,57 @@ pub proof fn projs_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, 
     mk_d(sig, node(Rule::ProjG(lj), jj, ps));
 }
 
-/// THE ETA EXPANSION IS TYPED, at the structure applied to its parameters,
-/// and converts with `y` given the fields' conversions.
+/// THE ETA EXPANSION IS TYPED, at the structure applied to its parameters.
+pub proof fn expansion_typed(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, am: Seq<ExprSpec>, ds: Seq<ExprSpec>, x: ExprSpec)
+    requires
+        eta_ctx(sig, g, s, c, ylv, am, ds),
+        params_typed(sig, g, c, ylv, am, ds),
+        derivable(sig, eq(g, x, x, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int)))),
+        !crate::ti_syntax::proj_prop(sig, spine_app(ExprSpec::Const(s, ylv), am.subrange(0, sig.ienv.ctor_np[c] as int))),
+    ensures ({
+        let np = sig.ienv.ctor_np[c] as nat;
+        let st = spine_app(ExprSpec::Const(s, ylv), am.subrange(0, np as int));
+        let z = spine_app(ExprSpec::Const(c, ylv), xsk(am, np, x, sig.ienv.ctor_nf[c] as nat));
+        &&& derivable(sig, eq(g, z, z, st))
+        &&& forall|i: int| 0 <= i < np + sig.ienv.ctor_nf[c] ==> #[trigger] is_pi(trest(ctor_t(sig, c, ylv, ds), xsk(am, np, x, sig.ienv.ctor_nf[c] as nat).subrange(0, i)))
+        &&& forall|i: int| 0 <= i < np + sig.ienv.ctor_nf[c] ==> derivable(sig, eq(g, #[trigger] xsk(am, np, x, sig.ienv.ctor_nf[c] as nat)[i],
+            xsk(am, np, x, sig.ienv.ctor_nf[c] as nat)[i], sdom(ctor_t(sig, c, ylv, ds), xsk(am, np, x, sig.ienv.ctor_nf[c] as nat), i)))
+        &&& trest(ctor_t(sig, c, ylv, ds), xsk(am, np, x, sig.ienv.ctor_nf[c] as nat)) == st
+    }),
+{
+    let t = ctor_t(sig, c, ylv, ds);
+    let lps = sig.consts[c].lps;
+    let np = sig.ienv.ctor_np[c] as nat;
+    let nf = sig.ienv.ctor_nf[c] as nat;
+    let dsy = sls(ds, lps, ylv);
+    let bodyy = spine_app(ExprSpec::Const(s, ylv), cod_vars(np, np + nf));
+    let xs = xsk(am, np, x, nf);
+    ctor_typed(sig, g, s, c, ylv, am, ds);
+    projs_typed(sig, g, s, c, ylv, am, ds, x, nf);
+    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] is_pi(trest(t, xs.subrange(0, i))) by {
+        crate::ti_spine::tel_next(dsy, bodyy, xs, i);
+    }
+    assert forall|i: int| 0 <= i < xs.len() implies derivable(sig, eq(g, #[trigger] xs[i], xs[i], sdom(t, xs, i))) by {
+        crate::ti_spine::tel_next(dsy, bodyy, xs, i);
+        if i < np {
+            crate::ti_spine::tel_next(dsy, bodyy, am, i);
+            assert(xs.subrange(0, i) =~= am.subrange(0, i));
+            assert(xs[i] == am[i]);
+        } else {
+            let q = (i - np) as nat;
+            let xq = xsk(am, np, x, q);
+            assert(xs.subrange(0, i) =~= xq);
+            assert(xs[i] == ExprSpec::Proj(q as usize, Box::new(x)));
+            assert(fty(sig, c, ylv, ds, am, x, q) == vsub(dsy[(np + q) as int], xq));
+        }
+    }
+    crate::ti_spine::spine_build(sig, g, ExprSpec::Const(c, ylv), t, xs);
+    crate::ti_spine::trest_binds(dsy, bodyy, xs);
+    cod_inst(ExprSpec::Const(s, ylv), xs, np);
+    assert(xs.subrange(0, np as int) =~= am.subrange(0, np as int));
+}
+
+/// ... and converts with `y` given the fields' conversions.
 pub proof fn eta_expansion(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>, am: Seq<ExprSpec>, ds: Seq<ExprSpec>, x: ExprSpec, b: ExprSpec)
     requires
         eta_ctx(sig, g, s, c, ylv, am, ds),
@@ -332,38 +385,25 @@ pub proof fn eta_expansion(sig: Sig, g: Ctx, s: u64, c: u64, ylv: Seq<LevelSpec>
     }),
 {
     let t = ctor_t(sig, c, ylv, ds);
-    let lps = sig.consts[c].lps;
     let np = sig.ienv.ctor_np[c] as nat;
     let nf = sig.ienv.ctor_nf[c] as nat;
-    let dsy = sls(ds, lps, ylv);
-    let bodyy = spine_app(ExprSpec::Const(s, ylv), cod_vars(np, np + nf));
     let xs = xsk(am, np, x, nf);
     ctor_typed(sig, g, s, c, ylv, am, ds);
     y_typed(sig, g, s, c, ylv, am, ds, b);
-    projs_typed(sig, g, s, c, ylv, am, ds, x, b, nf);
-    assert forall|i: int| 0 <= i < xs.len() implies #[trigger] is_pi(trest(t, xs.subrange(0, i))) by {
-        crate::ti_spine::tel_next(dsy, bodyy, xs, i);
-    }
-    assert forall|i: int| 0 <= i < xs.len() implies derivable(sig, eq(g, #[trigger] xs[i], am[i], sdom(t, xs, i)))
-        && derivable(sig, eq(g, xs[i], xs[i], sdom(t, xs, i))) by {
-        crate::ti_spine::tel_next(dsy, bodyy, xs, i);
+    expansion_typed(sig, g, s, c, ylv, am, ds, x);
+    assert forall|i: int| 0 <= i < xs.len() implies derivable(sig, eq(g, #[trigger] xs[i], am[i], sdom(t, xs, i))) by {
         if i < np {
-            crate::ti_spine::tel_next(dsy, bodyy, am, i);
-            assert(xs.subrange(0, i) =~= am.subrange(0, i));
             assert(xs[i] == am[i]);
+            assert(xs.subrange(0, i) =~= am.subrange(0, i));
         } else {
             let q = (i - np) as nat;
-            let xq = xsk(am, np, x, q);
-            assert(xs.subrange(0, i) =~= xq);
+            assert(xs.subrange(0, i) =~= xsk(am, np, x, q));
             assert(xs[i] == ExprSpec::Proj(q as usize, Box::new(x)));
-            assert(fty(sig, c, ylv, ds, am, x, q) == vsub(dsy[(np + q) as int], xq));
+            assert(fty(sig, c, ylv, ds, am, x, q) == vsub(sls(ds, sig.consts[c].lps, ylv)[(np + q) as int], xsk(am, np, x, q)));
+            crate::ti_spine::tel_next(sls(ds, sig.consts[c].lps, ylv), spine_app(ExprSpec::Const(s, ylv), cod_vars(np, np + nf)), xs, i);
         }
     }
-    crate::ti_spine::spine_build(sig, g, ExprSpec::Const(c, ylv), t, xs);
     crate::ti_spine::spine_cong(sig, g, ExprSpec::Const(c, ylv), t, xs, am);
-    crate::ti_spine::trest_binds(dsy, bodyy, xs);
-    cod_inst(ExprSpec::Const(s, ylv), xs, np);
-    assert(xs.subrange(0, np as int) =~= am.subrange(0, np as int));
 }
 
 } // verus!
