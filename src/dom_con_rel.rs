@@ -840,18 +840,17 @@ pub open spec fn cf_bnd(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>
     &&& forall|i: int| 0 <= i < ds.len() ==> le(#[trigger] ds[i], crate::dom_ctor_bound::fbound(sig, ind, pc, ls, pv, i))
 }
 
-/// The bounds at another instance of the same length.
-pub proof fn cf_bnd_blind(sig: Sig, ind: u64, pc: nat, np: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>)
+/// The bounds at a level-equivalent instance.
+pub proof fn cf_bnd_lveq(sig: Sig, ind: u64, pc: nat, np: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt, ds: Seq<Cpt>)
     requires
         cf_bnd(sig, ind, pc, np, l1, pv, k, r, a, ds),
-        crate::dom_code::former_blind(sig, ind),
-        l1.len() == l2.len(),
+        crate::conv_cr::levs_eq(l1, l2),
     ensures
         cf_bnd(sig, ind, pc, np, l2, pv, k, r, a, ds),
 {
-    crate::dom_ctor_bound::tb_blind(sig, ind, pc, np, l1, l2, pv, k, r, a);
+    crate::dom_ctor_bound::tb_lveq(sig, ind, pc, np, l1, l2, pv, k, r, a);
     assert forall|i: int| 0 <= i < ds.len() implies le(#[trigger] ds[i], crate::dom_ctor_bound::fbound(sig, ind, pc, l2, pv, i)) by {
-        crate::dom_ctor_bound::fbound_blind(sig, ind, pc, l1, l2, pv, i);
+        crate::dom_ctor_bound::fbound_lveq(sig, ind, pc, l1, l2, pv, i);
     }
 }
 
@@ -1813,8 +1812,7 @@ pub proof fn cf_diag_r(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelS
     fld_push(sig, nn, g, t02, t02, xs2, xs2, ds, fs, np, x, x2, d0, w);
     typed_facts_wf(n, u, a);
     cf_bnd_step(sig, ind, pc, np, ls, pv, k, r, a, ds, w);
-    crate::dom_code::canon_former_blind(sig, ind);
-    cf_bnd_blind(sig, ind, pc, np, ls, ls2, crate::dom_ctor_bound::pv_next(np, pv, k, w), k + 1, (r - 1) as nat, b, dz);
+    cf_bnd_lveq(sig, ind, pc, np, ls, ls2, crate::dom_ctor_bound::pv_next(np, pv, k, w), k + 1, (r - 1) as nat, b, dz);
     pr_step(sig, nn, n, g, c, ls, ls2, ind, pc, np, r, xs, xs2, a, ds, fs, u, pv, x, x2, w);
     pr_ok_lv(sig, nn, g, ind, ls, ls2, ys, ys2, crate::dom_ctor_bound::pv_next(np, pv, k, w));
     crate::ti_ls2::levs_eq_refl(ls2);

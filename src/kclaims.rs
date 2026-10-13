@@ -333,6 +333,7 @@ proof fn fields_of(sig: crate::ti_syntax::Sig, c: u64)
 }
 
 /// A structure's facts with its semantic constants, from the ranks.
+#[verifier::spinoff_prover]
 proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     requires
         crate::dom_proj_sound::struct_sem_h(sig, s),
@@ -376,6 +377,9 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     assert(crate::dom_proj_sound::sem_ranked(sig));
     assert(forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
         #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty())));
+    assert(crate::dom_code::canon_sr(sig, s));
+    assert(crate::dom_code::prop_ok(sig, s));
     assert(crate::dom_proj_sound::struct_sem(sig, s));
 }
 

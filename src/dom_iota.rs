@@ -2693,8 +2693,7 @@ proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, c
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
         typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, clv, pv)) by {
         r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
-        crate::dom_code::prop_ok_former_blind(sig, sh.ind);
-        crate::dom_code::canon_blind(sig, sh.ind, us, clv, pv);
+        crate::dom_code::canon_lveq(sig, sh.ind, us, clv, pv);
     }
 }
 
@@ -2882,8 +2881,8 @@ pub proof fn r2l_fit(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, cl
     let maj = crate::dom_code::cval(sh.ind, p as nat, crate::dom_code::smash(sig, sh.ind), xf);
     let dcan = crate::dom_code::canon_code(sig, sh.ind, us, pv);
     cf_val_typed(sig, rid, p, clv, dps, pv, xf, ak);
-    crate::dom_code::prop_ok_former_blind(sig, sh.ind);
-    crate::dom_code::canon_blind(sig, sh.ind, clv, us, pv);
+    crate::ti_ls2::levs_eq_sym(us, clv);
+    crate::dom_code::canon_lveq(sig, sh.ind, clv, us, pv);
     let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
     major_form(sig, rid, lv);
     let dsx = ds.subrange(0, pre).push(dcan);

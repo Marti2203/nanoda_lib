@@ -441,8 +441,8 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 /// its canonical recursor unique, each field a simple type over the
 /// parameters, the parameters all sorts unless every field is a type
 /// parameter (docs/TYPED_TARGET.md, "Slice: structure fields over the
-/// parameters"); always a proposition, or a type at every instance whose
-/// sort parameters are never propositions.
+/// parameters"); always a proposition, or a type at every instance (or
+/// without fields, `PUnit`) whose sort parameters are never propositions.
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
     &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
@@ -454,7 +454,7 @@ pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
         && !crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             crate::dom_code::canon_shape(sig, s).fields[0][k])
         ==> crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
-    &&& always_prop(sig, s) || (crate::dom_code::never_prop(sig, s)
+    &&& always_prop(sig, s) || ((crate::dom_code::never_prop(sig, s) || crate::dom_code::canon_shape(sig, s).fields[0].len() == 0)
         && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && (#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]) is Sort ==>
             never_zero(crate::dom_code::canon_shape(sig, s).pdoms[q]->Sort_0))
     &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]

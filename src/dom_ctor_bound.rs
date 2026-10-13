@@ -53,35 +53,32 @@ pub open spec fn tb(sig: Sig, ind: u64, pc: nat, np: nat, ls: Seq<LevelSpec>, pv
     }
 }
 
-/// The bounds read the instance only through the inductive's own code,
-/// blind at equal lengths.
-pub proof fn fbound_blind(sig: Sig, ind: u64, pc: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, i: int)
+/// The bounds read the instance only up to level equivalence.
+pub proof fn fbound_lveq(sig: Sig, ind: u64, pc: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, i: int)
     requires
-        crate::dom_code::former_blind(sig, ind),
-        l1.len() == l2.len(),
+        crate::conv_cr::levs_eq(l1, l2),
     ensures
         fbound(sig, ind, pc, l1, pv, i) == fbound(sig, ind, pc, l2, pv, i),
 {
-    crate::dom_code::canon_blind(sig, ind, l1, l2, pv);
+    crate::dom_code::canon_lveq(sig, ind, l1, l2, pv);
 }
 
-pub proof fn tb_blind(sig: Sig, ind: u64, pc: nat, np: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt)
+pub proof fn tb_lveq(sig: Sig, ind: u64, pc: nat, np: nat, l1: Seq<LevelSpec>, l2: Seq<LevelSpec>, pv: Seq<Cpt>, k: nat, r: nat, a: Cpt)
     requires
-        crate::dom_code::former_blind(sig, ind),
-        l1.len() == l2.len(),
+        crate::conv_cr::levs_eq(l1, l2),
     ensures
         tb(sig, ind, pc, np, l1, pv, k, r, a) == tb(sig, ind, pc, np, l2, pv, k, r, a),
     decreases r,
 {
-    crate::dom_code::canon_blind(sig, ind, l1, l2, pv);
+    crate::dom_code::canon_lveq(sig, ind, l1, l2, pv);
     if r > 0 && a is Pi {
         if k >= np {
-            fbound_blind(sig, ind, pc, l1, l2, pv, (k - np) as int);
+            fbound_lveq(sig, ind, pc, l1, l2, pv, (k - np) as int);
         }
         assert forall|q: int| 0 <= q < a->Pi_1.len() implies
             tb(sig, ind, pc, np, l1, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, #[trigger] a->Pi_1[q].1)
             == tb(sig, ind, pc, np, l2, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, a->Pi_1[q].1) by {
-            tb_blind(sig, ind, pc, np, l1, l2, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, a->Pi_1[q].1);
+            tb_lveq(sig, ind, pc, np, l1, l2, if k < np { pv.push(a->Pi_1[q].0) } else { pv }, k + 1, (r - 1) as nat, a->Pi_1[q].1);
         }
     }
 }
@@ -522,8 +519,8 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env
             }
         }
         var_ind_bound(sig, ind, usl, nf, args, env, pv, a);
-        crate::dom_code::canon_former_blind(sig, ind);
-        crate::dom_code::canon_blind(sig, ind, usl, ls, pv);
+        crate::dom_levels::sl_plevels_id(lps, ls);
+        assert(usl == ls);
         return;
     }
     // one binder: the domain and the generator's steps
@@ -554,8 +551,8 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env
             }
             assert forall|j: int| 0 <= j < pv.len() implies #[trigger] pv[j] == env((i + pv.len() - 1 - j) as nat) by {}
             var_ind_bound(sig, ind, usl, i as nat, fa, env, pv, a0);
-            crate::dom_code::canon_former_blind(sig, ind);
-            crate::dom_code::canon_blind(sig, ind, usl, ls, pv);
+            crate::dom_levels::sl_plevels_id(lps, ls);
+            assert(usl == ls);
         } else if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f) {
             // a type parameter: below the parameter's value
             crate::dom_lift::cf_var(sig, ind, pv, pc as int, i);

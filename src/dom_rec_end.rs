@@ -717,8 +717,7 @@ pub open spec fn rec_interp(sig: Sig, c: u64) -> bool {
 /// that a constructor's inductive is a smashed structure, `rec_model`).
 pub open spec fn rec_prop_ind(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
-    crate::dom_code::never_prop(sig, sh.ind) || (crate::dom_code::prop_former(sig, sh.ind) && sh.ni == 0
-        && sh.nmin() <= 1 && crate::rec_canon::shape_props(sh))
+    crate::dom_code::never_prop(sig, sh.ind) || (sh.ni == 0 && sh.nmin() <= 1 && crate::rec_canon::shape_props(sh))
 }
 
 /// The recursor eliminates into any universe (it has a motive universe).

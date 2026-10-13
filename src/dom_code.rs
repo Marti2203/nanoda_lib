@@ -454,12 +454,12 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
     &&& crate::dom_canon::pranked(sig, sh.fields[p][k], rk(sig, ind))
 }
 
-/// `ind`'s sort is a type at every instance, or a proposition at every
-/// instance without indices whose constructor values are all bottom: no
-/// constructor, or a smashed structure of proof fields.
+/// `ind`'s sort is a type at every instance, or it has no indices and its
+/// constructor values are all bottom at every instance: no constructor,
+/// or a smashed structure of proof fields (`True`, `And`, `Iff`, `PUnit`).
 #[verifier::opaque]
 pub open spec fn prop_ok(sig: Sig, ind: u64) -> bool {
-    never_prop(sig, ind) || (crate::ti_syntax::always_prop(sig, ind) && canon_shape(sig, ind).ni == 0
+    never_prop(sig, ind) || (canon_shape(sig, ind).ni == 0
         && (canon_shape(sig, ind).nmin() == 0 || (smash(sig, ind) && crate::rec_canon::shape_props(canon_shape(sig, ind)))))
 }
 
@@ -1255,27 +1255,6 @@ pub proof fn never_prop_ok(sig: Sig, ind: u64)
         prop_ok(sig, ind),
 {
     reveal(prop_ok);
-}
-
-/// A canonical inductive's codes ignore its level instance.
-pub proof fn canon_former_blind(sig: Sig, ind: u64)
-    requires
-        canon_ok(sig, ind),
-    ensures
-        former_blind(sig, ind),
-{
-    prop_ok_former_blind(sig, ind);
-}
-
-/// So do the codes of any former the tables admit.
-pub proof fn prop_ok_former_blind(sig: Sig, ind: u64)
-    requires
-        prop_ok(sig, ind),
-    ensures
-        former_blind(sig, ind),
-{
-    reveal(prop_ok);
-    reveal(prop_former);
 }
 
 /// A former that is a proposition at its own levels (`always_prop`,
