@@ -1988,6 +1988,43 @@ pub proof fn sound_all(sig: Sig)
 /// SOUNDNESS OF THE MODEL (the paper's Theorem 2.31): under a fitting
 /// environment, a derivation's sides denote the same join-closed set,
 /// typed within its type.
+/// Rule ProjIota's parameter premises are sound.
+proof fn sound_pjs(sig: Sig, d: Deriv, rho: Env)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        valid(sig, d),
+        concl(d) is Eq,
+        d->Node_0 is ProjIota,
+        fits_env(sig, concl(d)->Eq_0, rho),
+    ensures
+        crate::dom_proj_sound::pjs_sound(sig, concl(d)->Eq_1, rho),
+    decreases crate::ti_strip::irank(sig, d), d, 0int,
+{
+    valid_prems(sig, d);
+    crate::ti_strip::irank_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m) = (j->Eq_0, j->Eq_1);
+    reveal(crate::ti_syntax::proj_iota_ok);
+    reveal(crate::ti_syntax::proj_pjs);
+    let x = *m->Proj_1;
+    let h = crate::beta_model::spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let args = crate::beta_model::spine_args(x);
+    if args.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort {
+        let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+        assert forall|q: int| 0 <= q < sh.np implies #[trigger] crate::dom_model::jc(sig, args[q], rho)
+            && crate::dom_proj_sound::tyd_sort(sig, args[q], rho) by {
+            let t = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[s].lps, h->Const_1);
+            assert(pj[q] == crate::ti_syntax::eq(g, args[q], args[q], t));
+            assert(concl(ps[5 + q]) == pj[q]);
+            sound(sig, ps[5 + q], rho);
+            assert(t is Sort);
+            assert(crate::dom_sound::tyd(sig, args[q], rho, ExprSpec::Sort(t->Sort_0)));
+        }
+    }
+}
+
 pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
     requires
         crate::dom_rec_end::sig_sr(sig),
@@ -2051,6 +2088,7 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
             sound(sig, ps[1], rho);
             sound(sig, ps[3], rho);
             sound(sig, ps[4], rho);
+            sound_pjs(sig, d, rho);
             crate::dom_proj_sound::sound_proj_iota(sig, m, n, a, concl(ps[2])->Eq_3, l, rho);
         },
         Rule::RecEta(_) => sound_reta_d(sig, d, rho),

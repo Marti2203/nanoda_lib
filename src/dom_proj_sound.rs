@@ -211,6 +211,241 @@ pub proof fn proj_entry_ps(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpe
     }
 }
 
+/// `x` is typed within some sort.
+pub open spec fn tyd_sort(sig: Sig, x: ExprSpec, rho: Env) -> bool {
+    exists|l: LevelSpec| #[trigger] crate::dom_sound::tyd(sig, x, rho, ExprSpec::Sort(l))
+}
+
+/// MEMBERS OF TERMS TYPED WITHIN A SORT, each raised to a typed member
+/// above it.
+pub proof fn raise_all(sig: Sig, xs: Seq<ExprSpec>, rho: Env, cs: Seq<Cpt>) -> (vs: Seq<Cpt>)
+    requires
+        cs.len() == xs.len(),
+        forall|q: int| 0 <= q < xs.len() ==> #[trigger] tyd_sort(sig, xs[q], rho) && mem(sig, xs[q], rho, cs[q]),
+    ensures
+        vs.len() == xs.len(),
+        forall|q: int| 0 <= q < xs.len() ==> typed(#[trigger] vs[q], Cpt::U) && mem(sig, xs[q], rho, vs[q]) && wf(vs[q])
+            && le(cs[q], vs[q]),
+    decreases xs.len(),
+{
+    if xs.len() == 0 {
+        return Seq::empty();
+    }
+    let k = (xs.len() - 1) as int;
+    let vs0 = raise_all(sig, xs.subrange(0, k), rho, cs.subrange(0, k));
+    assert(tyd_sort(sig, xs[k], rho));
+    let l = choose|l: LevelSpec| #[trigger] crate::dom_sound::tyd(sig, xs[k], rho, ExprSpec::Sort(l));
+    let (v, a) = tyd_pick(sig, xs[k], rho, ExprSpec::Sort(l), cs[k]);
+    crate::dom_canon::sort_mem_typed(sig, l, rho, a, v);
+    crate::dom_model::typed_wf(v, a);
+    let vs = vs0.push(v);
+    assert forall|q: int| 0 <= q < xs.len() implies typed(#[trigger] vs[q], Cpt::U) && mem(sig, xs[q], rho, vs[q]) && wf(vs[q])
+        && le(cs[q], vs[q]) by {
+        if q < k {
+            assert(vs[q] == vs0[q]);
+            assert(xs.subrange(0, k)[q] == xs[q]);
+            assert(cs.subrange(0, k)[q] == cs[q]);
+        }
+    }
+    vs
+}
+
+/// THE PARAMETERS' CODES FOR A FIELD'S MEMBER: a member of a field over
+/// the parameters, at the parameters and earlier fields, is a member of
+/// the field lowered to the parameters at codes that are types and members
+/// of the parameters. Inverting the substitution needs the parameters'
+/// denotations join-closed, and their members raised to typed ones needs
+/// their typing (rule ProjIota's parameter premises, `proj_pjs`).
+#[verifier::spinoff_prover]
+pub proof fn ps_inv(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, i: nat, f: ExprSpec, ps: Seq<ExprSpec>, ys: Seq<ExprSpec>,
+    rho: Env, a: Cpt) -> (pv: Seq<Cpt>)
+    requires
+        crate::rec_canon::psimple(sig, ind, pdoms, np, i, f),
+        ps.len() == np,
+        ys.len() == i,
+        forall|j: nat| #[trigger] wf(rho(j)),
+        forall|q: int| 0 <= q < np ==> #[trigger] crate::dom_model::jc(sig, ps[q], rho),
+        forall|q: int| 0 <= q < np ==> #[trigger] tyd_sort(sig, ps[q], rho),
+        mem(sig, vsub(f, ps + ys), rho, a),
+    ensures
+        pv.len() == np,
+        forall|q: int| 0 <= q < np ==> typed(#[trigger] pv[q], Cpt::U) && mem(sig, ps[q], rho, pv[q]) && wf(pv[q]),
+        mem(sig, crate::rec_canon::plow(f, i), crate::dom_tele::exts(crate::dom_model::bot_env(), pv), a),
+{
+    use crate::dom_model::{mem_w, Wit};
+    let lf = crate::rec_canon::plow(f, i);
+    crate::dom_psimple::plow_vsub(sig, ind, pdoms, np, i, f, ps, ys);
+    crate::dom_psimple::plow_lift_id(sig, ind, pdoms, np, i, f);
+    crate::ti_beta::vsub_tsub(lf, ps);
+    let sb = crate::ti_beta::tsub(ps, np);
+    assert forall|j: nat| #[trigger] crate::dom_model::jc(sig, sb(j), rho) by {
+        crate::ti_beta::tsub_at(ps, np, j);
+        if j >= np {
+            crate::dom_model::jc_var(sig, (j - np) as nat, rho);
+        }
+    }
+    let w = {
+        reveal(mem);
+        choose|w: Wit| #[trigger] mem_w(sig, crate::ti_subst::psub(lf, sb), rho, a, w)
+    };
+    let rho2 = crate::dom_model::mem_psub_fwd(sig, lf, sb, rho, a, w);
+    // each parameter's covering code, raised to a typed member
+    let cs = Seq::new(np, |q: int| rho2((np - 1 - q) as nat));
+    assert forall|q: int| 0 <= q < np implies #[trigger] tyd_sort(sig, ps[q], rho) && mem(sig, ps[q], rho, cs[q]) by {
+        crate::ti_beta::tsub_at(ps, np, (np - 1 - q) as nat);
+        assert(mem(sig, sb((np - 1 - q) as nat), rho, rho2((np - 1 - q) as nat)));
+    }
+    let pv = raise_all(sig, ps, rho, cs);
+    // the lowered field at the raised codes, then at the parameters' slots only
+    let rho3: crate::dom_model::Env = |v: nat| if v < np { pv[(np - 1 - v) as int] } else { rho2(v) };
+    assert(crate::dom_model::env_le(rho2, rho3)) by {
+        assert forall|v: nat| #[trigger] le(rho2(v), rho3(v)) by {
+            if v >= np {
+                crate::dom_compact::le_refl(rho2(v));
+            } else {
+                assert(le(cs[(np - 1 - v) as int], pv[(np - 1 - v) as int]));
+            }
+        }
+    }
+    let w2 = {
+        reveal(mem);
+        choose|w: Wit| #[trigger] mem_w(sig, lf, rho2, a, w)
+    };
+    crate::dom_model::mem_env_mono(sig, lf, rho2, rho3, a, w2);
+    let env = crate::dom_tele::exts(crate::dom_model::bot_env(), pv);
+    assert forall|v: nat| v < np implies #[trigger] rho3(v) == env(v) by {
+        crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), pv, v);
+    }
+    crate::dom_model::mem_closed(sig, lf, rho3, env, np, a, w2);
+    reveal(mem);
+    pv
+}
+
+/// The parameters' codes, all types, along parameters that are all sorts
+/// above zero.
+#[verifier::spinoff_prover]
+proof fn proj_chain_all(sig: Sig, s: u64, us: Seq<LevelSpec>, pv: Seq<Cpt>) -> (dps: Seq<Cpt>)
+    requires
+        crate::dom_code::has_canon(sig, s),
+        us.len() == sig.consts[s].lps.len(),
+        pv.len() == canon_shape(sig, s).np,
+        forall|q: int| 0 <= q < canon_shape(sig, s).np ==> (#[trigger] canon_shape(sig, s).pdoms[q]) is Sort
+            && crate::ti_syntax::never_zero(canon_shape(sig, s).pdoms[q]->Sort_0),
+        forall|q: int| 0 <= q < pv.len() ==> typed(#[trigger] pv[q], Cpt::U),
+    ensures
+        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at_s(sig, canon_shape(sig, s), us),
+            crate::dom_model::bot_env(), dps, pv),
+{
+    let sh = canon_shape(sig, s);
+    let np = sh.np;
+    crate::dom_ctor_bound::ctor_shape_ind(sig, s);
+    let pd = crate::dom_iota::pdoms_at_s(sig, sh, us);
+    let dps = Seq::new(np, |k: int| Cpt::U);
+    crate::dom_sound::typed_basic();
+    assert forall|k: int| 0 <= k < np implies #[trigger] crate::dom_sound::dfit(sig, pd[k],
+        crate::dom_tele::exts(crate::dom_model::bot_env(), pv.subrange(0, k)), dps[k], pv[k]) by {
+        let env = crate::dom_tele::exts(crate::dom_model::bot_env(), pv.subrange(0, k));
+        reveal(mem);
+        let l = sh.pdoms[k]->Sort_0;
+        assert(sh.lps == sig.consts[s].lps) by { reveal(crate::dom_code::ind_side); crate::dom_code::canon_side(sig, s); }
+        assert(pd[k] == ExprSpec::Sort(crate::level_model::subst_level_spec(l, sh.lps, us)));
+        let r0 = Map::<nat, nat>::empty();
+        crate::level_model::subst_level_spec_interp(l, sh.lps, us, r0);
+        assert(!crate::ti_syntax::is_zero(crate::level_model::subst_level_spec(l, sh.lps, us)));
+        assert(mem_w_sort(sig, pd[k], env, dps[k]));
+    }
+    dps
+}
+
+/// A closed field's typing and rank, from `fields_typed`.
+proof fn ftyped_of(sig: Sig, ind: u64, p: int, k: int, ls: Seq<LevelSpec>)
+    requires
+        crate::dom_code::fields_typed(sig, ind),
+        0 <= p < canon_shape(sig, ind).nmin(),
+        0 <= k < canon_shape(sig, ind).fields[p].len(),
+        ls.len() == sig.consts[ind].lps.len(),
+        !crate::rec_canon::direct_occ(canon_shape(sig, ind).fields[p][k], ind, canon_shape(sig, ind).us(), canon_shape(sig, ind).np,
+            canon_shape(sig, ind).ni, k as nat),
+        !crate::rec_canon::pvar_field(canon_shape(sig, ind).pdoms, canon_shape(sig, ind).np, k as nat, canon_shape(sig, ind).fields[p][k]),
+        crate::rec_canon::simple_ty(sig, ind, canon_shape(sig, ind).fields[p][k]),
+    ensures
+        crate::dom_code::ftyped(sig, ind, p, k, ls),
+        crate::dom_canon::ranked(sig, canon_shape(sig, ind).fields[p][k], crate::dom_code::rk(sig, ind)),
+{
+    reveal(crate::dom_code::fields_typed);
+    let sh = canon_shape(sig, ind);
+    assert(crate::dom_code::ftyped(sig, ind, p, k, ls) && crate::dom_canon::ranked(sig, sh.fields[p][k], crate::dom_code::rk(sig, ind)));
+}
+
+/// The constructor step's facts for the one-field node, at a field over
+/// the parameters (closed, or of the third kind), the other fields bottom.
+#[verifier::spinoff_prover]
+proof fn proj_fields_ok_ps(sig: Sig, s: u64, us: Seq<LevelSpec>, a: Cpt, v2: Cpt, i: int,
+    dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>)
+    requires
+        struct_sem(sig, s),
+        canon_shape(sig, s).nmin() == 1,
+        us.len() == sig.consts[s].lps.len(),
+        0 <= i < canon_shape(sig, s).fields[0].len(),
+        forall|k: int| 0 <= k < canon_shape(sig, s).fields[0].len() ==> crate::rec_canon::psimple(sig, s, canon_shape(sig, s).pdoms,
+            canon_shape(sig, s).np, k as nat, #[trigger] canon_shape(sig, s).fields[0][k]),
+        !crate::rec_canon::pvar_field(canon_shape(sig, s).pdoms, canon_shape(sig, s).np, i as nat, canon_shape(sig, s).fields[0][i]),
+        typed(a, Cpt::U),
+        typed(v2, a),
+        crate::dom_tele::chain_ok(sig, crate::dom_iota::pdoms_at_s(sig, canon_shape(sig, s), us),
+            crate::dom_model::bot_env(), dps, pv),
+        xf == Seq::new(canon_shape(sig, s).fields[0].len(), |k: int| if k == i { v2 } else { Cpt::Bot }),
+        ak == Seq::new(canon_shape(sig, s).fields[0].len(), |k: int| if k == i { a } else { Cpt::Bot }),
+        crate::rec_canon::simple_ty(sig, s, canon_shape(sig, s).fields[0][i])
+            ==> mem(sig, crate::iota_sr::cfu_s(canon_shape(sig, s), 0, i, us), crate::dom_model::bot_env(), a),
+        !crate::rec_canon::simple_ty(sig, s, canon_shape(sig, s).fields[0][i])
+            ==> mem(sig, crate::iota_sr::cfu_s(canon_shape(sig, s), 0, i, us),
+                crate::dom_tele::exts(crate::dom_model::bot_env(), pv + xf.subrange(0, i)), a),
+    ensures
+        crate::dom_iota::cf_fields_ok_s(sig, canon_shape(sig, s), 0, us, dps, pv, xf, ak),
+{
+    let sh = canon_shape(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    crate::dom_code::canon_side(sig, s);
+    reveal(crate::dom_code::ind_side);
+    assert(crate::dom_model::sem_const(sig, s, us));
+    crate::dom_sound::typed_basic();
+    crate::dom_model::typed_wf(v2, a);
+    crate::dom_model::typed_wf(Cpt::Bot, Cpt::U);
+    assert(crate::dom_code::fields_typed(sig, s));
+    assert forall|k: int| 0 <= k < xf.len() implies !crate::dom_iota::isrec_s(sh, 0, k) by {
+        crate::ti_valid::psimple_not_direct(sig, s, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[0][k]);
+    }
+    assert forall|k: int| 0 <= k < xf.len() && !crate::dom_iota::isrec_s(sh, 0, k) && !crate::dom_iota::ispvar_s(sig, sh, 0, k)
+        && crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[0][k]) implies
+        mem(sig, crate::iota_sr::cfu_s(sh, 0, k, us), crate::dom_model::bot_env(), #[trigger] ak[k]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
+        && crate::dom_canon::ranked(sig, sh.fields[0][k], crate::dom_code::rk(sig, sh.ind)) by {
+        assert(sh.ind == s);
+        assert(!crate::rec_canon::direct_occ(sh.fields[0][k], s, sh.us(), sh.np, sh.ni, k as nat));
+        ftyped_of(sig, s, 0, k, us);
+        assert(crate::dom_code::ftyped(sig, s, 0, k, us) && crate::dom_canon::ranked(sig, sh.fields[0][k], crate::dom_code::rk(sig, s)));
+        if k != i {
+            crate::dom_model::mem_bot(sig, crate::iota_sr::cfu_s(sh, 0, k, us), crate::dom_model::bot_env());
+            reveal(mem);
+        }
+    }
+    assert forall|k: int| 0 <= k < xf.len() && !crate::dom_iota::isrec_s(sh, 0, k) && !crate::dom_iota::ispvar_s(sig, sh, 0, k)
+        && !crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[0][k]) implies
+        mem(sig, crate::iota_sr::cfu_s(sh, 0, k, us), crate::dom_tele::exts(crate::dom_model::bot_env(), pv + xf.subrange(0, k)), #[trigger] ak[k])
+        && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+        if k != i {
+            crate::dom_model::mem_bot(sig, crate::iota_sr::cfu_s(sh, 0, k, us), crate::dom_tele::exts(crate::dom_model::bot_env(), pv + xf.subrange(0, k)));
+            reveal(mem);
+        }
+    }
+    assert forall|k: int| 0 <= k < xf.len() && crate::dom_iota::ispvar_s(sig, sh, 0, k) implies
+        wf(#[trigger] ak[k]) && le(ak[k], pv[crate::dom_iota::pvq_s(sig, sh, 0, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k]) by {
+        assert(k != i);
+        assert(le(Cpt::Bot, pv[crate::dom_iota::pvq_s(sig, sh, 0, k)])) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+    }
+    assert(crate::dom_code::aw(xf));
+}
+
 /// Projections of equal subjects are equal.
 pub proof fn proj_sem_eq(sig: Sig, i: usize, x: ExprSpec, x2: ExprSpec, rho: Env)
     requires
@@ -722,6 +957,127 @@ pub proof fn proj_iota_sup(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
     crate::dom_model::mem_down_e(sig, m, rho, v2, u);
 }
 
+/// What rule ProjIota's parameter premises give the model: at a structure
+/// whose parameters are all sorts, each of the redex's parameters is
+/// join-closed and typed within a sort.
+pub open spec fn pjs_sound(sig: Sig, m: ExprSpec, rho: Env) -> bool {
+    let x = *m->Proj_1;
+    let s = sig.ienv.ctor_ind[crate::beta_model::spine_head(x)->Const_0];
+    let sh = canon_shape(sig, s);
+    let args = crate::beta_model::spine_args(x);
+    (args.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort) ==>
+        forall|q: int| 0 <= q < sh.np ==> #[trigger] crate::dom_model::jc(sig, args[q], rho) && tyd_sort(sig, args[q], rho)
+}
+
+/// `proj_iota_sup` at a field over the parameters (neither a parameter
+/// itself nor recursive), at parameters all sorts above zero, typed and
+/// join-closed (rule ProjIota's parameter premises): the parameters'
+/// members raised to typed codes covering the field's type there
+/// (`ps_inv`), the constructor node with that one field is a member of
+/// the subject.
+#[verifier::spinoff_prover]
+pub proof fn proj_iota_sup_ps(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+        proj_sem(sig),
+        forall|j: nat| #[trigger] wf(rho(j)),
+        ({
+            let x = *m->Proj_1;
+            let s = sig.ienv.ctor_ind[crate::beta_model::spine_head(x)->Const_0];
+            let sh = canon_shape(sig, s);
+            let args = crate::beta_model::spine_args(x);
+            &&& forall|k: int| 0 <= k < sh.fields[0].len() ==> crate::rec_canon::psimple(sig, s, sh.pdoms, sh.np, k as nat,
+                #[trigger] sh.fields[0][k])
+            &&& !crate::rec_canon::pvar_field(sh.pdoms, sh.np, m->Proj_0 as nat, sh.fields[0][m->Proj_0 as int])
+            &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort && crate::ti_syntax::never_zero(sh.pdoms[q]->Sort_0)
+            &&& forall|q: int| 0 <= q < sh.np ==> #[trigger] crate::dom_model::jc(sig, args[q], rho) && tyd_sort(sig, args[q], rho)
+        }),
+        crate::dom_sound::tyd(sig, crate::ti_syntax::proj_result(sig, m), rho, crate::ti_syntax::proj_fty(sig, m)),
+        mem(sig, crate::ti_syntax::proj_result(sig, m), rho, u),
+    ensures
+        mem(sig, m, rho, u),
+{
+    use crate::dom_model::{mem_w, Wit};
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_result);
+    reveal(crate::ti_syntax::proj_fty);
+    let (i, x) = (m->Proj_0, *m->Proj_1);
+    let h = crate::beta_model::spine_head(x);
+    let (c, us) = (h->Const_0, h->Const_1);
+    let s = sig.ienv.ctor_ind[c];
+    let sh = canon_shape(sig, s);
+    let (np, nf) = (sh.np, sh.fields[0].len());
+    let args = crate::beta_model::spine_args(x);
+    let n = args[np + i];
+    assert(m == ExprSpec::Proj(i, Box::new(x)));
+    if u is Bot {
+        crate::dom_model::mem_bot(sig, m, rho);
+        reveal(mem);
+        return;
+    }
+    reveal(mem);
+    let wu = choose|w: Wit| #[trigger] mem_w(sig, n, rho, u, w);
+    crate::dom_model::mem_wf(sig, n, rho, u, wu);
+    let fty = crate::ti_syntax::proj_fty(sig, m);
+    let (v2, a) = tyd_pick(sig, n, rho, fty, u);
+    typed_wf_pair(v2, a);
+    assert(struct_sem(sig, s));
+    crate::ti_syntax::struct_of_basic(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    assert(crate::dom_model::sem_const(sig, s, us));
+    assert(sh.lps == sig.consts[s].lps) by { reveal(crate::dom_code::ind_side); crate::dom_code::canon_side(sig, s); }
+    // the field at the constructor's levels, over the parameters
+    let f = sh.fields[0][i as int];
+    let f2 = crate::ti_proj::sfield(sig, s, i as nat, us);
+    crate::dom_canon::sl_kinds(sig, s, sh.pdoms, np, i as nat, f, 0, sh.lps, us);
+    assert(f2 == crate::iota_sr::cfu_s(sh, 0, i as int, us));
+    let ps = args.subrange(0, np as int);
+    let ys = args.subrange(np as int, (np + i) as int);
+    assert(args.subrange(0, (np + i) as int) =~= ps + ys);
+    assert forall|q: int| 0 <= q < np implies #[trigger] crate::dom_model::jc(sig, ps[q], rho) by {
+        assert(ps[q] == args[q]);
+    }
+    assert forall|q: int| 0 <= q < np implies #[trigger] tyd_sort(sig, ps[q], rho) by {
+        assert(ps[q] == args[q]);
+        assert(crate::dom_model::jc(sig, args[q], rho));
+    }
+    let pv = ps_inv(sig, s, sh.pdoms, np, i as nat, f2, ps, ys, rho, a);
+    let dps = proj_chain_all(sig, s, us, pv);
+    let xf = Seq::new(nf, |k: int| if k == i as int { v2 } else { Cpt::Bot });
+    let ak = Seq::new(nf, |k: int| if k == i as int { a } else { Cpt::Bot });
+    let env2 = crate::dom_tele::exts(crate::dom_model::bot_env(), pv);
+    if crate::rec_canon::simple_ty(sig, s, f) {
+        crate::dom_psimple::simple_psimple(sig, s, sh.pdoms, 0, i as nat, f2);
+        crate::dom_psimple::ps_mem_plow(sig, s, sh.pdoms, 0, i as nat, f2, crate::dom_model::bot_env(), env2, a);
+    } else {
+        let env = crate::dom_tele::exts(crate::dom_model::bot_env(), pv + xf.subrange(0, i as int));
+        assert forall|j: nat| j < np implies #[trigger] env2(j) == env((j + i) as nat) by {
+            crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), pv, j);
+            crate::dom_rec_ty::exts_at(crate::dom_model::bot_env(), pv + xf.subrange(0, i as int), (j + i) as nat);
+        }
+        crate::dom_psimple::ps_mem_plow(sig, s, sh.pdoms, np, i as nat, f2, env, env2, a);
+    }
+    proj_fields_ok_ps(sig, s, us, a, v2, i as int, dps, pv, xf, ak);
+    assert forall|k: int| 0 <= k < np implies mem(sig, #[trigger] args[k], rho, pv[k]) by {
+        assert(ps[k] == args[k]);
+    }
+    assert forall|k: int| 0 <= k < nf implies mem(sig, args[np + k], rho, #[trigger] xf[k]) && le(xf[k], xf[k]) by {
+        crate::dom_compact::le_refl(xf[k]);
+        if k != i as int {
+            crate::dom_model::mem_bot(sig, args[np + k], rho);
+        }
+    }
+    crate::dom_iota::con_major_s(sig, sh, 0, us, dps, pv, xf, ak, args, rho, xf);
+    crate::beta_model::spine_recompose(x);
+    let node = Cpt::Nd(NdKey::Con(s, 0, crate::dom_code::smash(sig, s)), xf);
+    crate::dom_compact::head_le(u, v2);
+    assert(!(xf[i as int] is Bot));
+    assert(crate::dom_code::cval(s, 0, crate::dom_code::smash(sig, s), xf) == node);
+    proj_intro(sig, i, x, rho, node);
+    assert(node->Nd_1[i as int] == v2);
+    crate::dom_model::mem_down_e(sig, m, rho, v2, u);
+}
+
 proof fn typed_wf_pair(v: Cpt, a: Cpt)
     requires
         typed(v, a),
@@ -863,6 +1219,8 @@ pub proof fn sound_proj_iota(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, st
         crate::dom_sound::sound_ok(sig, n, n, t, rho),
         crate::dom_sound::sound_ok(sig, t, t, ExprSpec::Sort(l), rho),
         crate::dom_sound::sound_ok(sig, n, n, crate::ti_syntax::proj_fty(sig, m), rho),
+        forall|j: nat| #[trigger] wf(rho(j)),
+        pjs_sound(sig, m, rho),
     ensures
         crate::dom_sound::sound_ok(sig, m, n, t, rho),
 {
