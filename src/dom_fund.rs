@@ -658,8 +658,10 @@ pub proof fn tf_head_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<E
 }
 
 /// A TYPE CHAINED TO AN APPLICATION OF THE INDUCTIVE reduces to one, its
-/// type parameters chained to the application's. Unlike `ind_inj_chain`
-/// it asks no typing of the application, so uniqueness of types can use it.
+/// type parameters chained to the application's; unless it is the
+/// application itself, they are equal at their sorts and the instances
+/// equivalent. Unlike `ind_inj_chain` it asks no typing of the
+/// application, so uniqueness of types can use it.
 pub proof fn ind_head_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, t2: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
@@ -673,6 +675,8 @@ pub proof fn ind_head_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: 
         ind_red(sig, t2, ind),
         forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
             ==> #[trigger] tchain(sig, g, xs[q], crate::beta_model::spine_args(ir(sig, t2, ind))[q]),
+        t2 == crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs)
+            || pconv(sig, g, ind, crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs), t2),
 {
     let t = crate::beta_model::spine_app(ExprSpec::Const(ind, ls), xs);
     crate::dom_ctor_bound::ctor_shape_ind(sig, ind);

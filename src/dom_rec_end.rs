@@ -1023,13 +1023,15 @@ pub proof fn rc_smash_norec(sig: Sig, rc: Rc)
     assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
     assert(rc.j == 0);
     assert forall|k: int| 0 <= k < rc.nf(sig) implies !#[trigger] crate::dom_iota::isrec(sig, rc.c, rc.j, k) by {
-        assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        assert(crate::rec_canon::psimple(sig, sh.ind, sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        crate::ti_valid::psimple_not_direct(sig, sh.ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[0][k]);
     }
     let nf = sh.fields[0].len();
     crate::dom_rec_ty::rec_pos_facts(sh.fields[0], sh.ind, sh.us(), sh.np, sh.ni, nf);
     if sh.rposj(0).len() > 0 {
         let k = sh.rposj(0)[0] as int;
-        assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        assert(crate::rec_canon::psimple(sig, sh.ind, sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        crate::ti_valid::psimple_not_direct(sig, sh.ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[0][k]);
         assert(!crate::dom_iota::isrec(sig, rc.c, 0, k));
     }
 }

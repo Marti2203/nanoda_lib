@@ -960,7 +960,6 @@ pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i:
         ps.len() == np,
         ys.len() == i,
         forall|q: int| 0 <= q < np ==> mem(sig, #[trigger] ps[q], rho, xs[q]),
-        forall|j: nat| #[trigger] wf(rho(j)),
     ensures
         mem(sig, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(f, sig.consts[s].lps, us), ps + ys), rho,
             ceval(sig, rk(sig, s), s, us, fpe(xs, np, i), f)),
@@ -971,7 +970,7 @@ pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i:
     let zs = ps + ys;
     let f2 = crate::expr_model::subst_expr_levels(f, sig.consts[s].lps, us);
     let code = ceval(sig, rk(sig, s), s, us, pe, f);
-    let rho2: Env = |v: nat| if v < i { Cpt::Bot } else if v < n { xs[n - 1 - v] } else { rho((v - n) as nat) };
+    let rho2: Env = |v: nat| if i <= v < n { xs[n - 1 - v] } else { Cpt::Bot };
     crate::dom_sound::typed_basic();
     typed_wf(Cpt::Bot, Cpt::U);
     assert forall|j: nat| #[trigger] wf(rho2(j)) by {
@@ -997,7 +996,8 @@ pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i:
         } else if v < n {
             assert(zs[n - 1 - v] == ps[n - 1 - v]);
         } else {
-            crate::dom_iota::var_mem(sig, (v - n) as nat, rho);
+            crate::dom_model::mem_bot(sig, sb(v), rho);
+            reveal(mem);
         }
     }
     assert(crate::dom_model::covers(sig, sb, rho, rho2));

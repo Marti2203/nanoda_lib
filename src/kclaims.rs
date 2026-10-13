@@ -358,9 +358,22 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     assert(crate::dom_code::canon_sr(sig, s));
     assert(crate::dom_rec_ty::ind_scope(sig, sh));
     assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_proj_sound::sem_ranked(sig)) by { reveal(crate::dom_proj_sound::sem_ranked); }
     crate::dom_rec_end::ty_closed_at(sig, s, crate::dom_code::rk(sig, s), Seq::empty());
     crate::dom_rec_end::ty_closed_at(sig, sh.ctors[0], crate::dom_code::rk(sig, sh.ctors[0]), Seq::empty());
     assert(!sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty())));
+    assert(crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, sh.ctors[0])),
+        crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty())));
+    assert(crate::dom_proj_sound::struct_sem_h(sig, s));
+    assert(!sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s));
+    assert(crate::dom_code::canon_sr(sig, s));
+    assert(crate::dom_rec_ty::ind_scope(sig, sh));
+    assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_proj_sound::sem_ranked(sig));
+    assert(forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
+        #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls));
+    assert(crate::dom_proj_sound::struct_sem(sig, s));
 }
 
 /// THE CANONICAL TWIN'S OBLIGATIONS (docs/TYPED_TARGET.md, "B5 design";
@@ -1539,9 +1552,8 @@ pub proof fn cw_eta(
             // each projection of `x` converts with the field, which is `y`'s
             assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, st) implies #[trigger] derivable(sig, eq(g0, ExprSpec::Proj(k as usize, Box::new(x)),
                 ExprSpec::Proj(k as usize, Box::new(y)), crate::ti_syntax::proj_ty(sig, st, k as nat, x)->Some_0)) by {
-                let q = crate::kstruct::struct_proj_typed(sig, g0, st, lt, x, k);
+                let tq = crate::kstruct::struct_proj_typed(sig, g0, st, lt, x, k);
                 crate::kstruct::struct_proj_typed(sig, g0, st, lt, y, k);
-                let tq = crate::beta_model::spine_args(st)[q];
                 let px = ExprSpec::Proj(k as usize, Box::new(x));
                 let py = ExprSpec::Proj(k as usize, Box::new(y));
                 let f = am[np + k];
@@ -2558,9 +2570,8 @@ pub proof fn cwh_eta_exp(
             crate::beta_model::spine_destruct_app(hc, cargs);
             assert forall|k: int| 0 <= k < crate::ti_syntax::struct_nf(sig, ety) implies #[trigger] derivable(sig, eq(g0, ExprSpec::Proj(k as usize, Box::new(e)),
                 ExprSpec::Proj(k as usize, Box::new(r)), crate::ti_syntax::proj_ty(sig, ety, k as nat, e)->Some_0)) by {
-                let q = crate::kstruct::struct_proj_typed(sig, g0, ety, lt, e, k);
+                let tq = crate::kstruct::struct_proj_typed(sig, g0, ety, lt, e, k);
                 crate::kstruct::struct_proj_typed(sig, g0, ety, lt, r, k);
-                let tq = args[q];
                 crate::kiota::proj_step_d(sig, g0, k as usize, r, tq);
                 assert(cargs[np + k] == ExprSpec::Proj(k as usize, Box::new(e)));
                 crate::dom_adeq_syn::dsym(sig, g0, ExprSpec::Proj(k as usize, Box::new(r)), ExprSpec::Proj(k as usize, Box::new(e)), tq);

@@ -157,6 +157,13 @@ pub proof fn proj_cong(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
     side_facts(sig, g, c, ls, xs, th);
     crate::dom_psimple::der_diag(sig, g, z, z2, st);
     crate::ti_eta::eta_proj_typed(sig, g, c, ls, xs, z, i);
+    let sh = rshape(sig, c);
+    assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[0][i])) by {
+        reveal(crate::ti_syntax::struct_of);
+        crate::dom_rec_end::rec_canon_ok(sig, c);
+        crate::dom_rec_ty::scope_ctor(sig, c, 0);
+        assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
+    }
     let q = fq(sig, c, i);
     let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, xs[q], xs[q], sort(l)));
     if crate::ti_syntax::proj_prop(sig, st) {

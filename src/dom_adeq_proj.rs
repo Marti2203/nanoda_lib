@@ -71,11 +71,13 @@ pub proof fn hred_proj(sig: Sig, i: usize, x: ExprSpec, k: nat)
     }
 }
 
-/// The projected field of a structure: a type parameter's variable.
+/// A parameter field of a structure: a type parameter's variable.
 pub proof fn pfield(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>)
     requires
         crate::ti_syntax::struct_of(sig, s),
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, i,
+            crate::dom_code::canon_shape(sig, s).fields[0][i as int]),
     ensures ({
         let sh = crate::dom_code::canon_shape(sig, s);
         let f = sh.fields[0][i as int];
@@ -85,9 +87,96 @@ pub proof fn pfield(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>)
         &&& crate::ti_proj::sfield(sig, s, i, ls) == f
     }),
 {
-    reveal(crate::ti_syntax::struct_of);
+}
+
+/// A FIELD NOT A PARAMETER, at two lists of parameters equal at their
+/// sorts and two equivalent instances, is equal at a sort: a closed field
+/// by its closed typing moved between the instances, a field over the
+/// parameters by its typing in the parameters' context, substituted
+/// (`dom_psimple::ps_pair`).
+#[verifier::spinoff_prover]
+pub proof fn sfield_conv(sig: Sig, g: Ctx, s: u64, i: nat, us: Seq<LevelSpec>, us2: Seq<LevelSpec>,
+    ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>, zs: Seq<ExprSpec>, zs2: Seq<ExprSpec>) -> (l: LevelSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::struct_of(sig, s),
+        i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        !crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, i,
+            crate::dom_code::canon_shape(sig, s).fields[0][i as int]),
+        us.len() == sig.consts[s].lps.len(),
+        crate::conv_cr::levs_eq(us, us2),
+        ps.len() == crate::dom_code::canon_shape(sig, s).np,
+        ps2.len() == crate::dom_code::canon_shape(sig, s).np,
+        zs.len() == i,
+        zs2.len() == i,
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q],
+            crate::dom_rel::ptype(sig, s, us, q))),
+        derivable(sig, crate::ti_syntax::Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, us), ps + zs),
+            crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, us2), ps2 + zs2), sort(l))),
+{
     let sh = crate::dom_code::canon_shape(sig, s);
-    assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, i, sh.fields[0][i as int]));
+    let (np, lps) = (sh.np, sig.consts[s].lps);
+    let f = sh.fields[0][i as int];
+    assert(proj_sem(sig));
+    assert(struct_sem(sig, s));
+    crate::dom_proj_sound::struct_fields(sig, s);
+    crate::ti_syntax::struct_of_basic(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    crate::dom_code::canon_side(sig, s);
+    reveal(crate::dom_code::ind_side);
+    assert(sh.lps == lps && sh.ind == s);
+    assert(crate::dom_code::fields_typed(sig, s));
+    assert(crate::rec_canon::psimple(sig, s, sh.pdoms, np, i, f));
+    crate::ti_valid::psimple_not_direct(sig, s, sh.pdoms, sh.us(), np, sh.ni, i, f);
+    assert(us2.len() == us.len());
+    let (fu, fu2) = (crate::ti_proj::sfield(sig, s, i, us), crate::ti_proj::sfield(sig, s, i, us2));
+    let rr = crate::dom_code::rk(sig, s);
+    let ss = crate::ti_strip::strip_below(sig, rr);
+    crate::dom_levels::sig_lps_below(sig, rr, lps, us);
+    crate::dom_levels::sig_lps_below(sig, rr, lps, us2);
+    if crate::rec_canon::simple_ty(sig, s, f) {
+        // closed: its typing at the level parameters, moved to both instances
+        crate::dom_iota::simple_closed(sig, s, f);
+        crate::ti_level::ls_nlbv(f, lps, us);
+        crate::ti_level::ls_nlbv(f, lps, us2);
+        crate::ti_spine::vsub_closed(fu, ps + zs);
+        crate::ti_spine::vsub_closed(fu2, ps2 + zs2);
+        let pl = crate::rec_canon::plevels(lps);
+        crate::dom_proj_sound::ftyped_of(sig, s, 0, i as int, pl);
+        crate::ti_ls2::sle_params(f, lps);
+        assert(crate::dom_rec_end::ty_closed(ss, f));
+        let l0 = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), f, f, sort(l)));
+        let d = crate::ti_sub::get(ss, eq(Seq::empty(), f, f, sort(l0)));
+        let w = crate::ti_meta::d_wf(ss, d);
+        crate::ti_meta::mk_d(ss, w);
+        crate::ti_ls2::lpair_sorts(ss, Seq::empty(), lps, us, us2);
+        assert(crate::ti_level::gls(Seq::empty(), lps, us) =~= Seq::<ExprSpec>::empty());
+        crate::ti_ls2::d_ls2(ss, d, Seq::empty(), lps, us, us2);
+        let l = crate::level_model::subst_level_spec(l0, lps, us);
+        assert(crate::expr_model::subst_expr_levels(sort(l0), lps, us) == sort(l));
+        crate::ti_strip::derivable_up(sig, rr, eq(Seq::empty(), fu, fu2, sort(l)));
+        crate::ti_sr::wk_closed(sig, g, fu, fu2, sort(l));
+        l
+    } else {
+        // over the parameters: typed in their context, then substituted
+        let e = crate::rec_canon::plow(f, i);
+        crate::dom_lift::pfield_facts(sig, s, 0, i as int);
+        crate::dom_canon::sl_kinds(sig, s, sh.pdoms, np, i, f, 0, lps, us);
+        crate::dom_canon::sl_kinds(sig, s, sh.pdoms, np, i, f, 0, lps, us2);
+        crate::dom_psimple::plow_vsub(sig, s, sh.pdoms, np, i, fu, ps, zs);
+        crate::dom_psimple::plow_vsub(sig, s, sh.pdoms, np, i, fu2, ps2, zs2);
+        let l0 = choose|l: LevelSpec| #[trigger] derivable(ss, eq(sh.pdoms, e, e, sort(l)));
+        let gl = crate::ti_level::gls(sh.pdoms, lps, us);
+        assert forall|q: int| 0 <= q < gl.len() implies gl[q] is Sort
+            && derivable(sig, eq(g, #[trigger] ps[q], ps2[q], gl[q])) by {
+            let _s = sh.pdoms[q];
+            assert(gl[q] == crate::dom_rel::ptype(sig, s, us, q));
+        }
+        crate::dom_psimple::ps_pair(sig, g, s, us, us2, e, sort(l0), ps, ps2);
+        crate::level_model::subst_level_spec(l0, lps, us)
+    }
 }
 
 /// A variable field over arguments is the parameter it names.
@@ -95,6 +184,8 @@ pub proof fn pfield_vsub(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>, xs: Seq<E
     requires
         crate::ti_syntax::struct_of(sig, s),
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, i,
+            crate::dom_code::canon_shape(sig, s).fields[0][i as int]),
         xs.len() == crate::dom_code::canon_shape(sig, s).np + i,
     ensures ({
         let sh = crate::dom_code::canon_shape(sig, s);
@@ -113,7 +204,7 @@ pub proof fn pfield_vsub(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>, xs: Seq<E
 #[verifier::spinoff_prover]
 pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t: ExprSpec, l: LevelSpec)
     requires
-        proj_sem(sig),
+        crate::dom_rec_end::sig_sr(sig),
         !sig.ienv.full,
         crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
         crate::ti_syntax::proj_prop(sig, st) ==> crate::ti_syntax::is_zero(l),
@@ -125,12 +216,9 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
         spine_args(crate::dom_rel::cr(sig, x)).len() == crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).np
             + crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).fields[0].len(),
         ({
-            let s = spine_head(st)->Const_0;
-            let sh = crate::dom_code::canon_shape(sig, s);
-            let q = (sh.np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
+            let np = crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).np;
             let a = spine_args(crate::dom_rel::cr(sig, x));
-            &&& derivable(sig, eq(dl, a[q], spine_args(st)[q], crate::dom_rel::ptype(sig, s, spine_head(st)->Const_1, q)))
-            &&& derivable(sig, eq(dl, a[sh.np + i], a[sh.np + i], a[q]))
+            derivable(sig, eq(dl, a[np + i], a[np + i], crate::dom_rel::arg_ty(sig, crate::dom_rel::cr(sig, x), (np + i) as nat)))
         }),
         crate::dom_rel::cpar(sig, dl, spine_head(st)->Const_0, crate::dom_rel::cr(sig, x), st),
         crate::dom_rel::iinst(sig, spine_head(st)->Const_0, crate::dom_rel::ir(sig, st, spine_head(st)->Const_0)) == spine_head(st)->Const_1,
@@ -156,14 +244,7 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
     let ps = spine_args(st);
     crate::ti_proj::proj_ty_unfold(sig, st, i as nat, x);
     assert(crate::ti_syntax::struct_of(sig, s));
-    pfield(sig, s, i as nat, us);
-    let v = sh.fields[0][i as int]->Var_0;
-    let q = (np + i - 1 - v) as int;
     let fld = a[np + i];
-    // the projection's type is the parameter
-    pfield_vsub(sig, s, i as nat, us, ps + crate::ti_syntax::projs(x, i as nat));
-    assert((ps + crate::ti_syntax::projs(x, i as nat))[q] == ps[q]);
-    assert(t == ps[q]);
     // the constructor application, at as many levels as the structure
     let (hc, cl) = (spine_head(cx), spine_head(cx)->Const_1);
     let c = hc->Const_0;
@@ -202,19 +283,22 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
     crate::ti_meta::valid_node(sig, Rule::ProjCong(l), jc, pc);
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(Rule::ProjCong(l), jc, pc));
     dsym(sig, dl, px, pcx, t);
-    // ProjIota: the redex converts with the field
-    let lq = sh.pdoms[q]->Sort_0;
-    assert(crate::dom_rel::ptype(sig, s, us, q) == sort(crate::level_model::subst_level_spec(lq, sig.consts[s].lps, us)));
-    dconv(sig, dl, fld, fld, a[q], ps[q], crate::level_model::subst_level_spec(lq, sig.consts[s].lps, us));
-    pfield_vsub(sig, s, i as nat, cl, a.subrange(0, (np + i) as int));
-    assert(crate::ti_syntax::proj_fty(sig, pcx) == a[q]) by {
+    // ProjIota: the redex converts with the field, typed at its declared
+    // type, which converts with the projection's
+    let ti = crate::dom_rel::arg_ty(sig, cx, (np + i) as nat);
+    arg_ty_fty(sig, s, i as nat, cx);
+    assert(crate::ti_syntax::proj_fty(sig, pcx) == ti) by {
         reveal(crate::ti_syntax::proj_fty);
     }
+    crate::ti_ls2::levs_eq_sym(cl, us);
+    crate::dom_lift::eq_ctx_wf(sig, dl, t, t, sort(l));
+    let lc = cfty_conv(sig, dl, s, i as nat, cx, st, x);
+    dconv(sig, dl, fld, fld, ti, t, lc);
     crate::ti_proj::proj_ty_indep(sig, st, i as nat, x, cx);
     let e0 = crate::ti_sub::get(sig, eq(dl, pcx, pcx, t));
     let e1 = crate::ti_sub::get(sig, eq(dl, fld, fld, t));
     let e2 = crate::ti_sub::get(sig, eq(dl, cx, cx, st));
-    let e4 = crate::ti_sub::get(sig, eq(dl, fld, fld, a[q]));
+    let e4 = crate::ti_sub::get(sig, eq(dl, fld, fld, ti));
     let ji = eq(dl, pcx, fld, t);
     // the constructor's parameters at their sorts
     let pj = crate::ti_syntax::proj_pjs(sig, dl, pcx);
@@ -266,21 +350,21 @@ pub proof fn pjs_peq(sig: Sig, dl: Ctx, s: u64, us: Seq<crate::level_model::Leve
     }
 }
 
-/// A constructor application's declared field type is the parameter the
-/// field names.
-pub proof fn arg_ty_field(sig: Sig, s: u64, i: nat, cx: ExprSpec)
+/// A constructor application's declared field type: the field at the
+/// constructor's levels over the earlier arguments.
+pub proof fn arg_ty_fty(sig: Sig, s: u64, i: nat, cx: ExprSpec)
     requires
         crate::ti_syntax::struct_of(sig, s),
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
         spine_head(cx) is Const,
         spine_head(cx)->Const_0 == crate::dom_code::canon_shape(sig, s).ctors[0],
         spine_args(cx).len() == crate::dom_code::canon_shape(sig, s).np + crate::dom_code::canon_shape(sig, s).fields[0].len(),
-    ensures ({
-        let sh = crate::dom_code::canon_shape(sig, s);
-        crate::dom_rel::arg_ty(sig, cx, sh.np + i) == spine_args(cx)[(sh.np + i - 1 - sh.fields[0][i as int]->Var_0) as int]
-    }),
+    ensures
+        crate::dom_rel::arg_ty(sig, cx, crate::dom_code::canon_shape(sig, s).np + i) == crate::ti_spine::vsub(
+            crate::ti_proj::sfield(sig, s, i, spine_head(cx)->Const_1),
+            spine_args(cx).subrange(0, (crate::dom_code::canon_shape(sig, s).np + i) as int)),
 {
-    reveal(crate::ti_syntax::struct_of);
+    crate::ti_syntax::struct_of_basic(sig, s);
     let sh = crate::dom_code::canon_shape(sig, s);
     let (np, nf) = (sh.np, sh.fields[0].len());
     let (c, cl) = (spine_head(cx)->Const_0, spine_head(cx)->Const_1);
@@ -294,7 +378,162 @@ pub proof fn arg_ty_field(sig: Sig, s: u64, i: nat, cx: ExprSpec)
     let ds2 = crate::dom_rec_shape::sls(ds, lps, cl);
     crate::dom_rec_end::tel_dom_binds(ds2, crate::expr_model::subst_expr_levels(body, lps, cl), a, (np + i) as int);
     assert(ds2[(np + i) as int] == crate::ti_proj::sfield(sig, s, i, cl));
+}
+
+/// A constructor application's declared field type, at a parameter
+/// field, is the parameter the field names.
+pub proof fn arg_ty_field(sig: Sig, s: u64, i: nat, cx: ExprSpec)
+    requires
+        crate::ti_syntax::struct_of(sig, s),
+        i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, i,
+            crate::dom_code::canon_shape(sig, s).fields[0][i as int]),
+        spine_head(cx) is Const,
+        spine_head(cx)->Const_0 == crate::dom_code::canon_shape(sig, s).ctors[0],
+        spine_args(cx).len() == crate::dom_code::canon_shape(sig, s).np + crate::dom_code::canon_shape(sig, s).fields[0].len(),
+    ensures ({
+        let sh = crate::dom_code::canon_shape(sig, s);
+        crate::dom_rel::arg_ty(sig, cx, sh.np + i) == spine_args(cx)[(sh.np + i - 1 - sh.fields[0][i as int]->Var_0) as int]
+    }),
+{
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let np = sh.np;
+    let (c, cl) = (spine_head(cx)->Const_0, spine_head(cx)->Const_1);
+    let a = spine_args(cx);
+    arg_ty_fty(sig, s, i, cx);
     pfield_vsub(sig, s, i, cl, a.subrange(0, (np + i) as int));
+}
+
+/// A SUBJECT'S CONSTRUCTOR APPLICATION, typed at a stuck structure
+/// application: at as many levels as the structure, equivalent to the
+/// application's, its parameters equal to the application's at their
+/// sorts (`dom_rel::cpar`).
+pub proof fn proj_ctor_levels(sig: Sig, dl: Ctx, s: u64, m: ExprSpec, st: ExprSpec)
+    requires
+        proj_sem(sig),
+        crate::ti_syntax::struct_of(sig, s),
+        crate::dom_rel::ctor_red(sig, m),
+        derivable(sig, eq(dl, m, crate::dom_rel::cr(sig, m), st)),
+        spine_head(crate::dom_rel::cr(sig, m)) is Const,
+        spine_head(crate::dom_rel::cr(sig, m))->Const_0 == crate::dom_code::canon_shape(sig, s).ctors[0],
+        spine_head(st) is Const,
+        spine_head(st)->Const_0 == s,
+        crate::dom_rel::ir(sig, st, s) == st,
+        crate::dom_rel::iinst(sig, s, st) == spine_head(st)->Const_1,
+        crate::dom_rel::cpar(sig, dl, s, crate::dom_rel::cr(sig, m), st),
+    ensures
+        spine_head(crate::dom_rel::cr(sig, m))->Const_1.len() == sig.consts[s].lps.len(),
+        crate::conv_cr::levs_eq(spine_head(crate::dom_rel::cr(sig, m))->Const_1, spine_head(st)->Const_1),
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+            ==> #[trigger] crate::dom_rel::peq(sig, dl, s, spine_head(st)->Const_1, q, spine_args(crate::dom_rel::cr(sig, m))[q],
+                spine_args(st)[q]),
+{
+    let cx = crate::dom_rel::cr(sig, m);
+    let (hc, cl) = (spine_head(cx), spine_head(cx)->Const_1);
+    let c = hc->Const_0;
+    let a = spine_args(cx);
+    crate::dom_adeq_syn::dsym(sig, dl, m, cx, st);
+    crate::beta_model::spine_recompose(cx);
+    let th = crate::dom_iota::spine_gen(sig, dl, hc, a, st);
+    crate::ti_spine::const_typed(sig, dl, c, cl, th);
+    crate::ti_syntax::struct_of_basic(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    assert(cl.len() == sig.consts[s].lps.len());
+}
+
+/// The structure application's field type, at a stuck structure
+/// application: the projection's type at any subject.
+pub proof fn fq_fty(sig: Sig, s: u64, i: nat, st: ExprSpec, y: ExprSpec)
+    requires
+        crate::ti_syntax::struct_of(sig, s),
+        proj_sem(sig),
+        i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        spine_head(st) is Const,
+        spine_head(st)->Const_0 == s,
+        spine_head(st)->Const_1.len() == sig.consts[s].lps.len(),
+        spine_args(st).len() == crate::dom_code::canon_shape(sig, s).np,
+        crate::dom_rel::ind_red(sig, st, s),
+    ensures
+        crate::dom_rel::ir(sig, st, s) == st,
+        crate::dom_rel::iinst(sig, s, st) == spine_head(st)->Const_1,
+        crate::dom_rel::fq(sig, s, st, 0, i as int) == crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, spine_head(st)->Const_1),
+            spine_args(st) + crate::ti_syntax::projs(y, i)),
+{
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let us = spine_head(st)->Const_1;
+    assert(struct_sem(sig, s));
+    assert(crate::dom_model::sem_const(sig, s, us));
+    crate::ti_syntax::struct_of_basic(sig, s);
+    crate::ti_hred_rec::const_spine_stuck(sig, st);
+    crate::ti_hred::hred_stuck_self(sig, st, crate::dom_rel::ir(sig, st, s));
+    crate::dom_rel::lpad_id(us, sig.consts[s].lps.len());
+    let cs = Seq::new(i, |_i: int| ExprSpec::Closed);
+    assert(spine_args(st).subrange(0, sh.np as int) =~= spine_args(st));
+    crate::ti_proj::sfield_vsub(sig, s, i, us, spine_args(st), cs, crate::ti_syntax::projs(y, i));
+}
+
+/// A CONSTRUCTOR APPLICATION'S DECLARED FIELD TYPE converts with the
+/// projection's type at a structure application whose parameters its own
+/// equal at their sorts, at an equivalent instance: the parameter itself,
+/// or the field at the two (`sfield_conv`).
+#[verifier::spinoff_prover]
+pub proof fn cfty_conv(sig: Sig, dl: Ctx, s: u64, i: nat, cx: ExprSpec, st: ExprSpec, y: ExprSpec) -> (l: LevelSpec)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        crate::ti_syntax::struct_of(sig, s),
+        i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        spine_head(cx) is Const,
+        spine_head(cx)->Const_0 == crate::dom_code::canon_shape(sig, s).ctors[0],
+        spine_head(cx)->Const_1.len() == sig.consts[s].lps.len(),
+        spine_args(cx).len() == crate::dom_code::canon_shape(sig, s).np + crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        spine_head(st) is Const,
+        spine_head(st)->Const_0 == s,
+        spine_head(st)->Const_1.len() == sig.consts[s].lps.len(),
+        spine_args(st).len() == crate::dom_code::canon_shape(sig, s).np,
+        crate::conv_cr::levs_eq(spine_head(cx)->Const_1, spine_head(st)->Const_1),
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+            ==> #[trigger] crate::dom_rel::peq(sig, dl, s, spine_head(st)->Const_1, q, spine_args(cx)[q], spine_args(st)[q]),
+        derivable(sig, crate::ti_syntax::Jd::Wf(dl)),
+    ensures
+        derivable(sig, eq(dl, crate::dom_rel::arg_ty(sig, cx, crate::dom_code::canon_shape(sig, s).np + i),
+            crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, spine_head(st)->Const_1), spine_args(st) + crate::ti_syntax::projs(y, i)),
+            sort(l))),
+{
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let np = sh.np;
+    let (cl, us) = (spine_head(cx)->Const_1, spine_head(st)->Const_1);
+    let (a, ps) = (spine_args(cx), spine_args(st));
+    let pj = crate::ti_syntax::projs(y, i);
+    arg_ty_fty(sig, s, i, cx);
+    crate::ti_syntax::struct_of_basic(sig, s);
+    crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    if crate::rec_canon::pvar_field(sh.pdoms, np, i, sh.fields[0][i as int]) {
+        pfield(sig, s, i, cl);
+        let q = (np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
+        pfield_vsub(sig, s, i, cl, a.subrange(0, (np + i) as int));
+        pfield_vsub(sig, s, i, us, ps + pj);
+        assert((ps + pj)[q] == ps[q]);
+        assert(crate::dom_rel::peq(sig, dl, s, us, q, a[q], ps[q]));
+        let lq = sh.pdoms[q]->Sort_0;
+        let l = crate::level_model::subst_level_spec(lq, sig.consts[s].lps, us);
+        assert(crate::dom_rel::ptype(sig, s, us, q) == sort(l));
+        l
+    } else {
+        crate::dom_proj_sound::struct_fields(sig, s);
+        let _f = sh.fields[0][i as int];
+        crate::ti_ls2::levs_eq_sym(cl, us);
+        assert forall|q: int| 0 <= q < np implies derivable(sig, eq(dl, #[trigger] ps[q], a.subrange(0, np as int)[q],
+            crate::dom_rel::ptype(sig, s, us, q))) by {
+            assert(sh.pdoms[q] is Sort);
+            crate::dom_rel::peq_symm(sig, dl, s, us, q, a[q], ps[q]);
+        }
+        let zs = a.subrange(np as int, (np + i) as int);
+        assert(a.subrange(0, np as int) + zs =~= a.subrange(0, (np + i) as int));
+        let l = sfield_conv(sig, dl, s, i, us, cl, ps, a.subrange(0, np as int), pj, zs);
+        crate::dom_adeq_syn::dsym(sig, dl, crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, us), ps + pj),
+            crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, cl), a.subrange(0, (np + i) as int)), sort(l));
+        l
+    }
 }
 
 /// The structure application's field type, at a stuck structure
@@ -304,6 +543,8 @@ pub proof fn fq_field(sig: Sig, s: u64, i: nat, st: ExprSpec)
         crate::ti_syntax::struct_of(sig, s),
         proj_sem(sig),
         i < crate::dom_code::canon_shape(sig, s).fields[0].len(),
+        crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, i,
+            crate::dom_code::canon_shape(sig, s).fields[0][i as int]),
         spine_head(st) is Const,
         spine_head(st)->Const_0 == s,
         spine_head(st)->Const_1.len() == sig.consts[s].lps.len(),
@@ -337,7 +578,7 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     x: ExprSpec, st: ExprSpec, t: ExprSpec, xx: ExprSpec, xx2: ExprSpec, sst: ExprSpec, tt: ExprSpec, tt2: ExprSpec,
     l: LevelSpec, u: Cpt, a: Cpt, v2: Cpt, b: Cpt)
     requires
-        proj_sem(sig),
+        crate::dom_rec_end::sig_sr(sig),
         !sig.ienv.full,
         crate::ti_syntax::proj_ty(sig, st, i as nat, x) == Some(t),
         crate::ti_syntax::proj_ty(sig, sst, i as nat, xx) == Some(tt),
@@ -393,12 +634,8 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     reveal(crate::ti_syntax::struct_of);
     assert(c == sh.ctors[0]);
     assert(crate::dom_rel::con_field(sig, nn, dl, cx, cx2, sst, v2->Nd_1, crate::dom_rel::cblock(v2, b), np, 0, b, i as int));
-    pfield(sig, s, i as nat, us);
-    let q = (np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
-    fq_field(sig, s, i as nat, sst);
-    pfield_vsub(sig, s, i as nat, us, spine_args(sst) + crate::ti_syntax::projs(xx, i as nat));
-    assert((spine_args(sst) + crate::ti_syntax::projs(xx, i as nat))[q] == spine_args(sst)[q]);
-    assert(tt == spine_args(sst)[q]);
+    fq_fty(sig, s, i as nat, sst, xx);
+    assert(tt == crate::dom_rel::fq(sig, s, sst, 0, i as int));
     assert(rel_tm(sig, nn, dl, aa[np + i], aa2[np + i], tt, f, ec));
     // moved to the projection's witness
     crate::dom_model::typed_up(f, ec, nn);
@@ -408,12 +645,8 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     // the projections reduce to the fields, derivably
     let ti = crate::dom_rel::arg_ty(sig, cx, (np + i) as nat);
     let ti2 = crate::dom_rel::arg_ty(sig, cx2, (np + i) as nat);
-    arg_ty_field(sig, s, i as nat, cx);
-    arg_ty_field(sig, s, i as nat, cx2);
     crate::dom_adeq_syn::dsym(sig, dl, aa[np + i], aa2[np + i], ti);
     crate::ti_chain::conv_chain(sig, dl, aa2[np + i], aa2[np + i], ti, ti2);
-    assert(crate::dom_rel::peq(sig, dl, s, us, q, aa[q], spine_args(sst)[q]));
-    assert(crate::dom_rel::peq(sig, dl, s, us, q, aa2[q], spine_args(sst)[q]));
     assert(crate::dom_rel::cpar(sig, dl, s, cx, sst));
     assert(crate::dom_rel::cpar(sig, dl, s, cx2, sst));
     assert(crate::dom_rel::iinst(sig, s, crate::dom_rel::ir(sig, sst, s)) == us);
@@ -460,7 +693,7 @@ pub proof fn seta_field(sig: Sig, n: nat, dl: Ctx, a: ExprSpec, a2: ExprSpec, b1
 pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::Env, t: ExprSpec,
     mm: ExprSpec, m2: ExprSpec, n1: ExprSpec, nn: ExprSpec, tt: ExprSpec, u: Cpt, a: Cpt, i: int)
     requires
-        proj_sem(sig),
+        crate::dom_rec_end::sig_sr(sig),
         !sig.ienv.full,
         crate::ti_syntax::struct_ty(sig, t),
         crate::ti_syntax::struct_ty(sig, tt),
@@ -500,28 +733,19 @@ pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::E
     assert(struct_sem(sig, s));
     assert(crate::dom_model::sem_const(sig, s, us));
     reveal(crate::ti_syntax::struct_of);
-    // the field and its parameter
-    pfield(sig, s, i as nat, us);
-    let q = (np + i - 1 - sh.fields[0][i]->Var_0) as int;
+    // the field's type at the structure application
     crate::dom_rel::ty_ind(sig, n, dl, tt, tt, a);
-    fq_field(sig, s, i as nat, tt);
     crate::ti_proj::proj_ty_unfold(sig, tt, i as nat, mm);
-    pfield_vsub(sig, s, i as nat, spine_head(tt)->Const_1, spine_args(tt) + crate::ti_syntax::projs(mm, i as nat));
-    assert((spine_args(tt) + crate::ti_syntax::projs(mm, i as nat))[q] == spine_args(tt)[q]);
+    fq_fty(sig, s, i as nat, tt, mm);
     let ti = crate::ti_syntax::proj_ty(sig, tt, i as nat, mm)->Some_0;
-    assert(ti == spine_args(tt)[q]);
+    assert(ti == crate::dom_rel::fq(sig, s, tt, 0, i));
     // the constructor applications: the structure's only constructor
     assert(crate::dom_rel::con_field(sig, n, dl, x, xa, tt, fs, es, np, 0, a, i));
     assert(crate::dom_rel::con_field(sig, n, dl, x1, x2, tt, fs, es, np, 0, a, i));
     assert(spine_head(x)->Const_0 == sh.ctors[0]);
     assert(spine_head(x2)->Const_0 == sh.ctors[0]);
-    arg_ty_field(sig, s, i as nat, x);
-    arg_ty_field(sig, s, i as nat, x2);
-    arg_ty_field(sig, s, i as nat, x1);
     let (tx, tx2, txa, tx1) = (crate::dom_rel::arg_ty(sig, x, (np + i) as nat), crate::dom_rel::arg_ty(sig, x2, (np + i) as nat),
         crate::dom_rel::arg_ty(sig, xa, (np + i) as nat), crate::dom_rel::arg_ty(sig, x1, (np + i) as nat));
-    assert(peq(sig, dl, s, us, q, aa[q], spine_args(tt)[q]));
-    assert(peq(sig, dl, s, us, q, bb[q], spine_args(tt)[q]));
     // each side's field typed at its parameter
     let (fa, fb, fa2, fb1) = (aa[np + i], bb[np + i], aa2[np + i], bb1[np + i]);
     crate::dom_adeq_syn::dsym(sig, dl, fa, fa2, tx);
@@ -539,14 +763,25 @@ pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::E
     proj_side(sig, dl, ui, mm, tt, ti, lt);
     crate::ti_proj::proj_ty_indep(sig, tt, i as nat, mm, nn);
     proj_side(sig, dl, ui, nn, tt, ti, lt);
-    // the declared types chain, and the fields convert
-    crate::ti_chain::tchain_sym(sig, dl, bb[q], spine_args(tt)[q]);
-    crate::ti_chain::tchain_trans(sig, dl, aa[q], spine_args(tt)[q], bb[q]);
-    crate::ti_chain::tchain_sym(sig, dl, aa[q], spine_args(tt)[q]);
+    // the declared types convert with the projections', so chain, and the
+    // fields convert
+    crate::dom_lift::eq_ctx_wf(sig, dl, ti, ti, sort(lt));
+    let (cl, cl2) = (spine_head(x)->Const_1, spine_head(x2)->Const_1);
+    proj_ctor_levels(sig, dl, s, mm, tt);
+    proj_ctor_levels(sig, dl, s, nn, tt);
+    let l1 = cfty_conv(sig, dl, s, i as nat, x, tt, mm);
+    let l2 = cfty_conv(sig, dl, s, i as nat, x2, tt, mm);
+    reveal(crate::ti_sub::tconvd);
+    crate::dom_adeq_syn::dsym(sig, dl, tx, ti, sort(l1));
+    crate::dom_adeq_syn::dsym(sig, dl, tx2, ti, sort(l2));
+    crate::ti_chain::tchain_one(sig, dl, tx, ti);
+    crate::ti_chain::tchain_one(sig, dl, ti, tx);
+    crate::ti_chain::tchain_one(sig, dl, ti, tx2);
+    crate::ti_chain::tchain_trans(sig, dl, tx, ti, tx2);
     crate::dom_adeq_syn::dsym(sig, dl, ExprSpec::Proj(ui, Box::new(mm)), fa, ti);
     crate::dom_adeq_syn::dtrans(sig, dl, fa, ExprSpec::Proj(ui, Box::new(mm)), ExprSpec::Proj(ui, Box::new(nn)), ti);
     crate::dom_adeq_syn::dtrans(sig, dl, fa, ExprSpec::Proj(ui, Box::new(nn)), fb, ti);
-    crate::ti_chain::conv_chain(sig, dl, fa, fb, ti, aa[q]);
+    crate::ti_chain::conv_chain(sig, dl, fa, fb, ti, tx);
     // the field's relation
     if !(fs[i] is Bot) {
         crate::dom_proj_sound::con_stage(n, u, a, i);
@@ -566,7 +801,7 @@ pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::E
 pub proof fn seta_tail(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::Env, t: ExprSpec,
     mm: ExprSpec, m2: ExprSpec, n1: ExprSpec, nn: ExprSpec, tt: ExprSpec, u: Cpt, a: Cpt)
     requires
-        proj_sem(sig),
+        crate::dom_rec_end::sig_sr(sig),
         !sig.ienv.full,
         crate::ti_syntax::struct_ty(sig, t),
         crate::ti_syntax::struct_ty(sig, tt),

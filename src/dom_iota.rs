@@ -2096,7 +2096,8 @@ pub proof fn rebuilt_bot_ihs(sig: Sig, rid: u64, p: int, xs: Seq<Cpt>)
     assert(sh.nmin() == 1);
     assert(rd.rules.len() == sh.nmin());
     assert forall|k: int| 0 <= k < sh.fields[p].len() implies !#[trigger] crate::dom_rec::rec_field(sig, rid, p, k) by {
-        assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        assert(crate::rec_canon::psimple(sig, sh.ind, sh.pdoms, sh.np, k as nat, sh.fields[0][k]));
+        crate::ti_valid::psimple_not_direct(sig, sh.ind, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[0][k]);
     }
     let x = rebuilt(sig, rid, p, xs);
     assert(!crate::dom_rec::rec_ok(sig, rid, x));

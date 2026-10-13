@@ -248,8 +248,17 @@ pub proof fn eta_heads(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<E
         =~= a0.subrange(0, np as int));
 }
 
-/// The major's projections are typed at the parameters their fields
-/// name (ProjCong: the structure is never a proposition), which are types.
+/// The type of the major's projection `k`: the field over the
+/// parameters and the earlier projections.
+pub open spec fn eta_fty(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, x: ExprSpec, k: int) -> ExprSpec {
+    let sh = rshape(sig, rid);
+    crate::ti_spine::vsub(crate::ti_proj::sfield(sig, sh.ind, k as nat, rinst(sig, rid, lv)),
+        a0.subrange(0, sh.np as int) + crate::ti_syntax::projs(x, k as nat))
+}
+
+/// The major's projections are typed at their fields' types, which are
+/// types (ProjCong: the structure is never a proposition); a parameter
+/// field's is the parameter it names.
 #[verifier::spinoff_prover]
 pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>, x: ExprSpec, k: int)
     requires
@@ -261,11 +270,12 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
         let sh = rshape(sig, rid);
         let q = (sh.np + k - 1 - sh.fields[0][k]->Var_0) as int;
         let st = eta_st(sig, rid, lv, a0);
-        &&& 0 <= q < sh.np
-        &&& crate::ti_syntax::proj_ty(sig, st, k as nat, x) == Some(a0[q])
-        &&& derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(x)), a0[q]))
-        &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, a0[q], a0[q], sort(l)))
+        let t = eta_fty(sig, rid, lv, a0, x, k);
+        &&& crate::ti_syntax::proj_ty(sig, st, k as nat, x) == Some(t)
+        &&& derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(x)), t))
+        &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
         &&& !crate::ti_syntax::proj_prop(sig, st)
+        &&& crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]) ==> 0 <= q < sh.np && t == a0[q]
     }),
 {
     let sh = rshape(sig, rid);
@@ -273,26 +283,44 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
     let np = sh.np;
     let us = rinst(sig, rid, lv);
     let st = eta_st(sig, rid, lv, a0);
+    let t = eta_fty(sig, rid, lv, a0, x, k);
+    let pj = crate::ti_syntax::projs(x, k as nat);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, us), a0.subrange(0, np as int));
-    crate::dom_adeq_proj::pfield(sig, sh.ind, k as nat, us);
-    let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
-    // the parameter is a type
-    crate::iota_sr::ptype_at(sig, rid, us, q);
-    let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[sh.ind].lps, us);
-    crate::ti_spine::vsub_closed(sort(lq), a0.subrange(0, q));
-    assert(derivable(sig, eq(g, a0[q], a0[q], sort(lq))));
-    // its projection's type
     crate::ti_proj::proj_ty_unfold(sig, st, k as nat, x);
-    crate::dom_adeq_proj::pfield_vsub(sig, sh.ind, k as nat, us, a0.subrange(0, np as int) + crate::ti_syntax::projs(x, k as nat));
-    assert((a0.subrange(0, np as int) + crate::ti_syntax::projs(x, k as nat))[q] == a0[q]);
     eta_never_prop(sig, sh.ind, st);
+    let lq = if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, sh.fields[0][k]) {
+        crate::dom_adeq_proj::pfield(sig, sh.ind, k as nat, us);
+        let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
+        // the parameter is a type
+        crate::iota_sr::ptype_at(sig, rid, us, q);
+        let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[sh.ind].lps, us);
+        crate::ti_spine::vsub_closed(sort(lq), a0.subrange(0, q));
+        assert(derivable(sig, eq(g, a0[q], a0[q], sort(lq))));
+        crate::dom_adeq_proj::pfield_vsub(sig, sh.ind, k as nat, us, a0.subrange(0, np as int) + pj);
+        assert((a0.subrange(0, np as int) + pj)[q] == a0[q]);
+        lq
+    } else {
+        // the field over the parameters, equal to itself at a sort
+        crate::dom_lift::eq_ctx_wf(sig, g, x, x, st);
+        crate::ti_ls2::levs_eq_refl(us);
+        let ps = a0.subrange(0, np as int);
+        assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], ps[q],
+            crate::dom_rel::ptype(sig, sh.ind, us, q))) by {
+            crate::iota_sr::ptype_at(sig, rid, us, q);
+            let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[sh.ind].lps, us);
+            crate::ti_spine::vsub_closed(sort(lq), a0.subrange(0, q));
+        }
+        crate::dom_adeq_proj::sfield_conv(sig, g, sh.ind, k as nat, us, us, ps, ps, pj, pj)
+    };
+    assert(derivable(sig, eq(g, t, t, sort(lq))));
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     // ProjCong
     let px = ExprSpec::Proj(k as usize, Box::new(x));
     let d0 = crate::ti_sub::get(sig, eq(g, x, x, st));
-    let d1 = crate::ti_sub::get(sig, eq(g, a0[q], a0[q], sort(lq)));
-    let j = eq(g, px, px, a0[q]);
+    let d1 = crate::ti_sub::get(sig, eq(g, t, t, sort(lq)));
+    let j = eq(g, px, px, t);
     let ps = seq![d0, d1];
-    assert(crate::ti_syntax::prems(ps, seq![eq(g, x, x, st), eq(g, a0[q], a0[q], sort(lq))]));
+    assert(crate::ti_syntax::prems(ps, seq![eq(g, x, x, st), eq(g, t, t, sort(lq))]));
     assert(crate::ti_syntax::step_ok(sig, Rule::ProjCong(lq), j, ps)) by {
         reveal(crate::ti_syntax::proj_cong_ok);
     }
@@ -341,11 +369,9 @@ pub proof fn eta_cx_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Se
         } else {
             let k = i - np;
             eta_proj_typed(sig, g, rid, lv, a0, x, k);
-            let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
             assert(tds[np + k] == crate::iota_sr::cfu(sig, rid, 0, k, us));
             assert(crate::iota_sr::cfu(sig, rid, 0, k, us) == crate::ti_proj::sfield(sig, sh.ind, k as nat, us));
-            crate::dom_adeq_proj::pfield_vsub(sig, sh.ind, k as nat, us, cargs.subrange(0, i));
-            assert(cargs.subrange(0, i)[q] == a0[q]);
+            assert(cargs.subrange(0, i) =~= a0.subrange(0, np as int) + crate::ti_syntax::projs(x, k as nat));
             assert(cargs[i] == ExprSpec::Proj(k as usize, Box::new(x)));
         }
     }
@@ -386,9 +412,12 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
     let cargs = a0.subrange(0, np as int) + crate::ti_syntax::projs(x, nf);
     eta_proj_typed(sig, g, rid, lv, a0, x, k);
     eta_proj_typed(sig, g, rid, lv, a0, cx, k);
-    let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
-    let t = a0[q];
-    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, a0[q], a0[q], sort(l)));
+    let t = eta_fty(sig, rid, lv, a0, x, k);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)));
+    crate::ti_syntax::struct_of_basic(sig, sh.ind);
+    crate::ti_proj::sfield_vsub(sig, sh.ind, k as nat, us, a0.subrange(0, np as int), crate::ti_syntax::projs(x, k as nat),
+        crate::ti_syntax::projs(cx, k as nat));
+    assert(eta_fty(sig, rid, lv, a0, cx, k) == t);
     let (px, pc) = (ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(cx)));
     // the redex fires, to the major's projection
     crate::beta_model::spine_destruct_app(ExprSpec::Const(c, us), cargs);
@@ -400,9 +429,7 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
         reveal(crate::ti_syntax::proj_result);
         assert(cargs[np + k] == px);
     }
-    crate::dom_adeq_proj::pfield(sig, sh.ind, k as nat, us);
-    crate::dom_adeq_proj::pfield_vsub(sig, sh.ind, k as nat, us, cargs.subrange(0, np + k));
-    assert(cargs.subrange(0, np + k)[q] == t);
+    assert(cargs.subrange(0, np + k) =~= a0.subrange(0, np as int) + crate::ti_syntax::projs(x, k as nat));
     assert(crate::ti_syntax::proj_fty(sig, pc) == t) by {
         reveal(crate::ti_syntax::proj_fty);
     }
@@ -412,9 +439,32 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
     let e2 = crate::ti_sub::get(sig, eq(g, cx, cx, st));
     let e3 = crate::ti_sub::get(sig, eq(g, t, t, sort(l)));
     let ji = eq(g, pc, px, t);
-    let pi = seq![e0, e1, e2, e3, e1];
-    assert(crate::ti_syntax::prems(pi, seq![eq(g, pc, pc, t), eq(g, px, px, t), eq(g, cx, cx, st), eq(g, t, t, sort(l)),
-        eq(g, px, px, crate::ti_syntax::proj_fty(sig, pc))]));
+    // the constructor's parameters, typed at their sorts
+    let pj = crate::ti_syntax::proj_pjs(sig, g, pc);
+    assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))
+        && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[q])) == pj[q] by {
+        reveal(crate::ti_syntax::proj_pjs);
+        crate::iota_sr::ptype_at(sig, rid, us, q);
+        let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[sh.ind].lps, us);
+        crate::ti_spine::vsub_closed(sort(lq), a0.subrange(0, q));
+        assert(cargs[q] == a0[q]);
+        assert(pj[q] == eq(g, a0[q], a0[q], crate::dom_rel::ptype(sig, sh.ind, us, q)));
+        let dq = crate::ti_sub::get(sig, pj[q]);
+        crate::ti_sub::pick_of(sig, dq);
+    }
+    let qs = Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
+    let pi = seq![e0, e1, e2, e3, e1] + qs;
+    let js = seq![eq(g, pc, pc, t), eq(g, px, px, t), eq(g, cx, cx, st), eq(g, t, t, sort(l)),
+        eq(g, px, px, crate::ti_syntax::proj_fty(sig, pc))] + pj;
+    assert forall|q: int| 0 <= q < pi.len() implies crate::ti_syntax::concl(#[trigger] pi[q]) == js[q] by {
+        if q >= 5 {
+            assert(pi[q] == qs[q - 5]);
+        }
+    }
+    assert(crate::ti_syntax::prems(pi, js));
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
+    assert(crate::ti_syntax::proj_ty(sig, st, k as nat, cx) is Some);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, us), a0.subrange(0, np as int));
     assert(crate::ti_syntax::step_ok(sig, Rule::ProjIota(l), ji, pi)) by {
         reveal(crate::ti_syntax::proj_iota_ok);
     }

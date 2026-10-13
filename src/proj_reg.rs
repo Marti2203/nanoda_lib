@@ -913,11 +913,9 @@ proof fn walk_arg(
         assert(sq.subrange(0, j) =~= am.subrange(0, j));
     } else {
         let k = j - np;
-        let q = crate::kstruct::struct_proj_typed(sig, g0, ety, lt, s, k);
-        crate::dom_adeq_proj::pfield(sig, ind, k as nat, ls);
-        crate::dom_adeq_proj::pfield_vsub(sig, ind, k as nat, ls, sq.subrange(0, j));
-        psq_at(am, np, s, idx as nat, q);
-        assert(sq.subrange(0, j)[q] == am[q]);
+        crate::kstruct::struct_proj_typed(sig, g0, ety, lt, s, k);
+        assert(tds[j] == crate::ti_proj::sfield(sig, ind, k as nat, ls));
+        assert(sq.subrange(0, j) =~= am + crate::ti_syntax::projs(s, k as nat));
         if j < m {
             psq_at(am, np, s, idx as nat, j);
         } else {
@@ -1208,8 +1206,8 @@ pub proof fn cc_proj(
             assert(sig.ienv.ctor_ind[cid] == ind);
             assert(sh.fields[0].len() == sig.ienv.ctor_nf[cid] as nat);
             // so the projection is typed
-            let q = crate::kstruct::struct_proj_typed(sig, g0, ety, l, s, idx as int);
-            assert(crate::metatheory::typed(dty, denv, d, p, crate::beta_model::spine_args(ety)[q]));
+            let tq = crate::kstruct::struct_proj_typed(sig, g0, ety, l, s, idx as int);
+            assert(crate::metatheory::typed(dty, denv, d, p, tq));
             assert(rtyped(dty, denv, d, p));
             // and at the kernel's field type
             assert(crate::kclaims::ci_at(dty, denv, d, p, btm));

@@ -199,10 +199,12 @@ pub proof fn struct_type_arity(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec)
     }
 }
 
-/// A PROJECTION OF A STRUCTURE'S TERM is typed at the parameter its field
-/// names, which is a type; the structure is never a proposition.
+/// A PROJECTION OF A STRUCTURE'S TERM is typed at its field's type over
+/// the parameters and the earlier projections, which is a type (the
+/// parameter a parameter field names); the structure is never a
+/// proposition.
 #[verifier::spinoff_prover]
-pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: ExprSpec, k: int) -> (q: int)
+pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: ExprSpec, k: int) -> (tq: ExprSpec)
     requires
         crate::kclaims::ind_ok(sig),
         derivable(sig, eq(g, t, t, sort(l))),
@@ -211,13 +213,12 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         derivable(sig, eq(g, x, x, t)),
         0 <= k < crate::dom_code::canon_shape(sig, spine_head(t)->Const_0).fields[0].len(),
     ensures
-        0 <= q < spine_args(t).len(),
-        q == (crate::dom_code::canon_shape(sig, spine_head(t)->Const_0).np + k - 1
-            - crate::dom_code::canon_shape(sig, spine_head(t)->Const_0).fields[0][k]->Var_0) as int,
-        crate::ti_syntax::proj_ty(sig, t, k as nat, x) == Some(spine_args(t)[q]),
-        forall|y: ExprSpec| #[trigger] crate::ti_syntax::proj_ty(sig, t, k as nat, y) == Some(spine_args(t)[q]),
-        derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(x)), spine_args(t)[q])),
-        exists|lq: LevelSpec| #[trigger] derivable(sig, eq(g, spine_args(t)[q], spine_args(t)[q], sort(lq))),
+        tq == crate::ti_spine::vsub(crate::ti_proj::sfield(sig, spine_head(t)->Const_0, k as nat, spine_head(t)->Const_1),
+            spine_args(t) + crate::ti_syntax::projs(x, k as nat)),
+        crate::ti_syntax::proj_ty(sig, t, k as nat, x) == Some(tq),
+        forall|y: ExprSpec| #[trigger] crate::ti_syntax::proj_ty(sig, t, k as nat, y) == Some(tq),
+        derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(x)), tq)),
+        exists|lq: LevelSpec| #[trigger] derivable(sig, eq(g, tq, tq, sort(lq))),
         !crate::ti_syntax::proj_prop(sig, t),
 {
     assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
@@ -227,33 +228,51 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
     struct_facts(sig, s);
     let sh = crate::dom_code::canon_shape(sig, s);
     let np = sh.np;
-    crate::dom_adeq_proj::pfield(sig, s, k as nat, us);
-    let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
-    // the parameter is a type
-    crate::iota_sr::ptype_at_s(sig, sh, us, q);
-    let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[s].lps, us);
-    crate::ti_spine::vsub_closed(sort(lq), ps.subrange(0, q));
-    assert(derivable(sig, eq(g, ps[q], ps[q], sort(lq))));
-    // its projections' type
-    assert forall|y: ExprSpec| #[trigger] crate::ti_syntax::proj_ty(sig, t, k as nat, y) == Some(ps[q]) by {
+    let pj = crate::ti_syntax::projs(x, k as nat);
+    let tq = crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, k as nat, us), ps + pj);
+    // its projections' type, at any subject
+    assert forall|y: ExprSpec| #[trigger] crate::ti_syntax::proj_ty(sig, t, k as nat, y) == Some(tq) by {
         crate::ti_proj::proj_ty_unfold(sig, t, k as nat, y);
-        crate::dom_adeq_proj::pfield_vsub(sig, s, k as nat, us, ps + crate::ti_syntax::projs(y, k as nat));
-        assert((ps + crate::ti_syntax::projs(y, k as nat))[q] == ps[q]);
+        crate::ti_proj::sfield_vsub(sig, s, k as nat, us, ps, crate::ti_syntax::projs(y, k as nat), pj);
     }
+    // a type
+    let lq = if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, sh.fields[0][k]) {
+        crate::dom_adeq_proj::pfield(sig, s, k as nat, us);
+        let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
+        crate::iota_sr::ptype_at_s(sig, sh, us, q);
+        let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[s].lps, us);
+        crate::ti_spine::vsub_closed(sort(lq), ps.subrange(0, q));
+        crate::dom_adeq_proj::pfield_vsub(sig, s, k as nat, us, ps + pj);
+        assert((ps + pj)[q] == ps[q]);
+        assert(derivable(sig, eq(g, ps[q], ps[q], sort(lq))));
+        lq
+    } else {
+        crate::dom_proj_sound::struct_fields(sig, s);
+        let _f = sh.fields[0][k];
+        crate::dom_lift::eq_ctx_wf(sig, g, x, x, t);
+        crate::ti_ls2::levs_eq_refl(us);
+        assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], ps[q],
+            crate::dom_rel::ptype(sig, s, us, q))) by {
+            crate::iota_sr::ptype_at_s(sig, sh, us, q);
+            let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[s].lps, us);
+            crate::ti_spine::vsub_closed(sort(lq), ps.subrange(0, q));
+        }
+        crate::dom_adeq_proj::sfield_conv(sig, g, s, k as nat, us, us, ps, ps, pj, pj)
+    };
     crate::ti_eta::eta_never_prop(sig, s, t);
     // ProjCong
     let px = ExprSpec::Proj(k as usize, Box::new(x));
     let d0 = crate::ti_sub::get(sig, eq(g, x, x, t));
-    let d1 = crate::ti_sub::get(sig, eq(g, ps[q], ps[q], sort(lq)));
-    let j = eq(g, px, px, ps[q]);
+    let d1 = crate::ti_sub::get(sig, eq(g, tq, tq, sort(lq)));
+    let j = eq(g, px, px, tq);
     let pp = seq![d0, d1];
-    assert(crate::ti_syntax::prems(pp, seq![eq(g, x, x, t), eq(g, ps[q], ps[q], sort(lq))]));
+    assert(crate::ti_syntax::prems(pp, seq![eq(g, x, x, t), eq(g, tq, tq, sort(lq))]));
     assert(crate::ti_syntax::step_ok(sig, crate::ti_syntax::Rule::ProjCong(lq), j, pp)) by {
         reveal(crate::ti_syntax::proj_cong_ok);
     }
     crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::ProjCong(lq), j, pp);
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::ProjCong(lq), j, pp));
-    q
+    tq
 }
 
 /// A STRUCTURE'S CONSTRUCTOR applied to all its arguments is typed at the
@@ -401,12 +420,10 @@ pub proof fn struct_cx_typed(sig: Sig, g: Ctx, st: ExprSpec, lt: LevelSpec, x: E
             assert(derivable(sig, eq(g, a0[i], a0[i], crate::ti_spine::vsub(crate::dom_rel::ptype(sig, s, us, i), a0.subrange(0, i)))));
         } else {
             let k = i - np;
-            let q = struct_proj_typed(sig, g, st, lt, x, k);
+            struct_proj_typed(sig, g, st, lt, x, k);
             assert(tds[np + k] == crate::iota_sr::cfu_s(sh, 0, k, us));
             assert(crate::iota_sr::cfu_s(sh, 0, k, us) == crate::ti_proj::sfield(sig, s, k as nat, us));
-            crate::dom_adeq_proj::pfield(sig, s, k as nat, us);
-            crate::dom_adeq_proj::pfield_vsub(sig, s, k as nat, us, cargs.subrange(0, i));
-            assert(cargs.subrange(0, i)[q] == a0[q]);
+            assert(cargs.subrange(0, i) =~= a0 + crate::ti_syntax::projs(x, k as nat));
             assert(cargs[i] == ExprSpec::Proj(k as usize, Box::new(x)));
         }
     }

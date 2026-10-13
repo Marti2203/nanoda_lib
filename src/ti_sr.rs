@@ -117,11 +117,14 @@ pub proof fn pi_chain_cod(sig: Sig, g: Ctx, a: ExprSpec, l1: LevelSpec, c1: Expr
 }
 
 /// A projection's two types: the subjects' chained types are applications
-/// of one structure, whose parameter the field names they chain.
+/// of one structure, whose parameter the field names they chain; a field
+/// not a parameter is equal at the two by injectivity
+/// (`dom_adeq_proj::sfield_conv`).
 #[verifier::spinoff_prover]
 proof fn uniq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, ta: ExprSpec, tb: ExprSpec, st1: ExprSpec, st2: ExprSpec)
     requires
         crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, x, x, st1)),
         tchain(sig, g, st1, st2),
         crate::ti_syntax::proj_ty(sig, st1, i as nat, x) is Some,
         crate::ti_syntax::proj_ty(sig, st2, i as nat, x) is Some,
@@ -146,8 +149,38 @@ proof fn uniq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, ta: ExprSpec, tb: Ex
     crate::dom_lift::iapp_self(sig, st2);
     crate::ti_hred::hred_stuck_self(sig, st2, crate::dom_rel::ir(sig, st2, s1));
     assert(s2 == s1);
-    // both types are the parameter the field names
     let sh = crate::dom_code::canon_shape(sig, s1);
+    if !crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[0][i as int]) {
+        let pj = crate::ti_syntax::projs(x, i as nat);
+        let (t1, t2) = (crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s1, i as nat, us1), xs + pj),
+            crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s1, i as nat, us2), ys + pj));
+        if st2 == st1 {
+            crate::ti_chain::tchain_refl(sig, g, t1);
+            tchain_trans(sig, g, ta, t1, t2);
+            tchain_meet(sig, g, ta, tb, t2);
+            return;
+        }
+        // otherwise the parameters equal at their sorts, the instances
+        // equivalent
+        assert(crate::dom_rel::pconv(sig, g, s1, st1, st2));
+        crate::dom_lift::iapp_self(sig, st1);
+        crate::dom_rel::lpad_id(us1, sig.consts[s1].lps.len());
+        crate::dom_rel::lpad_id(us2, sig.consts[s1].lps.len());
+        crate::dom_proj_sound::struct_fields(sig, s1);
+        let _f = sh.fields[0][i as int];
+        assert forall|q: int| 0 <= q < sh.np implies derivable(sig, eq(g, #[trigger] xs[q], ys[q], crate::dom_rel::ptype(sig, s1, us1, q))) by {
+            assert(sh.pdoms[q] is Sort);
+            assert(crate::dom_rel::peq(sig, g, s1, us1, q, xs[q], ys[q]));
+        }
+        crate::dom_lift::eq_ctx_wf(sig, g, x, x, st1);
+        let l = crate::dom_adeq_proj::sfield_conv(sig, g, s1, i as nat, us1, us2, xs, ys, pj, pj);
+        reveal(crate::ti_sub::tconvd);
+        crate::ti_chain::tchain_one(sig, g, t1, t2);
+        tchain_trans(sig, g, ta, t1, t2);
+        tchain_meet(sig, g, ta, tb, t2);
+        return;
+    }
+    // both types are the parameter the field names
     crate::dom_adeq_proj::pfield(sig, s1, i as nat, us1);
     let q = (sh.np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
     crate::dom_adeq_proj::pfield_vsub(sig, s1, i as nat, us1, xs + crate::ti_syntax::projs(x, i as nat));
@@ -572,9 +605,6 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
     assert(crate::dom_model::sem_const(sig, s, cl));
     crate::ti_syntax::struct_of_basic(sig, s);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
-    assert(crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, sh.fields[0][i as int])) by {
-        reveal(crate::ti_syntax::struct_of);
-    }
     // the constructor application's type: the structure at the parameters
     let lps = sig.consts[s].lps;
     crate::dom_con_rel::ctor_inst(sig, c, cl, s, 0, np);
@@ -595,17 +625,15 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
         crate::ti_spine::tel_next(ds, body, aa, k);
     }
     crate::ti_spine::spine_ty(sig, g, ExprSpec::Const(c, cl), tc, aa, st);
-    // the field, typed at the parameter it names
-    crate::dom_adeq_proj::pfield(sig, s, i as nat, cl);
-    let q = (np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
+    // the field, typed at its declared type there
     let fld = aa[np + i];
     crate::ti_spine::tel_next(ds, body, aa, (np + i) as int);
     assert(ds[np + i] == crate::ti_proj::sfield(sig, s, i as nat, cl));
-    crate::dom_adeq_proj::pfield_vsub(sig, s, i as nat, cl, aa.subrange(0, (np + i) as int));
-    assert(derivable(sig, eq(g, fld, fld, aa[q])));
-    assert(crate::ti_syntax::proj_fty(sig, m) == aa[q]) by {
+    let pf = crate::ti_syntax::proj_fty(sig, m);
+    assert(pf == crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i as nat, cl), aa.subrange(0, (np + i) as int))) by {
         reveal(crate::ti_syntax::proj_fty);
     }
+    assert(derivable(sig, eq(g, fld, fld, pf)));
     // the subject's type is an application of the same structure
     tchain_sym(sig, g, st, r);
     crate::dom_fund::ind_head_chain(sig, g, s, cl, ra, st);
@@ -616,18 +644,49 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
     crate::dom_lift::iapp_self(sig, st);
     crate::ti_hred::hred_stuck_self(sig, st, crate::dom_rel::ir(sig, st, s));
     assert(s2 == s);
-    crate::dom_adeq_proj::pfield_vsub(sig, s, i as nat, us2, spine_args(st) + crate::ti_syntax::projs(x, i as nat));
-    assert((spine_args(st) + crate::ti_syntax::projs(x, i as nat))[q] == spine_args(st)[q]);
-    assert(ty == spine_args(st)[q]);
-    assert(tchain(sig, g, aa[q], ty));
+    let pjx = crate::ti_syntax::projs(x, i as nat);
+    if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, sh.fields[0][i as int]) {
+        // the parameter the field names, chained
+        crate::dom_adeq_proj::pfield(sig, s, i as nat, cl);
+        let q = (np + i - 1 - sh.fields[0][i as int]->Var_0) as int;
+        crate::dom_adeq_proj::pfield_vsub(sig, s, i as nat, cl, aa.subrange(0, (np + i) as int));
+        assert(pf == aa[q]);
+        crate::dom_adeq_proj::pfield_vsub(sig, s, i as nat, us2, spine_args(st) + pjx);
+        assert((spine_args(st) + pjx)[q] == spine_args(st)[q]);
+        assert(ty == spine_args(st)[q]);
+        assert(tchain(sig, g, aa[q], ty));
+    } else {
+        // the parameters equal at their sorts by injectivity, the field
+        // equal at the two
+        let dr = get(sig, eq(g, x, x, r));
+        crate::ti_valid::d_ty(sig, dr);
+        reveal(crate::ti_sub::tconvd);
+        let lt = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, r, r, sort(l)));
+        crate::dom_ctor_bound::ctor_shape_ind(sig, s);
+        crate::beta_model::spine_recompose(st);
+        crate::dom_fund::ind_inj_args(sig, g, s, cl, us2, ra, spine_args(st), sort(lt));
+        crate::dom_rel::lpad_id(us2, lps.len());
+        crate::dom_proj_sound::struct_fields(sig, s);
+        let _f = sh.fields[0][i as int];
+        assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ra[q], spine_args(st)[q],
+            crate::dom_rel::ptype(sig, s, cl, q))) by {
+            assert(sh.pdoms[q] is Sort);
+            assert(crate::dom_rel::peq(sig, g, s, cl, q, ra[q], spine_args(st)[q]));
+        }
+        crate::dom_lift::eq_ctx_wf(sig, g, x, x, r);
+        let zs = aa.subrange(np as int, (np + i) as int);
+        assert(ra + zs =~= aa.subrange(0, (np + i) as int));
+        let lf = crate::dom_adeq_proj::sfield_conv(sig, g, s, i as nat, cl, us2, ra, spine_args(st), zs, pjx);
+        crate::ti_chain::tchain_one(sig, g, pf, ty);
+    }
     // ProjIota, then back to the projection's type
-    conv_chain(sig, g, fld, fld, aa[q], ty);
+    conv_chain(sig, g, fld, fld, pf, ty);
     conv_chain(sig, g, m, m, t, ty);
     let e0 = get(sig, eq(g, m, m, ty));
     let e1 = get(sig, eq(g, fld, fld, ty));
     let e2 = get(sig, eq(g, x, x, st));
     let e3 = get(sig, eq(g, ty, ty, sort(l)));
-    let e4 = get(sig, eq(g, fld, fld, aa[q]));
+    let e4 = get(sig, eq(g, fld, fld, pf));
     let ji = eq(g, m, fld, ty);
     // the constructor's parameters, typed at their sorts down its telescope
     let pj = crate::ti_syntax::proj_pjs(sig, g, m);
