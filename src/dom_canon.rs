@@ -569,6 +569,122 @@ pub proof fn sort_mem_typed(sig: Sig, l: LevelSpec, rho: Env, a: Cpt, x: Cpt)
     }
 }
 
+/// A value of a sort-zero parameter is typed at `Prop` (bottom is too).
+pub proof fn prop_param_typed(sig: Sig, l: LevelSpec, rho: Env, a: Cpt, x: Cpt)
+    requires
+        crate::ti_syntax::is_zero(l),
+        mem(sig, ExprSpec::Sort(l), rho, a),
+        typed(x, a),
+    ensures
+        typed(x, Cpt::Prop),
+{
+    crate::dom_adeq::mem_sort(sig, l, rho, a);
+    crate::dom_sound::typed_basic();
+    if a is Bot {
+        let n = cstage(x, a);
+        typed_up(x, a, n);
+        crate::dom_typing::ty_of_bot(n, x);
+    }
+}
+
+/// What is typed at a proposition is bottom (`prop_inhabitant_bot`, at
+/// any stages).
+pub proof fn typed_prop_bot(u: Cpt, a: Cpt)
+    requires
+        typed(u, a),
+        typed(a, Cpt::Prop),
+    ensures
+        u is Bot,
+{
+    let n = vstd::math::max(cstage(u, a) as int, cstage(a, Cpt::Prop) as int) as nat;
+    typed_up(u, a, n);
+    typed_up(a, Cpt::Prop, n);
+    crate::dom_typing::prop_inhabitant_bot(n, u, a);
+}
+
+/// An arrow into a proposition is a proposition.
+pub proof fn arrow_typed_prop(a: Cpt, b: Cpt)
+    requires
+        typed(a, Cpt::U),
+        typed(b, Cpt::Prop),
+    ensures
+        typed(crate::dom_code::arrow(a, b), Cpt::Prop),
+{
+    let m = vstd::math::max(cstage(a, Cpt::U) as int, cstage(b, Cpt::Prop) as int) as nat;
+    typed_up(a, Cpt::U, m);
+    typed_up(b, Cpt::Prop, m);
+    let ar = crate::dom_code::arrow(a, b);
+    let g = ar->Pi_1;
+    assert(g[0] == (Cpt::Bot, b));
+    typed_wf(a, Cpt::U);
+    typed_wf(b, Cpt::Prop);
+    crate::dom_code::arrow_wf(a, b);
+    assert(ht(Cpt::U) == 0 && ht(Cpt::Bot) == 0 && ht(Cpt::Prop) == 0);
+    assert(cstage(a, Cpt::U) == ht(a) + 1 && cstage(b, Cpt::Prop) == ht(b) + 1);
+    assert(hts(g, 0) == 0);
+    assert(hts(g, 1) == ht(b));
+    assert(ht(ar) == 1 + vstd::math::max(ht(a) as int, hts(g, 1) as int));
+    assert(ht(ar) == m);
+    assert(crate::dom_typing::has_type(m, Cpt::Bot, a)) by {
+        reveal_with_fuel(crate::dom_typing::has_type, 2);
+    }
+    assert(crate::dom_typing::has_type(m + 1, ar, Cpt::Prop)) by {
+        reveal_with_fuel(crate::dom_typing::has_type, 2);
+    }
+    typed_down(ar, Cpt::Prop, m + 1);
+}
+
+/// A PROOF FIELD'S CODE IS A PROPOSITION, its sort-zero parameters' codes
+/// being propositions.
+pub proof fn pprop_code(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pdoms: Seq<ExprSpec>, np: nat, k: nat,
+    pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        crate::rec_canon::pprop(pdoms, np, k, e),
+        crate::rec_canon::psimple(sig, outer, pdoms, np, k, e),
+        aw(pe),
+        pe.len() == np + k,
+        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] pe[q], Cpt::U),
+        forall|q: int| 0 <= q < np && pdoms[q] is Sort && crate::ti_syntax::is_zero(pdoms[q]->Sort_0)
+            ==> typed(#[trigger] pe[q], Cpt::Prop),
+    ensures
+        typed(ceval(sig, r, outer, ls, pe, e), Cpt::Prop),
+    decreases e,
+{
+    if crate::rec_canon::pvar_field(pdoms, np, k, e) {
+        let v = e->Var_0;
+        let q = (k + np - 1 - v) as int;
+        assert(pe[pe.len() - 1 - v] == pe[q]);
+        return;
+    }
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        assert(crate::rec_canon::parrow(sig, outer, pdoms, np, k, e));
+        let pe2 = pe.push(Cpt::Bot);
+        ps_ceval_typed(sig, r, outer, ls, pdoms, np, k, pe, *a);
+        aw_push(pe, Cpt::Bot);
+        assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe2[q], Cpt::U) by {
+            assert(pe2[q] == pe[q]);
+        }
+        assert forall|q: int| 0 <= q < np && pdoms[q] is Sort && crate::ti_syntax::is_zero(pdoms[q]->Sort_0)
+            implies typed(#[trigger] pe2[q], Cpt::Prop) by {
+            assert(pe2[q] == pe[q]);
+        }
+        pprop_code(sig, r, outer, ls, pdoms, np, k + 1, pe2, *b);
+        arrow_typed_prop(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe2, *b));
+        return;
+    }
+}
+
+/// A proof field is neither a direct occurrence nor a closed simple type.
+pub proof fn pprop_not_head(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, us: Seq<LevelSpec>, np: nat, ni: nat, k: nat, e: ExprSpec)
+    requires
+        crate::rec_canon::pprop(pdoms, np, k, e),
+    ensures
+        !crate::rec_canon::direct_occ(e, ind, us, np, ni, k),
+        !crate::rec_canon::simple_ty(sig, ind, e),
+{
+    crate::beta_model::spine_recompose(e);
+}
+
 /// Telescopes ending in non-binders agree only domain by domain.
 pub proof fn binds_eq(ds1: Seq<ExprSpec>, b1: ExprSpec, ds2: Seq<ExprSpec>, b2: ExprSpec)
     requires

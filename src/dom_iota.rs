@@ -3233,6 +3233,78 @@ proof fn cf_ps_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq
     typed_weak(xf[k], ak[k], cv);
 }
 
+/// AT A PROP STRUCTURE every field value is bottom: each field is a proof
+/// (`rec_canon::pprop`), typed at its code, which is a proposition.
+#[verifier::spinoff_prover]
+pub proof fn cf_prop_bot_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>)
+    requires
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_ty::ind_scope(sig, sh),
+        cf_fields_ok_s(sig, sh, p, cl, dps, pv, xf, ak),
+        !crate::dom_code::never_prop(sig, sh.ind),
+    ensures
+        crate::dom_code::smash(sig, sh.ind),
+        forall|k: int| 0 <= k < xf.len() ==> (#[trigger] xf[k]) is Bot,
+{
+    let (ind, np) = (sh.ind, sh.np);
+    let r = crate::dom_code::rk(sig, ind);
+    reveal(crate::dom_code::prop_ok);
+    assert(crate::dom_code::canon_shape(sig, ind) == sh);
+    assert(crate::dom_code::smash(sig, ind) && crate::rec_canon::shape_props(sh));
+    crate::dom_ctor_bound::ctor_shape(sig, ind, p);
+    assert(sh.pdoms.len() == np && pv.len() == np);
+    assert forall|i: int| 0 <= i < pv.len() implies #[trigger] wf(pv[i]) by {
+        assert(crate::dom_sound::dfit(sig, pdoms_at_s(sig, sh, cl)[i], crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]));
+        typed_wf(pv[i], dps[i]);
+    }
+    reveal(crate::rec_canon::shape_props);
+    crate::dom_sound::typed_basic();
+    // the parameters' values: types, propositions at sort zero
+    assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies typed(#[trigger] pv[q], Cpt::U)
+        && (crate::ti_syntax::is_zero(sh.pdoms[q]->Sort_0) ==> typed(pv[q], Cpt::Prop)) by {
+        let l0 = sh.pdoms[q]->Sort_0;
+        let pd = pdoms_at_s(sig, sh, cl)[q];
+        assert(crate::dom_sound::dfit(sig, pd, crate::dom_tele::exts(bot_env(), pv.subrange(0, q)), dps[q], pv[q]));
+        let l1 = crate::level_model::subst_level_spec(l0, sh.lps, cl);
+        assert(pd == ExprSpec::Sort(l1));
+        crate::dom_canon::sort_mem_typed(sig, l1, crate::dom_tele::exts(bot_env(), pv.subrange(0, q)), dps[q], pv[q]);
+        if crate::ti_syntax::is_zero(l0) {
+            assert(crate::rec_canon::stable_lvl(l0)) by { reveal(crate::rec_canon::stable_lvl); }
+            crate::dom_code::scode_sl(l0, sh.lps, cl);
+            crate::dom_canon::prop_param_typed(sig, l1, crate::dom_tele::exts(bot_env(), pv.subrange(0, q)), dps[q], pv[q]);
+        }
+    }
+    assert forall|k: int| 0 <= k < xf.len() implies (#[trigger] xf[k]) is Bot by {
+        let e = sh.fields[p][k];
+        let pe = crate::dom_code::fpe(pv, np, k as nat);
+        let cv = crate::dom_code::ceval(sig, r, ind, cl, pe, e);
+        assert(crate::rec_canon::pprop(sh.pdoms, np, k as nat, e));
+        crate::dom_canon::pprop_not_head(sig, ind, sh.pdoms, sh.us(), np, sh.ni, k as nat, e);
+        crate::dom_canon::canon_fields(sig, ind, p, k);
+        crate::dom_code::fpe_aw(pv, np, k as nat);
+        assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
+            assert(pe[q] == pv[q]);
+        }
+        assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort && crate::ti_syntax::is_zero(sh.pdoms[q]->Sort_0)
+            implies typed(#[trigger] pe[q], Cpt::Prop) by {
+            assert(pe[q] == pv[q]);
+        }
+        crate::dom_canon::pprop_code(sig, r, ind, cl, sh.pdoms, np, k as nat, pe, e);
+        crate::dom_canon::ps_ceval_typed(sig, r, ind, cl, sh.pdoms, np, k as nat, pe, e);
+        if ispvar_s(sig, sh, p, k) {
+            let q = pvq_s(sig, sh, p, k);
+            crate::dom_lift::cf_var(sig, ind, pv, p, k);
+            crate::dom_code::ceval_blind(sig, r, ind, Seq::empty(), cl, pe, e);
+            assert(cv == pv[q]);
+            typed_weak(xf[k], ak[k], cv);
+        } else {
+            cf_ps_typed_s(sig, sh, p, cl, dps, pv, xf, ak, k);
+            crate::dom_code::ceval_blind(sig, r, ind, Seq::empty(), cl, pe, e);
+        }
+        crate::dom_canon::typed_prop_bot(xf[k], cv);
+    }
+}
+
 #[verifier::spinoff_prover]
 pub proof fn cf_val_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>, xf: Seq<Cpt>, ak: Seq<Cpt>)
     requires
@@ -3257,6 +3329,9 @@ pub proof fn cf_val_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl
     typed_wf(dcan, Cpt::U);
     let sm = crate::dom_code::smash(sig, ind);
     let val = crate::dom_code::cval(ind, p as nat, sm, xf);
+    if !crate::dom_code::never_prop(sig, ind) {
+        cf_prop_bot_s(sig, sh, p, cl, dps, pv, xf, ak);
+    }
     if val is Bot {
         let n0 = cstage(dcan, Cpt::U);
         typed_up(dcan, Cpt::U, n0);
@@ -3318,7 +3393,6 @@ pub proof fn cf_val_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl
             typed_up(xf[k], cv, n);
         }
     }
-    crate::dom_code::prop_ok_never(sig, ind);
     crate::dom_code::never_prop_not(sig, ind, cl);
     assert(has_type(n, val, dcan));
     typed_down(val, dcan, n);

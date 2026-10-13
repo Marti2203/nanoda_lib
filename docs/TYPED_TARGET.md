@@ -2569,13 +2569,15 @@ shape, so congruent across signatures); `rec_model` carries the rest.
 Level-blind codes cover always-Prop formers (`former_blind`,
 `prop_former`, `always_prop_at`). **Staged** (`rec_canon::pstruct_live`,
 false): the call sites of `dom_code::prop_ok_never` are what is left --
-a Prop structure's constructor value typed at its code (bottom from
-`prop_inhabitant_bot` at the proof fields' codes, `dom_iota::cf_val_typed_s`),
 projections at a Prop structure (`kstruct::struct_proj_typed`), and the
 eta step: the typed judgment must fire `RecEta` at Prop structures (a
 stuck `And.rec m f h` denotes `f` at bottom fields) with subject reduction
 through `Irr` rather than `StructEta` (`ti_eta::eta_facts`,
-`eta_struct_eq`). nanoda, like Lean's kernel, does no structure eta at
+`eta_struct_eq`). Done: a Prop structure's constructor value is bottom at
+its code (`dom_iota::cf_prop_bot_s`): each proof field's code is a
+proposition (`dom_canon::pprop_code`, `arrow_typed_prop`; a sort-zero
+parameter's value, `prop_param_typed`), so the field values are bottom
+(`typed_prop_bot`) and the smashed constructor value too. nanoda, like Lean's kernel, does no structure eta at
 propositions (`tc.rs::iota_try_eta_struct`, `may_be_prop`).
 
 ### The conditional theorem (started 2026-10-12)
