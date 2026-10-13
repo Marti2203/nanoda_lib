@@ -2440,8 +2440,19 @@ Projection side done (493f213): a field not a parameter is equal at a
 sort at two parameter lists equal at their sorts and two equivalent
 instances (`dom_adeq_proj::sfield_conv`), which serves uniqueness of
 types, subject reduction, projection adequacy and struct eta; the model
-side dispatches on the field's kind. Open: the recursor's eta for
-smashed structures (`dom_rec_eta` reads parameter fields), then the flip.
+side dispatches on the field's kind. The recursor's eta for smashed
+structures reads a field's type as the field over the recursor's
+parameters (`dom_rec_eta::rft`, `rft_any`, `rft_conv`), converting
+between the recursor's and the constructor's parameters by
+`sfield_conv`; a closed field's constructor clause moves under head
+expansion (`dom_rel_hexp::expand_top`). **Flipped** (2026-10-13):
+`struct_of` admits fields over the parameters, its parameters all sorts
+unless every field is one. Probes: a structure with a field that is not
+a parameter, and the eta step's hypotheses at one, do not refute.
+Coverage by dependency closure is unchanged by this slice alone (235):
+the gates that bind first are elsewhere (an inductive that may be a
+proposition, function-typed fields, `outParam`). Next: function-typed
+fields ("then arrows").
 
 **Correction (2026-10-13): parameter-typed fields were refuted.**
 `rec_model` asked every non-recursive field `ranked` and `rec_model_h`

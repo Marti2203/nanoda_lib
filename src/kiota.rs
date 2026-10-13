@@ -328,11 +328,11 @@ proof fn sr_kiota_eta(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let fs = cargs.subrange(np as int, cargs.len() as int);
     let ci = crate::ti_eta::eta_st(sig, rid, lv, a0);
     let pj = crate::ti_syntax::projs(x, nf);
-    let ts = Seq::new(nf, |i: int| a0[crate::dom_rec_eta::fq(sig, rid, i)]);
+    let ts = Seq::new(nf, |i: int| crate::ti_eta::eta_fty(sig, rid, lv, a0, x, i));
     assert forall|i: int| 0 <= i < nf implies derivable(sig, eq(g, #[trigger] pj[i], fs[i], ts[i])) by {
         crate::ti_eta::eta_proj_typed(sig, g, rid, lv, a0, x, i);
-        let q = crate::dom_rec_eta::fq(sig, rid, i);
-        let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, a0[q], a0[q], sort(l)));
+        let tq = ts[i];
+        let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, tq, tq, sort(l)));
         let px = ExprSpec::Proj(i as usize, Box::new(x));
         assert(crate::ti_syntax::proj_fire(sig, px)) by {
             reveal(crate::ti_syntax::proj_fire);
@@ -340,8 +340,8 @@ proof fn sr_kiota_eta(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
         assert(crate::ti_syntax::proj_result(sig, px) == fs[i]) by {
             reveal(crate::ti_syntax::proj_result);
         }
-        crate::ti_chain::tchain_refl(sig, g, a0[q]);
-        crate::ti_sr::sr_proj_fire(sig, g, i as usize, x, a0[q], ci, l);
+        crate::ti_chain::tchain_refl(sig, g, tq);
+        crate::ti_sr::sr_proj_fire(sig, g, i as usize, x, tq, ci, l);
     }
     // under application congruence, to the rule's instance
     let heads = a0.subrange(0, pre);

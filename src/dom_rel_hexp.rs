@@ -245,4 +245,26 @@ pub proof fn expand_tm(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1:
     }
 }
 
+/// THE CONSTRUCTOR CLAUSE IS CLOSED UNDER HEAD EXPANSION: terms
+/// head-reducing to constructor-related terms, derivably, are.
+pub proof fn expand_top(sig: Sig, n: nat, g: Ctx, m1: ExprSpec, m2: ExprSpec, s1: ExprSpec, s2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt)
+    requires
+        con_top(sig, n, g, m1, m2, t, u, a),
+        a is Nd && a->Nd_0 is Ty,
+        !(u is Bot),
+        hred(sig, s1, m1),
+        hred(sig, s2, m2),
+        derivable(sig, eq(g, s1, m1, t)),
+        derivable(sig, eq(g, s2, m2, t)),
+    ensures
+        con_top(sig, n, g, s1, s2, t, u, a),
+{
+    con_tm_unfold(sig, n, g, m1, m2, t, u, a);
+    con_tm_unfold(sig, n, g, s1, s2, t, u, a);
+    cr_eq(sig, s1, m1);
+    cr_eq(sig, s2, m2);
+    crate::dom_adeq_syn::dtrans(sig, g, s1, m1, cr(sig, m1), t);
+    crate::dom_adeq_syn::dtrans(sig, g, s2, m2, cr(sig, m2), t);
+}
+
 } // verus!

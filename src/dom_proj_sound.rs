@@ -914,9 +914,11 @@ pub proof fn struct_fields(sig: Sig, s: u64)
 {
     reveal(crate::ti_syntax::struct_of);
     let sh = canon_shape(sig, s);
-    assert forall|k: int| 0 <= k < sh.fields[0].len() implies crate::rec_canon::psimple(sig, s, sh.pdoms, sh.np, k as nat,
-        #[trigger] sh.fields[0][k]) by {
-        crate::dom_psimple::pvar_psimple(sig, s, sh.pdoms, sh.np, k as nat, sh.fields[0][k]);
+    assert forall|k: int| 0 <= k < sh.fields[0].len() && !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, #[trigger] sh.fields[0][k])
+        implies forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort by {
+        assert forall|q: int| 0 <= q < sh.np implies (#[trigger] sh.pdoms[q]) is Sort by {
+            let _f = sh.fields[0][k];
+        }
     }
 }
 

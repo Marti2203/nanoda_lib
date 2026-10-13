@@ -140,41 +140,116 @@ pub open spec fn fq(sig: Sig, c: u64, i: int) -> int {
     (sh.np + i - 1 - sh.fields[0][i]->Var_0) as int
 }
 
-/// PROJECTIONS OF EQUAL MAJORS are equal (ProjCong), at the field's
-/// parameter.
+/// Field `i`'s type over the parameters `ps` at the instance `us` (any
+/// earlier fields: it mentions none, `rft_any`).
+pub open spec fn rft(sig: Sig, c: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>, i: int) -> ExprSpec {
+    crate::ti_spine::vsub(crate::iota_sr::cfu(sig, c, 0, i, us), ps + Seq::new(i as nat, |_k: int| ExprSpec::Closed))
+}
+
+/// A smashed structure's field over the parameters at any earlier
+/// fields; a parameter field's is the parameter.
+pub proof fn rft_any(sig: Sig, c: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>, ys: Seq<ExprSpec>, i: int)
+    requires
+        crate::dom_rec_end::rec_hyps(sig, c),
+        crate::dom_code::smash(sig, rshape(sig, c).ind),
+        0 <= i < rshape(sig, c).fields[0].len(),
+        ps.len() == rshape(sig, c).np,
+        ys.len() == i,
+    ensures
+        crate::ti_spine::vsub(crate::iota_sr::cfu(sig, c, 0, i, us), ps + ys) == rft(sig, c, us, ps, i),
+        crate::iota_sr::cfu(sig, c, 0, i, us) == crate::ti_proj::sfield(sig, rshape(sig, c).ind, i as nat, us),
+        crate::rec_canon::pvar_field(rshape(sig, c).pdoms, rshape(sig, c).np, i as nat, rshape(sig, c).fields[0][i]) ==>
+            0 <= fq(sig, c, i) < rshape(sig, c).np && rshape(sig, c).pdoms[fq(sig, c, i)] is Sort && rft(sig, c, us, ps, i) == ps[fq(sig, c, i)],
+{
+    let sh = rshape(sig, c);
+    crate::dom_rec_end::rec_canon_ok(sig, c);
+    crate::ti_syntax::struct_of_basic(sig, sh.ind);
+    assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
+    crate::dom_rec_ty::scope_ctor(sig, c, 0);
+    crate::dom_rec_ty::rec_lps_sub(sig, c);
+    assert(sh.lps == sig.consts[sh.ind].lps) by {
+        reveal(crate::dom_code::ind_side);
+        crate::dom_code::canon_side(sig, sh.ind);
+    }
+    let cs = Seq::new(i as nat, |_k: int| ExprSpec::Closed);
+    crate::ti_proj::sfield_vsub(sig, sh.ind, i as nat, us, ps, ys, cs);
+    if crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[0][i]) {
+        let f = sh.fields[0][i];
+        crate::ti_spine::vsub_var(f->Var_0, ps + cs);
+        assert((ps + cs)[(ps + cs).len() - 1 - f->Var_0] == ps[fq(sig, c, i)]);
+    }
+}
+
+/// A smashed structure's field at two lists of parameters equal at their
+/// sorts and two equivalent instances is equal at a sort: the parameter
+/// itself, or the field at the two (`dom_adeq_proj::sfield_conv`).
+#[verifier::spinoff_prover]
+pub proof fn rft_conv(sig: Sig, g: Ctx, c: u64, i: int, us: Seq<LevelSpec>, us2: Seq<LevelSpec>, ps: Seq<ExprSpec>, ps2: Seq<ExprSpec>) -> (l: LevelSpec)
+    requires
+        crate::dom_rec_end::rec_hyps(sig, c),
+        crate::dom_code::smash(sig, rshape(sig, c).ind),
+        0 <= i < rshape(sig, c).fields[0].len(),
+        us.len() == sig.consts[rshape(sig, c).ind].lps.len(),
+        crate::conv_cr::levs_eq(us, us2),
+        ps.len() == rshape(sig, c).np,
+        ps2.len() == rshape(sig, c).np,
+        forall|q: int| 0 <= q < rshape(sig, c).np && rshape(sig, c).pdoms[q] is Sort ==> derivable(sig, eq(g, #[trigger] ps[q], ps2[q],
+            crate::dom_rel::ptype(sig, rshape(sig, c).ind, us, q))),
+        derivable(sig, crate::ti_syntax::Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, rft(sig, c, us, ps, i), rft(sig, c, us2, ps2, i), sort(l))),
+{
+    let sh = rshape(sig, c);
+    let cs = Seq::new(i as nat, |_k: int| ExprSpec::Closed);
+    rft_any(sig, c, us, ps, cs, i);
+    rft_any(sig, c, us2, ps2, cs, i);
+    crate::dom_rec_end::rec_canon_ok(sig, c);
+    crate::ti_syntax::struct_of_basic(sig, sh.ind);
+    assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
+    if crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[0][i]) {
+        let q = fq(sig, c, i);
+        crate::iota_sr::ptype_at(sig, c, us, q);
+        crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[sh.ind].lps, us)
+    } else {
+        crate::dom_proj_sound::struct_fields(sig, sh.ind);
+        let _f = sh.fields[0][i];
+        assert(forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort);
+        crate::dom_adeq_proj::sfield_conv(sig, g, sh.ind, i as nat, us, us2, ps, ps2, cs, cs)
+    }
+}
+
+/// PROJECTIONS OF EQUAL MAJORS are equal (ProjCong), at the field's type
+/// over the recursor's parameters.
 pub proof fn proj_cong(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, th: ExprSpec, z: ExprSpec, z2: ExprSpec, i: int)
     requires
         side_ok(sig, g, c, ls, xs, th),
         derivable(sig, eq(g, z, z2, crate::ti_eta::eta_st(sig, c, ls, xs))),
         0 <= i < rshape(sig, c).fields[0].len(),
-    ensures
-        0 <= fq(sig, c, i) < rshape(sig, c).np,
-        crate::ti_syntax::proj_ty(sig, crate::ti_eta::eta_st(sig, c, ls, xs), i as nat, z) == Some(xs[fq(sig, c, i)]),
-        derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(z2)), xs[fq(sig, c, i)])),
+    ensures ({
+        let t = rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i);
+        &&& crate::ti_syntax::proj_ty(sig, crate::ti_eta::eta_st(sig, c, ls, xs), i as nat, z) == Some(t)
+        &&& derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(z2)), t))
+        &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+        &&& !crate::ti_syntax::proj_prop(sig, crate::ti_eta::eta_st(sig, c, ls, xs))
+    }),
 {
     assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
+    let sh = rshape(sig, c);
     let st = crate::ti_eta::eta_st(sig, c, ls, xs);
+    let xs0 = xs.subrange(0, sh.np as int);
+    let t = rft(sig, c, rinst(sig, c, ls), xs0, i);
     side_facts(sig, g, c, ls, xs, th);
     crate::dom_psimple::der_diag(sig, g, z, z2, st);
     crate::ti_eta::eta_proj_typed(sig, g, c, ls, xs, z, i);
-    let sh = rshape(sig, c);
-    assert(crate::rec_canon::pvar_field(sh.pdoms, sh.np, i as nat, sh.fields[0][i])) by {
-        reveal(crate::ti_syntax::struct_of);
-        crate::dom_rec_end::rec_canon_ok(sig, c);
-        crate::dom_rec_ty::scope_ctor(sig, c, 0);
-        assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
-    }
-    let q = fq(sig, c, i);
-    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, xs[q], xs[q], sort(l)));
-    if crate::ti_syntax::proj_prop(sig, st) {
-        assert(false);
-    }
+    rft_any(sig, c, rinst(sig, c, ls), xs0, crate::ti_syntax::projs(z, i as nat), i);
+    assert(crate::ti_eta::eta_fty(sig, c, ls, xs, z, i) == t);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)));
     let (pz, pz2) = (ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(z2)));
     let d0 = crate::ti_sub::get(sig, eq(g, z, z2, st));
-    let d1 = crate::ti_sub::get(sig, eq(g, xs[q], xs[q], sort(l)));
-    let j = eq(g, pz, pz2, xs[q]);
+    let d1 = crate::ti_sub::get(sig, eq(g, t, t, sort(l)));
+    let j = eq(g, pz, pz2, t);
     let ps = seq![d0, d1];
-    assert(crate::ti_syntax::prems(ps, seq![eq(g, z, z2, st), eq(g, xs[q], xs[q], sort(l))]));
+    assert(crate::ti_syntax::prems(ps, seq![eq(g, z, z2, st), eq(g, t, t, sort(l))]));
     assert(crate::ti_syntax::step_ok(sig, crate::ti_syntax::Rule::ProjCong(l), j, ps)) by {
         reveal(crate::ti_syntax::proj_cong_ok);
     }
@@ -195,19 +270,20 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         derivable(sig, eq(g, z, spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), pa + fa), crate::ti_eta::eta_st(sig, c, ls, xs))),
         hred(sig, z, spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), pa + fa)),
         0 <= i < rshape(sig, c).fields[0].len(),
-        derivable(sig, eq(g, fa[i], fa[i], xs[fq(sig, c, i)])),
-        derivable(sig, eq(g, fa[i], fa[i], pa[fq(sig, c, i)])),
+        derivable(sig, eq(g, fa[i], fa[i], rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i))),
+        derivable(sig, eq(g, fa[i], fa[i], rft(sig, c, cl, pa, i))),
         forall|q: int| 0 <= q < rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] pa[q], pa[q],
             crate::dom_rel::ptype(sig, rshape(sig, c).ind, cl, q))),
     ensures
         hred(sig, ExprSpec::Proj(i as usize, Box::new(z)), fa[i]),
-        derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), fa[i], xs[fq(sig, c, i)])),
+        derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), fa[i], rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i))),
 {
     assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let sh = rshape(sig, c);
     let st = crate::ti_eta::eta_st(sig, c, ls, xs);
     let cid = sh.ctors[0];
     let cz = spine_app(ExprSpec::Const(cid, cl), pa + fa);
+    let t = rft(sig, c, rinst(sig, c, ls), xs.subrange(0, sh.np as int), i);
     side_facts(sig, g, c, ls, xs, th);
     crate::dom_rec_ty::scope_ctor(sig, c, 0);
     crate::dom_rec_ty::scope_ctor_ind(sig, c);
@@ -215,7 +291,6 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     crate::dom_psimple::der_diag(sig, g, cz, z, st);
     proj_cong(sig, g, c, ls, xs, th, z, cz, i);
     proj_cong(sig, g, c, ls, xs, th, cz, cz, i);
-    let q = fq(sig, c, i);
     let (pz, pc) = (ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(cz)));
     // the projection of the constructor application fires
     crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, cl), pa + fa);
@@ -227,24 +302,22 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         reveal(crate::ti_syntax::proj_result);
         assert((pa + fa)[sh.np + i] == fa[i]);
     }
-    crate::ti_eta::eta_proj_typed(sig, g, c, ls, xs, cz, i);
-    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, xs[q], xs[q], sort(l)));
-    // ProjIota, the field's declared type the application's own parameter
-    crate::dom_adeq_proj::pfield(sig, sh.ind, i as nat, cl);
-    crate::dom_adeq_proj::pfield_vsub(sig, sh.ind, i as nat, cl, (pa + fa).subrange(0, sh.np + i));
-    assert((pa + fa).subrange(0, sh.np + i)[q] == pa[q]);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)));
+    // ProjIota, the field's declared type over the application's own parameters
     assert(crate::dom_code::canon_shape(sig, sh.ind) == sh) by {
         crate::dom_rec_end::rec_canon_ok(sig, c);
     }
-    assert(crate::ti_syntax::proj_fty(sig, pc) == pa[q]) by {
+    assert((pa + fa).subrange(0, sh.np + i) =~= pa + fa.subrange(0, i));
+    rft_any(sig, c, cl, pa, fa.subrange(0, i), i);
+    assert(crate::ti_syntax::proj_fty(sig, pc) == rft(sig, c, cl, pa, i)) by {
         reveal(crate::ti_syntax::proj_fty);
     }
-    let e0 = crate::ti_sub::get(sig, eq(g, pc, pc, xs[q]));
-    let e1 = crate::ti_sub::get(sig, eq(g, fa[i], fa[i], xs[q]));
+    let e0 = crate::ti_sub::get(sig, eq(g, pc, pc, t));
+    let e1 = crate::ti_sub::get(sig, eq(g, fa[i], fa[i], t));
     let e2 = crate::ti_sub::get(sig, eq(g, cz, cz, st));
-    let e3 = crate::ti_sub::get(sig, eq(g, xs[q], xs[q], sort(l)));
-    let e4 = crate::ti_sub::get(sig, eq(g, fa[i], fa[i], pa[q]));
-    let ji = eq(g, pc, fa[i], xs[q]);
+    let e3 = crate::ti_sub::get(sig, eq(g, t, t, sort(l)));
+    let e4 = crate::ti_sub::get(sig, eq(g, fa[i], fa[i], rft(sig, c, cl, pa, i)));
+    let ji = eq(g, pc, fa[i], t);
     // the constructor's parameters at their sorts
     let pj = crate::ti_syntax::proj_pjs(sig, g, pc);
     assert forall|k: int| 0 <= k < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
@@ -257,7 +330,7 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     }
     let qs = Seq::new(pj.len(), |k: int| crate::ti_sub::pick(sig, pj[k]));
     let pi = seq![e0, e1, e2, e3, e4] + qs;
-    let js = seq![eq(g, pc, pc, xs[q]), eq(g, fa[i], fa[i], xs[q]), eq(g, cz, cz, st), eq(g, xs[q], xs[q], sort(l)),
+    let js = seq![eq(g, pc, pc, t), eq(g, fa[i], fa[i], t), eq(g, cz, cz, st), eq(g, t, t, sort(l)),
         eq(g, fa[i], fa[i], crate::ti_syntax::proj_fty(sig, pc))] + pj;
     assert forall|k: int| 0 <= k < pi.len() implies crate::ti_syntax::concl(#[trigger] pi[k]) == js[k] by {
         if k >= 5 {
@@ -271,7 +344,7 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     }
     crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::ProjIota(l), ji, pi);
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::ProjIota(l), ji, pi));
-    crate::dom_adeq_syn::dtrans(sig, g, pz, pc, fa[i], xs[q]);
+    crate::dom_adeq_syn::dtrans(sig, g, pz, pc, fa[i], t);
     // and reduces there
     let k = choose|k: nat| #[trigger] crate::ti_hred::hiter(sig, z, k) == cz;
     crate::dom_con_rel::stuck_spine(sig, cid, cl, pa + fa);
@@ -281,8 +354,9 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
 }
 
 /// THE CONSTRUCTOR AT FIELD TERMS relates to a term where the constructor
-/// at the fields they head-reduce to does: same levels and parameters, and
-/// each field term derivably its field at the field's parameter.
+/// at the fields they head-reduce to does: the recursor's instance and
+/// parameters, and each field term derivably its field at the field's
+/// type.
 #[verifier::spinoff_prover]
 pub proof fn con_xfer(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, th: ExprSpec, n: nat,
     cl: Seq<LevelSpec>, fa: Seq<ExprSpec>, ft: Seq<ExprSpec>, z: ExprSpec, u: Cpt, a: Cpt, pv: Seq<Cpt>)
@@ -290,14 +364,15 @@ pub proof fn con_xfer(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         side_ok(sig, g, c, ls, xs, th),
         fa.len() == rshape(sig, c).fields[0].len(),
         ft.len() == rshape(sig, c).fields[0].len(),
-        cl.len() == sig.consts[rshape(sig, c).ind].lps.len(),
+        cl == rinst(sig, c, ls),
         crate::dom_rel::con_top(sig, n, g,
             spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), xs.subrange(0, rshape(sig, c).np as int) + fa), z,
             crate::ti_eta::eta_st(sig, c, ls, xs), u, a),
         derivable(sig, eq(g, spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), xs.subrange(0, rshape(sig, c).np as int) + ft),
             spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), xs.subrange(0, rshape(sig, c).np as int) + ft),
             crate::ti_eta::eta_st(sig, c, ls, xs))),
-        forall|i: int| 0 <= i < ft.len() ==> hred(sig, #[trigger] ft[i], fa[i]) && derivable(sig, eq(g, ft[i], fa[i], xs[fq(sig, c, i)])),
+        forall|i: int| 0 <= i < ft.len() ==> hred(sig, #[trigger] ft[i], fa[i])
+            && derivable(sig, eq(g, ft[i], fa[i], rft(sig, c, cl, xs.subrange(0, rshape(sig, c).np as int), i))),
         a is Nd && a->Nd_0 is Ty && a->Nd_0->Ty_0 == rshape(sig, c).ind && wf(a),
         crate::dom_lift::tbl_canon(sig, rshape(sig, c).ind, pv, a),
         pv.len() == rshape(sig, c).np,
@@ -348,36 +423,46 @@ pub proof fn con_xfer(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, rinst(sig, c, ls)), ps);
     crate::dom_lift::iapp_self(sig, ci);
     crate::dom_typing::tbl_wf(a);
+    side_facts(sig, g, c, ls, xs, th);
+    crate::dom_proj_sound::struct_fields(sig, ind);
+    assert(p == 0);
     assert forall|i: int| 0 <= i < fs.len() implies #[trigger] crate::dom_rel::con_field(sig, n, g, y, zx, ci, fs, es, np, p, a, i) by {
         assert(crate::dom_rel::con_field(sig, n, g, y0, zx, ci, fs, es, np, p, a, i));
-        let q = fq(sig, c, i);
-        crate::dom_adeq_proj::pfield(sig, ind, i as nat, cl);
-        crate::dom_adeq_proj::arg_ty_field(sig, ind, i as nat, y0);
-        crate::dom_adeq_proj::arg_ty_field(sig, ind, i as nat, y);
+        let t = rft(sig, c, cl, ps, i);
+        crate::dom_adeq_proj::arg_ty_fty(sig, ind, i as nat, y0);
+        crate::dom_adeq_proj::arg_ty_fty(sig, ind, i as nat, y);
         assert(spine_args(y)[np + i] == ft[i] && spine_args(y0)[np + i] == fa[i]);
-        assert(crate::dom_rel::arg_ty(sig, y, (np + i) as nat) == xs[q]);
-        assert(crate::dom_rel::arg_ty(sig, y0, (np + i) as nat) == xs[q]);
+        assert((ps + fa).subrange(0, np + i) =~= ps + fa.subrange(0, i));
+        assert((ps + ft).subrange(0, np + i) =~= ps + ft.subrange(0, i));
+        rft_any(sig, c, cl, ps, fa.subrange(0, i), i);
+        rft_any(sig, c, cl, ps, ft.subrange(0, i), i);
+        assert(crate::dom_rel::arg_ty(sig, y, (np + i) as nat) == t);
+        assert(crate::dom_rel::arg_ty(sig, y0, (np + i) as nat) == t);
         let zi = spine_args(zx)[np + i];
-        assert(hred(sig, ft[i], fa[i]) && derivable(sig, eq(g, ft[i], fa[i], xs[q])));
-        crate::dom_adeq_syn::dtrans(sig, g, ft[i], fa[i], zi, xs[q]);
+        assert(hred(sig, ft[i], fa[i]) && derivable(sig, eq(g, ft[i], fa[i], t)));
+        crate::dom_adeq_syn::dtrans(sig, g, ft[i], fa[i], zi, t);
         if !(fs[i] is Bot) {
-            // a parameter-typed field's entry is its parameter's code
+            // a field over the parameters: its entry is no recursive mark,
+            // and the relation's field type is the field's at the parameters
             crate::dom_canon::canon_fields(sig, ind, p, i);
             assert(crate::dom_typing::tbl(a->Nd_1)[p]->Nd_1[i] == es[i]);
             assert(crate::dom_lift::entry_canon(sig, ind, pv, p, i, es[i]));
-            crate::dom_lift::fq_var(sig, ind, ci, pv, p, i);
-            assert(crate::dom_lift::pq(sig, ind, ci, q) == xs[q]);
+            crate::ti_valid::psimple_not_direct(sig, ind, sh.pdoms, sh.us(), np, sh.ni, i as nat, sh.fields[0][i]);
             assert(es[i] != crate::dom_typing::rmark());
             let fqt = crate::dom_rel::fq(sig, ind, ci, p, i);
-            assert(fqt == xs[q]);
-            crate::dom_psimple::der_diag(sig, g, fa[i], zi, xs[q]);
+            crate::dom_rel::lpad_id(cl, sig.consts[ind].lps.len());
+            assert(crate::dom_rel::ir(sig, ci, ind) == ci);
+            assert(spine_args(ci).subrange(0, np as int) =~= ps);
+            assert(fqt == t);
+            crate::dom_psimple::der_diag(sig, g, fa[i], zi, t);
             crate::ti_hred::hred_refl(sig, zi);
             crate::dom_rel_hexp::expand_tm(sig, n, g, fa[i], zi, ft[i], zi, fqt, fs[i], crate::dom_typing::ecode(es[i]));
         }
     }
 }
 
-/// A TYPE PARAMETER'S TWO SIDES convert as types.
+/// A TYPE PARAMETER'S TWO SIDES are equal at its sort, and convert as
+/// types.
 pub proof fn par_conv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSpec>, LevelSpec), ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>,
     xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, a: Cpt, ds: Seq<Cpt>, fs: Seq<Cpt>, u: Cpt, q: int)
     requires
@@ -389,6 +474,7 @@ pub proof fn par_conv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelS
     ensures
         crate::ti_chain::tchain(sig, g, xs[q], xs2[q]),
         crate::ti_chain::tchain(sig, g, xs2[q], xs[q]),
+        derivable(sig, eq(g, xs[q], xs2[q], crate::dom_rel::ptype(sig, rshape(sig, c).ind, rinst(sig, c, ls), q))),
 {
     let (t0, t02) = (crate::ti_syntax::dty_at(sig, c, ls), crate::ti_syntax::dty_at(sig, c, ls2));
     assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, q));
@@ -403,7 +489,9 @@ pub proof fn par_conv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelS
     crate::ti_chain::tchain_sym(sig, g, xs[q], xs2[q]);
 }
 
-/// A field's type, at a smashed structure: its parameter.
+/// A field's type, at a smashed structure: the field over the recursor's
+/// parameters; a parameter field's is the parameter, and the end reads it
+/// as one.
 pub proof fn fty_par(sig: Sig, rc: crate::dom_rec_end::Rc, i: int)
     requires
         crate::dom_rec_end::rec_hyps(sig, rc.c),
@@ -411,32 +499,40 @@ pub proof fn fty_par(sig: Sig, rc: crate::dom_rec_end::Rc, i: int)
         rc.j == 0,
         0 <= i < rc.nf(sig),
         rc.xs.len() > rshape(sig, rc.c).np,
+        rc.xs2.len() > rshape(sig, rc.c).np,
         rc.args.len() == rc.nf(sig),
+        rc.args2.len() == rc.nf(sig),
     ensures
-        crate::dom_rec_end::pvar_at(sig, rc.c, 0, i),
-        !crate::dom_rec_end::pfa_at(sig, rc.c, 0, i),
-        crate::dom_rec_end::pidx(sig, rc.c, 0, i) == fq(sig, rc.c, i),
-        0 <= fq(sig, rc.c, i) < rshape(sig, rc.c).np,
-        rshape(sig, rc.c).pdoms[fq(sig, rc.c, i)] is Sort,
-        rc.fty(sig, i) == rc.xs[fq(sig, rc.c, i)],
+        rc.fty(sig, i) == rft(sig, rc.c, rc.ri(sig), rc.xs.subrange(0, rshape(sig, rc.c).np as int), i),
+        rc.fty2(sig, i) == rft(sig, rc.c, rc.ri2(sig), rc.xs2.subrange(0, rshape(sig, rc.c).np as int), i),
+        !crate::dom_iota::isrec(sig, rc.c, 0, i),
+        crate::rec_canon::psimple(sig, rshape(sig, rc.c).ind, rshape(sig, rc.c).pdoms, rshape(sig, rc.c).np, i as nat,
+            rshape(sig, rc.c).fields[0][i]),
+        crate::dom_rec_end::pvar_at(sig, rc.c, 0, i) ==> {
+            &&& crate::dom_rec_end::pidx(sig, rc.c, 0, i) == fq(sig, rc.c, i)
+            &&& 0 <= fq(sig, rc.c, i) < rshape(sig, rc.c).np
+            &&& rshape(sig, rc.c).pdoms[fq(sig, rc.c, i)] is Sort
+            &&& rc.fty(sig, i) == rc.xs[fq(sig, rc.c, i)]
+        },
 {
     let sh = rshape(sig, rc.c);
     let np = sh.np;
-    reveal(crate::ti_syntax::struct_of);
     crate::dom_rec_end::rec_canon_ok(sig, rc.c);
-    crate::dom_rec_ty::scope_ctor(sig, rc.c, 0);
     assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
-    let f = sh.fields[0][i];
-    assert(crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f));
-    let ri = rc.ri(sig);
-    let ps = rc.xs.subrange(0, np as int);
-    assert(crate::iota_sr::cfu(sig, rc.c, 0, i, ri) == f);
-    crate::ti_spine::vsub_var(f->Var_0, ps + rc.args.subrange(0, i));
-    assert((ps + rc.args.subrange(0, i))[np + i - 1 - f->Var_0] == rc.xs[fq(sig, rc.c, i)]);
+    crate::dom_proj_sound::struct_fields(sig, sh.ind);
+    assert(crate::rec_canon::psimple(sig, sh.ind, sh.pdoms, np, i as nat, sh.fields[0][i]));
+    crate::ti_valid::psimple_not_direct(sig, sh.ind, sh.pdoms, sh.us(), np, sh.ni, i as nat, sh.fields[0][i]);
+    let (ps, ps2) = (rc.xs.subrange(0, np as int), rc.xs2.subrange(0, np as int));
+    rft_any(sig, rc.c, rc.ri(sig), ps, rc.args.subrange(0, i), i);
+    rft_any(sig, rc.c, rc.ri2(sig), ps2, rc.args2.subrange(0, i), i);
+    assert(rc.np(sig) == np);
+    if crate::dom_rec_end::pvar_at(sig, rc.c, 0, i) {
+        assert(ps[fq(sig, rc.c, i)] == rc.xs[fq(sig, rc.c, i)]);
+    }
 }
 
 /// A FIELD PAIR moves from the reducts' arguments to field terms that
-/// head-reduce to them, derivably, at the field's parameter.
+/// head-reduce to them, derivably, at the field's type.
 #[verifier::spinoff_prover]
 pub proof fn field_xfer(sig: Sig, rc0: crate::dom_rec_end::Rc, rc: crate::dom_rec_end::Rc, i: int)
     requires
@@ -447,8 +543,8 @@ pub proof fn field_xfer(sig: Sig, rc0: crate::dom_rec_end::Rc, rc: crate::dom_re
         rc.args.len() == rc0.nf(sig) && rc.args2.len() == rc0.nf(sig),
         0 <= i < rc0.nf(sig),
         hred(sig, rc.args[i], rc0.args[i]) && hred(sig, rc.args2[i], rc0.args2[i]),
-        derivable(sig, eq(rc.g, rc.args[i], rc0.args[i], rc.xs[fq(sig, rc.c, i)])),
-        derivable(sig, eq(rc.g, rc.args2[i], rc0.args2[i], rc.xs[fq(sig, rc.c, i)])),
+        derivable(sig, eq(rc.g, rc.args[i], rc0.args[i], rc.fty(sig, i))),
+        derivable(sig, eq(rc.g, rc.args2[i], rc0.args2[i], rc.fty(sig, i))),
     ensures
         crate::dom_rec_end::rc_field(sig, rc, i),
 {
@@ -456,8 +552,8 @@ pub proof fn field_xfer(sig: Sig, rc0: crate::dom_rec_end::Rc, rc: crate::dom_re
     crate::dom_rec_end::rc_smash_norec(sig, rc0);
     fty_par(sig, rc0, i);
     fty_par(sig, rc, i);
-    let q = fq(sig, rc.c, i);
-    let tq = rc.xs[q];
+    let tq = rc.fty(sig, i);
+    assert(rc0.fty(sig, i) == tq);
     assert(crate::dom_rec_end::rc_field(sig, rc0, i));
     let (f, f2, a, a2) = (rc.args[i], rc.args2[i], rc0.args[i], rc0.args2[i]);
     assert(derivable(sig, eq(rc.g, a, a2, tq)));
@@ -467,8 +563,13 @@ pub proof fn field_xfer(sig: Sig, rc0: crate::dom_rec_end::Rc, rc: crate::dom_re
     assert(rc.fsm(sig) == rc0.fsm(sig));
     assert(rc.fcode(sig, i) == rc0.fcode(sig, i));
     assert(rc.pv(sig) == rc0.pv(sig));
-    if !(rc.fsm(sig)[i] is Bot) {
-        crate::dom_rel_hexp::expand_tm(sig, rc.nn, rc.g, a, a2, f, f2, tq, rc.fsm(sig)[i], rc.fcode(sig, i));
+    let (w, e) = (rc.fsm(sig)[i], rc.fcode(sig, i));
+    if !(w is Bot) {
+        if crate::dom_rec_end::pvar_at(sig, rc.c, rc.j, i) || crate::dom_rec_end::pfa_at(sig, rc.c, rc.j, i) {
+            crate::dom_rel_hexp::expand_tm(sig, rc.nn, rc.g, a, a2, f, f2, tq, w, e);
+        } else {
+            crate::dom_rel_hexp::expand_top(sig, rc.nn, rc.g, a, a2, f, f2, tq, w, e);
+        }
     }
 }
 
@@ -485,18 +586,19 @@ pub proof fn fterm_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
         cl.len() == sig.consts[rshape(sig, c).ind].lps.len(),
         derivable(sig, eq(g, xs.last(), spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), pa + fa), crate::ti_eta::eta_st(sig, c, ls, xs))),
         hred(sig, xs.last(), spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), pa + fa)),
-        forall|i: int| 0 <= i < fa.len() ==> derivable(sig, eq(g, #[trigger] fa[i], fa[i], xs[fq(sig, c, i)]))
-            && derivable(sig, eq(g, fa[i], fa[i], pa[fq(sig, c, i)])),
+        forall|i: int| 0 <= i < fa.len() ==> derivable(sig, eq(g, #[trigger] fa[i], fa[i],
+            rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i)))
+            && derivable(sig, eq(g, fa[i], fa[i], rft(sig, c, cl, pa, i))),
         forall|q: int| 0 <= q < rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] pa[q], pa[q],
             crate::dom_rel::ptype(sig, rshape(sig, c).ind, cl, q))),
     ensures
         forall|i: int| 0 <= i < fa.len() ==> hred(sig, #[trigger] s_args(sig, c, ls, xs)[i], fa[i])
-            && derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], fa[i], xs[fq(sig, c, i)])),
+            && derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], fa[i], rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i))),
 {
     side_red(sig, g, c, ls, xs, th);
     assert forall|i: int| 0 <= i < fa.len() implies hred(sig, #[trigger] s_args(sig, c, ls, xs)[i], fa[i])
-        && derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], fa[i], xs[fq(sig, c, i)])) by {
-        assert(derivable(sig, eq(g, fa[i], fa[i], xs[fq(sig, c, i)])));
+        && derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], fa[i], rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i))) by {
+        assert(derivable(sig, eq(g, fa[i], fa[i], rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i))));
         proj_red(sig, g, c, ls, xs, th, xs.last(), cl, pa, fa, i);
     }
 }
@@ -608,43 +710,72 @@ pub open spec fn con_pre(sig: Sig, rc0: crate::dom_rec_end::Rc) -> bool {
     &&& crate::dom_code::smash(sig, rshape(sig, rc0.c).ind)
 }
 
-/// THE REDUCTS' FIELDS ARE TYPED at each field's parameter, on each side
-/// at both the recursor's parameters and the constructor's own (from the
+/// THE REDUCTS' FIELDS ARE TYPED at each field's type, on each side over
+/// both the recursor's parameters and the constructor's own (from the
 /// reducts' context's field pairs and parameter equations).
 #[verifier::spinoff_prover]
 pub proof fn fa_tys(sig: Sig, rc0: crate::dom_rec_end::Rc)
     requires
         crate::dom_rec_end::rc_core(sig, rc0),
         crate::dom_code::smash(sig, rshape(sig, rc0.c).ind),
-    ensures
-        forall|i: int| 0 <= i < rc0.args.len() ==> derivable(sig, eq(rc0.g, #[trigger] rc0.args[i], rc0.args[i], rc0.xs[fq(sig, rc0.c, i)]))
-            && derivable(sig, eq(rc0.g, rc0.args[i], rc0.args[i], rc0.pargs[fq(sig, rc0.c, i)])),
-        forall|i: int| 0 <= i < rc0.args2.len() ==> derivable(sig, eq(rc0.g, #[trigger] rc0.args2[i], rc0.args2[i], rc0.xs2[fq(sig, rc0.c, i)]))
-            && derivable(sig, eq(rc0.g, rc0.args2[i], rc0.args2[i], rc0.pargs2[fq(sig, rc0.c, i)])),
+    ensures ({
+        let np = rshape(sig, rc0.c).np as int;
+        let (xs0, xs20) = (rc0.xs.subrange(0, np), rc0.xs2.subrange(0, np));
+        &&& forall|i: int| 0 <= i < rc0.args.len() ==> derivable(sig, eq(rc0.g, #[trigger] rc0.args[i], rc0.args[i],
+                rft(sig, rc0.c, rc0.ri(sig), xs0, i)))
+            && derivable(sig, eq(rc0.g, rc0.args[i], rc0.args[i], rft(sig, rc0.c, rc0.cl, rc0.pargs, i)))
+        &&& forall|i: int| 0 <= i < rc0.args2.len() ==> derivable(sig, eq(rc0.g, #[trigger] rc0.args2[i], rc0.args2[i],
+                rft(sig, rc0.c, rc0.ri2(sig), xs20, i)))
+            && derivable(sig, eq(rc0.g, rc0.args2[i], rc0.args2[i], rft(sig, rc0.c, rc0.cl2, rc0.pargs2, i)))
+    }),
 {
     let sh = rshape(sig, rc0.c);
     let g = rc0.g;
+    let c = rc0.c;
+    let np = sh.np as int;
+    let (xs0, xs20) = (rc0.xs.subrange(0, np), rc0.xs2.subrange(0, np));
     crate::dom_rec_end::rc_smash_norec(sig, rc0);
     let (ri, ri2) = (rc0.ri(sig), rc0.ri2(sig));
-    assert forall|i: int| 0 <= i < rc0.args.len() implies derivable(sig, eq(g, #[trigger] rc0.args[i], rc0.args[i], rc0.xs[fq(sig, rc0.c, i)]))
-        && derivable(sig, eq(g, rc0.args[i], rc0.args[i], rc0.pargs[fq(sig, rc0.c, i)])) by {
-        fty_par(sig, rc0, i);
-        let q = fq(sig, rc0.c, i);
-        assert(crate::dom_rec_end::rc_field(sig, rc0, i));
-        crate::dom_psimple::der_diag(sig, g, rc0.args[i], rc0.args2[i], rc0.xs[q]);
-        par_ty_conv(sig, g, rc0.c, ri, q, rc0.xs[q], rc0.pargs[q]);
-        crate::ti_chain::conv_chain(sig, g, rc0.args[i], rc0.args[i], rc0.xs[q], rc0.pargs[q]);
+    crate::dom_lift::eq_ctx_wf(sig, g, rc0.xs[rc0.pre(sig)], rc0.cx(sig), rc0.ind(sig));
+    // the parameters: the recursor's against the constructors', and the two
+    // recursors'
+    assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies derivable(sig, eq(g, #[trigger] xs0[q], rc0.pargs[q],
+        crate::dom_rel::ptype(sig, sh.ind, ri, q))) by {
+        assert(xs0[q] == rc0.xs[q]);
     }
-    assert forall|i: int| 0 <= i < rc0.args2.len() implies derivable(sig, eq(g, #[trigger] rc0.args2[i], rc0.args2[i], rc0.xs2[fq(sig, rc0.c, i)]))
-        && derivable(sig, eq(g, rc0.args2[i], rc0.args2[i], rc0.pargs2[fq(sig, rc0.c, i)])) by {
+    assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies derivable(sig, eq(g, #[trigger] xs20[q], rc0.pargs2[q],
+        crate::dom_rel::ptype(sig, sh.ind, ri2, q))) by {
+        assert(xs20[q] == rc0.xs2[q]);
+    }
+    assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies derivable(sig, eq(g, #[trigger] xs0[q], xs20[q],
+        crate::dom_rel::ptype(sig, sh.ind, ri, q))) by {
+        assert(xs0[q] == rc0.xs[q] && xs20[q] == rc0.xs2[q]);
+        par_conv(sig, rc0.nn, rc0.n, g, c, rc0.sm, rc0.ls, rc0.ls2, rc0.xs, rc0.xs2, rc0.a, rc0.ds, rc0.fs, rc0.u, q);
+    }
+    reveal(crate::ti_sub::tconvd);
+    assert forall|i: int| 0 <= i < rc0.args.len() implies derivable(sig, eq(g, #[trigger] rc0.args[i], rc0.args[i], rft(sig, c, ri, xs0, i)))
+        && derivable(sig, eq(g, rc0.args[i], rc0.args[i], rft(sig, c, rc0.cl, rc0.pargs, i))) by {
         fty_par(sig, rc0, i);
-        let q = fq(sig, rc0.c, i);
+        let t = rft(sig, c, ri, xs0, i);
         assert(crate::dom_rec_end::rc_field(sig, rc0, i));
-        crate::dom_psimple::der_diag(sig, g, rc0.args[i], rc0.args2[i], rc0.xs[q]);
-        par_conv(sig, rc0.nn, rc0.n, g, rc0.c, rc0.sm, rc0.ls, rc0.ls2, rc0.xs, rc0.xs2, rc0.a, rc0.ds, rc0.fs, rc0.u, q);
-        crate::ti_chain::conv_chain(sig, g, rc0.args2[i], rc0.args2[i], rc0.xs[q], rc0.xs2[q]);
-        par_ty_conv(sig, g, rc0.c, ri2, q, rc0.xs2[q], rc0.pargs2[q]);
-        crate::ti_chain::conv_chain(sig, g, rc0.args2[i], rc0.args2[i], rc0.xs2[q], rc0.pargs2[q]);
+        crate::dom_psimple::der_diag(sig, g, rc0.args[i], rc0.args2[i], t);
+        let l = rft_conv(sig, g, c, i, ri, rc0.cl, xs0, rc0.pargs);
+        crate::ti_chain::tchain_one(sig, g, t, rft(sig, c, rc0.cl, rc0.pargs, i));
+        crate::ti_chain::conv_chain(sig, g, rc0.args[i], rc0.args[i], t, rft(sig, c, rc0.cl, rc0.pargs, i));
+    }
+    assert forall|i: int| 0 <= i < rc0.args2.len() implies derivable(sig, eq(g, #[trigger] rc0.args2[i], rc0.args2[i], rft(sig, c, ri2, xs20, i)))
+        && derivable(sig, eq(g, rc0.args2[i], rc0.args2[i], rft(sig, c, rc0.cl2, rc0.pargs2, i))) by {
+        fty_par(sig, rc0, i);
+        let t = rft(sig, c, ri, xs0, i);
+        let t2 = rft(sig, c, ri2, xs20, i);
+        assert(crate::dom_rec_end::rc_field(sig, rc0, i));
+        crate::dom_psimple::der_diag(sig, g, rc0.args[i], rc0.args2[i], t);
+        rft_conv(sig, g, c, i, ri, ri2, xs0, xs20);
+        crate::ti_chain::tchain_one(sig, g, t, t2);
+        crate::ti_chain::conv_chain(sig, g, rc0.args2[i], rc0.args2[i], t, t2);
+        rft_conv(sig, g, c, i, ri2, rc0.cl2, xs20, rc0.pargs2);
+        crate::ti_chain::tchain_one(sig, g, t2, rft(sig, c, rc0.cl2, rc0.pargs2, i));
+        crate::ti_chain::conv_chain(sig, g, rc0.args2[i], rc0.args2[i], t2, rft(sig, c, rc0.cl2, rc0.pargs2, i));
     }
 }
 
@@ -713,7 +844,8 @@ pub proof fn con_fields(sig: Sig, rc0: crate::dom_rec_end::Rc)
         ctx_of(sig, rc0).args.len() == rc0.nf(sig) && ctx_of(sig, rc0).args2.len() == rc0.nf(sig),
         forall|i: int| 0 <= i < rc0.nf(sig) ==> #[trigger] crate::dom_rec_end::rc_field(sig, ctx_of(sig, rc0), i),
         forall|i: int| 0 <= i < rc0.nf(sig) ==> hred(sig, #[trigger] ctx_of(sig, rc0).args[i], rc0.args[i])
-            && derivable(sig, eq(rc0.g, ctx_of(sig, rc0).args[i], rc0.args[i], rc0.xs[fq(sig, rc0.c, i)])),
+            && derivable(sig, eq(rc0.g, ctx_of(sig, rc0).args[i], rc0.args[i],
+                rft(sig, rc0.c, rc0.ri(sig), rc0.xs.subrange(0, rshape(sig, rc0.c).np as int), i))),
 {
     reveal(crate::dom_rec_end::rc_red);
     let (g, c, ls, ls2, xs, xs2) = (rc0.g, rc0.c, rc0.ls, rc0.ls2, rc0.xs, rc0.xs2);
@@ -726,13 +858,28 @@ pub proof fn con_fields(sig: Sig, rc0: crate::dom_rec_end::Rc)
     pargs_at_cl(sig, rc0);
     fterm_red(sig, g, c, ls, xs, t, rc0.cl, rc0.pargs, rc0.args);
     fterm_red(sig, g, c, ls2, xs2, t2, rc0.cl2, rc0.pargs2, rc0.args2);
-    assert forall|i: int| 0 <= i < rc.nf(sig) implies #[trigger] crate::dom_rec_end::rc_field(sig, rc, i) by {
-        let q = fq(sig, c, i);
-        assert(hred(sig, rc.args[i], rc0.args[i]) && hred(sig, rc.args2[i], rc0.args2[i]));
-        assert(derivable(sig, eq(g, rc.args2[i], rc0.args2[i], xs2[q])));
-        fty_par(sig, rc0, i);
+    let np = rshape(sig, c).np as int;
+    let (xs0, xs20) = (xs.subrange(0, np), xs2.subrange(0, np));
+    let (ri, ri2) = (rc0.ri(sig), rc0.ri2(sig));
+    crate::dom_lift::eq_ctx_wf(sig, g, rc0.xs[rc0.pre(sig)], rc0.cx(sig), rc0.ind(sig));
+    assert forall|q: int| 0 <= q < np && rshape(sig, c).pdoms[q] is Sort implies derivable(sig, eq(g, #[trigger] xs20[q], xs0[q],
+        crate::dom_rel::ptype(sig, rshape(sig, c).ind, ri2, q))) by {
+        assert(xs0[q] == xs[q] && xs20[q] == xs2[q]);
         par_conv(sig, rc0.nn, rc0.n, g, c, rc0.sm, ls, ls2, xs, xs2, rc0.a, rc0.ds, rc0.fs, rc0.u, q);
-        crate::ti_chain::conv_chain(sig, g, rc.args2[i], rc0.args2[i], xs2[q], xs[q]);
+        crate::dom_adeq_syn::dsym(sig, g, xs[q], xs2[q], crate::dom_rel::ptype(sig, rshape(sig, c).ind, ri, q));
+        crate::iota_sr::ptype_lv(sig, g, c, ri, ri2, q, xs2[q], xs[q]);
+    }
+    reveal(crate::ti_sub::tconvd);
+    assert forall|i: int| 0 <= i < rc.nf(sig) implies #[trigger] crate::dom_rec_end::rc_field(sig, rc, i) by {
+        let (t, t2) = (rft(sig, c, ri, xs0, i), rft(sig, c, ri2, xs20, i));
+        assert(hred(sig, rc.args[i], rc0.args[i]) && hred(sig, rc.args2[i], rc0.args2[i]));
+        assert(derivable(sig, eq(g, rc.args2[i], rc0.args2[i], t2)));
+        fty_par(sig, rc0, i);
+        fty_par(sig, rc, i);
+        crate::ti_ls2::levs_eq_sym(ri, ri2);
+        rft_conv(sig, g, c, i, ri2, ri, xs20, xs0);
+        crate::ti_chain::tchain_one(sig, g, t2, t);
+        crate::ti_chain::conv_chain(sig, g, rc.args2[i], rc0.args2[i], t2, t);
         field_xfer(sig, rc0, rc, i);
     }
 }
@@ -819,7 +966,8 @@ pub proof fn fterm_proj(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Ex
         side_ok(sig, g, c, ls, xs, th),
         0 <= i < rshape(sig, c).fields[0].len(),
     ensures
-        derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], ExprSpec::Proj(i as usize, Box::new(xs.last())), xs[fq(sig, c, i)])),
+        derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], ExprSpec::Proj(i as usize, Box::new(xs.last())),
+            rft(sig, c, rinst(sig, c, ls), xs.subrange(0, rshape(sig, c).np as int), i))),
 {
     let sh = rshape(sig, c);
     let x = xs.last();
@@ -907,18 +1055,37 @@ pub proof fn bot_fields(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Leve
     crate::dom_rec_end::major_dom(sig, c, ls, xs);
     assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, pre));
     assert(rc.fsm(sig) == Seq::new(rc.nf(sig), |k: int| Cpt::Bot));
+    let np = sh.np as int;
+    let (xs0, xs20) = (xs.subrange(0, np), xs2.subrange(0, np));
+    let (ri, ri2) = (rinst(sig, c, ls), rinst(sig, c, ls2));
+    crate::dom_lift::eq_ctx_wf(sig, g, x, x, rc.ind(sig));
+    assert(crate::dom_rec_adeq::rf_heads(sig, g, c, ls, ls2));
+    crate::ti_ls2::levs_eq_refl(sh.us());
+    crate::ti_ls2::lls_pair(sh.us(), sh.us(), sig.ienv.recs[c].uparams, ls, ls2);
+    crate::dom_rec_ty::rec_lps_sub(sig, c);
+    assert(crate::conv_cr::levs_eq(ri, ri2));
+    crate::ti_ls2::levs_eq_sym(ri, ri2);
+    assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies derivable(sig, eq(g, #[trigger] xs20[q], xs0[q],
+        crate::dom_rel::ptype(sig, sh.ind, ri2, q))) by {
+        assert(xs0[q] == xs[q] && xs20[q] == xs2[q]);
+        par_conv(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u, q);
+        crate::dom_adeq_syn::dsym(sig, g, xs[q], xs2[q], crate::dom_rel::ptype(sig, sh.ind, ri, q));
+        crate::iota_sr::ptype_lv(sig, g, c, ri, ri2, q, xs2[q], xs[q]);
+    }
+    reveal(crate::ti_sub::tconvd);
     assert forall|i: int| 0 <= i < sh.fields[0].len() implies #[trigger] crate::dom_rec_end::rc_field(sig, rc, i) by {
-        let q = fq(sig, c, i);
+        let (tq, tq2) = (rft(sig, c, ri, xs0, i), rft(sig, c, ri2, xs20, i));
         let (px, px2) = (ExprSpec::Proj(i as usize, Box::new(x)), ExprSpec::Proj(i as usize, Box::new(x2)));
         fty_par(sig, rc, i);
         fterm_proj(sig, g, c, ls, xs, t, i);
         fterm_proj(sig, g, c, ls2, xs2, t2, i);
         proj_cong(sig, g, c, ls, xs, t, x, x2, i);
-        par_conv(sig, nn, n, g, c, sm, ls, ls2, xs, xs2, a, ds, fs, u, q);
-        crate::dom_adeq_syn::dsym(sig, g, rc.args2[i], px2, xs2[q]);
-        crate::ti_chain::conv_chain(sig, g, px2, rc.args2[i], xs2[q], xs[q]);
-        crate::dom_adeq_syn::dtrans(sig, g, rc.args[i], px, px2, xs[q]);
-        crate::dom_adeq_syn::dtrans(sig, g, rc.args[i], px2, rc.args2[i], xs[q]);
+        rft_conv(sig, g, c, i, ri2, ri, xs20, xs0);
+        crate::ti_chain::tchain_one(sig, g, tq2, tq);
+        crate::dom_adeq_syn::dsym(sig, g, rc.args2[i], px2, tq2);
+        crate::ti_chain::conv_chain(sig, g, px2, rc.args2[i], tq2, tq);
+        crate::dom_adeq_syn::dtrans(sig, g, rc.args[i], px, px2, tq);
+        crate::dom_adeq_syn::dtrans(sig, g, rc.args[i], px2, rc.args2[i], tq);
         assert(rc.fsm(sig)[i] is Bot);
     }
 }
@@ -1023,11 +1190,8 @@ pub proof fn side_conv(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
     assert forall|k: int| 0 <= k < args.len() implies derivable(sig, eq(g, #[trigger] args[k], args[k],
         crate::ti_spine::vsub(crate::iota_sr::cfu(sig, c, 0, k, us), heads.subrange(0, np as int) + args.subrange(0, k)))) by {
         proj_cong(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs), x, x, k);
-        let f = sh.fields[0][k];
-        assert(crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f));
-        assert(crate::iota_sr::cfu(sig, c, 0, k, us) == f);
-        crate::ti_spine::vsub_var(f->Var_0, ps + args.subrange(0, k));
-        assert((ps + args.subrange(0, k))[np + k - 1 - f->Var_0] == xs[fq(sig, c, k)]);
+        rft_any(sig, c, us, ps, args.subrange(0, k), k);
+        assert(heads.subrange(0, np as int) =~= ps);
         assert(args[k] == ExprSpec::Proj(k as usize, Box::new(xs.last())));
     }
     // the rule's body at the heads and projections beta-reduces to the minor

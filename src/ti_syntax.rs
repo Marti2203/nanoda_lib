@@ -438,17 +438,22 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
 }
 
 /// A STRUCTURE: a canonical inductive with one constructor and no indices,
-/// its canonical recursor unique, each field a type parameter
-/// (docs/TYPED_TARGET.md, "Structures stage plan": the first slice, whose
-/// table entries are the parameters' own codes); always a proposition, or
-/// a type at every instance whose fields' parameters are never
-/// propositions.
+/// its canonical recursor unique, each field a simple type over the
+/// parameters, the parameters all sorts unless every field is a type
+/// parameter (docs/TYPED_TARGET.md, "Slice: structure fields over the
+/// parameters"); always a proposition, or a type at every instance whose
+/// sort parameters are never propositions.
 #[verifier::opaque]
 pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
     &&& crate::dom_code::has_canon(sig, s) && crate::dom_code::canon_shape(sig, s).nmin() == 1 && crate::dom_code::canon_shape(sig, s).ni == 0
     &&& forall|k: int| 0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() ==>
-        crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
+        crate::rec_canon::psimple(sig, s, crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             #[trigger] crate::dom_code::canon_shape(sig, s).fields[0][k])
+    &&& forall|k: int, q: int| #![trigger crate::dom_code::canon_shape(sig, s).fields[0][k], crate::dom_code::canon_shape(sig, s).pdoms[q]]
+        0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() && 0 <= q < crate::dom_code::canon_shape(sig, s).np
+        && !crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
+            crate::dom_code::canon_shape(sig, s).fields[0][k])
+        ==> crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
     &&& always_prop(sig, s) || (crate::dom_code::never_prop(sig, s)
         && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && (#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]) is Sort ==>
             never_zero(crate::dom_code::canon_shape(sig, s).pdoms[q]->Sort_0))
