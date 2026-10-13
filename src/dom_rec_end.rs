@@ -101,7 +101,8 @@ pub proof fn con_rel_arg(sig: Sig, n: nat, g: Ctx, y: ExprSpec, y2: ExprSpec, ty
         wf(w),
         n <= n0,
         rec ==> crate::dom_lift::ptr(sig, n0, n, g, ind, ty, ty, pv) && crate::dom_lift::prel(sig, n, g, ind, ty, ty, pv)
-            && crate::dom_rel::pconv(sig, g, ind, ty, ty),
+            && crate::dom_rel::pconv(sig, g, ind, ty, ty)
+            && crate::dom_lift::ptr_all(sig, n0, g, ind, ty, ty, pv) && crate::dom_code::aw(pv),
         w is Bot || (con_top(sig, n0, g, y, y2, ty, w, c) && has_type(n0, w, c) && has_type(n0, c, Cpt::U)
             && c is Nd && c->Nd_0 is Ty && fbnd(sig, ind, pv, ty, rec, c) && (d is Bot || fbnd(sig, ind, pv, ty, rec, d))),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
@@ -1932,6 +1933,34 @@ pub proof fn pconv_self(sig: Sig, rc: Rc)
     }
 }
 
+/// `rc_ptr` at every stage up to the high one, and the parameters' codes
+/// well formed.
+pub proof fn rc_ptr_all(sig: Sig, rc: Rc)
+    requires
+        rc_core(sig, rc),
+    ensures
+        crate::dom_lift::ptr_all(sig, rc.nn, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind(sig), rc.pv(sig)),
+        crate::dom_code::aw(rc.pv(sig)),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let ind = sh.ind;
+    let ci = rc.ind(sig);
+    let pv = rc.pv(sig);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rc.c);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, rc.ri(sig)), rc.xs.subrange(0, sh.np as int));
+    crate::dom_lift::iapp_self(sig, ci);
+    assert(crate::dom_rec::all_wf(rc.fs));
+    assert forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort implies
+        #[trigger] crate::dom_lift::pq(sig, ind, ci, q) == crate::dom_lift::pq(sig, ind, ci, q)
+        && (pv[q] is Bot || (rel_ty(sig, rc.nn, rc.g, crate::dom_lift::pq(sig, ind, ci, q), crate::dom_lift::pq(sig, ind, ci, q), pv[q])
+            && has_type(rc.nn, pv[q], Cpt::U))) && wf(pv[q]) by {
+        assert(crate::dom_lift::pq(sig, ind, ci, q) == rc.xs[q]);
+        assert(pv[q] == rc.fs[q]);
+        rc_par(sig, rc, q);
+    }
+    crate::dom_lift::par_ptr_all(sig, rc.nn, rc.g, ind, ci, ci, pv);
+}
+
 /// THE RECURSOR'S PARAMETERS TRANSFER: each is related to itself at its
 /// value, a type, so a relation at a code below that value moves between
 /// stages (`ptr`); and the major's type's parameters convert (`pconv`).
@@ -2550,6 +2579,7 @@ pub proof fn ih_flds(sig: Sig, rc: Rc, kf: int)
             crate::dom_rel_per::symm_ty(sig, rc.nn, rc.g, ci, rc.ind2(sig), dm);
             crate::dom_rel_per::trans_ty(sig, rc.nn, rc.g, ci, rc.ind2(sig), ci, dm);
             crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[pre], rc.cx(sig), ci);
+            rc_ptr_all(sig, rc);
             rc_ptr(sig, rc, rc.nn);
             con_rel_arg(sig, rc.nn, rc.g, rc.args[kf], rc.args2[kf], ci, v, dm, rc.nn, v, rc.fcode(sig, kf), crate::dom_rec_ty::rshape(sig, rc.c).ind, true,
                 rc.pv(sig));
@@ -3120,6 +3150,29 @@ pub proof fn field_arg_par(sig: Sig, rc: Rc, k: nat)
 }
 
 /// A field argument of the major's inductive or a closed type:
+/// The parameters' values on both sides at every stage up to the high one
+/// (`ps_below`'s parameter hypothesis), their codes well formed.
+#[verifier::spinoff_prover]
+pub proof fn rc_ptr_all_at(sig: Sig, rc: Rc)
+    requires
+        rc_core(sig, rc),
+    ensures
+        crate::dom_lift::ptr_all_at(sig, rc.nn, rc.g, rc.xs.subrange(0, rc.np(sig) as int), rc.xs.subrange(0, rc.np(sig) as int), rc.pv(sig)),
+        crate::dom_code::aw(rc.pv(sig)),
+        crate::ti_syntax::iota_ok(sig),
+{
+    let ps = rc.xs.subrange(0, rc.np(sig) as int);
+    let pv = rc.pv(sig);
+    assert(crate::dom_rec::all_wf(rc.fs));
+    assert forall|q: int| 0 <= q < pv.len() implies
+        #[trigger] wf(pv[q]) && (pv[q] is Bot || (rel_ty(sig, rc.nn, rc.g, ps[q], ps[q], pv[q]) && has_type(rc.nn, pv[q], Cpt::U))) by {
+        assert(pv[q] == rc.fs[q]);
+        assert(ps[q] == rc.xs[q]);
+        rc_par(sig, rc, q);
+    }
+    crate::dom_lift::par_ptr_all_at(sig, rc.nn, rc.g, ps, pv);
+}
+
 /// A field argument over the parameters: moved from the major's code to
 /// the walk's at the parameters' values.
 #[verifier::spinoff_prover]
@@ -3194,6 +3247,7 @@ pub proof fn field_arg_ps(sig: Sig, rc: Rc, k: nat)
         assert(rel_tm(sig, (n - 1) as nat, rc.g, z, z2, crate::dom_lift::pq(sig, ind, rc.ind(sig), q), v1, e2));
     }
     crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[rc.pre(sig)], rc.cx(sig), rc.ind(sig));
+    rc_ptr_all_at(sig, rc);
     crate::dom_lift::ps_below(sig, rc.nn, (n - 1) as nat, rc.g, ind, ri, ri, ex, ps, ps, pv, y, y2, fk, wv, e, dd);
 }
 
@@ -3213,6 +3267,7 @@ pub proof fn field_arg_con(sig: Sig, rc: Rc, k: nat)
     let (ta, dd, wv) = (*t->Bind_1, *a->Pi_0, w.wv(k));
     let ri = rc.ri(sig);
     if crate::dom_iota::isrec(sig, rc.c, rc.j, k as int) {
+        rc_ptr_all(sig, rc);
         rc_ptr(sig, rc, (n - 1) as nat);
         rc_fty_rec(sig, rc, k as int);
     } else {
@@ -3483,6 +3538,7 @@ pub proof fn motive_top(sig: Sig, rc: Rc)
         crate::dom_lift::tbl_canon_mono(sig, ind, ws0, pvs, d0);
     }
     crate::dom_lift::eq_ctx_wf(sig, rc.g, rc.xs[pre], rc.cx(sig), ci);
+    rc_ptr_all(sig, rc);
     rc_ptr(sig, rc, k1);
     con_rel_arg(sig, k1, rc.g, x, x, ci, jw, d0, nn, wx, dm, ind, true, pvs);
     con_rel_arg(sig, k1, rc.g, rc.cxr(sig), x, ci, jw, d0, nn, wx, dm, ind, true, pvs);

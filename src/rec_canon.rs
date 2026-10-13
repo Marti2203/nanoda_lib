@@ -183,7 +183,7 @@ pub open spec fn parrow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: na
 /// Whether arrow fields are admitted: not until the logical relation's
 /// transfer between a field type's instances covers function types.
 pub open spec fn arrows_live() -> bool {
-    false
+    true
 }
 
 pub open spec fn psapp(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool

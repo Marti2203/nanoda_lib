@@ -498,6 +498,8 @@ pub open spec fn cf_inv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Level
     &&& crate::conv_cr::levs_eq(ls, ls2)
     &&& cf_bnd(sig, ind, pc, np, ls, pv, xs.len() as nat, r, a, ds)
     &&& pr_ok(sig, nn, g, ind, ls, xs, xs2, pv)
+    &&& crate::dom_code::aw(pv)
+    &&& crate::ti_syntax::iota_ok(sig)
 }
 
 /// A parameter pair related at its value, a type, at the high stage.
@@ -1168,6 +1170,13 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
             crate::dom_rel_mono::decr_ty(sig, nn, g, xs[q], xs[q], c2, pv[q]);
             crate::dom_adeq_base::stab_ty_up(sig, n, nn, g, xs[q], xs[q], c2);
         }
+        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies
+            #[trigger] crate::dom_lift::pq(sig, ind, ty, q) == crate::dom_lift::pq(sig, ind, t, q)
+            && rel_ty(sig, nn, g, crate::dom_lift::pq(sig, ind, ty, q), crate::dom_lift::pq(sig, ind, ty, q), pv[q])
+            && has_type(nn, pv[q], Cpt::U) && wf(pv[q]) by {
+            assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
+        }
+        crate::dom_lift::par_ptr_all(sig, nn, g, ind, ty, t, pv);
         crate::dom_lift::con_below(sig, nn, n, g, y, y2, ty, t, w, us[i], d, a, pv);
     } else {
         let ec = ecode(es[i]);
@@ -1222,6 +1231,8 @@ pub proof fn cf_end_pfield(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Le
         n <= nn,
         pv.len() == np,
         pr_ok(sig, nn, g, ind, ls, xs, xs2, pv),
+        crate::dom_code::aw(pv),
+        crate::ti_syntax::iota_ok(sig),
         derivable(sig, crate::ti_syntax::Jd::Wf(g)),
         spine_args(t).len() >= np,
         forall|q: int| 0 <= q < np ==> #[trigger] spine_args(t)[q] == xs[q],
@@ -1281,6 +1292,12 @@ pub proof fn cf_end_pfield(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Le
         assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
         crate::dom_lift::par_xfer(sig, nn, n, g, xs[q], pv[q], z, z2, w1, v1, e1, e2);
     }
+    assert forall|q: int| 0 <= q < pv.len() implies
+        #[trigger] rel_ty(sig, nn, g, a[q], a[q], pv[q]) && has_type(nn, pv[q], Cpt::U) && wf(pv[q]) by {
+        let _s = sh.pdoms[q];
+        assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
+    }
+    crate::dom_lift::par_ptr_all_at(sig, nn, g, a, pv);
     crate::dom_lift::ps_below(sig, nn, n, g, ind, ls, ls, e, a, a, pv, y, y2, w, v, d, ec);
 }
 
@@ -1330,6 +1347,8 @@ pub proof fn ctor_pfield_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: 
         0 <= i < crate::dom_code::canon_shape(sig, ind).fields[pc as int].len(),
         np + i <= xs.len(),
         crate::rec_canon::psapp(sig, ind, crate::dom_code::canon_shape(sig, ind).pdoms, np, i as nat,
+            crate::dom_code::canon_shape(sig, ind).fields[pc as int][i])
+        || crate::rec_canon::parrow(sig, ind, crate::dom_code::canon_shape(sig, ind).pdoms, np, i as nat,
             crate::dom_code::canon_shape(sig, ind).fields[pc as int][i]),
     ensures
         tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat)
@@ -1431,6 +1450,7 @@ pub proof fn tshape_lveq(t1: ExprSpec, t2: ExprSpec, ind: u64, r: nat)
 pub proof fn ctor_adeq_core(sig: Sig, nn: nat, n: nat, dl: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, l: LevelSpec,
     u: Cpt, a: Cpt, av: Cpt, v: Cpt)
     requires
+        crate::ti_syntax::iota_ok(sig),
         crate::dom_model::sem_const(sig, c, ls),
         sig.ienv.ctor_ind.contains_key(c),
         crate::conv_cr::levs_eq(ls, ls2),

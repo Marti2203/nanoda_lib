@@ -254,6 +254,52 @@ proof fn pbinds_decreases(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSp
     }
 }
 
+/// AN ARROW WITH A LIFTED CODOMAIN, instantiated, is the arrow of the
+/// instances, its codomain lifted.
+pub proof fn vsub_arrow(a: ExprSpec, c: ExprSpec, xs: Seq<ExprSpec>)
+    ensures
+        vsub(crate::ti_syntax::pi(a, crate::subst_algebra::lift(1, 0, c)), xs)
+            == crate::ti_syntax::pi(vsub(a, xs), crate::subst_algebra::lift(1, 0, vsub(c, xs))),
+{
+    let t = crate::ti_beta::tsub(xs, xs.len());
+    crate::ti_beta::vsub_tsub(crate::ti_syntax::pi(a, crate::subst_algebra::lift(1, 0, c)), xs);
+    crate::ti_beta::vsub_tsub(a, xs);
+    crate::ti_beta::vsub_tsub(c, xs);
+    crate::ti_subst::lift_under_up(c, t);
+}
+
+/// A FIELD ARROW'S PARTS: its domain, and its codomain with the unused
+/// binder dropped, simple over the parameters, ranked and typed in their
+/// context; the arrow is the domain to the codomain lifted, its code the
+/// arrow code of theirs.
+pub proof fn arrow_parts(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, r: int, e: ExprSpec, rr: int, ls: Seq<LevelSpec>, pv: Seq<Cpt>)
+    requires
+        psimple(sig, ind, pdoms, np, 0, e),
+        crate::rec_canon::parrow(sig, ind, pdoms, np, 0, e),
+        pranked(sig, e, r),
+        ptyped(sig, r, pdoms, e),
+    ensures ({
+        let (ta, tb) = (*e->Bind_1, *e->Bind_2);
+        let b2 = plow(tb, 1);
+        &&& e == crate::ti_syntax::pi(ta, crate::subst_algebra::lift(1, 0, b2))
+        &&& psimple(sig, ind, pdoms, np, 0, ta) && psimple(sig, ind, pdoms, np, 0, b2)
+        &&& pranked(sig, ta, r) && pranked(sig, b2, r)
+        &&& ptyped(sig, r, pdoms, ta) && ptyped(sig, r, pdoms, b2)
+        &&& crate::ti_syntax::esize(ta) < crate::ti_syntax::esize(e) && crate::ti_syntax::esize(b2) < crate::ti_syntax::esize(e)
+        &&& ceval(sig, rr, ind, ls, pv, e) == crate::dom_code::arrow(ceval(sig, rr, ind, ls, pv, ta), ceval(sig, rr, ind, ls, pv, b2))
+    }),
+{
+    let (ta, tb) = (*e->Bind_1, *e->Bind_2);
+    let b2 = plow(tb, 1);
+    plow_lift_id(sig, ind, pdoms, np, 1, tb);
+    psimple_plow(sig, ind, pdoms, np, 1, tb, r);
+    esize_plow(tb, 1);
+    assert(pbinds_typed(sig, r, pdoms, e));
+    crate::dom_code::ceval_lift(sig, rr, ind, ls, pv, seq![Cpt::Bot], Seq::empty(), b2);
+    assert(pv + seq![Cpt::Bot] + Seq::<Cpt>::empty() =~= pv.push(Cpt::Bot));
+    assert(pv + Seq::<Cpt>::empty() =~= pv);
+}
+
 /// Lifting keeps the size.
 pub proof fn esize_lift(n: nat, c: nat, e: ExprSpec)
     ensures

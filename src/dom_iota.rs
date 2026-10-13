@@ -3221,6 +3221,8 @@ proof fn cf_ps_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl: Seq
     crate::dom_sound::typed_basic();
     assert forall|q: int| 0 <= q < np && sh.pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
         assert(pe[q] == pv[q]);
+        assert(0 <= q < pv.len());
+        assert(wf(pv[q]));
         assert(wf(pv[q]) && typed(pv[q], Cpt::U));
     }
     crate::dom_canon::ps_ceval_typed(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), sh.pdoms, np, k as nat, pe, e);

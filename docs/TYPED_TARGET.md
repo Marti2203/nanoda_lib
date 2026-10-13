@@ -2469,7 +2469,7 @@ fragment: 54 of Core's 3875 declarations by dependency closure, not
 fields only (`dom_psimple::pranked_simple`). The refutation no longer
 goes through, nor does the one through the eta step's hypotheses.
 
-**Slice: arrow fields (started 2026-10-13; staged).** A field
+**Slice: arrow fields (2026-10-13; live).** A field
 `A → B` between simple types over the parameters, its codomain not
 depending on its argument. Coverage by dependency closure: 235 → 400 on
 Core with arrows over simple types (applied parameters add nothing
@@ -2487,13 +2487,23 @@ above the arrow's members (`ps_bound`); the codes of lifted terms
 arrows (`pranked`, `pcapp`, `psd`, `blind_ty`); the typings in the
 parameters' context state the codomain with its binder dropped
 (`ptyped`'s `pbinds_typed`), which nanoda's constructor typing gives
-(`dom_field_ty::prebuild_arrow`). **Open, and why it is staged
-(`rec_canon::arrows_live`, false):** the logical relation's transfer of a
-field's relation between instances and codes (`dom_lift::ps_rel`,
-`ps_below`) for function types. Within one instance it goes through the
-relation's own monotonicity (`dom_rel_mono::incr`/`decr`, `mono_tm`,
-stage stability); across the major's and the recursor's instances it
-needs the instances' types related, which the callers do not carry.
+(`dom_field_ty::prebuild_arrow`). **The transfer between instances**
+(`rec_canon::arrows_live` is now true): an arrow's type relation at two
+instances (`dom_lift::ps_rel`) is the Pi relation at its parts; a value's
+move (`ps_below_arrow`, `ps_below_arrow_arg`) runs at the source's stage:
+each target argument is projected onto the source's inputs, moved back
+to the source's domain (the direction turns at a domain), applied, the
+result moved forward to the target's codomain, then down to the target's
+stage. So the parameters' transfer is needed at every stage up to the
+source's and in both directions, with each side's relation
+(`ptr_all_at` on parameter values, `ptr_all` at a former's parameters);
+`app_ptr_all`, `closed_ptr_all`/`closed_ptr_all2` give it at a head's
+arguments, `par_ptr_all`/`par_ptr_all_at` when both sides share
+parameters, `dom_rec_end::rc_ptr_all`/`rc_ptr_all_at` at the recursor's.
+The codes involved are well formed (`aw`), which the constructor
+invariant (`dom_con_rel::cf_inv`) now carries, with `iota_ok`. Probes:
+`rec_hyps` with an arrow field, the field-argument context with one, and
+`ps_below`'s arrow branch do not prove `false`.
 
 ### The conditional theorem (started 2026-10-12)
 

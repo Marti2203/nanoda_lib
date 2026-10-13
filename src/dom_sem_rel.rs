@@ -470,6 +470,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
         crate::beta_model::spine_args(m).len() == p.len(),
         crate::beta_model::spine_args(m2).len() == p.len(),
         tf_prel(sig, n, g, m, m2, p),
+        crate::dom_code::aw(p),
         tf_shape(sig, g, c, ls, tel, p, m, m2, t, t0, tt),
         tf_fun(sig, c, ls, tel, p, u),
         has_type(n, u, a),
@@ -568,6 +569,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
                     ty_bot(sig, n, g, crate::dom_lift::pq(sig, c, m, q), crate::dom_lift::pq(sig, c, m2, q));
                 }
             }
+            crate::dom_lift::pad_aw(p, sc.np);
             crate::dom_lift::canon_rel(sig, n, g, m, m2, cs, u);
         },
         _ => {},

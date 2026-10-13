@@ -345,7 +345,7 @@ pub proof fn ps_field_at_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, k: 
         !crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]),
     ensures ({
         let fu = cfu_s(sh, p, k, us);
-        &&& crate::rec_canon::psapp(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu)
+        &&& (crate::rec_canon::psapp(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu) || crate::rec_canon::parrow(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu))
         &&& crate::rec_canon::psimple(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu)
         &&& crate::rec_canon::plow(fu, k as nat) == crate::expr_model::subst_expr_levels(crate::rec_canon::plow(sh.fields[p][k], k as nat), sh.lps, us)
         &&& sh.lps == sig.consts[sh.ind].lps
@@ -568,7 +568,7 @@ pub proof fn ps_field_at(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpec>)
     ensures ({
         let sh = rshape(sig, rid);
         let fu = cfu(sig, rid, p, k, us);
-        &&& crate::rec_canon::psapp(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu)
+        &&& (crate::rec_canon::psapp(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu) || crate::rec_canon::parrow(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu))
         &&& crate::rec_canon::psimple(sig, sh.ind, sh.pdoms, sh.np, k as nat, fu)
         &&& crate::rec_canon::plow(fu, k as nat) == crate::expr_model::subst_expr_levels(crate::rec_canon::plow(sh.fields[p][k], k as nat), sh.lps, us)
         &&& sh.lps == sig.consts[sh.ind].lps
