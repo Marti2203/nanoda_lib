@@ -144,6 +144,7 @@ pub proof fn fire_inst_sig(s1: Sig, s2: Sig, a: ExprSpec)
     reveal(crate::ti_syntax::iota_lm);
     reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::rec_large);
+    reveal(crate::dom_code::prop_former);
     let ind = crate::rec_canon::rec_ind(s1, crate::beta_model::spine_head(a)->Const_0);
     if crate::ti_syntax::struct_of(s1, ind) {
         crate::ti_proj::struct_congr(s1, s2, ind);

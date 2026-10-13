@@ -807,7 +807,7 @@ pub open spec fn struct_sem(sig: Sig, s: u64) -> bool {
     &&& !sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s)
     &&& crate::dom_code::canon_sr(sig, s)
     &&& crate::dom_rec_ty::ind_scope(sig, sh)
-    &&& crate::dom_code::never_prop(sig, s)
+    &&& crate::dom_code::prop_ok(sig, s)
     &&& sem_ranked(sig)
     &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
     &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, sh.ctors[0])), crate::ti_syntax::dty_at(sig, sh.ctors[0], Seq::empty()))
@@ -833,7 +833,7 @@ pub open spec fn struct_sem_h(sig: Sig, s: u64) -> bool {
     &&& !sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s)
     &&& crate::dom_code::canon_sr(sig, s)
     &&& crate::dom_rec_ty::ind_scope(sig, sh)
-    &&& crate::dom_code::never_prop(sig, s)
+    &&& crate::dom_code::prop_ok(sig, s)
 }
 
 pub open spec fn proj_sem_h(sig: Sig) -> bool {

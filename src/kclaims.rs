@@ -360,7 +360,7 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     }
     assert(crate::dom_code::canon_sr(sig, s));
     assert(crate::dom_rec_ty::ind_scope(sig, sh));
-    assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_code::prop_ok(sig, s));
     assert(crate::dom_proj_sound::sem_ranked(sig)) by { reveal(crate::dom_proj_sound::sem_ranked); }
     crate::dom_rec_end::ty_closed_at(sig, s, crate::dom_code::rk(sig, s), Seq::empty());
     crate::dom_rec_end::ty_closed_at(sig, sh.ctors[0], crate::dom_code::rk(sig, sh.ctors[0]), Seq::empty());
@@ -372,7 +372,7 @@ proof fn struct_sem_of(sig: crate::ti_syntax::Sig, s: u64)
     assert(!sig.ienv.ctor_ind.contains_key(s) && !sig.ienv.recs.contains_key(s));
     assert(crate::dom_code::canon_sr(sig, s));
     assert(crate::dom_rec_ty::ind_scope(sig, sh));
-    assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_code::prop_ok(sig, s));
     assert(crate::dom_proj_sound::sem_ranked(sig));
     assert(forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[s].lps.len() ==>
         #[trigger] crate::dom_model::sem_const(sig, s, ls) && crate::dom_model::sem_const(sig, sh.ctors[0], ls));

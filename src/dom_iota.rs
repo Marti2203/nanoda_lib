@@ -2258,7 +2258,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_model::sem_const(sig, sh.ind, us)
     &&& crate::dom_model::sem_const(sig, sh.ind, clv)
     &&& crate::dom_model::sem_const(sig, sh.ctors[p], clv)
-    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
+    &&& crate::dom_code::prop_ok(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
     &&& forall|k: int| 0 <= k < sh.fields[p].len() && !isrec(sig, rid, p, k) && crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) ==>
@@ -2693,6 +2693,7 @@ proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, c
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
         typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, clv, pv)) by {
         r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);
+        crate::dom_code::prop_ok_former_blind(sig, sh.ind);
         crate::dom_code::canon_blind(sig, sh.ind, us, clv, pv);
     }
 }
@@ -2811,6 +2812,8 @@ pub proof fn r2l_major(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<
     typed_wf(v, ac);
     le_refl(v);
     crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(crate::dom_code::canon_ok(sig, ind));
+    assert(crate::dom_model::ctor_of(sig, ind, c));
     assert(crate::dom_model::code_ok(sig, c, clv, ac, v));
     assert(crate::dom_sem::sem_mem(sig, c, clv, v, ac, v));
     crate::dom_sem::mem_sem(sig, c, clv, rho, v);
@@ -2879,6 +2882,7 @@ pub proof fn r2l_fit(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, cl
     let maj = crate::dom_code::cval(sh.ind, p as nat, crate::dom_code::smash(sig, sh.ind), xf);
     let dcan = crate::dom_code::canon_code(sig, sh.ind, us, pv);
     cf_val_typed(sig, rid, p, clv, dps, pv, xf, ak);
+    crate::dom_code::prop_ok_former_blind(sig, sh.ind);
     crate::dom_code::canon_blind(sig, sh.ind, clv, us, pv);
     let tds = crate::dom_rec_ty::rtds(sig, rid, lv);
     major_form(sig, rid, lv);
@@ -3022,7 +3026,7 @@ pub open spec fn cf_fields_ok_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int
     &&& 0 <= p < sh.nmin()
     &&& cl.len() == sig.consts[sh.ind].lps.len()
     &&& crate::dom_model::sem_const(sig, sh.ind, cl)
-    &&& crate::dom_code::never_prop(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
+    &&& crate::dom_code::prop_ok(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
     &&& crate::dom_tele::chain_ok(sig, pdoms_at_s(sig, sh, cl), bot_env(), dps, pv)
     &&& xf.len() == sh.fields[p].len()
@@ -3314,6 +3318,7 @@ pub proof fn cf_val_typed_s(sig: Sig, sh: crate::rec_canon::IndShape, p: int, cl
             typed_up(xf[k], cv, n);
         }
     }
+    crate::dom_code::prop_ok_never(sig, ind);
     crate::dom_code::never_prop_not(sig, ind, cl);
     assert(has_type(n, val, dcan));
     typed_down(val, dcan, n);

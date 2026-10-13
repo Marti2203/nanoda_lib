@@ -454,12 +454,21 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
     &&& crate::dom_canon::pranked(sig, sh.fields[p][k], rk(sig, ind))
 }
 
+/// `ind`'s sort is a type at every instance, or a proposition at every
+/// instance without indices whose constructor values are all bottom: no
+/// constructor, or a smashed structure of proof fields.
+#[verifier::opaque]
+pub open spec fn prop_ok(sig: Sig, ind: u64) -> bool {
+    never_prop(sig, ind) || (crate::rec_canon::pstruct_live() && crate::ti_syntax::always_prop(sig, ind) && canon_shape(sig, ind).ni == 0
+        && (canon_shape(sig, ind).nmin() == 0 || (smash(sig, ind) && crate::rec_canon::shape_props(canon_shape(sig, ind)))))
+}
+
 /// `ind` at `ls` has its canonical table over `args`.
 /// `ind` has canonical tables: ranked, with a canonical recursor, no level
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && never_prop(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && prop_ok(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -1191,6 +1200,28 @@ pub proof fn prop_lveq(sig: Sig, ind: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpe
 }
 
 /// A never-Prop inductive is not Prop at any instance.
+/// An inductive that is a proposition at its own levels is one at every
+/// instance.
+pub proof fn always_prop_at(sig: Sig, ind: u64, ls: Seq<LevelSpec>)
+    requires
+        crate::ti_syntax::always_prop(sig, ind),
+    ensures
+        ls.len() == sig.consts[ind].lps.len() ==> is_prop_at(sig, ind, ls),
+{
+    let lps = sig.consts[ind].lps;
+    if ls.len() == lps.len() {
+        let t0 = sig.consts[ind].ty;
+        let k = tarity(t0);
+        crate::dom_rec_shape::tarity_sl(t0, lps, ls);
+        crate::dom_canon::tbody_sl(t0, k, lps, ls);
+        let l0 = tbody(t0, k)->Sort_0;
+        assert(crate::rec_canon::stable_lvl(l0)) by {
+            reveal(crate::rec_canon::stable_lvl);
+        }
+        scode_sl(l0, lps, ls);
+    }
+}
+
 pub proof fn never_prop_not(sig: Sig, ind: u64, ls: Seq<LevelSpec>)
     requires
         never_prop(sig, ind),
@@ -1210,10 +1241,59 @@ pub proof fn never_prop_not(sig: Sig, ind: u64, ls: Seq<LevelSpec>)
     }
 }
 
-/// A former whose codes ignore its level instance: never Prop, or without
-/// level parameters (docs/TYPED_TARGET.md, "Universe polymorphism", U3).
+/// A former whose codes ignore its level instance: never Prop, always
+/// Prop, or without level parameters (docs/TYPED_TARGET.md, "Universe polymorphism", U3).
 pub open spec fn former_blind(sig: Sig, j: u64) -> bool {
-    never_prop(sig, j) || sig.consts[j].lps.len() == 0
+    never_prop(sig, j) || prop_former(sig, j) || sig.consts[j].lps.len() == 0
+}
+
+/// A former never a proposition is one the tables admit.
+pub proof fn never_prop_ok(sig: Sig, ind: u64)
+    requires
+        never_prop(sig, ind),
+    ensures
+        prop_ok(sig, ind),
+{
+    reveal(prop_ok);
+}
+
+/// A canonical inductive's codes ignore its level instance.
+pub proof fn canon_former_blind(sig: Sig, ind: u64)
+    requires
+        canon_ok(sig, ind),
+    ensures
+        former_blind(sig, ind),
+{
+    prop_ok_former_blind(sig, ind);
+}
+
+/// While Prop structures are staged (`rec_canon::pstruct_live`), a former
+/// the tables admit is never a proposition.
+pub proof fn prop_ok_never(sig: Sig, ind: u64)
+    requires
+        prop_ok(sig, ind),
+    ensures
+        never_prop(sig, ind),
+{
+    reveal(prop_ok);
+}
+
+/// So do the codes of any former the tables admit.
+pub proof fn prop_ok_former_blind(sig: Sig, ind: u64)
+    requires
+        prop_ok(sig, ind),
+    ensures
+        former_blind(sig, ind),
+{
+    reveal(prop_ok);
+    reveal(prop_former);
+}
+
+/// A former that is a proposition at its own levels (`always_prop`,
+/// opaque: its body is a quantified level fact).
+#[verifier::opaque]
+pub open spec fn prop_former(sig: Sig, j: u64) -> bool {
+    crate::ti_syntax::always_prop(sig, j)
 }
 
 /// Every constant a type mentions is `former_blind`.
@@ -1262,6 +1342,10 @@ pub proof fn canon_blind(sig: Sig, j: u64, u1: Seq<LevelSpec>, u2: Seq<LevelSpec
     if never_prop(sig, j) {
         never_prop_not(sig, j, u1);
         never_prop_not(sig, j, u2);
+    } else if prop_former(sig, j) {
+        reveal(prop_former);
+        always_prop_at(sig, j, u1);
+        always_prop_at(sig, j, u2);
     } else if u1.len() == 0 {
         assert(u1 =~= u2);
     }

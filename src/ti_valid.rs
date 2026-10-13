@@ -185,6 +185,7 @@ pub proof fn canon_grow(sig: Sig, sig2: Sig, r: u64)
     assert(sh2 == sh);
     reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::rec_large);
+    reveal(crate::dom_code::prop_former);
 }
 
 /// A canonical recursor is no type former: its type ends in the motive
@@ -469,6 +470,7 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
     reveal(crate::ti_syntax::iota_lm);
     reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::rec_large);
+    reveal(crate::dom_code::prop_former);
     let rid = crate::beta_model::spine_head(m)->Const_0;
     crate::ti_syntax::frag_of(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid));
@@ -477,6 +479,8 @@ proof fn pjs_ext(sig: Sig, sig2: Sig, g: crate::ti_syntax::Ctx, m: ExprSpec)
     let ind = crate::rec_canon::rec_ind(sig, rid);
     assert(crate::rec_canon::rec_ind(sig2, rid) == ind);
     assert(sig2.consts[ind] == sig.consts[ind]);
+    assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
+    canon_grow(sig, sig2, rid);
     assert(crate::dom_rec_ty::rshape(sig2, rid).pdoms == crate::dom_rec_ty::rshape(sig, rid).pdoms);
     assert(crate::dom_rec_ty::rshape(sig2, rid).us() == crate::dom_rec_ty::rshape(sig, rid).us());
 }

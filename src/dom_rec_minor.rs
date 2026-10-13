@@ -385,6 +385,31 @@ pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
         assert(ds[i] == crate::expr_model::subst_expr_levels(sh.field_at(j, i, (1 + j) as nat), rd.uparams, lv));
         minor_dom_fld(sig, rid, lv, j, i, xs0, yi, ds[i]);
     } else {
+        minor_dom_ih(sig, rid, lv, j, xs0, ys, i, ds);
+    }
+}
+
+/// `minor_dom` at an induction hypothesis: the motive at the recursive
+/// field.
+#[verifier::spinoff_prover]
+proof fn minor_dom_ih(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<ExprSpec>, ys: Seq<ExprSpec>, i: int,
+    ds: Seq<ExprSpec>)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        0 <= j < rshape(sig, rid).nmin(),
+        xs0.len() == rshape(sig, rid).np + 1 + j,
+        0 <= i <= ys.len(),
+        rshape(sig, rid).fields[j].len() <= i < rshape(sig, rid).fields[j].len() + rshape(sig, rid).rposj(j).len(),
+        ds == msds(sig, rid, lv, j),
+    ensures
+        vsub(ds[i], xs0 + ys.subrange(0, i)) == ExprSpec::App(Box::new(xs0[rshape(sig, rid).np as int]),
+            Box::new(ys[rshape(sig, rid).rposj(j)[i - rshape(sig, rid).fields[j].len()] as int])),
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let nf = sh.fields[j].len();
+    let xa = xs0 + ys.subrange(0, i);
+    let (_, _) = minor_split(sig, rid, lv, j);
         let q = i - nf;
         crate::dom_rec_ty::rec_pos_facts(sh.fields[j], sh.ind, sh.us(), sh.np, sh.ni, nf);
         let k = sh.rposj(j)[q];
@@ -409,7 +434,6 @@ pub proof fn minor_dom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, j: int, xs0: Seq<
         crate::ti_spine::vsub_var((nf - 1 - k + q) as nat, xa);
         assert(xa[xa.len() - 1 - (j + nf + q)] == xs0[sh.np as int]);
         assert(xa[xa.len() - 1 - (nf - 1 - k + q)] == ys[k as int]);
-    }
 }
 
 /// THE MINOR'S TYPE after all its arguments: the motive at the constructor

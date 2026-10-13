@@ -180,6 +180,32 @@ pub open spec fn parrow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: na
     }
 }
 
+/// A PROOF FIELD: a parameter declared at `Prop`, or a function type into a
+/// proof field (docs/TYPED_TARGET.md, "Prop structures").
+pub open spec fn pprop(pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
+    decreases e,
+{
+    (pvar_field(pdoms, np, k, e) && crate::ti_syntax::is_zero(pdoms[(k + np - 1 - e->Var_0) as int]->Sort_0))
+    || match e {
+        ExprSpec::Bind(BinderKind::Pi, _, b) => pprop(pdoms, np, k + 1, *b),
+        _ => false,
+    }
+}
+
+/// Whether Prop structures and empty propositions are admitted: not until
+/// their constructor values, eta step and projections are typed at
+/// propositions (docs/TYPED_TARGET.md, "Prop structures").
+pub open spec fn pstruct_live() -> bool {
+    false
+}
+
+/// Every field of every constructor of the shape is a proof field.
+#[verifier::opaque]
+pub open spec fn shape_props(sh: IndShape) -> bool {
+    forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len()
+        ==> #[trigger] pprop(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
+}
+
 /// A SORT whose level is zero at every instance or at none (`Prop`,
 /// `Type u`), so its code is the same at every instance
 /// (docs/TYPED_TARGET.md, "Slice: sort leaves").

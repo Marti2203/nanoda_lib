@@ -522,6 +522,7 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env
             }
         }
         var_ind_bound(sig, ind, usl, nf, args, env, pv, a);
+        crate::dom_code::canon_former_blind(sig, ind);
         crate::dom_code::canon_blind(sig, ind, usl, ls, pv);
         return;
     }
@@ -553,6 +554,7 @@ pub proof fn tb_mem(sig: Sig, ind: u64, pc: nat, ls: Seq<LevelSpec>, k: nat, env
             }
             assert forall|j: int| 0 <= j < pv.len() implies #[trigger] pv[j] == env((i + pv.len() - 1 - j) as nat) by {}
             var_ind_bound(sig, ind, usl, i as nat, fa, env, pv, a0);
+            crate::dom_code::canon_former_blind(sig, ind);
             crate::dom_code::canon_blind(sig, ind, usl, ls, pv);
         } else if crate::rec_canon::pvar_field(sh.pdoms, np, i as nat, f) {
             // a type parameter: below the parameter's value

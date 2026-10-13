@@ -956,6 +956,7 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
     crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
     crate::dom_rel::ty_ind(sig, n, g, t, t, a);
     crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
+    reveal(crate::dom_code::prop_ok);
     if crate::dom_code::has_canon(sig, ind) {
         assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, ty), q, spine_args(ty)[q], spine_args(t)[q]) by {
@@ -1812,6 +1813,7 @@ pub proof fn cf_diag_r(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelS
     fld_push(sig, nn, g, t02, t02, xs2, xs2, ds, fs, np, x, x2, d0, w);
     typed_facts_wf(n, u, a);
     cf_bnd_step(sig, ind, pc, np, ls, pv, k, r, a, ds, w);
+    crate::dom_code::canon_former_blind(sig, ind);
     cf_bnd_blind(sig, ind, pc, np, ls, ls2, crate::dom_ctor_bound::pv_next(np, pv, k, w), k + 1, (r - 1) as nat, b, dz);
     pr_step(sig, nn, n, g, c, ls, ls2, ind, pc, np, r, xs, xs2, a, ds, fs, u, pv, x, x2, w);
     pr_ok_lv(sig, nn, g, ind, ls, ls2, ys, ys2, crate::dom_ctor_bound::pv_next(np, pv, k, w));

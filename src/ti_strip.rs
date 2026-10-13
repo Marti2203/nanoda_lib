@@ -300,6 +300,7 @@ pub proof fn frag_below(sig: Sig, r: int, rid: u64)
     reveal(crate::dom_rec_ty::rec_elp);
     reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::rec_large);
+    reveal(crate::dom_code::prop_former);
 }
 
 /// `iota_ok` holds below every rank.

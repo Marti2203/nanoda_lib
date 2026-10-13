@@ -30,7 +30,7 @@ pub proof fn struct_facts(sig: Sig, s: u64)
         &&& crate::dom_rec_ty::ind_scope(sig, sh)
         &&& sh.ind == s && sh.lps == sig.consts[s].lps
         &&& sh.nmin() == 1 && sh.ni == 0
-        &&& crate::dom_code::never_prop(sig, s)
+        &&& crate::dom_code::prop_ok(sig, s)
         &&& crate::dom_code::canon_ok(sig, s)
         &&& crate::dom_levels::sig_lps(sig)
         &&& crate::dom_rec_end::ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, s)), crate::ti_syntax::dty_at(sig, s, Seq::empty()))
@@ -48,7 +48,7 @@ pub proof fn struct_facts(sig: Sig, s: u64)
     let sh = crate::dom_code::canon_shape(sig, s);
     assert(crate::dom_rec_ty::ind_scope(sig, sh));
     assert(sh.ind == s && sh.lps == sig.consts[s].lps);
-    assert(crate::dom_code::never_prop(sig, s));
+    assert(crate::dom_code::prop_ok(sig, s));
     assert(crate::dom_code::canon_ok(sig, s));
     assert(crate::dom_levels::sig_lps(sig));
     assert(crate::ti_syntax::iota_ok(sig));
@@ -255,6 +255,7 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         }
         crate::dom_adeq_proj::sfield_conv(sig, g, s, k as nat, us, us, ps, ps, pj, pj)
     };
+    crate::dom_code::prop_ok_never(sig, s);
     crate::ti_eta::eta_never_prop(sig, s, t);
     // ProjCong
     let px = ExprSpec::Proj(k as usize, Box::new(x));

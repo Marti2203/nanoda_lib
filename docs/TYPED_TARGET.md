@@ -2549,6 +2549,35 @@ structures (`True`, `And`, `Iff`; → 578 with both), which the model would
 have to interpret. Probes (`ind_ok` with such a recursor, the new branch
 of `jkernel::sr_iota_at`) do not prove `false`.
 
+**Slice: Prop structures (started 2026-10-13; staged).** The large
+recursors of `True`, `And`, `Iff` (and `False`'s): Core by dependency
+closure 446 → about 536. The model is already proof-irrelevant
+(`dom_typing::prop_inhabitant_bot`: what is typed at a code typed at
+`Prop` is bottom, function proofs included, since a lambda code has a
+non-bottom output), so the model's typing is unchanged. What changes is
+which inductives get canonical tables and interpreted recursors:
+`dom_code::prop_ok` (opaque; in `canon_ok`, `struct_sem`, `rec_model`)
+admits besides the never-Prop inductives the propositions without
+indices whose constructor values are all bottom -- no constructor, or a
+smashed structure whose fields are proof fields (`rec_canon::pprop`: a
+parameter declared at `Prop`, or a function type into one;
+`shape_props`). Several-constructor propositions (`Or`) stay out of the
+tables: their constructor values would be nodes at a proposition's code;
+their recursors are Prop-only anyway. `rec_interp` reads the
+signature-free part (`dom_rec_end::rec_prop_ind`, off the recursor's own
+shape, so congruent across signatures); `rec_model` carries the rest.
+Level-blind codes cover always-Prop formers (`former_blind`,
+`prop_former`, `always_prop_at`). **Staged** (`rec_canon::pstruct_live`,
+false): the call sites of `dom_code::prop_ok_never` are what is left --
+a Prop structure's constructor value typed at its code (bottom from
+`prop_inhabitant_bot` at the proof fields' codes, `dom_iota::cf_val_typed_s`),
+projections at a Prop structure (`kstruct::struct_proj_typed`), and the
+eta step: the typed judgment must fire `RecEta` at Prop structures (a
+stuck `And.rec m f h` denotes `f` at bottom fields) with subject reduction
+through `Irr` rather than `StructEta` (`ti_eta::eta_facts`,
+`eta_struct_eq`). nanoda, like Lean's kernel, does no structure eta at
+propositions (`tc.rs::iota_try_eta_struct`, `may_be_prop`).
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

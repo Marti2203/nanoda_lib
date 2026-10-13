@@ -377,7 +377,7 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
         #[trigger] crate::dom_model::sem_const(sig, c, lv) && ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, c, lv))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sh.ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, sh.ind, ls)
     &&& ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
-    &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
+    &&& (rec_large(sig, c) ==> crate::dom_code::prop_ok(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& crate::dom_levels::sig_lps(sig)
     &&& forall|ls: Seq<LevelSpec>, p: int| ls.len() == sig.consts[sh.ind].lps.len() && 0 <= p < sh.nmin()
@@ -439,7 +439,7 @@ pub open spec fn sig_sr(sig: Sig) -> bool {
 pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     let rd = sig.ienv.recs[c];
-    &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
+    &&& (rec_large(sig, c) ==> crate::dom_code::prop_ok(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
         crate::dom_canon::pcapp(sig, #[trigger] sh.fields[p][k], sh.ind)
@@ -706,7 +706,17 @@ pub open spec fn rec_frag_l(sig: Sig, c: u64) -> bool {
 /// motive is a proposition (`ti_hred::rec_fire`), its Iota irrelevance.
 #[verifier::opaque]
 pub open spec fn rec_interp(sig: Sig, c: u64) -> bool {
-    rec_large(sig, c) && crate::dom_code::never_prop(sig, crate::dom_rec_ty::rshape(sig, c).ind)
+    rec_large(sig, c) && rec_prop_ind(sig, c)
+}
+
+/// The recursor's inductive is a type at every instance, or a proposition
+/// at every instance without indices, with at most one constructor, of
+/// proof fields (read off the recursor's own shape; the model's facts add
+/// that a constructor's inductive is a smashed structure, `rec_model`).
+pub open spec fn rec_prop_ind(sig: Sig, c: u64) -> bool {
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    crate::dom_code::never_prop(sig, sh.ind) || (crate::rec_canon::pstruct_live() && crate::dom_code::prop_former(sig, sh.ind) && sh.ni == 0
+        && sh.nmin() <= 1 && crate::rec_canon::shape_props(sh))
 }
 
 /// The recursor eliminates into any universe (it has a motive universe).
@@ -811,7 +821,7 @@ pub proof fn frag_dir(s1: Sig, s2: Sig, c: u64)
     scope_dir(s1, s2, c);
     let sh = crate::dom_rec_ty::rshape(s1, c);
     assert(sh == crate::dom_rec_ty::rshape(s2, c));
-    assert(rec_interp(s1, c) == rec_interp(s2, c)) by { reveal(rec_interp); reveal(rec_large); }
+    assert(rec_interp(s1, c) == rec_interp(s2, c)) by { reveal(rec_interp); reveal(rec_large); reveal(crate::dom_code::prop_former); }
     assert forall|p: int| 0 <= p < sh.nmin() implies !s2.ienv.recs.contains_key(#[trigger] sh.ctors[p]) by {}
 }
 
