@@ -166,6 +166,7 @@ pub proof fn tel_inv(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, xs: S
 pub open spec fn agree(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig) -> bool {
     &&& forall|k: u64| #[trigger] small.consts.contains_key(k) ==> big.consts.contains_key(k) && big.consts[k] == small.consts[k]
     &&& forall|k: u64| #[trigger] small.ienv.recs.contains_key(k) ==> big.ienv.recs.contains_key(k)
+    &&& forall|k: u64| #[trigger] small.ienv.ctor_ind.contains_key(k) ==> big.ienv.ctor_ind.contains_key(k)
 }
 
 /// A SIMPLE TYPE MOVES DOWN to a signature agreeing on its constants.

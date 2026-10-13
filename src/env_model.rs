@@ -996,6 +996,7 @@ pub proof fn env_le_at<'a>(export: nat, view: Map<NamePtr<'a>, Declar<'a>>, keys
     table_at_mono(view, keys, c1, c2, |d: Declar<'a>| struct_ctor_entry(d));
     table_at_mono(view, keys, c1, c2, |d: Declar<'a>| ctor_nf_entry(d));
     table_at_mono(view, keys, c1, c2, |d: Declar<'a>| ctor_ind_entry(d));
+    tables_stable_at(export, view, keys, c1, c2);
 }
 
 

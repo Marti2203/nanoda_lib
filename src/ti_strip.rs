@@ -224,6 +224,7 @@ pub proof fn psimple_shrink(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np
     requires
         s1.consts == s2.consts,
         forall|j: u64| #[trigger] s2.ienv.recs.contains_key(j) ==> s1.ienv.recs.contains_key(j),
+        forall|j: u64| #[trigger] s2.ienv.ctor_ind.contains_key(j) ==> s1.ienv.ctor_ind.contains_key(j),
     ensures
         crate::rec_canon::psimple(s1, ind, pdoms, np, k, e) ==> crate::rec_canon::psimple(s2, ind, pdoms, np, k, e),
         crate::rec_canon::psapp(s1, ind, pdoms, np, k, e) ==> crate::rec_canon::psapp(s2, ind, pdoms, np, k, e),

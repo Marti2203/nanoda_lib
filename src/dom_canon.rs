@@ -588,6 +588,109 @@ pub proof fn ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: S
     canon_typed(sig, jd, lsub(sig, outer, ls, us), ca);
 }
 
+/// A SIMPLE TYPE OVER THE PARAMETERS HAS ITS CODE AS A MEMBER, read at
+/// the instance the code is evaluated at, wherever the parameters' slots
+/// hold at least the parameters' codes: a parameter's slot by its value, a
+/// former's application by its code function at the arguments' codes
+/// (docs/TYPED_TARGET.md, "Widening": structure fields over the
+/// parameters).
+pub proof fn ceval_mem(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, ls: Seq<LevelSpec>, pe: Seq<Cpt>,
+    e: ExprSpec, env: Env)
+    requires
+        crate::dom_model::consts_ranked(sig),
+        crate::rec_canon::psimple(sig, ind, pdoms, np, k, e),
+        aw(pe),
+        pe.len() == np + k,
+        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] pe[q], Cpt::U),
+        forall|i: nat| #[trigger] wf(env(i)),
+        forall|q: int| 0 <= q < np ==> le(#[trigger] pe[q], env((k + np - 1 - q) as nat)),
+    ensures
+        mem(sig, crate::expr_model::subst_expr_levels(e, sig.consts[ind].lps, ls), env,
+            ceval(sig, rk(sig, ind), ind, ls, pe, e)),
+    decreases esize(e),
+{
+    let r = rk(sig, ind);
+    let lps = sig.consts[ind].lps;
+    let e2 = crate::expr_model::subst_expr_levels(e, lps, ls);
+    let code = ceval(sig, r, ind, ls, pe, e);
+    if crate::rec_canon::pvar_field(pdoms, np, k, e) {
+        let v = e->Var_0;
+        let q = (k + np - 1 - v) as int;
+        assert(e2 == e);
+        assert(pe[pe.len() - 1 - v] == pe[q]);
+        assert(code == pe[q]);
+        reveal(mem);
+        assert(mem_w(sig, e2, env, code, Wit::Nil));
+        return;
+    }
+    crate::dom_psimple::psapp_args(sig, ind, pdoms, np, k, e);
+    crate::ti_valid::psapp_head(sig, ind, pdoms, np, k, e);
+    let h = spine_head(e);
+    let (j, usk) = (h->Const_0, h->Const_1);
+    let args = spine_args(e);
+    let ul = lsub(sig, ind, ls, usk);
+    crate::beta_model::spine_recompose(e);
+    if !(0 <= rk(sig, j) < r) {
+        assert(code == Cpt::Bot);
+        crate::dom_model::mem_bot(sig, e2, env);
+        reveal(mem);
+        return;
+    }
+    let ca = cargs(sig, r, ind, ls, pe, e);
+    assert(code == canon_code(sig, j, ul, ca));
+    cargs_spine(sig, r, ind, ls, pe, e);
+    cargs_wf(sig, r, ind, ls, pe, e);
+    spine_args_size(e);
+    // the term at the instance: the former at `ul`, the arguments instanced
+    crate::dom_levels::sl_spine(e, lps, ls);
+    let args2 = spine_args(e2);
+    assert(spine_head(e2) == ExprSpec::Const(j, ul));
+    crate::beta_model::spine_recompose(e2);
+    // the arguments: their codes, members and types
+    assert forall|i: int| 0 <= i < args2.len() implies #[trigger] mem(sig, args2[i], env, ca[i]) && wf(ca[i]) by {
+        assert(args2[i] == crate::expr_model::subst_expr_levels(args[i], lps, ls));
+        ceval_mem(sig, ind, pdoms, np, k, ls, pe, args[i], env);
+    }
+    assert(crate::dom_bound::args_w(sig, args2, env, ca));
+    assert forall|i: int| 0 <= i < ca.len() implies #[trigger] typed(ca[i], Cpt::U) by {
+        ps_ceval_typed(sig, r, ind, ls, pdoms, np, k, pe, args[i]);
+    }
+    // the former's type at `ul`: sorts above zero, then a sort
+    reveal(crate::rec_canon::tparams);
+    let t = sig.consts[j].ty;
+    let n = tarity(t);
+    let tds0 = crate::rec_canon::tdoms(t, n);
+    let tb0 = tbody(t, n);
+    let kj = sig.consts[j].lps;
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, tds0, tb0, kj, ul);
+    let tds = crate::dom_rec_shape::sls(tds0, kj, ul);
+    let l = crate::expr_model::subst_expr_levels(tb0, kj, ul)->Sort_0;
+    assert(dty_at(sig, j, ul) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)));
+    let dps = Seq::new(n, |_q: int| Cpt::U);
+    crate::dom_sound::typed_basic();
+    assert forall|q: int| 0 <= q < n implies #[trigger] crate::dom_sound::dfit(sig, tds[q],
+        crate::dom_tele::exts(bot_env(), ca.subrange(0, q)), dps[q], ca[q]) by {
+        let lq = tds0[q]->Sort_0;
+        let r0 = Map::<nat, nat>::empty();
+        crate::level_model::subst_level_spec_interp(lq, kj, ul, r0);
+        assert(tds[q] == ExprSpec::Sort(crate::level_model::subst_level_spec(lq, kj, ul)));
+        assert(!crate::ti_syntax::is_zero(crate::level_model::subst_level_spec(lq, kj, ul)));
+        reveal(mem);
+        assert(mem_w(sig, tds[q], crate::dom_tele::exts(bot_env(), ca.subrange(0, q)), Cpt::U, Wit::Nil));
+    }
+    assert(crate::dom_tele::chain_ok(sig, tds, bot_env(), dps, ca));
+    // the former is a semantic constant, its code function reaching the
+    // canonical code at the arguments' codes
+    crate::dom_model::sem_const_of(sig, j, ul);
+    let (a, v) = tf_step(sig, j, ul, tds, l, dps, ca);
+    typed_wf(v, a);
+    le_refl(v);
+    assert(crate::dom_sem::sem_mem(sig, j, ul, v, a, v));
+    crate::dom_sem::mem_sem(sig, j, ul, env, v);
+    canon_wf(sig, j, ul, ca);
+    crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(j, ul), args2, env, v, ca, code);
+}
+
 /// A SIMPLE TYPE OVER THE PARAMETERS HAS A TYPE AS CODE, its type
 /// parameters' codes being types.
 pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pdoms: Seq<ExprSpec>, np: nat, k: nat,

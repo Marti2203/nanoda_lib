@@ -375,6 +375,11 @@ pub proof fn struct_congr(s1: Sig, s2: Sig, s: u64)
         crate::dom_code::canon_shape_struct(s2, s);
     }
     assert(crate::dom_code::canon_shape(s1, s) == crate::dom_code::canon_shape(s2, s));
+    let sh = crate::dom_code::canon_shape(s1, s);
+    assert forall|k: int| 0 <= k < sh.fields[0].len() implies
+        crate::rec_canon::psimple(s2, s, sh.pdoms, sh.np, k as nat, #[trigger] sh.fields[0][k]) by {
+        crate::dom_rec_end::psimple_congr(s1, s2, s, sh.pdoms, sh.np, k as nat, sh.fields[0][k]);
+    }
     assert forall|a1: u64, a2: u64| #![trigger crate::rec_canon::rec_canon(s2, a1), crate::rec_canon::rec_canon(s2, a2)]
         crate::rec_canon::rec_canon(s2, a1) && crate::rec_canon::rec_ind(s2, a1) == s
         && crate::rec_canon::rec_canon(s2, a2) && crate::rec_canon::rec_ind(s2, a2) == s implies a1 == a2 by {

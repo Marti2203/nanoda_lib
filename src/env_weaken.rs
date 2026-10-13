@@ -21,6 +21,7 @@ pub open spec fn env_le(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
     &&& forall|k: u64| #[trigger] denv.struct_ctor.contains_key(k) ==> denv2.struct_ctor.contains_key(k) && denv2.struct_ctor[k] == denv.struct_ctor[k]
     &&& forall|k: u64| #[trigger] denv.ctor_nf.contains_key(k) ==> denv2.ctor_nf.contains_key(k) && denv2.ctor_nf[k] == denv.ctor_nf[k]
     &&& forall|k: u64| #[trigger] denv.ctor_ind.contains_key(k) ==> denv2.ctor_ind.contains_key(k) && denv2.ctor_ind[k] == denv.ctor_ind[k]
+    &&& tables_stable(dty, denv, denv2)
 }
 
 /// The second environment defines exactly the first's definitions among
@@ -99,6 +100,11 @@ pub proof fn ew_sig_ext(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, dty2
         assert(denv2.recs.contains_key(k) && denv2.recs[k] == denv.recs[k]);
     }
     assert(s1.ienv.sub(s2.ienv));
+    assert forall|k: u64| #![trigger s2.ienv.ctor_ind.contains_key(k), s1.consts.contains_key(k)]
+        s1.consts.contains_key(k) && s2.ienv.ctor_ind.contains_key(k) implies s1.ienv.ctor_ind.contains_key(k) by {
+        assert(dty.contains_key(k));
+        assert(denv2.ctor_ind.contains_key(k));
+    }
     assert forall|c: u64, ls: Seq<LevelSpec>| #[trigger] crate::ti_syntax::is_def(s2, c, ls) implies crate::ti_syntax::def_ok(s2, c, ls) by {
         assert(crate::ti_syntax::is_def(s0, c, ls));
         crate::ti_locals::crank_same(s0, s2, crate::ti_syntax::dval(s0, c, ls));

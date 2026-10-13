@@ -133,7 +133,7 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
 }
 
 /// `sig2` extends `sig`: more constants and more locals, the old ones
-/// unchanged, and every definition of `sig2` well ranked in it -- or the
+/// unchanged (no old constant becomes a constructor), and every definition of `sig2` well ranked in it -- or the
 /// same constants and ranks (`ti_strip::strip_below`).
 pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> sig2.consts.contains_key(c) && sig2.consts[c] == sig.consts[c]
@@ -146,6 +146,8 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_ind.contains_key(k) ==> sig2.ienv.ctor_ind.contains_key(k) && sig2.ienv.ctor_ind[k] == sig.ienv.ctor_ind[k]
     &&& forall|k: u64| #[trigger] sig.ienv.struct_ctor.contains_key(k) ==> sig2.ienv.struct_ctor.contains_key(k) && sig2.ienv.struct_ctor[k] == sig.ienv.struct_ctor[k]
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_nf.contains_key(k) ==> sig2.ienv.ctor_nf.contains_key(k) && sig2.ienv.ctor_nf[k] == sig.ienv.ctor_nf[k]
+    &&& forall|k: u64| #![trigger sig2.ienv.ctor_ind.contains_key(k), sig.consts.contains_key(k)]
+        sig.consts.contains_key(k) && sig2.ienv.ctor_ind.contains_key(k) ==> sig.ienv.ctor_ind.contains_key(k)
 }
 
 /// A canonical recursor stays one in an extension, with the same
@@ -185,6 +187,94 @@ pub proof fn canon_grow(sig: Sig, sig2: Sig, r: u64)
     reveal(crate::dom_rec_end::rec_large);
 }
 
+/// A canonical recursor is no type former: its type ends in the motive
+/// applied to the major premise, not in a sort.
+pub proof fn rec_no_former(sig: Sig, j: u64)
+    requires
+        crate::rec_canon::rec_canon(sig, j),
+    ensures
+        !(crate::rec_canon::tbody(sig.consts[j].ty, crate::rec_canon::tarity(sig.consts[j].ty)) is Sort),
+{
+    let rd = sig.ienv.recs[j];
+    let ind = crate::rec_canon::rec_ind(sig, j);
+    let sh = crate::rec_canon::shape_of(sig, rd, ind);
+    let lm = crate::rec_canon::elim_level(sig, j, ind);
+    let (nmin, ni) = (sh.nmin(), sh.ni);
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + nmin + ni, sh.np) + crate::rec_canon::vars(0, ni));
+    let args = crate::rec_canon::vars(1, ni).push(ExprSpec::Var(0));
+    let body = crate::beta_model::spine_app(ExprSpec::Var(nmin + ni + 1), args);
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert(sig.consts[j].ty == crate::rec_canon::binds(BinderKind::Pi, ds, body));
+    assert(body is App);
+    crate::dom_rec_shape::tarity_binds(ds, body);
+    crate::dom_iota::tbody_binds(ds, body);
+}
+
+/// A former applied over the parameters is headed by another former.
+pub proof fn psapp_head(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        crate::rec_canon::psapp(sig, ind, pdoms, np, k, e),
+    ensures
+        crate::beta_model::spine_head(e) is Const,
+        crate::rec_canon::other_former(sig, ind, crate::beta_model::spine_head(e)->Const_0),
+        crate::beta_model::spine_head(e)->Const_1.len() == sig.consts[crate::beta_model::spine_head(e)->Const_0].lps.len(),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        psapp_head(sig, ind, pdoms, np, k, *f);
+    }
+}
+
+/// A simple type over the parameters stays one in an extension: its
+/// formers keep their declarations, and none becomes a recursor (every
+/// recursor of the extension is canonical, so no former).
+pub proof fn psimple_grow(sig: Sig, sig2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec)
+    requires
+        sig_ext(sig, sig2),
+        !sig.ienv.full,
+    ensures
+        crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) ==> crate::rec_canon::psimple(sig2, ind, pdoms, np, k, e),
+        crate::rec_canon::psapp(sig, ind, pdoms, np, k, e) ==> crate::rec_canon::psapp(sig2, ind, pdoms, np, k, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            psimple_grow(sig, sig2, ind, pdoms, np, k, *f);
+            psimple_grow(sig, sig2, ind, pdoms, np, k, *x);
+        },
+        ExprSpec::Const(j, _) => {
+            if crate::rec_canon::other_former(sig, ind, j) {
+                assert(sig2.consts[j] == sig.consts[j]);
+                assert(!sig2.ienv.ctor_ind.contains_key(j));
+                if sig2.ienv.recs.contains_key(j) {
+                    frag_of(sig2, j);
+                    rec_no_former(sig2, j);
+                }
+            }
+        },
+        _ => {},
+    }
+    if crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) && !crate::rec_canon::pvar_field(pdoms, np, k, e) {
+        psapp_head(sig, ind, pdoms, np, k, e);
+        let j = crate::beta_model::spine_head(e)->Const_0;
+        assert(sig2.consts[j] == sig.consts[j]);
+    }
+}
+
+/// A field of both kinds is impossible: a simple type over the parameters
+/// is no direct occurrence.
+pub proof fn psimple_not_direct(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, us: Seq<LevelSpec>, np: nat, ni: nat, k: nat, e: ExprSpec)
+    requires
+        crate::rec_canon::psimple(sig, ind, pdoms, np, k, e),
+    ensures
+        !crate::rec_canon::direct_occ(e, ind, us, np, ni, k),
+{
+    if !crate::rec_canon::pvar_field(pdoms, np, k, e) {
+        psapp_head(sig, ind, pdoms, np, k, e);
+    }
+}
+
 /// Whether an inductive with a canonical recursor is a structure, and its
 /// canonical recursor and shape, survive an extension.
 pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
@@ -216,7 +306,23 @@ pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
     let c2 = crate::dom_code::canon_rec(sig2, s);
     assert(c1 == r);
     assert(c2 == r);
-    assert(crate::dom_code::canon_shape(sig, s) == crate::dom_code::canon_shape(sig2, s));
+    let sh = crate::dom_code::canon_shape(sig, s);
+    assert(sh == crate::dom_code::canon_shape(sig2, s));
+    // the fields' kinds: simple in one signature iff in the other
+    if sh.nmin() == 1 {
+        assert forall|k: int| 0 <= k < sh.fields[0].len() implies
+            crate::rec_canon::psimple(sig, s, sh.pdoms, sh.np, k as nat, #[trigger] sh.fields[0][k])
+            == crate::rec_canon::psimple(sig2, s, sh.pdoms, sh.np, k as nat, sh.fields[0][k]) by {
+            let f = sh.fields[0][k];
+            psimple_grow(sig, sig2, s, sh.pdoms, sh.np, k as nat, f);
+            if crate::rec_canon::psimple(sig2, s, sh.pdoms, sh.np, k as nat, f) {
+                reveal(crate::rec_canon::field_kind);
+                assert(sh.ctors[0] == sh.ctors[0]);
+                assert(crate::rec_canon::field_kind(sig, s, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, sh.fields[0][k]));
+                psimple_not_direct(sig2, s, sh.pdoms, sh.us(), sh.np, sh.ni, k as nat, f);
+            }
+        }
+    }
 }
 
 /// A structure stays one in an extension, with the same shape.
@@ -258,6 +364,11 @@ pub proof fn struct_grow(sig: Sig, sig2: Sig, s: u64)
             }
         } else {
             crate::dom_code::canon_shape_struct(sig2, s);
+        }
+        let sh = crate::dom_code::canon_shape(sig, s);
+        assert forall|k: int| 0 <= k < sh.fields[0].len() implies
+            crate::rec_canon::psimple(sig2, s, sh.pdoms, sh.np, k as nat, #[trigger] sh.fields[0][k]) by {
+            psimple_grow(sig, sig2, s, sh.pdoms, sh.np, k as nat, sh.fields[0][k]);
         }
     }
 }

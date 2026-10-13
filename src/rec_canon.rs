@@ -105,13 +105,26 @@ pub open spec fn tarity(t: ExprSpec) -> nat
 }
 
 /// A type former other than `ind`: an axiom, not a recursor, whose type is
-/// a Pi telescope ending in a sort.
+/// a Pi telescope ending in a sort, over parameters that are all types
+/// (`tparams`), neither a recursor nor a constructor.
 pub open spec fn other_former(sig: Sig, ind: u64, j: u64) -> bool {
     &&& j != ind
     &&& sig.consts.contains_key(j)
     &&& sig.consts[j].val is None
     &&& !sig.ienv.recs.contains_key(j)
+    &&& !sig.ienv.ctor_ind.contains_key(j)
     &&& tbody(sig.consts[j].ty, tarity(sig.consts[j].ty)) is Sort
+    &&& tparams(sig.consts[j].ty)
+}
+
+/// A FORMER OVER TYPES: every binder of its type is a sort above zero
+/// (`List`, `Prod`, `Option`), so any types are arguments for it.
+#[verifier::opaque]
+pub open spec fn tparams(t: ExprSpec) -> bool {
+    &&& t == binds(BinderKind::Pi, tdoms(t, tarity(t)), tbody(t, tarity(t)))
+    &&& tdoms(t, tarity(t)).len() == tarity(t)
+    &&& forall|q: int| 0 <= q < tarity(t) ==> (#[trigger] tdoms(t, tarity(t))[q]) is Sort
+        && crate::ti_syntax::never_zero(tdoms(t, tarity(t))[q]->Sort_0)
 }
 
 /// A CLOSED SIMPLE TYPE: another type former fully applied to closed
@@ -130,7 +143,7 @@ pub open spec fn simple_app(sig: Sig, ind: u64, e: ExprSpec) -> bool
 {
     match e {
         ExprSpec::App(f, x) => simple_app(sig, ind, *f) && simple_ty(sig, ind, *x),
-        ExprSpec::Const(j, _) => other_former(sig, ind, j),
+        ExprSpec::Const(j, us) => other_former(sig, ind, j) && us.len() == sig.consts[j].lps.len(),
         _ => false,
     }
 }
@@ -158,7 +171,7 @@ pub open spec fn psapp(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
 {
     match e {
         ExprSpec::App(f, x) => psapp(sig, ind, pdoms, np, k, *f) && psimple(sig, ind, pdoms, np, k, *x),
-        ExprSpec::Const(j, _) => other_former(sig, ind, j),
+        ExprSpec::Const(j, us) => other_former(sig, ind, j) && us.len() == sig.consts[j].lps.len(),
         _ => false,
     }
 }

@@ -1506,6 +1506,26 @@ elimination is fine: both sides of its `Iota` are proofs, both bottom.
 Until this is settled, the S6 signature condition excludes large
 eliminators of Prop inductives; S6.7 is where it returns.
 
+**Found 2026-10-12: no interpretation exists in this architecture.** The
+fundamental lemma relates every context to itself over the bottom
+environment, and the relation asks a term with a non-bottom member to
+head-reduce to a canonical form. Take `T := Eq.rec (motive := fun _ _ =>
+Type) Nat h`. In `(a : Nat) (h : a = a)`, `h ≡ Eq.refl a` by
+irrelevance and Iota fires (the kernel's K-like step), so soundness gives
+`T` the code of `Nat`. In `(a b : Nat) (h : a = b)`, `T` is stuck, so
+adequacy forces it to denote bottom. Over the bottom environment both
+applications of `Eq.rec` receive the same arguments (`a`, `b`, `h` all
+bottom), so no choice of `Eq.rec`'s denotation meets both. A
+proof-relevant `Eq.refl` (`ref w`, as the paper's identity type) does not
+help: irrelevance (`h ≡ Eq.refl a` at `h : a = a`) is then unsound over
+the bottom environment, and with it the contradiction returns. Lifting it
+needs a model where variables are not bottom (neutral elements). `And`-
+and `True`-like large eliminators are not affected: they are structures,
+and their stuck redexes take the eta step (`RecEta`). Measured: Lean's
+Core reaches `Eq` at its 16th declaration, so the fragment covers no
+longer Core prefix in this model; Eq's large elimination is metatheory
+the full judgment's hypotheses carry.
+
 ### Sub-stages
 
 | | content |
@@ -2377,6 +2397,35 @@ the fragment (`m` is not Sort-typed: `rec_small`, `rec_frag_l`,
   structure sides.
 - **Later: dependent fields** (`Sigma.snd`, `Subtype.property`): table
   entries that depend on earlier fields (Σ-codes).
+
+**Coverage by dependency closure (measured 2026-10-12).** Lean's
+Core reaches `Eq` at its 16th declaration, so no long Core prefix is in
+the fragment (see "Open: large elimination out of Prop"). The theorem
+holds of any export nanoda accepts, and a declaration's dependency
+closure is an export, so a declaration whose closure is in the fragment
+is covered by checking that closure. Measured on Core's 3875 declarations
+(scratchpad script approximating the gates): 235 today; 1208 with every
+shape gate widened (structure fields over the parameters, function-typed
+fields, `outParam`/type-former/value parameters, `And`-like large
+elimination, `Sort u` inductives, Prop-only recursors at the kernel side);
+1557 with literals and the Nat built-ins too. Removing one gate from the
+widened set costs: structure fields 774, non-dependent field types 640,
+`outParam` 322, type-former parameters 248, polymorphic fields 241,
+`And`-like elimination 218, `Sort u` 173, Prop-only recursors 52, value
+parameters 35. Polymorphic fields (`Bind.bind : {α β} → ...`) have no
+finite canonical code (a dependent Pi over a sort), so the table design
+excludes them.
+
+**Slice: structure fields over the parameters (started 2026-10-12).**
+`struct_of` admits `psimple` fields (then arrows). Groundwork:
+`dom_canon::ceval_mem` (a simple field's code is a member of its type,
+a former's application through its code function); the field kinds ask
+of a nested former that its parameters are types (`rec_canon::tparams`),
+its level arity, and that it is no constructor; `sig_ext`/`env_le` carry
+the tables' stability. Open: the projection lemmas need the structure's
+parameter codes typed, from the former's approximation by projecting
+them onto its inputs (`dom_proj::proj`), then `proj_entry`,
+`proj_iota_sup` and the eta/recursor sites, then the flip.
 
 ### The conditional theorem (started 2026-10-12)
 
