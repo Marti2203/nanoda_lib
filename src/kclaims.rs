@@ -297,7 +297,8 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
     }
 }
 
-/// An interpreted recursor's fields: ranked below its inductive, and typed,
+/// An interpreted recursor's fields: ranked below its inductive (a
+/// parameter's variable allowed), and typed,
 /// from their shapes (`rec_model_h`) and the certified constants
 /// (`dom_rec_end::ctors_below`).
 proof fn fields_of(sig: crate::ti_syntax::Sig, c: u64)
@@ -309,7 +310,7 @@ proof fn fields_of(sig: crate::ti_syntax::Sig, c: u64)
     ensures ({
         let sh = crate::dom_rec_ty::rshape(sig, c);
         &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
-            crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+            crate::dom_canon::pranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
         &&& crate::dom_code::fields_typed(sig, sh.ind)
     }),
 {
@@ -322,10 +323,10 @@ proof fn fields_of(sig: crate::ti_syntax::Sig, c: u64)
     assert(crate::dom_code::canon_shape(sig, ind) == sh);
     crate::dom_canon::fields_typed_of(sig, ind);
     assert forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) implies
-        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, ind)) by {
-        assert(crate::dom_canon::capp(sig, sh.fields[p][k], ind));
+        crate::dom_canon::pranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, ind)) by {
+        assert(crate::dom_canon::pcapp(sig, sh.fields[p][k], ind));
         crate::dom_canon::field_consts(sig, ind, p, k);
-        crate::dom_canon::ranked_of(sig, sh.fields[p][k], ind, crate::dom_code::rk(sig, ind));
+        crate::dom_canon::pranked_of(sig, sh.fields[p][k], ind, crate::dom_code::rk(sig, ind));
     }
 }
 

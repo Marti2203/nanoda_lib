@@ -384,7 +384,7 @@ pub open spec fn rec_model(sig: Sig, c: u64) -> bool {
     &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin() ==> #[trigger] rule_typed(sig, c, lv, p)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
-        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
+        crate::dom_canon::pranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
     &&& crate::dom_code::fields_typed(sig, sh.ind)
 }
 
@@ -430,7 +430,7 @@ pub open spec fn rec_model_h(sig: Sig, c: u64) -> bool {
     &&& (rec_large(sig, c) ==> crate::dom_code::never_prop(sig, sh.ind))
     &&& crate::dom_code::fields_blind(sig, sh.ind)
     &&& forall|p: int, k: int| 0 <= p < sh.nmin() && 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, c, p, k) ==>
-        crate::dom_canon::capp(sig, #[trigger] sh.fields[p][k], sh.ind)
+        crate::dom_canon::pcapp(sig, #[trigger] sh.fields[p][k], sh.ind)
     &&& crate::dom_code::fields_typed_h(sig, sh.ind)
 }
 

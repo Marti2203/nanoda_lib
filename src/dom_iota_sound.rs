@@ -186,6 +186,11 @@ pub proof fn sound_iota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec, rho: Env)
     assert(crate::dom_rec_end::ty_closed(ss, crate::ti_syntax::dty_at(sig, cid, clv)));
     let lc = choose|l: LevelSpec| #[trigger] derivable(ss, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, clv),
         crate::ti_syntax::dty_at(sig, cid, clv), crate::ti_syntax::sort(l)));
+    assert forall|k: int| 0 <= k < sh.fields[p].len() && !crate::dom_iota::isrec(sig, rid, p, k)
+        && crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) implies
+        crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind)) by {
+        crate::dom_psimple::pranked_simple(sig, sh.ind, sh.fields[p][k], crate::dom_code::rk(sig, sh.ind));
+    }
     assert(crate::dom_iota::r2l_ok(sig, rid, lv, p, clv));
     assert(a0.last() == major);
     assert(major == spine_app(ExprSpec::Const(sh.ctors[p], clv), cargs));

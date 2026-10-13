@@ -46,6 +46,21 @@ pub proof fn pvar_psimple(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: 
 {
 }
 
+/// A closed simple type `pranked` is `ranked`: it has no variable.
+pub proof fn pranked_simple(sig: Sig, ind: u64, e: ExprSpec, r: int)
+    requires
+        simple_ty(sig, ind, e) || crate::rec_canon::simple_app(sig, ind, e),
+        crate::dom_canon::pranked(sig, e, r),
+    ensures
+        ranked(sig, e, r),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        pranked_simple(sig, ind, *f, r);
+        pranked_simple(sig, ind, *x, r);
+    }
+}
+
 /// `ranked` is `pranked`.
 pub proof fn ranked_pranked(sig: Sig, e: ExprSpec, r: int)
     requires

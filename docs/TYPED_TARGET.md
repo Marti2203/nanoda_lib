@@ -2404,7 +2404,8 @@ the fragment (see "Open: large elimination out of Prop"). The theorem
 holds of any export nanoda accepts, and a declaration's dependency
 closure is an export, so a declaration whose closure is in the fragment
 is covered by checking that closure. Measured on Core's 3875 declarations
-(scratchpad script approximating the gates): 235 today; 1208 with every
+(scratchpad script approximating the gates): 235 today (54 before the
+correction below); 1208 with every
 shape gate widened (structure fields over the parameters, function-typed
 fields, `outParam`/type-former/value parameters, `And`-like large
 elimination, `Sort u` inductives, Prop-only recursors at the kernel side);
@@ -2434,9 +2435,28 @@ join-closed, which only its typing's soundness gives; the soundness
 induction has no other route to it (generation yields `derivable`
 facts, not derivations to recurse on). `ti_syntax::proj_pjs`; producers
 from the telescope (subject reduction) or the relation's parameter
-equations (`pjs_peq`, `pargs_at_cl`); the transformers carry them. Open:
-`proj_iota_sup` and the eta/recursor sites for such fields, then the
-flip.
+equations (`pjs_peq`, `pargs_at_cl`); the transformers carry them.
+Projection side done (493f213): a field not a parameter is equal at a
+sort at two parameter lists equal at their sorts and two equivalent
+instances (`dom_adeq_proj::sfield_conv`), which serves uniqueness of
+types, subject reduction, projection adequacy and struct eta; the model
+side dispatches on the field's kind. Open: the recursor's eta for
+smashed structures (`dom_rec_eta` reads parameter fields), then the flip.
+
+**Correction (2026-10-13): parameter-typed fields were refuted.**
+`rec_model` asked every non-recursive field `ranked` and `rec_model_h`
+asked it `capp`, both false on a variable. So for an interpreted
+recursor (large elimination, an inductive never a proposition: `List`,
+`Prod`, `Option`, every type class) whose inductive has a
+parameter-typed field, `rec_hyps` and the fragment hypothesis were
+unsatisfiable (`rec_hyps` with `pvar_at` proved `false`). The P3b
+parameter machinery verified but never applied there, and the coverage
+script, which admitted `psimple` fields everywhere, overstated the
+fragment: 54 of Core's 3875 declarations by dependency closure, not
+235. Fixed: `pranked`/`pcapp` (a parameter's variable allowed) in
+`rec_model`/`rec_model_h`; `dom_iota::r2l_ok` asks `ranked` of closed
+fields only (`dom_psimple::pranked_simple`). The refutation no longer
+goes through, nor does the one through the eta step's hypotheses.
 
 ### The conditional theorem (started 2026-10-12)
 
