@@ -583,10 +583,13 @@ pub open spec fn psd(sig: crate::ti_syntax::Sig, e: ExprSpec) -> bool
 {
     let h = crate::beta_model::spine_head(e);
     let n = crate::beta_model::spine_args(e).len();
-    e is Var || {
-        &&& h is Const
-        &&& forall|i: int| 0 <= i < n ==> (#[trigger] crate::rec_canon::tdoms(sig.consts[h->Const_0].ty, n)[i]) is Sort
-        &&& psd_args(sig, e)
+    e is Var || match e {
+        ExprSpec::Bind(BinderKind::Pi, a, b) => psd(sig, *a) && psd(sig, *b),
+        _ => {
+            &&& h is Const
+            &&& forall|i: int| 0 <= i < n ==> (#[trigger] crate::rec_canon::tdoms(sig.consts[h->Const_0].ty, n)[i]) is Sort
+            &&& psd_args(sig, e)
+        },
     }
 }
 
@@ -641,6 +644,11 @@ pub proof fn psd_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, 
         psd(small, e),
     decreases e, 1int,
 {
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        psd_down(big, small, *a);
+        psd_down(big, small, *b);
+        return;
+    }
     if !(e is Var) {
         psd_args_down(big, small, e);
         crate::twin::all_consts_head(e, small.consts.dom());
@@ -668,6 +676,10 @@ pub proof fn psd_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, e: Exp
     decreases e, 1int,
 {
     psd_args_eq(s1, s2, e);
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        psd_eq(s1, s2, *a);
+        psd_eq(s1, s2, *b);
+    }
 }
 
 /// A simple type over the parameters' parts.
@@ -722,6 +734,13 @@ pub proof fn psimple_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::S
         crate::rec_canon::psimple(small, ind, pdoms, np, k, e),
     decreases e, 1int,
 {
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        if crate::rec_canon::parrow(big, ind, pdoms, np, k, e) {
+            psimple_down(big, small, ind, pdoms, np, k, *a);
+            psimple_down(big, small, ind, pdoms, np, k + 1, *b);
+            return;
+        }
+    }
     if !crate::rec_canon::pvar_field(pdoms, np, k, e) {
         psapp_down(big, small, ind, pdoms, np, k, e);
         crate::twin::all_consts_head(e, small.consts.dom());
@@ -751,6 +770,10 @@ pub proof fn psimple_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, in
     decreases e, 1int,
 {
     psapp_eq(s1, s2, ind, pdoms, np, k, e);
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        psimple_eq(s1, s2, ind, pdoms, np, k, *a);
+        psimple_eq(s1, s2, ind, pdoms, np, k + 1, *b);
+    }
 }
 
 pub proof fn pcapp_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, e: ExprSpec, ind: u64)
@@ -761,6 +784,10 @@ pub proof fn pcapp_eq(s1: crate::ti_syntax::Sig, s2: crate::ti_syntax::Sig, e: E
     decreases e,
 {
     if let ExprSpec::App(f, x) = e {
+        pcapp_eq(s1, s2, *f, ind);
+        pcapp_eq(s1, s2, *x, ind);
+    }
+    if let ExprSpec::Bind(_, f, x) = e {
         pcapp_eq(s1, s2, *f, ind);
         pcapp_eq(s1, s2, *x, ind);
     }
@@ -842,6 +869,92 @@ pub proof fn pargs_of(sig: crate::ti_syntax::Sig, r: int, dl: crate::ti_syntax::
 /// of `tw`, lowered past the earlier fields (`rec_canon::plow`), with its
 /// facts (`dom_psimple::ptyped`): `simple_rebuild` with the parameters'
 /// variables as leaves, typed at their sorts.
+/// `prebuild` at an arrow: its domain and codomain rebuilt (the codomain
+/// at one more slot, its binder), the codomain weakened under the rebuilt
+/// domain, the arrow formed and retyped at nanoda's level.
+#[verifier::spinoff_prover]
+pub proof fn prebuild_arrow(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: crate::ti_syntax::Sig, r: int, ind: u64,
+    pdoms: Seq<ExprSpec>, k: nat, ta: ExprSpec, tb: ExprSpec, te: ExprSpec) -> (l: LevelSpec)
+    requires
+        crate::dom_rec_end::sig_sr(s),
+        crate::ti_syntax::derivable(s, crate::ti_syntax::eq(gc, crate::ti_syntax::pi(ta, tb), crate::ti_syntax::pi(ta, tb), te)),
+        gc.len() == pdoms.len() + k,
+        forall|q: int| 0 <= q < pdoms.len() ==> gc[q] == #[trigger] pdoms[q] && pdoms[q] is Sort,
+        crate::rec_canon::psimple(s, ind, pdoms, pdoms.len(), k, ta),
+        crate::rec_canon::psimple(s, ind, pdoms, pdoms.len(), k + 1, tb),
+        psd(s, ta),
+        psd(s, tb),
+        agree(tw, s),
+        crate::dom_rec_end::types_below(tw),
+        crate::ti_syntax::iota_ok(tw),
+        crate::dom_levels::sig_lps(tw),
+        crate::dom_canon::pranked(tw, ta, r),
+        crate::dom_canon::pranked(tw, tb, r),
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::Jd::Wf(pdoms)),
+    ensures ({
+        let e = crate::ti_syntax::pi(ta, tb);
+        &&& crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(pdoms,
+            crate::rec_canon::plow(e, k), crate::rec_canon::plow(e, k), crate::ti_syntax::sort(l)))
+        &&& crate::ti_chain::tchain(s, gc, te, crate::ti_syntax::sort(l))
+        &&& crate::dom_psimple::ptyped(tw, r, pdoms, crate::rec_canon::plow(e, k))
+    }),
+    decreases crate::beta_model::size(crate::ti_syntax::pi(ta, tb)), 1int,
+{
+    use crate::ti_syntax::{sort, eq, Jd};
+    let np = pdoms.len();
+    let e = crate::ti_syntax::pi(ta, tb);
+    let tt = crate::ti_strip::strip_below(tw, r);
+    let d = crate::ti_sub::get(s, eq(gc, e, e, te));
+    crate::ti_gen::gen(s, d);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(ta, tb, l1, l2)
+        && crate::ti_gen::typ(s, gc, ta, l1) && crate::ti_gen::typ(s, gc.push(ta), tb, l2)
+        && crate::ti_chain::tchain(s, gc, te, sort(crate::ti_syntax::imax(l1, l2)));
+    let lm = crate::ti_syntax::imax(l1, l2);
+    // the parts, rebuilt
+    let la = prebuild(s, gc, tw, r, ind, pdoms, k, ta, sort(l1));
+    let gc2 = gc.push(ta);
+    assert forall|q: int| 0 <= q < pdoms.len() implies gc2[q] == #[trigger] pdoms[q] && pdoms[q] is Sort by {
+        assert(gc2[q] == gc[q]);
+    }
+    let lb = prebuild(s, gc2, tw, r, ind, pdoms, k + 1, tb, sort(l2));
+    let (pa, q) = (crate::rec_canon::plow(ta, k), crate::rec_canon::plow(tb, k + 1));
+    // the codomain under the rebuilt domain
+    let w = crate::ti_sub::get(tt, Jd::Wf(pdoms));
+    let dpa = crate::ti_sub::get(tt, eq(pdoms, pa, pa, sort(la)));
+    let w2 = crate::ti_meta::d_cons(tt, w, la, dpa);
+    let dq = crate::ti_sub::get(tt, eq(pdoms, q, q, sort(lb)));
+    assert(pdoms.push(pa).drop_last() =~= pdoms);
+    let dq2 = crate::ti_sub::d_wk(tt, dq, w2);
+    crate::ti_meta::mk_d(tt, dq2);
+    let lq = crate::subst_algebra::lift(1, 0, q);
+    assert(crate::subst_algebra::lift(1, 0, sort(lb)) == sort(lb));
+    crate::dom_adeq_syn::d_pi_self(tt, pdoms, pa, lq, la, lb);
+    assert(crate::rec_canon::plow(e, k) == crate::ti_syntax::pi(pa, lq));
+    // at nanoda's level
+    crate::dom_fund::sort_inj_chain(s, gc, l1, la);
+    crate::dom_fund::sort_inj_chain(s, gc2, l2, lb);
+    let lr = crate::ti_syntax::imax(la, lb);
+    assert(crate::conv_cr::lev_eq(lr, lm)) by {
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(lr, rho) == crate::level_model::interp(lm, rho) by {
+            assert(crate::level_model::interp(la, rho) == crate::level_model::interp(l1, rho));
+            assert(crate::level_model::interp(lb, rho) == crate::level_model::interp(l2, rho));
+        }
+    }
+    crate::dom_levels::sort_retype2(tt, pdoms, crate::ti_syntax::pi(pa, lq), crate::ti_syntax::pi(pa, lq), lm, lr);
+    // the codomain's binder dropped is the rebuilt codomain
+    crate::dom_psimple::psimple_plow(s, ind, pdoms, np, k + 1, tb, r);
+    crate::dom_psimple::psimple_lift(s, ind, pdoms, np, 0, q, 1, 0, r);
+    crate::dom_psimple::plow_lift_id(s, ind, pdoms, np, 1, lq);
+    let back = crate::rec_canon::plow(lq, 1);
+    crate::subst_algebra::inst_lift(0, 0, 0, ExprSpec::Closed, q);
+    crate::subst_algebra::inst_lift(0, 0, 0, ExprSpec::Closed, back);
+    crate::subst_algebra::lift_zero(0, q);
+    crate::subst_algebra::lift_zero(0, back);
+    assert(back == q);
+    assert(crate::dom_psimple::ptyped(tw, r, pdoms, crate::ti_syntax::pi(pa, lq)));
+    lm
+}
+
 #[verifier::spinoff_prover]
 pub proof fn prebuild(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: crate::ti_syntax::Sig, r: int, ind: u64,
     pdoms: Seq<ExprSpec>, k: nat, e: ExprSpec, te: ExprSpec) -> (l: LevelSpec)
@@ -883,6 +996,11 @@ pub proof fn prebuild(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: c
         crate::ti_meta::mk_d(tt, dv);
         assert(crate::rec_canon::plow(e, k) == ExprSpec::Var(j));
         return lq;
+    }
+    if let ExprSpec::Bind(BinderKind::Pi, ta, tb) = e {
+        if crate::rec_canon::parrow(s, ind, pdoms, np, k, e) {
+            return prebuild_arrow(s, gc, tw, r, ind, pdoms, k, *ta, *tb, te);
+        }
     }
     let h = crate::beta_model::spine_head(e);
     let a = crate::beta_model::spine_args(e);

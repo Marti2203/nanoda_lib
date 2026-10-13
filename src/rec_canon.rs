@@ -164,6 +164,26 @@ pub open spec fn psimple(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: n
 {
     pvar_field(pdoms, np, k, e) || (psapp(sig, ind, pdoms, np, k, e) && spine_head(e) is Const
         && spine_args(e).len() == tarity(sig.consts[spine_head(e)->Const_0].ty))
+        || parrow(sig, ind, pdoms, np, k, e)
+}
+
+/// A FUNCTION TYPE between simple types over the parameters, its codomain
+/// not depending on its argument: the binder is one more slot before the
+/// parameters, which a simple type never names. Staged: not yet admitted
+/// (`arrows_live`; docs/TYPED_TARGET.md, "Slice: arrow fields").
+pub open spec fn parrow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
+    decreases e, 0int,
+{
+    arrows_live() && match e {
+        ExprSpec::Bind(BinderKind::Pi, a, b) => psimple(sig, ind, pdoms, np, k, *a) && psimple(sig, ind, pdoms, np, k + 1, *b),
+        _ => false,
+    }
+}
+
+/// Whether arrow fields are admitted: not until the logical relation's
+/// transfer between a field type's instances covers function types.
+pub open spec fn arrows_live() -> bool {
+    false
 }
 
 pub open spec fn psapp(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
@@ -184,6 +204,8 @@ pub open spec fn plow(e: ExprSpec, k: nat) -> ExprSpec
     match e {
         ExprSpec::App(f, x) => ExprSpec::App(Box::new(plow(*f, k)), Box::new(plow(*x, k))),
         ExprSpec::Var(i) => if i >= k { ExprSpec::Var((i - k) as nat) } else { e },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => ExprSpec::Bind(BinderKind::Pi, Box::new(plow(*a, k)),
+            Box::new(lift(1, 0, plow(*b, k + 1)))),
         _ => e,
     }
 }

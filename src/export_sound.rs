@@ -945,7 +945,7 @@ proof fn ptyped_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>, r: int,
         crate::dom_psimple::ptyped(s0, r, dl, e),
     ensures
         crate::dom_psimple::ptyped(crate::ti_syntax::Sig { locals: d, ..s0 }, r, dl, e),
-    decreases e, 1int,
+    decreases crate::ti_syntax::esize(e), 1int,
 {
     let s1 = crate::ti_syntax::Sig { locals: d, ..s0 };
     crate::ti_strip::strip_below_locals(s0, d, r);
@@ -953,6 +953,11 @@ proof fn ptyped_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>, r: int,
     let h = crate::beta_model::spine_head(e);
     if h is Const {
         canon_locals(s0, s1, h->Const_0);
+    }
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        ptyped_locals(s0, d, r, dl, *a);
+        crate::dom_psimple::esize_plow(*b, 1);
+        ptyped_locals(s0, d, r, dl, crate::rec_canon::plow(*b, 1));
     }
 }
 
@@ -962,7 +967,7 @@ proof fn pargs_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>, r: int, 
         crate::dom_psimple::pargs_typed(s0, r, dl, e),
     ensures
         crate::dom_psimple::pargs_typed(crate::ti_syntax::Sig { locals: d, ..s0 }, r, dl, e),
-    decreases e, 0int,
+    decreases crate::ti_syntax::esize(e), 0int,
 {
     if let ExprSpec::App(f, x) = e {
         pargs_locals(s0, d, r, dl, *f);

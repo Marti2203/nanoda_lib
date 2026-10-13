@@ -179,6 +179,10 @@ pub proof fn psimple_nlbv(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: 
         psimple_nlbv(sig, ind, pdoms, np, k, *f);
         psimple_nlbv(sig, ind, pdoms, np, k, *x);
     }
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        psimple_nlbv(sig, ind, pdoms, np, k, *a);
+        psimple_nlbv(sig, ind, pdoms, np, k + 1, *b);
+    }
 }
 
 /// A projection's type, unfolded: the field at the instance over the

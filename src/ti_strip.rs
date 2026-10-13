@@ -234,6 +234,10 @@ pub proof fn psimple_shrink(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np
         psimple_shrink(s1, s2, ind, pdoms, np, k, *f);
         psimple_shrink(s1, s2, ind, pdoms, np, k, *x);
     }
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        psimple_shrink(s1, s2, ind, pdoms, np, k, *a);
+        psimple_shrink(s1, s2, ind, pdoms, np, k + 1, *b);
+    }
 }
 
 /// THE SIGNATURE BELOW A RANK keeps a canonical recursor of it canonical:

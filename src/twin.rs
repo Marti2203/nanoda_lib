@@ -149,6 +149,10 @@ pub proof fn psimple_grow(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: 
         psimple_grow(s1, s2, ind, pdoms, np, k, *f);
         psimple_grow(s1, s2, ind, pdoms, np, k, *x);
     }
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        psimple_grow(s1, s2, ind, pdoms, np, k, *a);
+        psimple_grow(s1, s2, ind, pdoms, np, k + 1, *b);
+    }
     if let ExprSpec::Const(j, _) = e {
         assert(s1.consts.contains_key(j));
     }
@@ -1674,6 +1678,10 @@ pub proof fn psimple_twin(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: 
     if let ExprSpec::App(f, x) = e {
         psimple_twin(sig, ind, pdoms, np, k, *f);
         psimple_twin(sig, ind, pdoms, np, k, *x);
+    }
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        psimple_twin(sig, ind, pdoms, np, k, *a);
+        psimple_twin(sig, ind, pdoms, np, k + 1, *b);
     }
     let h = spine_head(e);
     if psapp(sig, ind, pdoms, np, k, e) {

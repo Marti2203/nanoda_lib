@@ -110,29 +110,9 @@ pub proof fn plow_vsub(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
         c.len() == k,
     ensures
         vsub(e, a + c) == vsub(plow(e, k), a),
-    decreases e,
 {
-    match e {
-        ExprSpec::App(f, x) => {
-            if !psapp(sig, ind, pdoms, np, k, e) {
-                assert(pvar_field(pdoms, np, k, e));
-            }
-            plow_vsub(sig, ind, pdoms, np, k, *f, a, c);
-            plow_vsub(sig, ind, pdoms, np, k, *x, a, c);
-            crate::ti_spine::vsub_app(*f, *x, a + c);
-            crate::ti_spine::vsub_app(plow(*f, k), plow(*x, k), a);
-        },
-        ExprSpec::Var(i) => {
-            assert(pvar_field(pdoms, np, k, e));
-            crate::ti_spine::vsub_var(i, a + c);
-            crate::ti_spine::vsub_var((i - k) as nat, a);
-        },
-        ExprSpec::Const(j, ls) => {
-            crate::ti_spine::vsub_const(j, ls, a + c);
-            crate::ti_spine::vsub_const(j, ls, a);
-        },
-        _ => {},
-    }
+    plow_lift_id(sig, ind, pdoms, np, k, e);
+    vsub_lift_drop(plow(e, k), a, c);
 }
 
 /// Lowering keeps the kind, with no earlier fields.
@@ -144,9 +124,44 @@ pub proof fn psimple_plow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: 
         pranked(sig, e, r) ==> pranked(sig, plow(e, k), r),
     decreases e,
 {
-    if let ExprSpec::App(f, x) = e {
-        psimple_plow(sig, ind, pdoms, np, k, *f, r);
-        psimple_plow(sig, ind, pdoms, np, k, *x, r);
+    match e {
+        ExprSpec::App(f, x) => {
+            psimple_plow(sig, ind, pdoms, np, k, *f, r);
+            psimple_plow(sig, ind, pdoms, np, k, *x, r);
+        },
+        ExprSpec::Bind(BinderKind::Pi, ta, tb) => {
+            psimple_plow(sig, ind, pdoms, np, k, *ta, r);
+            psimple_plow(sig, ind, pdoms, np, k + 1, *tb, r);
+            psimple_lift(sig, ind, pdoms, np, 0, plow(*tb, k + 1), 1, 0, r);
+        },
+        _ => {},
+    }
+}
+
+/// LIFTING KEEPS THE KIND past the parameters: lifted by `n` at a cutoff
+/// at most the slots before the parameters, a simple type over the
+/// parameters is one with `n` more slots before them.
+pub proof fn psimple_lift(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec, n: nat, c: nat, r: int)
+    requires
+        c <= k,
+    ensures
+        psimple(sig, ind, pdoms, np, k, e) ==> psimple(sig, ind, pdoms, np, k + n, crate::subst_algebra::lift(n, c, e)),
+        psapp(sig, ind, pdoms, np, k, e) ==> psapp(sig, ind, pdoms, np, k + n, crate::subst_algebra::lift(n, c, e))
+            && spine_head(crate::subst_algebra::lift(n, c, e)) == spine_head(e)
+            && spine_args(crate::subst_algebra::lift(n, c, e)).len() == spine_args(e).len(),
+        pranked(sig, e, r) ==> pranked(sig, crate::subst_algebra::lift(n, c, e), r),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            psimple_lift(sig, ind, pdoms, np, k, *f, n, c, r);
+            psimple_lift(sig, ind, pdoms, np, k, *x, n, c, r);
+        },
+        ExprSpec::Bind(BinderKind::Pi, ta, tb) => {
+            psimple_lift(sig, ind, pdoms, np, k, *ta, n, c, r);
+            psimple_lift(sig, ind, pdoms, np, k + 1, *tb, n, c + 1, r);
+        },
+        _ => {},
     }
 }
 
@@ -170,12 +185,37 @@ pub proof fn ceval_plow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: na
             }
             ceval_plow(sig, ind, pdoms, np, k, *f, r, outer, ls, pv);
             ceval_plow(sig, ind, pdoms, np, k, *x, r, outer, ls, pv);
+            assert(plow(e, k) is App);
             assert(cargs(sig, r, outer, ls, pe, e) == cargs(sig, r, outer, ls, pe, *f).push(ceval(sig, r, outer, ls, pe, *x)));
             assert(cargs(sig, r, outer, ls, pe2, plow(e, k)) == cargs(sig, r, outer, ls, pe2, plow(*f, k)).push(ceval(sig, r, outer, ls, pe2, plow(*x, k))));
+            assert(spine_head(plow(e, k)) == spine_head(e));
         },
         ExprSpec::Var(i) => {
             assert(pvar_field(pdoms, np, k, e));
             assert(pe[pe.len() - 1 - i] == pe2[pe2.len() - 1 - (i - k)]);
+            assert(ceval(sig, r, outer, ls, pe, e) == ceval(sig, r, outer, ls, pe2, plow(e, k)));
+        },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            assert(crate::rec_canon::parrow(sig, ind, pdoms, np, k, e));
+            ceval_plow(sig, ind, pdoms, np, k, *a, r, outer, ls, pv);
+            ceval_plow(sig, ind, pdoms, np, k + 1, *b, r, outer, ls, pv);
+            assert(pe.push(Cpt::Bot) =~= crate::dom_code::fpe(pv, np, k + 1));
+            let q = plow(*b, k + 1);
+            crate::dom_code::ceval_lift(sig, r, outer, ls, pe2, seq![Cpt::Bot], Seq::empty(), q);
+            assert(pe2 + seq![Cpt::Bot] + Seq::<Cpt>::empty() =~= pe2.push(Cpt::Bot));
+            assert(pe2 + Seq::<Cpt>::empty() =~= pe2);
+            let pa = plow(*a, k);
+            assert(plow(e, k) == ExprSpec::Bind(BinderKind::Pi, Box::new(pa), Box::new(crate::subst_algebra::lift(1, 0, q))));
+            assert(ceval(sig, r, outer, ls, pe, e) == crate::dom_code::arrow(ceval(sig, r, outer, ls, pe, *a),
+                ceval(sig, r, outer, ls, pe.push(Cpt::Bot), *b)));
+            assert(ceval(sig, r, outer, ls, pe2, plow(e, k)) == crate::dom_code::arrow(ceval(sig, r, outer, ls, pe2, pa),
+                ceval(sig, r, outer, ls, pe2.push(Cpt::Bot), crate::subst_algebra::lift(1, 0, q))));
+            assert(ceval(sig, r, outer, ls, pe, e) == ceval(sig, r, outer, ls, pe2, plow(e, k)));
+        },
+        ExprSpec::Const(..) => {
+            assert(plow(e, k) == e);
+            assert(cargs(sig, r, outer, ls, pe, e) == Seq::<Cpt>::empty());
+            assert(cargs(sig, r, outer, ls, pe2, e) == Seq::<Cpt>::empty());
         },
         _ => {},
     }
@@ -189,13 +229,65 @@ pub open spec fn ty_in(sig: Sig, dl: crate::ti_syntax::Ctx, x: ExprSpec) -> bool
 /// `styped` in the parameters' context `dl`: a type there, and so its
 /// arguments, its type parameters at their declared sorts.
 pub open spec fn ptyped(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
-    decreases e, 1int,
+    decreases crate::ti_syntax::esize(e), 1int,
 {
     ty_in(crate::ti_strip::strip_below(sig, r), dl, e) && pargs_typed(sig, r, dl, e) && pdoms_typed(sig, r, dl, e)
+        && pbinds_typed(sig, r, dl, e)
+}
+
+/// An arrow's domain and codomain are typed in the context, the codomain
+/// with its unused binder dropped.
+pub open spec fn pbinds_typed(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
+    decreases crate::ti_syntax::esize(e), 0int,
+    via pbinds_decreases
+{
+    match e {
+        ExprSpec::Bind(BinderKind::Pi, a, b) => ptyped(sig, r, dl, *a) && ptyped(sig, r, dl, plow(*b, 1)),
+        _ => true,
+    }
+}
+
+#[via_fn]
+proof fn pbinds_decreases(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) {
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        esize_plow(*b, 1);
+    }
+}
+
+/// Lifting keeps the size.
+pub proof fn esize_lift(n: nat, c: nat, e: ExprSpec)
+    ensures
+        crate::ti_syntax::esize(crate::subst_algebra::lift(n, c, e)) == crate::ti_syntax::esize(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { esize_lift(n, c, *f); esize_lift(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { esize_lift(n, c, *t); esize_lift(n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { esize_lift(n, c, *t); esize_lift(n, c, *v); esize_lift(n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => esize_lift(n, c, *x),
+        _ => {},
+    }
+}
+
+/// Lowering keeps the size.
+pub proof fn esize_plow(e: ExprSpec, k: nat)
+    ensures
+        crate::ti_syntax::esize(plow(e, k)) == crate::ti_syntax::esize(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { esize_plow(*f, k); esize_plow(*x, k); },
+        ExprSpec::Bind(BinderKind::Pi, t, b) => {
+            esize_plow(*t, k);
+            esize_plow(*b, k + 1);
+            esize_lift(1, 0, plow(*b, k + 1));
+        },
+        _ => {},
+    }
 }
 
 pub open spec fn pargs_typed(sig: Sig, r: int, dl: crate::ti_syntax::Ctx, e: ExprSpec) -> bool
-    decreases e, 0int,
+    decreases crate::ti_syntax::esize(e), 0int,
 {
     match e {
         ExprSpec::App(f, x) => pargs_typed(sig, r, dl, *f) && ptyped(sig, r, dl, *x),
@@ -523,29 +615,13 @@ pub proof fn plift_vsub(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: na
         c.len() == k,
     ensures
         vsub(crate::subst_algebra::lift(s, k, e), a + b + c) == vsub(e, a + c),
-    decreases e,
 {
-    match e {
-        ExprSpec::App(f, x) => {
-            if !psapp(sig, ind, pdoms, np, k, e) {
-                assert(pvar_field(pdoms, np, k, e));
-            }
-            plift_vsub(sig, ind, pdoms, np, k, *f, s, a, b, c);
-            plift_vsub(sig, ind, pdoms, np, k, *x, s, a, b, c);
-            crate::ti_spine::vsub_app(crate::subst_algebra::lift(s, k, *f), crate::subst_algebra::lift(s, k, *x), a + b + c);
-            crate::ti_spine::vsub_app(*f, *x, a + c);
-        },
-        ExprSpec::Var(i) => {
-            assert(pvar_field(pdoms, np, k, e));
-            crate::ti_spine::vsub_var(i + s, a + b + c);
-            crate::ti_spine::vsub_var(i, a + c);
-        },
-        ExprSpec::Const(j, ls) => {
-            crate::ti_spine::vsub_const(j, ls, a + b + c);
-            crate::ti_spine::vsub_const(j, ls, a + c);
-        },
-        _ => {},
-    }
+    let x = plow(e, k);
+    plow_lift_id(sig, ind, pdoms, np, k, e);
+    crate::subst_algebra::lift_lift(s, k, 0, k, x);
+    assert(a + b + c =~= a + (b + c));
+    vsub_lift_drop(x, a, b + c);
+    vsub_lift_drop(x, a, c);
 }
 
 /// A simple type over the parameters is its lowered form lifted past the
@@ -569,8 +645,57 @@ pub proof fn plow_lift_id(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: 
         ExprSpec::Var(i) => {
             assert(pvar_field(pdoms, np, k, e));
         },
+        ExprSpec::Bind(bk, ta, tb) => {
+            assert(crate::rec_canon::parrow(sig, ind, pdoms, np, k, e));
+            plow_lift_id(sig, ind, pdoms, np, k, *ta);
+            plow_lift_id(sig, ind, pdoms, np, k + 1, *tb);
+            let q = plow(*tb, k + 1);
+            crate::subst_algebra::lift_lift(k, 1, 0, 1, q);
+            nlbv_lift(1, 0, q);
+        },
         _ => {},
     }
+}
+
+/// Lifting raises the loose variables' bound by at most the lift.
+pub proof fn nlbv_lift(n: nat, c: nat, e: ExprSpec)
+    ensures
+        crate::expr_model::nlbv(crate::subst_algebra::lift(n, c, e)) <= crate::expr_model::nlbv(e) + n,
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { nlbv_lift(n, c, *f); nlbv_lift(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { nlbv_lift(n, c, *t); nlbv_lift(n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { nlbv_lift(n, c, *t); nlbv_lift(n, c, *v); nlbv_lift(n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => nlbv_lift(n, c, *x),
+        _ => {},
+    }
+}
+
+/// INSTANTIATING A LIFTED TERM past the slots the lift skipped: a term over
+/// `a`'s slots, lifted past `c`'s, instantiated at `a + c`, is itself at
+/// `a`.
+pub proof fn vsub_lift_drop(x: ExprSpec, a: Seq<ExprSpec>, c: Seq<ExprSpec>)
+    requires
+        crate::expr_model::nlbv(x) <= a.len(),
+    ensures
+        vsub(crate::subst_algebra::lift(c.len(), 0, x), a + c) == vsub(x, a),
+{
+    use crate::ti_subst::{psub, rn, lr, comp_rs};
+    let (n, k) = (a.len(), c.len());
+    let ac = a + c;
+    crate::ti_beta::vsub_tsub(crate::subst_algebra::lift(k, 0, x), ac);
+    crate::ti_beta::vsub_tsub(x, a);
+    crate::ti_subst::lift_is_rn(k, 0, x);
+    crate::ti_subst::psub_rn_psub(x, lr(k, 0), crate::ti_beta::tsub(ac, n + k));
+    let s = comp_rs(lr(k, 0), crate::ti_beta::tsub(ac, n + k));
+    let t = crate::ti_beta::tsub(a, n);
+    assert forall|i: nat| i < n implies #[trigger] s(i) == t(i) by {
+        crate::ti_beta::tsub_at(ac, n + k, i + k);
+        crate::ti_beta::tsub_at(a, n, i);
+        assert(ac[(n + k - 1 - (i + k)) as int] == a[(n - 1 - i) as int]);
+    }
+    crate::ti_proj::psub_agree(x, s, t, n);
 }
 
 /// MEMBERS OF A SIMPLE TYPE OVER THE PARAMETERS, lifted past different

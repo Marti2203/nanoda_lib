@@ -243,6 +243,10 @@ pub proof fn psimple_grow(sig: Sig, sig2: Sig, ind: u64, pdoms: Seq<ExprSpec>, n
             psimple_grow(sig, sig2, ind, pdoms, np, k, *f);
             psimple_grow(sig, sig2, ind, pdoms, np, k, *x);
         },
+        ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) => {
+            psimple_grow(sig, sig2, ind, pdoms, np, k, *a);
+            psimple_grow(sig, sig2, ind, pdoms, np, k + 1, *b);
+        },
         ExprSpec::Const(j, _) => {
             if crate::rec_canon::other_former(sig, ind, j) {
                 assert(sig2.consts[j] == sig.consts[j]);
@@ -255,7 +259,8 @@ pub proof fn psimple_grow(sig: Sig, sig2: Sig, ind: u64, pdoms: Seq<ExprSpec>, n
         },
         _ => {},
     }
-    if crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) && !crate::rec_canon::pvar_field(pdoms, np, k, e) {
+    if crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) && !crate::rec_canon::pvar_field(pdoms, np, k, e)
+        && !crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) {
         psapp_head(sig, ind, pdoms, np, k, e);
         let j = crate::beta_model::spine_head(e)->Const_0;
         assert(sig2.consts[j] == sig.consts[j]);
@@ -270,7 +275,7 @@ pub proof fn psimple_not_direct(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, us: Se
     ensures
         !crate::rec_canon::direct_occ(e, ind, us, np, ni, k),
 {
-    if !crate::rec_canon::pvar_field(pdoms, np, k, e) {
+    if !crate::rec_canon::pvar_field(pdoms, np, k, e) && !crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) {
         psapp_head(sig, ind, pdoms, np, k, e);
     }
 }

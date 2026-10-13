@@ -2469,6 +2469,32 @@ fragment: 54 of Core's 3875 declarations by dependency closure, not
 fields only (`dom_psimple::pranked_simple`). The refutation no longer
 goes through, nor does the one through the eta step's hypotheses.
 
+**Slice: arrow fields (started 2026-10-13; staged).** A field
+`A → B` between simple types over the parameters, its codomain not
+depending on its argument. Coverage by dependency closure: 235 → 400 on
+Core with arrows over simple types (applied parameters add nothing
+without type-former parameters; sorts as fields add 40 more). Encoding:
+`rec_canon::parrow`, the codomain a simple type at one more slot before
+the parameters (its binder, which a simple type never names), so every
+lemma over the field kinds takes the binder as an earlier slot.
+Lowering keeps the binder (`plow(A → B, k) = plow(A, k) → lift(1, 0,
+plow(B, k + 1))`); the substitution facts reduce to one general one
+(`dom_psimple::vsub_lift_drop`). The model: an arrow's code is
+`dom_code::arrow` (domain code, bottom to the codomain's code), a member
+of the arrow type (`dom_canon::ceval_mem`) and a type (`arrow_typed`),
+above the arrow's members (`ps_bound`); the codes of lifted terms
+(`ceval_lift`), lowering (`ceval_plow`). The ranks and shapes admit
+arrows (`pranked`, `pcapp`, `psd`, `blind_ty`); the typings in the
+parameters' context state the codomain with its binder dropped
+(`ptyped`'s `pbinds_typed`), which nanoda's constructor typing gives
+(`dom_field_ty::prebuild_arrow`). **Open, and why it is staged
+(`rec_canon::arrows_live`, false):** the logical relation's transfer of a
+field's relation between instances and codes (`dom_lift::ps_rel`,
+`ps_below`) for function types. Within one instance it goes through the
+relation's own monotonicity (`dom_rel_mono::incr`/`decr`, `mono_tm`,
+stage stability); across the major's and the recursor's instances it
+needs the instances' types related, which the callers do not carry.
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

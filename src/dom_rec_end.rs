@@ -713,6 +713,10 @@ pub proof fn psimple_congr(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np:
         psimple_congr(s1, s2, ind, pdoms, np, k, *f);
         psimple_congr(s1, s2, ind, pdoms, np, k, *x);
     }
+    if let ExprSpec::Bind(crate::expr_model::BinderKind::Pi, a, b) = e {
+        psimple_congr(s1, s2, ind, pdoms, np, k, *a);
+        psimple_congr(s1, s2, ind, pdoms, np, k + 1, *b);
+    }
 }
 
 /// The canonical recursor reads only the constants and the tables.
@@ -1280,6 +1284,8 @@ proof fn rc_field_intro(sig: Sig, rc: Rc, i: int, dm: Cpt, es: Seq<Cpt>)
         crate::dom_lift::fq_closed(sig, ind, ci, p, i);
         crate::dom_lift::field_facts(sig, ind, p, i);
         assert(crate::dom_lift::cf(sig, ind, rc.pv(sig), p, i) == crate::dom_lift::cf(sig, ind, Seq::empty(), p, i));
+        assert(!(f is Var) && !(f is Bind));
+        crate::dom_code::ceval_spine(sig, crate::dom_code::rk(sig, ind), ind, Seq::empty(), Seq::empty(), f);
         let fu = crate::iota_sr::cfu(sig, rc.c, j, i, ri);
         crate::ti_level::ls_nlbv(f, sh.lps, ri);
         crate::ti_spine::vsub_closed(fu, ps + rc.args.subrange(0, i));

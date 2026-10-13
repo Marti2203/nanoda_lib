@@ -1184,7 +1184,6 @@ pub proof fn side_conv(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
     assert(heads[np as int] == p && heads[(np + 1) as int] == xs[(np + 1) as int]);
     // the projections at their fields' types
     crate::dom_psimple::der_diag(sig, g, x, cx, ci);
-    reveal(crate::ti_syntax::struct_of);
     crate::dom_rec_end::rec_canon_ok(sig, c);
     crate::dom_rec_ty::scope_ctor(sig, c, 0);
     assert forall|k: int| 0 <= k < args.len() implies derivable(sig, eq(g, #[trigger] args[k], args[k],

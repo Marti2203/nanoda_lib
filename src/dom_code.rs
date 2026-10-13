@@ -662,6 +662,7 @@ pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq
 {
     match e {
         ExprSpec::Var(i) => if i < pe.len() { pe[pe.len() - 1 - i] } else { Cpt::Bot },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => arrow(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe.push(Cpt::Bot), *b)),
         _ => match spine_head(e) {
             ExprSpec::Const(jd, us) => if 0 <= rk(sig, jd) < r {
                 canon_code(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, pe, e))
@@ -821,6 +822,93 @@ pub proof fn centries_wf(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt>,
     }
 }
 
+/// The code of a term neither a variable nor a binder: its head former's
+/// canonical code at its arguments' codes, below the rank, else bottom.
+pub proof fn ceval_spine(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
+    requires
+        !(e is Var),
+        !(e is Bind),
+    ensures
+        ceval(sig, r, outer, ls, pe, e) == match spine_head(e) {
+            ExprSpec::Const(jd, us) => if 0 <= rk(sig, jd) < r {
+                canon_code(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, pe, e))
+            } else {
+                Cpt::Bot
+            },
+            _ => Cpt::Bot,
+        },
+{
+}
+
+/// A lifted term's spine head is its head lifted.
+pub proof fn spine_head_lift(n: nat, c: nat, e: ExprSpec)
+    ensures
+        spine_head(crate::subst_algebra::lift(n, c, e)) == crate::subst_algebra::lift(n, c, spine_head(e)),
+    decreases e,
+{
+    if let ExprSpec::App(f, _) = e {
+        spine_head_lift(n, c, *f);
+    }
+}
+
+/// THE CODE OF A LIFTED TERM, read with the lift's slots inserted below
+/// the top `c` codes, is the term's code.
+pub proof fn ceval_lift(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, base: Seq<Cpt>, mid: Seq<Cpt>, top: Seq<Cpt>, e: ExprSpec)
+    ensures
+        ceval(sig, r, outer, ls, base + mid + top, crate::subst_algebra::lift(mid.len(), top.len(), e))
+            == ceval(sig, r, outer, ls, base + top, e),
+    decreases r, 1int, esize(e) + 1,
+{
+    let (n, c) = (mid.len(), top.len());
+    let (p1, p2) = (base + mid + top, base + top);
+    let e1 = crate::subst_algebra::lift(n, c, e);
+    match e {
+        ExprSpec::Var(i) => {
+            if i < c {
+                assert(p1[p1.len() - 1 - i] == top[c - 1 - i]);
+                assert(p2[p2.len() - 1 - i] == top[c - 1 - i]);
+            } else if i < p2.len() {
+                assert(p1[p1.len() - 1 - (i + n)] == base[base.len() - 1 - (i - c)]);
+                assert(p2[p2.len() - 1 - i] == base[base.len() - 1 - (i - c)]);
+            }
+        },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            ceval_lift(sig, r, outer, ls, base, mid, top, *a);
+            ceval_lift(sig, r, outer, ls, base, mid, top.push(Cpt::Bot), *b);
+            assert(p1.push(Cpt::Bot) =~= base + mid + top.push(Cpt::Bot));
+            assert(p2.push(Cpt::Bot) =~= base + top.push(Cpt::Bot));
+        },
+        _ => {
+            spine_head_lift(n, c, e);
+            if let ExprSpec::Bind(bk, _, _) = e {
+                assert(e1 is Bind && e1->Bind_0 == bk);
+            } else {
+                assert(!(e1 is Bind) && !(e1 is Var));
+            }
+            if let ExprSpec::Const(jd, us) = spine_head(e) {
+                if 0 <= rk(sig, jd) < r {
+                    cargs_lift(sig, r, outer, ls, base, mid, top, e);
+                }
+            }
+        },
+    }
+}
+
+pub proof fn cargs_lift(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, base: Seq<Cpt>, mid: Seq<Cpt>, top: Seq<Cpt>, e: ExprSpec)
+    ensures
+        cargs(sig, r, outer, ls, base + mid + top, crate::subst_algebra::lift(mid.len(), top.len(), e))
+            == cargs(sig, r, outer, ls, base + top, e),
+    decreases r, 1int, esize(e),
+{
+    if let ExprSpec::App(f, x) = e {
+        assert(esize(*f) >= 1) by {
+            reveal_with_fuel(esize, 1);
+        }
+        cargs_lift(sig, r, outer, ls, base, mid, top, *f);
+        ceval_lift(sig, r, outer, ls, base, mid, top, *x);
+    }
+}
+
 pub proof fn ceval_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec)
     requires
         aw(pe),
@@ -833,6 +921,12 @@ pub proof fn ceval_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<
             if i < pe.len() {
                 assert(wf(pe[pe.len() - 1 - i]));
             }
+        },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            ceval_wf(sig, r, outer, ls, pe, *a);
+            aw_push(pe, Cpt::Bot);
+            ceval_wf(sig, r, outer, ls, pe.push(Cpt::Bot), *b);
+            arrow_wf(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe.push(Cpt::Bot), *b));
         },
         _ => {
             if let ExprSpec::Const(jd, us) = spine_head(e) {
@@ -910,6 +1004,14 @@ pub proof fn ceval_mono(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: Se
                 le_refl(Cpt::Bot);
             }
         },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            ceval_mono(sig, r, outer, ls, p1, p2, *a);
+            le_refl(Cpt::Bot);
+            pre_le_push2(p1, p2, Cpt::Bot, Cpt::Bot);
+            ceval_mono(sig, r, outer, ls, p1.push(Cpt::Bot), p2.push(Cpt::Bot), *b);
+            arrow_mono(ceval(sig, r, outer, ls, p1, *a), ceval(sig, r, outer, ls, p1.push(Cpt::Bot), *b),
+                ceval(sig, r, outer, ls, p2, *a), ceval(sig, r, outer, ls, p2.push(Cpt::Bot), *b));
+        },
         _ => {
             if let ExprSpec::Const(jd, us) = spine_head(e) {
                 if 0 <= rk(sig, jd) < r {
@@ -955,6 +1057,8 @@ pub proof fn ceval_closed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: 
         ceval_closed(sig, r, outer, ls, p1, p2, ind, *f);
         ceval_closed(sig, r, outer, ls, p1, p2, ind, *x);
     }
+    assert(!(e is Var) && !(e is Bind));
+    assert(cargs(sig, r, outer, ls, p1, e) == cargs(sig, r, outer, ls, p2, e));
 }
 
 /// Whether an inductive lives in Prop reads its instance only up to
@@ -1024,6 +1128,7 @@ pub open spec fn blind_ty(sig: Sig, e: ExprSpec) -> bool
     match e {
         ExprSpec::App(f, x) => blind_ty(sig, *f) && blind_ty(sig, *x),
         ExprSpec::Const(j, _) => former_blind(sig, j),
+        ExprSpec::Bind(_, t, b) => blind_ty(sig, *t) && blind_ty(sig, *b),
         _ => true,
     }
 }
@@ -1110,6 +1215,11 @@ pub proof fn ceval_blind(sig: Sig, r: int, outer: u64, u1: Seq<LevelSpec>, u2: S
         ceval(sig, r, outer, u1, pe, e) == ceval(sig, r, outer, u2, pe, e),
     decreases r, 1int, esize(e) + 1,
 {
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        ceval_blind(sig, r, outer, u1, u2, pe, *a);
+        ceval_blind(sig, r, outer, u1, u2, pe.push(Cpt::Bot), *b);
+        return;
+    }
     if !(e is Var) {
         if let ExprSpec::Const(jd, us) = spine_head(e) {
             if 0 <= rk(sig, jd) < r {
@@ -1147,9 +1257,14 @@ pub proof fn blind_sl(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
         blind_sl(sig, *f, ks, vs);
         blind_sl(sig, *x, ks, vs);
     }
+    if let ExprSpec::Bind(_, t, b) = e {
+        blind_sl(sig, *t, ks, vs);
+        blind_sl(sig, *b, ks, vs);
+    }
 }
 
 /// A BLIND TYPE'S CODE ignores the levels written in it.
+#[verifier::spinoff_prover]
 pub proof fn ceval_sl(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<Cpt>, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     requires
         blind_ty(sig, e),
@@ -1168,7 +1283,21 @@ pub proof fn ceval_sl(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<
             ceval_sl(sig, r, outer, ls, pe, *f, ks, vs);
             ceval_sl(sig, r, outer, ls, pe, *x, ks, vs);
         },
+        ExprSpec::Bind(BinderKind::Pi, a, b) => {
+            ceval_sl(sig, r, outer, ls, pe, *a, ks, vs);
+            ceval_sl(sig, r, outer, ls, pe.push(Cpt::Bot), *b, ks, vs);
+            return;
+        },
         _ => {},
+    }
+    if let ExprSpec::Bind(bk, _, _) = e {
+        assert(e2 is Bind && e2->Bind_0 == bk && bk != BinderKind::Pi);
+        assert(ceval(sig, r, outer, ls, pe, e) == Cpt::Bot);
+        assert(ceval(sig, r, outer, ls, pe, e2) == Cpt::Bot);
+    } else if !(e is Var) {
+        assert(!(e2 is Bind) && !(e2 is Var));
+        ceval_spine(sig, r, outer, ls, pe, e);
+        ceval_spine(sig, r, outer, ls, pe, e2);
     }
     if !(e is Var) {
         if let ExprSpec::Const(jd, us) = spine_head(e) {
@@ -1233,6 +1362,11 @@ pub proof fn ceval_lveq(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: S
         ceval(sig, r, outer, ls, pe, e) == ceval(sig, r, outer, ls2, pe, e),
     decreases r, 1int, esize(e) + 1,
 {
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        ceval_lveq(sig, r, outer, ls, ls2, pe, *a);
+        ceval_lveq(sig, r, outer, ls, ls2, pe.push(Cpt::Bot), *b);
+        return;
+    }
     if !(e is Var) {
         if let ExprSpec::Const(jd, us) = spine_head(e) {
             if 0 <= rk(sig, jd) < r {
@@ -1441,6 +1575,11 @@ pub proof fn ceval_lv(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ls2: Seq
         ceval(sig, r, outer, ls, pe, e) == ceval(sig, r, outer, ls2, pe, e),
     decreases r, 1int, esize(e) + 1,
 {
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        ceval_lv(sig, r, outer, ls, ls2, pe, *a);
+        ceval_lv(sig, r, outer, ls, ls2, pe.push(Cpt::Bot), *b);
+        return;
+    }
     if !(e is Var) {
         if let ExprSpec::Const(jd, us) = spine_head(e) {
             if 0 <= rk(sig, jd) < r {

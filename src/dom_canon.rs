@@ -44,6 +44,7 @@ pub open spec fn pranked(sig: Sig, e: ExprSpec, r: int) -> bool
         ExprSpec::App(f, x) => pranked(sig, *f, r) && pranked(sig, *x, r),
         ExprSpec::Const(j, _) => 0 <= rk(sig, j) < r && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
         ExprSpec::Var(_) => true,
+        ExprSpec::Bind(BinderKind::Pi, a, b) => pranked(sig, *a, r) && pranked(sig, *b, r),
         _ => false,
     }
 }
@@ -69,6 +70,7 @@ pub open spec fn pcapp(sig: Sig, e: ExprSpec, ind: u64) -> bool
         ExprSpec::App(f, x) => pcapp(sig, *f, ind) && pcapp(sig, *x, ind),
         ExprSpec::Const(j, _) => j != ind && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
         ExprSpec::Var(_) => true,
+        ExprSpec::Bind(BinderKind::Pi, a, b) => pcapp(sig, *a, ind) && pcapp(sig, *b, ind),
         _ => false,
     }
 }
@@ -97,6 +99,10 @@ pub proof fn pranked_of(sig: Sig, e: ExprSpec, ind: u64, r: int)
     decreases e,
 {
     if let ExprSpec::App(f, x) = e {
+        pranked_of(sig, *f, ind, r);
+        pranked_of(sig, *x, ind, r);
+    }
+    if let ExprSpec::Bind(_, f, x) = e {
         pranked_of(sig, *f, ind, r);
         pranked_of(sig, *x, ind, r);
     }
@@ -244,6 +250,11 @@ pub proof fn sl_kinds(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
     if let ExprSpec::App(f, x) = e {
         sl_kinds(sig, ind, pdoms, np, k, *f, r, ks, vs);
         sl_kinds(sig, ind, pdoms, np, k, *x, r, ks, vs);
+    }
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        sl_kinds(sig, ind, pdoms, np, k, *a, r, ks, vs);
+        sl_kinds(sig, ind, pdoms, np, k + 1, *b, r, ks, vs);
+        crate::ti_level::ls_lift(1, 0, crate::rec_canon::plow(*b, k + 1), ks, vs);
     }
 }
 
@@ -418,6 +429,49 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
         assert(pe[pe.len() - 1 - v] == pe[q]);
         le_trans(d, rho(v), pe[q]);
         return;
+    }
+    if let ExprSpec::Bind(BinderKind::Pi, ta, tb) = e {
+        if crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) {
+            // a member lies below its generator, whose domain is below the
+            // domain's code and whose outputs below the codomain's
+            if d is Bot {
+                reveal_with_fuel(le_set, 2);
+                return;
+            }
+            let pe2 = pe.push(Cpt::Bot);
+            let (ca, cb) = (ceval(sig, r, ind, ls, pe, *ta), ceval(sig, r, ind, ls, pe2, *tb));
+            reveal(mem);
+            let w = choose|w: Wit| #[trigger] mem_w(sig, e, rho, d, w);
+            let (a, gen, wa, ws) = (w->Gen_0, w->Gen_1, *w->Gen_2, w->Gen_3);
+            assert(mem_w(sig, *ta, rho, a, wa));
+            ps_bound(sig, ind, pdoms, np, k, ls, pe, *ta, rho, a);
+            aw_push(pe, Cpt::Bot);
+            assert(gen is Pi && *gen->Pi_0 == a);
+            assert(entries_ok(sig, *tb, rho, a, gen, ws));
+            let g = gen->Pi_1;
+            assert(gsteps(gen) == g);
+            assert forall|i: int| 0 <= i < g.len() implies le(#[trigger] g[i].1, cb) by {
+                let x = g[i].0;
+                let rho2 = ext(rho, x);
+                assert(i < ws.len());
+                assert(typed(gsteps(gen)[i].0, a) && mem_w(sig, *tb, ext(rho, gsteps(gen)[i].0), gsteps(gen)[i].1, ws[i]));
+                assert(typed(x, a) && mem_w(sig, *tb, rho2, g[i].1, ws[i]));
+                typed_wf(x, a);
+                assert forall|j: nat| #[trigger] wf(rho2(j)) by {
+                    if j > 0 { assert(rho2(j) == rho((j - 1) as nat)); }
+                }
+                assert forall|q: int| 0 <= q < np implies le(rho2(((k + 1) + np - 1 - q) as nat), #[trigger] pe2[q]) by {
+                    assert(pe2[q] == pe[q]);
+                    assert(rho2(((k + 1) + np - 1 - q) as nat) == rho((k + np - 1 - q) as nat));
+                }
+                assert(mem(sig, *tb, rho2, g[i].1));
+                ps_bound(sig, ind, pdoms, np, k + 1, ls, pe2, *tb, rho2, g[i].1);
+            }
+            crate::dom_code::arrow_le_intro(gen, ca, cb);
+            assert(ceval(sig, r, ind, ls, pe, e) == crate::dom_code::arrow(ca, cb));
+            le_trans(d, gen, crate::dom_code::arrow(ca, cb));
+            return;
+        }
     }
     crate::dom_psimple::psimple_facts(sig, ind, pdoms, np, k, e, r);
     let h = spine_head(e);
@@ -876,6 +930,50 @@ pub proof fn ceval_mem(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
         assert(mem_w(sig, e2, env, code, Wit::Nil));
         return;
     }
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        if crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) {
+            // an arrow: its code generates itself, the domain's code at the
+            // domain, bottom to the codomain's code
+            let pe2 = pe.push(Cpt::Bot);
+            let env2 = crate::dom_model::ext(env, Cpt::Bot);
+            ceval_mem(sig, ind, pdoms, np, k, ls, pe, *a, env);
+            aw_push(pe, Cpt::Bot);
+            crate::dom_sound::typed_basic();
+            assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe2[q], Cpt::U) by {
+                assert(pe2[q] == pe[q]);
+            }
+            assert forall|i: nat| #[trigger] wf(env2(i)) by {
+                if i > 0 { assert(env2(i) == env((i - 1) as nat)); }
+            }
+            assert forall|q: int| 0 <= q < np implies le(#[trigger] pe2[q], env2(((k + 1) + np - 1 - q) as nat)) by {
+                assert(pe2[q] == pe[q]);
+                assert(env2(((k + 1) + np - 1 - q) as nat) == env((k + np - 1 - q) as nat));
+            }
+            ceval_mem(sig, ind, pdoms, np, k + 1, ls, pe2, *b, env2);
+            let (ca, cb) = (ceval(sig, r, ind, ls, pe, *a), ceval(sig, r, ind, ls, pe2, *b));
+            assert(code == crate::dom_code::arrow(ca, cb));
+            ps_ceval_typed(sig, r, ind, ls, pdoms, np, k, pe, *a);
+            ceval_wf(sig, r, ind, ls, pe, *a);
+            ceval_wf(sig, r, ind, ls, pe2, *b);
+            crate::dom_code::arrow_wf(ca, cb);
+            le_refl(code);
+            let (a2, b2) = (crate::expr_model::subst_expr_levels(*a, lps, ls), crate::expr_model::subst_expr_levels(*b, lps, ls));
+            assert(e2 == ExprSpec::Bind(BinderKind::Pi, Box::new(a2), Box::new(b2)));
+            reveal(mem);
+            let wa = choose|w: Wit| #[trigger] mem_w(sig, a2, env, ca, w);
+            let wb = choose|w: Wit| #[trigger] mem_w(sig, b2, env2, cb, w);
+            let ws = seq![wb];
+            assert(gsteps(code) == seq![(Cpt::Bot, cb)]);
+            assert(typed(Cpt::Bot, ca)) by {
+                crate::dom_model::typed_up(ca, Cpt::U, cstage(ca, Cpt::U));
+                reveal_with_fuel(crate::dom_typing::has_type, 2);
+                crate::dom_model::typed_down(Cpt::Bot, ca, cstage(ca, Cpt::U));
+            }
+            assert(entries_ok(sig, b2, env, ca, code, ws));
+            assert(mem_w(sig, e2, env, code, Wit::Gen(ca, code, Box::new(wa), ws)));
+            return;
+        }
+    }
     crate::dom_psimple::psapp_args(sig, ind, pdoms, np, k, e);
     crate::ti_valid::psapp_head(sig, ind, pdoms, np, k, e);
     let h = spine_head(e);
@@ -1007,6 +1105,39 @@ pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i:
     crate::ti_beta::vsub_tsub(f2, zs);
 }
 
+/// AN ARROW CODE IS A TYPE when its domain and codomain are: its one
+/// entry, bottom, is typed at any domain.
+pub proof fn arrow_typed(a: Cpt, b: Cpt)
+    requires
+        typed(a, Cpt::U),
+        typed(b, Cpt::U),
+    ensures
+        typed(crate::dom_code::arrow(a, b), Cpt::U),
+{
+    let m = vstd::math::max(cstage(a, Cpt::U) as int, cstage(b, Cpt::U) as int) as nat;
+    typed_up(a, Cpt::U, m);
+    typed_up(b, Cpt::U, m);
+    let ar = crate::dom_code::arrow(a, b);
+    let g = ar->Pi_1;
+    assert(g[0] == (Cpt::Bot, b));
+    typed_wf(a, Cpt::U);
+    typed_wf(b, Cpt::U);
+    crate::dom_code::arrow_wf(a, b);
+    assert(ht(Cpt::U) == 0 && ht(Cpt::Bot) == 0);
+    assert(cstage(a, Cpt::U) == ht(a) + 1 && cstage(b, Cpt::U) == ht(b) + 1);
+    assert(hts(g, 0) == 0);
+    assert(hts(g, 1) == ht(b));
+    assert(ht(ar) == 1 + vstd::math::max(ht(a) as int, hts(g, 1) as int));
+    assert(ht(ar) == m);
+    assert(crate::dom_typing::has_type(m, Cpt::Bot, a)) by {
+        reveal_with_fuel(crate::dom_typing::has_type, 2);
+    }
+    assert(crate::dom_typing::has_type(m + 1, ar, Cpt::U)) by {
+        reveal_with_fuel(crate::dom_typing::has_type, 2);
+    }
+    typed_down(ar, Cpt::U, m + 1);
+}
+
 /// A SIMPLE TYPE OVER THE PARAMETERS HAS A TYPE AS CODE, its type
 /// parameters' codes being types.
 pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pdoms: Seq<ExprSpec>, np: nat, k: nat,
@@ -1026,6 +1157,19 @@ pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pd
         let q = (k + np - 1 - v) as int;
         assert(pe[pe.len() - 1 - v] == pe[q]);
         return;
+    }
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = e {
+        if crate::rec_canon::parrow(sig, outer, pdoms, np, k, e) {
+            let pe2 = pe.push(Cpt::Bot);
+            ps_ceval_typed(sig, r, outer, ls, pdoms, np, k, pe, *a);
+            aw_push(pe, Cpt::Bot);
+            assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe2[q], Cpt::U) by {
+                assert(pe2[q] == pe[q]);
+            }
+            ps_ceval_typed(sig, r, outer, ls, pdoms, np, k + 1, pe2, *b);
+            arrow_typed(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe2, *b));
+            return;
+        }
     }
     crate::dom_psimple::psapp_args(sig, outer, pdoms, np, k, e);
     let h = spine_head(e);
