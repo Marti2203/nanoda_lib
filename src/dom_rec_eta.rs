@@ -230,7 +230,8 @@ pub proof fn proj_cong(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
         &&& crate::ti_syntax::proj_ty(sig, crate::ti_eta::eta_st(sig, c, ls, xs), i as nat, z) == Some(t)
         &&& derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(z2)), t))
         &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
-        &&& !crate::ti_syntax::proj_prop(sig, crate::ti_eta::eta_st(sig, c, ls, xs))
+        &&& (crate::ti_syntax::proj_prop(sig, crate::ti_eta::eta_st(sig, c, ls, xs)) ==> exists|l: LevelSpec|
+            crate::ti_syntax::is_zero(l) && #[trigger] derivable(sig, eq(g, t, t, sort(l))))
     }),
 {
     assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
@@ -243,7 +244,11 @@ pub proof fn proj_cong(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
     crate::ti_eta::eta_proj_typed(sig, g, c, ls, xs, z, i);
     rft_any(sig, c, rinst(sig, c, ls), xs0, crate::ti_syntax::projs(z, i as nat), i);
     assert(crate::ti_eta::eta_fty(sig, c, ls, xs, z, i) == t);
-    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)));
+    let l = if crate::ti_syntax::proj_prop(sig, st) {
+        choose|l: LevelSpec| crate::ti_syntax::is_zero(l) && #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+    } else {
+        choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+    };
     let (pz, pz2) = (ExprSpec::Proj(i as usize, Box::new(z)), ExprSpec::Proj(i as usize, Box::new(z2)));
     let d0 = crate::ti_sub::get(sig, eq(g, z, z2, st));
     let d1 = crate::ti_sub::get(sig, eq(g, t, t, sort(l)));
@@ -302,7 +307,11 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         reveal(crate::ti_syntax::proj_result);
         assert((pa + fa)[sh.np + i] == fa[i]);
     }
-    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)));
+    let l = if crate::ti_syntax::proj_prop(sig, st) {
+        choose|l: LevelSpec| crate::ti_syntax::is_zero(l) && #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+    } else {
+        choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+    };
     // ProjIota, the field's declared type over the application's own parameters
     assert(crate::dom_code::canon_shape(sig, sh.ind) == sh) by {
         crate::dom_rec_end::rec_canon_ok(sig, c);

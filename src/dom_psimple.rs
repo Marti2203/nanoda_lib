@@ -300,6 +300,70 @@ pub proof fn arrow_parts(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, r: i
     assert(pv + Seq::<Cpt>::empty() =~= pv);
 }
 
+/// A PROOF FIELD UNDER A LIFT: lifting past `n` more slots at a cutoff
+/// below the earlier fields keeps the kind, `n` slots on.
+pub proof fn pprop_lift(pdoms: Seq<ExprSpec>, np: nat, k: nat, n: nat, c: nat, x: ExprSpec)
+    requires
+        c <= k,
+    ensures
+        crate::rec_canon::pprop(pdoms, np, k + n, crate::subst_algebra::lift(n, c, x)) == crate::rec_canon::pprop(pdoms, np, k, x),
+    decreases x,
+{
+    if let ExprSpec::Bind(BinderKind::Pi, a, b) = x {
+        pprop_lift(pdoms, np, k + 1, n, c + 1, *b);
+        assert(k + 1 + n == (k + n) + 1);
+    }
+}
+
+/// A PROOF FIELD IS A PROPOSITION in the parameters' context: typed at a
+/// sort whose level is zero at every instance (a sort-zero parameter, or a
+/// function type into a proof field, at `imax(_, 0)`).
+pub proof fn pprop_zero(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, r: int, e: ExprSpec) -> (l: LevelSpec)
+    requires
+        crate::rec_canon::pprop(pdoms, np, 0, e),
+        psimple(sig, ind, pdoms, np, 0, e),
+        pranked(sig, e, r),
+        ptyped(sig, r, pdoms, e),
+        pdoms.len() == np,
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::Jd::Wf(pdoms)),
+    ensures
+        crate::ti_syntax::is_zero(l),
+        crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::eq(pdoms, e, e, crate::ti_syntax::sort(l))),
+    decreases crate::ti_syntax::esize(e),
+{
+    let ss = crate::ti_strip::strip_below(sig, r);
+    if pvar_field(pdoms, np, 0, e) {
+        let j = e->Var_0;
+        let q = (np - 1 - j) as int;
+        let l0 = pdoms[q]->Sort_0;
+        let w = crate::ti_sub::get(ss, crate::ti_syntax::Jd::Wf(pdoms));
+        let dv = crate::ti_sub::d_var(ss, w, j);
+        assert(pdoms[pdoms.len() - 1 - j] == pdoms[q]);
+        assert(crate::ti_syntax::var_ty(pdoms, j) == crate::ti_syntax::sort(l0));
+        crate::ti_meta::mk_d(ss, dv);
+        l0
+    } else {
+        assert(crate::rec_canon::parrow(sig, ind, pdoms, np, 0, e));
+        arrow_parts(sig, ind, pdoms, np, r, e, r, Seq::empty(), Seq::empty());
+        let (ta, tb) = (*e->Bind_1, *e->Bind_2);
+        let b2 = plow(tb, 1);
+        let lb2 = crate::subst_algebra::lift(1, 0, b2);
+        pprop_lift(pdoms, np, 0, 1, 0, b2);
+        let lb = pprop_zero(sig, ind, pdoms, np, r, b2);
+        let la = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(ss, crate::ti_syntax::eq(pdoms, ta, ta, crate::ti_syntax::sort(l)));
+        crate::dom_rule_ty::wf_push(ss, pdoms, ta, la);
+        assert(pdoms + seq![ta] =~= pdoms.push(ta));
+        crate::dom_rule_g::wk_end(ss, pdoms, seq![ta], b2, b2, crate::ti_syntax::sort(lb));
+        assert(crate::subst_algebra::lift(1, 0, crate::ti_syntax::sort(lb)) == crate::ti_syntax::sort(lb));
+        crate::dom_adeq_syn::d_pi_self(ss, pdoms, ta, lb2, la, lb);
+        let l = crate::ti_syntax::imax(la, lb);
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l, rho) == 0 by {
+            assert(crate::level_model::interp(lb, rho) == 0);
+        }
+        l
+    }
+}
+
 /// Lifting keeps the size.
 pub proof fn esize_lift(n: nat, c: nat, e: ExprSpec)
     ensures

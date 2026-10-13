@@ -459,7 +459,7 @@ pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// constructor, or a smashed structure of proof fields.
 #[verifier::opaque]
 pub open spec fn prop_ok(sig: Sig, ind: u64) -> bool {
-    never_prop(sig, ind) || (crate::rec_canon::pstruct_live() && crate::ti_syntax::always_prop(sig, ind) && canon_shape(sig, ind).ni == 0
+    never_prop(sig, ind) || (crate::ti_syntax::always_prop(sig, ind) && canon_shape(sig, ind).ni == 0
         && (canon_shape(sig, ind).nmin() == 0 || (smash(sig, ind) && crate::rec_canon::shape_props(canon_shape(sig, ind)))))
 }
 
@@ -1265,17 +1265,6 @@ pub proof fn canon_former_blind(sig: Sig, ind: u64)
         former_blind(sig, ind),
 {
     prop_ok_former_blind(sig, ind);
-}
-
-/// While Prop structures are staged (`rec_canon::pstruct_live`), a former
-/// the tables admit is never a proposition.
-pub proof fn prop_ok_never(sig: Sig, ind: u64)
-    requires
-        prop_ok(sig, ind),
-    ensures
-        never_prop(sig, ind),
-{
-    reveal(prop_ok);
 }
 
 /// So do the codes of any former the tables admit.

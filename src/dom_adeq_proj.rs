@@ -115,6 +115,8 @@ pub proof fn sfield_conv(sig: Sig, g: Ctx, s: u64, i: nat, us: Seq<LevelSpec>, u
     ensures
         derivable(sig, eq(g, crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, us), ps + zs),
             crate::ti_spine::vsub(crate::ti_proj::sfield(sig, s, i, us2), ps2 + zs2), sort(l))),
+        crate::rec_canon::pprop(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, i,
+            crate::dom_code::canon_shape(sig, s).fields[0][i as int]) ==> crate::ti_syntax::is_zero(l),
 {
     let sh = crate::dom_code::canon_shape(sig, s);
     let (np, lps) = (sh.np, sig.consts[s].lps);
@@ -136,6 +138,9 @@ pub proof fn sfield_conv(sig: Sig, g: Ctx, s: u64, i: nat, us: Seq<LevelSpec>, u
     let ss = crate::ti_strip::strip_below(sig, rr);
     crate::dom_levels::sig_lps_below(sig, rr, lps, us);
     crate::dom_levels::sig_lps_below(sig, rr, lps, us2);
+    if crate::rec_canon::pprop(sh.pdoms, np, i, f) {
+        crate::dom_canon::pprop_not_head(sig, s, sh.pdoms, sh.us(), np, sh.ni, i, f);
+    }
     if crate::rec_canon::simple_ty(sig, s, f) {
         // closed: its typing at the level parameters, moved to both instances
         crate::dom_iota::simple_closed(sig, s, f);
@@ -167,7 +172,19 @@ pub proof fn sfield_conv(sig: Sig, g: Ctx, s: u64, i: nat, us: Seq<LevelSpec>, u
         crate::dom_canon::sl_kinds(sig, s, sh.pdoms, np, i, f, 0, lps, us2);
         crate::dom_psimple::plow_vsub(sig, s, sh.pdoms, np, i, fu, ps, zs);
         crate::dom_psimple::plow_vsub(sig, s, sh.pdoms, np, i, fu2, ps2, zs2);
-        let l0 = choose|l: LevelSpec| #[trigger] derivable(ss, eq(sh.pdoms, e, e, sort(l)));
+        let l0 = if crate::rec_canon::pprop(sh.pdoms, np, i, f) {
+            // a proof field: a proposition there
+            crate::dom_psimple::plow_lift_id(sig, s, sh.pdoms, np, i, f);
+            crate::dom_psimple::pprop_lift(sh.pdoms, np, 0, i, 0, e);
+            assert(0 + i == i);
+            let lz = choose|l: LevelSpec| #[trigger] derivable(ss, eq(sh.pdoms, e, e, sort(l)));
+            let dz = crate::ti_sub::get(ss, eq(sh.pdoms, e, e, sort(lz)));
+            let wz = crate::ti_meta::d_wf(ss, dz);
+            crate::ti_meta::mk_d(ss, wz);
+            crate::dom_psimple::pprop_zero(sig, s, sh.pdoms, np, rr, e)
+        } else {
+            choose|l: LevelSpec| #[trigger] derivable(ss, eq(sh.pdoms, e, e, sort(l)))
+        };
         let gl = crate::ti_level::gls(sh.pdoms, lps, us);
         assert forall|q: int| 0 <= q < gl.len() implies gl[q] is Sort
             && derivable(sig, eq(g, #[trigger] ps[q], ps2[q], gl[q])) by {
@@ -175,6 +192,10 @@ pub proof fn sfield_conv(sig: Sig, g: Ctx, s: u64, i: nat, us: Seq<LevelSpec>, u
             assert(gl[q] == crate::dom_rel::ptype(sig, s, us, q));
         }
         crate::dom_psimple::ps_pair(sig, g, s, us, us2, e, sort(l0), ps, ps2);
+        if crate::rec_canon::pprop(sh.pdoms, np, i, f) {
+            assert(crate::rec_canon::stable_lvl(l0)) by { reveal(crate::rec_canon::stable_lvl); }
+            crate::dom_code::scode_sl(l0, lps, us);
+        }
         crate::level_model::subst_level_spec(l0, lps, us)
     }
 }

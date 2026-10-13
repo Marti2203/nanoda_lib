@@ -701,9 +701,11 @@ pub open spec fn rec_frag_l(sig: Sig, c: u64) -> bool {
 }
 
 /// THE MODEL INTERPRETS the recursor: it eliminates into any universe, and
-/// its inductive is a type at every instance. A large recursor of a Prop
-/// inductive (`Eq.rec`) is not interpreted: it reduces only where its
-/// motive is a proposition (`ti_hred::rec_fire`), its Iota irrelevance.
+/// its inductive is a type at every instance, or a proposition whose
+/// constructor values are bottom (`rec_prop_ind`: `True`, `And`, `Iff`,
+/// `False`). Any other large recursor of a Prop inductive (`Eq.rec`) is not
+/// interpreted: it reduces only where its motive is a proposition
+/// (`ti_hred::rec_fire`), its Iota irrelevance.
 #[verifier::opaque]
 pub open spec fn rec_interp(sig: Sig, c: u64) -> bool {
     rec_large(sig, c) && rec_prop_ind(sig, c)
@@ -715,7 +717,7 @@ pub open spec fn rec_interp(sig: Sig, c: u64) -> bool {
 /// that a constructor's inductive is a smashed structure, `rec_model`).
 pub open spec fn rec_prop_ind(sig: Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
-    crate::dom_code::never_prop(sig, sh.ind) || (crate::rec_canon::pstruct_live() && crate::dom_code::prop_former(sig, sh.ind) && sh.ni == 0
+    crate::dom_code::never_prop(sig, sh.ind) || (crate::dom_code::prop_former(sig, sh.ind) && sh.ni == 0
         && sh.nmin() <= 1 && crate::rec_canon::shape_props(sh))
 }
 

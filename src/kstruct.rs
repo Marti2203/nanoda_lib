@@ -215,7 +215,8 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         forall|y: ExprSpec| #[trigger] crate::ti_syntax::proj_ty(sig, t, k as nat, y) == Some(tq),
         derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(x)), tq)),
         exists|lq: LevelSpec| #[trigger] derivable(sig, eq(g, tq, tq, sort(lq))),
-        !crate::ti_syntax::proj_prop(sig, t),
+        crate::ti_syntax::proj_prop(sig, t) ==> exists|lq: LevelSpec| crate::ti_syntax::is_zero(lq)
+            && #[trigger] derivable(sig, eq(g, tq, tq, sort(lq))),
 {
     assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     let (s, us) = (spine_head(t)->Const_0, spine_head(t)->Const_1);
@@ -255,8 +256,23 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         }
         crate::dom_adeq_proj::sfield_conv(sig, g, s, k as nat, us, us, ps, ps, pj, pj)
     };
-    crate::dom_code::prop_ok_never(sig, s);
-    crate::ti_eta::eta_never_prop(sig, s, t);
+    if crate::dom_code::never_prop(sig, s) {
+        crate::ti_eta::eta_never_prop(sig, s, t);
+    } else {
+        // a Prop structure: its fields are proofs, its projections' types
+        // propositions
+        reveal(crate::dom_code::prop_ok);
+        reveal(crate::rec_canon::shape_props);
+        let f = sh.fields[0][k];
+        assert(crate::rec_canon::pprop(sh.pdoms, np, k as nat, f));
+        if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
+            let q = (np + k - 1 - f->Var_0) as int;
+            let l0 = sh.pdoms[q]->Sort_0;
+            assert(crate::rec_canon::stable_lvl(l0)) by { reveal(crate::rec_canon::stable_lvl); }
+            crate::dom_code::scode_sl(l0, sig.consts[s].lps, us);
+        }
+        assert(crate::ti_syntax::is_zero(lq));
+    }
     // ProjCong
     let px = ExprSpec::Proj(k as usize, Box::new(x));
     let d0 = crate::ti_sub::get(sig, eq(g, x, x, t));

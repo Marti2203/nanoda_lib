@@ -192,13 +192,6 @@ pub open spec fn pprop(pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bo
     }
 }
 
-/// Whether Prop structures and empty propositions are admitted: not until
-/// their constructor values, eta step and projections are typed at
-/// propositions (docs/TYPED_TARGET.md, "Prop structures").
-pub open spec fn pstruct_live() -> bool {
-    false
-}
-
 /// Every field of every constructor of the shape is a proof field.
 #[verifier::opaque]
 pub open spec fn shape_props(sh: IndShape) -> bool {

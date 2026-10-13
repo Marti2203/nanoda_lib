@@ -164,7 +164,7 @@ pub proof fn eta_facts(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>
         &&& a0.len() == sh.np + sh.nmin() + 2
         &&& sh.lps == sig.consts[sh.ind].lps
         &&& rinst(sig, rid, lv).len() == sig.consts[sh.ind].lps.len()
-        &&& crate::dom_code::never_prop(sig, sh.ind)
+        &&& crate::dom_code::prop_ok(sig, sh.ind)
         &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
         &&& crate::dom_levels::lps_distinct(sig.consts[sh.ind].lps)
     }),
@@ -175,7 +175,7 @@ pub proof fn eta_facts(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>
     assert(crate::dom_rec_end::sig_rec(sig));
     reveal(crate::dom_rec_end::sig_rec);
     assert(crate::dom_rec_end::rec_model(sig, rid));
-    assert(crate::dom_rec_end::rec_frag_l(sig, rid) && crate::dom_code::never_prop(sig, sh.ind)) by {
+    assert(crate::dom_rec_end::rec_frag_l(sig, rid) && crate::dom_code::prop_ok(sig, sh.ind)) by {
         reveal(crate::dom_rec_end::rec_interp);
         reveal(crate::dom_rec_end::rec_large);
     }
@@ -192,7 +192,6 @@ pub proof fn eta_facts(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>
     assert(sh.nmin() == 1 && sh.ni == 0);
     assert(sh.fields[0].len() == rd.rules[0].nfields);
     assert(a0.len() == sh.np + sh.nmin() + 2);
-    assert(crate::dom_code::never_prop(sig, sh.ind));
 }
 
 /// The major typed at the structure application, the parameters at their
@@ -274,7 +273,8 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
         &&& crate::ti_syntax::proj_ty(sig, st, k as nat, x) == Some(t)
         &&& derivable(sig, eq(g, ExprSpec::Proj(k as usize, Box::new(x)), ExprSpec::Proj(k as usize, Box::new(x)), t))
         &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
-        &&& !crate::ti_syntax::proj_prop(sig, st)
+        &&& (crate::ti_syntax::proj_prop(sig, st) ==> exists|l: LevelSpec| crate::ti_syntax::is_zero(l)
+            && #[trigger] derivable(sig, eq(g, t, t, sort(l))))
         &&& crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[0][k]) ==> 0 <= q < sh.np && t == a0[q]
     }),
 {
@@ -287,7 +287,6 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
     let pj = crate::ti_syntax::projs(x, k as nat);
     crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, us), a0.subrange(0, np as int));
     crate::ti_proj::proj_ty_unfold(sig, st, k as nat, x);
-    eta_never_prop(sig, sh.ind, st);
     let lq = if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, sh.fields[0][k]) {
         crate::dom_adeq_proj::pfield(sig, sh.ind, k as nat, us);
         let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
@@ -313,6 +312,22 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
         crate::dom_adeq_proj::sfield_conv(sig, g, sh.ind, k as nat, us, us, ps, ps, pj, pj)
     };
     assert(derivable(sig, eq(g, t, t, sort(lq))));
+    if crate::dom_code::never_prop(sig, sh.ind) {
+        eta_never_prop(sig, sh.ind, st);
+    } else {
+        // a Prop structure: its fields are proofs, their types propositions
+        reveal(crate::dom_code::prop_ok);
+        reveal(crate::rec_canon::shape_props);
+        let f = sh.fields[0][k];
+        assert(crate::rec_canon::pprop(sh.pdoms, np, k as nat, f));
+        if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
+            let q = (np + k - 1 - f->Var_0) as int;
+            let l0 = sh.pdoms[q]->Sort_0;
+            assert(crate::rec_canon::stable_lvl(l0)) by { reveal(crate::rec_canon::stable_lvl); }
+            crate::dom_code::scode_sl(l0, sig.consts[sh.ind].lps, us);
+        }
+        assert(crate::ti_syntax::is_zero(lq));
+    }
     assert(!sig.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
     // ProjCong
     let px = ExprSpec::Proj(k as usize, Box::new(x));
@@ -413,7 +428,11 @@ pub proof fn eta_proj_eq(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: Seq
     eta_proj_typed(sig, g, rid, lv, a0, x, k);
     eta_proj_typed(sig, g, rid, lv, a0, cx, k);
     let t = eta_fty(sig, rid, lv, a0, x, k);
-    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)));
+    let l = if crate::ti_syntax::proj_prop(sig, st) {
+        choose|l: LevelSpec| crate::ti_syntax::is_zero(l) && #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+    } else {
+        choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, t, t, sort(l)))
+    };
     crate::ti_syntax::struct_of_basic(sig, sh.ind);
     crate::ti_proj::sfield_vsub(sig, sh.ind, k as nat, us, a0.subrange(0, np as int), crate::ti_syntax::projs(x, k as nat),
         crate::ti_syntax::projs(cx, k as nat));

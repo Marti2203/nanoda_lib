@@ -365,7 +365,11 @@ proof fn sr_kiota_eta(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     assert forall|i: int| 0 <= i < nf implies derivable(sig, eq(g, #[trigger] pj[i], fs[i], ts[i])) by {
         crate::ti_eta::eta_proj_typed(sig, g, rid, lv, a0, x, i);
         let tq = ts[i];
-        let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, tq, tq, sort(l)));
+        let l = if crate::ti_syntax::proj_prop(sig, ci) {
+            choose|l: LevelSpec| crate::ti_syntax::is_zero(l) && #[trigger] derivable(sig, eq(g, tq, tq, sort(l)))
+        } else {
+            choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, tq, tq, sort(l)))
+        };
         let px = ExprSpec::Proj(i as usize, Box::new(x));
         assert(crate::ti_syntax::proj_fire(sig, px)) by {
             reveal(crate::ti_syntax::proj_fire);
