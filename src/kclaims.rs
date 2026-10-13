@@ -283,6 +283,8 @@ pub proof fn sig_sr_of(sig: crate::ti_syntax::Sig)
                 }
             } else {
                 crate::ti_syntax::frag_of(sig, c);
+                crate::dom_rec_minor::ind_below_rec_g(sig, c);
+                crate::dom_rec_end::ty_closed_at(sig, ind, rr, Seq::empty());
                 assert forall|lv: Seq<LevelSpec>, p: int| lv.len() == rd.uparams.len() && 0 <= p < sh.nmin()
                     implies #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p) by {
                     assert forall|r: int| 0 <= r < sh.rposj(p).len() implies #[trigger] crate::dom_rule_g::idx_typed(sig, c, lv, p, r) by {}
@@ -438,7 +440,7 @@ pub proof fn recs_declared(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, i
 pub open spec fn ind_ok_hyp(sig: crate::ti_syntax::Sig) -> bool {
     &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> rec_small(sig, c)
     &&& crate::dom_rec_end::sig_sr_h(sig)
-    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
+    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c) || crate::dom_rec_end::rec_prop_ok(sig, c)
     &&& forall|ind: u64| #[trigger] sig.ienv.struct_ctor.contains_key(ind) && sig.ienv.ctor_nf.contains_key(sig.ienv.struct_ctor[ind])
         ==> crate::dom_code::smash(sig, ind) && crate::dom_code::canon_shape(sig, ind).ctors[0] == sig.ienv.struct_ctor[ind]
 }
@@ -525,7 +527,7 @@ pub proof fn struct_agree(sig: crate::ti_syntax::Sig, rid: u64)
 pub open spec fn ind_ok(sig: crate::ti_syntax::Sig) -> bool {
     &&& crate::ti_syntax::iota_ok(sig)
     &&& crate::dom_rec_end::sig_sr(sig)
-    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c)
+    &&& forall|c: u64| #[trigger] sig.ienv.recs.contains_key(c) ==> crate::dom_rec_end::rec_interp(sig, c) || crate::dom_rec_end::rec_prop_ok(sig, c)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_np.contains_key(cid) ==> sig.ienv.ctor_ind.contains_key(cid)
     &&& forall|cid: u64| #[trigger] sig.ienv.ctor_ind.contains_key(cid) && crate::dom_code::has_canon(sig, sig.ienv.ctor_ind[cid])
         ==> crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[cid]).ctors.contains(cid)

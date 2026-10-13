@@ -86,7 +86,9 @@ pub proof fn pi_not_ind(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<
 #[verifier::spinoff_prover]
 pub proof fn typed_arity(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     requires
-        crate::dom_rec_end::rec_hyps(sig, spine_head(m)->Const_0),
+        crate::dom_rec_end::rec_hyps(sig, spine_head(m)->Const_0)
+        || (crate::dom_rec_end::sig_sr(sig) && sig.ienv.recs.contains_key(spine_head(m)->Const_0)
+            && crate::dom_rec_end::rec_prop_ok(sig, spine_head(m)->Const_0)),
         crate::beta_model::rec_ready(sig.ienv, m),
         derivable(sig, eq(g, m, m, t)),
     ensures
@@ -104,7 +106,6 @@ pub proof fn typed_arity(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     }
     crate::ti_syntax::frag_of(sig, rid);
     assert(crate::dom_rec_end::rec_frag_l(sig, rid));
-    crate::dom_rec_end::rec_canon_ok(sig, rid);
     crate::dom_rec_ty::scope_ctor_ind(sig, rid);
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     crate::dom_iota::major_form(sig, rid, lv);
@@ -138,6 +139,7 @@ pub proof fn typed_arity(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let thc = crate::dom_iota::spine_gen(sig, g, hc, cargs, ci);
     crate::ti_spine::const_typed(sig, g, cid, clv, thc);
     crate::dom_ctor_bound::ctor_shape(sig, ind, p);
+    crate::dom_rec_end::rec_sig_lps(sig, rid);
     crate::dom_levels::sig_lps_at(sig, sig.consts[ind].lps, clv);
     crate::dom_rec_ty::rec_lps_distinct(sig, rid);
     crate::iota_sr::ctor_at(sig, rid, p, clv);
@@ -263,6 +265,37 @@ pub proof fn sr_kiota(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     } else {
         sr_kiota_eta(sig, g, m, t);
     }
+}
+
+/// SUBJECT REDUCTION FOR THE KERNEL'S IOTA at a recursor into Prop only:
+/// its motive is a proposition at every instance, so the typed judgment
+/// reduces it (`ti_hred::rec_fire`), and the redex is no structure's.
+#[verifier::spinoff_prover]
+pub proof fn sr_kiota_p(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
+    requires
+        crate::ti_sr::sig_wf(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        sig.ienv.recs.contains_key(spine_head(m)->Const_0),
+        crate::dom_rec_end::rec_prop_ok(sig, spine_head(m)->Const_0),
+        crate::beta_model::rec_ready(sig.ienv, m),
+        !crate::ti_syntax::is_def(sig, spine_head(m)->Const_0, spine_head(m)->Const_1),
+        derivable(sig, eq(g, m, m, t)),
+    ensures
+        derivable(sig, eq(g, m, crate::beta_model::rec_result(sig.ienv, m), t)),
+{
+    let rid = spine_head(m)->Const_0;
+    typed_arity(sig, g, m, t);
+    reveal(crate::dom_rec_end::rec_large);
+    reveal(crate::ti_syntax::iota_prop);
+    reveal(crate::ti_hred::fire_inst);
+    reveal(crate::ti_hred::rec_smash);
+    reveal(crate::ti_syntax::iota_lm);
+    assert(crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid)) is Zero);
+    assert(crate::ti_syntax::iota_lm(sig, m) == LevelSpec::Zero);
+    assert(crate::ti_syntax::is_zero(LevelSpec::Zero));
+    assert(crate::ti_hred::rec_fire(sig, m));
+    crate::ti_hred_rec::fire_hstep(sig, m);
+    crate::ti_sr::sr(sig, g, m, t);
 }
 
 /// At a smashed structure's recursor: the redex up to its major steps by
@@ -566,10 +599,10 @@ pub proof fn ctor_arity_at(sig: Sig, g: Ctx, r2: u64, p: int, x: ExprSpec, s: u6
     let tt = spine_app(ExprSpec::Const(s, us), ps);
     assert(!crate::ti_syntax::no_recs(sig));
     assert(crate::dom_rec_end::sig_rec(sig));
-    assert(crate::dom_rec_end::rec_interp(sig, rid));
     crate::ti_syntax::frag_of(sig, rid);
-    assert(crate::dom_rec_end::rec_frag_l(sig, rid));
-    crate::dom_rec_end::rec_canon_ok(sig, rid);
+    assert(crate::dom_rec_end::rec_frag_l(sig, rid)) by {
+        reveal(crate::dom_rec_end::rec_interp);
+    }
     crate::dom_rec_ty::scope_ctor_ind(sig, rid);
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     let (cid, clv) = (spine_head(x)->Const_0, spine_head(x)->Const_1);
@@ -579,6 +612,7 @@ pub proof fn ctor_arity_at(sig: Sig, g: Ctx, r2: u64, p: int, x: ExprSpec, s: u6
     let thc = crate::dom_iota::spine_gen(sig, g, hc, cargs, tt);
     crate::ti_spine::const_typed(sig, g, cid, clv, thc);
     crate::dom_ctor_bound::ctor_shape(sig, ind, p);
+    crate::dom_rec_end::rec_sig_lps(sig, rid);
     crate::dom_levels::sig_lps_at(sig, sig.consts[ind].lps, clv);
     crate::dom_rec_ty::rec_lps_distinct(sig, rid);
     crate::iota_sr::ctor_at(sig, rid, p, clv);

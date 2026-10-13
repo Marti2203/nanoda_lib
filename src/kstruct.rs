@@ -81,16 +81,12 @@ pub proof fn canon_scope(sig: Sig, ind: u64) -> (rr: int)
         let rid = crate::dom_code::canon_rec(sig, ind);
         assert(sig.ienv.recs.contains_key(rid));
         assert(!crate::ti_syntax::no_recs(sig));
-        assert(crate::dom_rec_end::rec_interp(sig, rid));
         crate::ti_syntax::frag_of(sig, rid);
         assert(crate::dom_rec_end::rec_frag_l(sig, rid)) by {
             reveal(crate::dom_rec_end::rec_interp);
         }
         crate::dom_rec_ty::rec_scope_ind(sig, rid);
         assert(crate::dom_rec_end::sig_rec(sig));
-        assert(crate::dom_rec_end::rec_model(sig, rid)) by {
-            reveal(crate::dom_rec_end::sig_rec);
-        }
         assert forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[ind].lps.len() implies #[trigger] crate::dom_model::sem_const(sig, ind, ls) by {
             crate::dom_rec_end::rec_model_at(sig, rid, ls);
         }

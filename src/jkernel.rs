@@ -586,8 +586,11 @@ pub proof fn sr_iota_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx
     assert(!crate::ti_syntax::no_recs(sig));
     crate::ti_syntax::frag_of(sig, rid);
     assert(crate::rec_canon::rec_canon(sig, rid));
-    assert(crate::dom_rec_end::rec_interp(sig, rid));
-    crate::kiota::sr_kiota(sig, g, m, t);
+    if crate::dom_rec_end::rec_interp(sig, rid) {
+        crate::kiota::sr_kiota(sig, g, m, t);
+    } else {
+        crate::kiota::sr_kiota_p(sig, g, m, t);
+    }
     let rc = crate::beta_model::rec_result(sig.ienv, m);
     let rr = crate::beta_model::rec_result(denv, m);
     if crate::twin::rec_core(raw, rid) {

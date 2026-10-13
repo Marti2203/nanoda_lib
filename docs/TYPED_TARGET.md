@@ -2527,6 +2527,28 @@ Probes (`rec_hyps` with a sort field and with an arrow into a sort, the
 field-argument context, `ps_rel`'s and `ps_below`'s sort branches) do not
 prove `false`.
 
+**Slice: recursors into Prop only (2026-10-13).** `ind_ok_hyp` (and
+`ind_ok`) asked every recursor to be interpreted (`rec_interp`: large,
+of an inductive that is never a proposition), which kept every Prop
+inductive out, though the model already handles the others
+(`rec_model_p`). A recursor that eliminates into Prop only
+(`dom_rec_end::rec_prop_ok`: not `rec_large`, its inductive no
+structure, no indices and sort parameters) is now admitted: its motive is
+a proposition at every instance, so the typed judgment fires its Iota
+(`ti_hred::rec_fire` through `iota_prop`), and the kernel's Iota at it
+has subject reduction by the generic route (`kiota::sr_kiota_p`).
+`rec_model_p` gains the inductive's closed type (from the ranks, as
+`rec_model`), so `rec_model_at` and `rec_sig_lps` serve both kinds and
+`kiota::typed_arity`/`ctor_arity_at` and `kstruct::canon_scope` no longer
+ask the recursor to be interpreted. Core by dependency closure: 434 →
+446 (`Or` and the other several-constructor propositions). Still out:
+Prop structures with Prop-only elimination (`Nonempty`; the typed
+judgment fires neither Iota nor the eta step at a smashed, uninterpreted
+recursor; 446 → 468 with them), and the large recursors of Prop
+structures (`True`, `And`, `Iff`; → 578 with both), which the model would
+have to interpret. Probes (`ind_ok` with such a recursor, the new branch
+of `jkernel::sr_iota_at`) do not prove `false`.
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

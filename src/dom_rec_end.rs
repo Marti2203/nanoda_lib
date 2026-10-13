@@ -408,8 +408,19 @@ pub open spec fn rec_model_p(sig: Sig, c: u64) -> bool {
         ==> #[trigger] crate::iota_gen::rule_typed_g(sig, c, lv, p)
     &&& forall|p: int| 0 <= p < sh.nmin() ==> ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] sh.ctors[p], Seq::empty()))
     &&& forall|ls: Seq<LevelSpec>| ls.len() == sig.consts[sh.ind].lps.len() ==> #[trigger] crate::dom_model::sem_const(sig, sh.ind, ls)
+    &&& ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, sh.ind, Seq::empty()))
     &&& crate::dom_levels::sig_lps(sig)
     &&& (sh.ni == 0 || !crate::dom_code::never_prop(sig, sh.ind))
+}
+
+/// A RECURSOR INTO PROP ONLY, of an inductive that is no structure,
+/// without indices and with sort parameters: the kernel's Iota at it is
+/// the typed judgment's (its motive is a proposition at every instance),
+/// with no eta step.
+pub open spec fn rec_prop_ok(sig: Sig, c: u64) -> bool {
+    &&& !rec_large(sig, c)
+    &&& !crate::dom_code::smash(sig, crate::rec_canon::rec_ind(sig, c))
+    &&& rec_frag_l(sig, c)
 }
 
 /// The hypothesis soundness and adequacy take: the recursor conditions
@@ -505,21 +516,41 @@ pub proof fn rec_canon_ok(sig: Sig, c: u64)
     assert(r2 == c);
 }
 
+/// A recursor's model facts carry the signature's level facts.
+pub proof fn rec_sig_lps(sig: Sig, c: u64)
+    requires
+        sig_rec(sig),
+        sig.ienv.recs.contains_key(c),
+    ensures
+        crate::dom_levels::sig_lps(sig),
+{
+    reveal(sig_rec);
+    if rec_interp(sig, c) {
+        assert(rec_model(sig, c));
+    } else {
+        assert(rec_model_p(sig, c));
+    }
+}
+
 /// The inductive is semantic at every instance.
 pub proof fn rec_model_at(sig: Sig, c: u64, ls: Seq<LevelSpec>)
     requires
         sig_rec(sig),
-        rec_frag(sig, c),
-        rec_interp(sig, c),
+        sig.ienv.recs.contains_key(c),
         ls.len() == sig.consts[crate::dom_rec_ty::rshape(sig, c).ind].lps.len(),
     ensures
         crate::dom_model::sem_const(sig, crate::dom_rec_ty::rshape(sig, c).ind, ls),
         ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, crate::dom_rec_ty::rshape(sig, c).ind, Seq::empty())),
         forall|p: int| 0 <= p < crate::dom_rec_ty::rshape(sig, c).nmin() ==>
             ty_closed(crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, c)), crate::ti_syntax::dty_at(sig, #[trigger] crate::dom_rec_ty::rshape(sig, c).ctors[p], Seq::empty())),
+        crate::dom_levels::sig_lps(sig),
 {
     reveal(sig_rec);
-    assert(rec_model(sig, c));
+    if rec_interp(sig, c) {
+        assert(rec_model(sig, c));
+    } else {
+        assert(rec_model_p(sig, c));
+    }
 }
 
 /// A field type's members, the field lifted past `s` binders, lie below
