@@ -773,10 +773,30 @@ proof fn d_ren_piota(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> n
     crate::ti_subst::psub_spine_const(q, st);
     assert(psub(m, q) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, q))));
     let j2 = eq(dl, psub(m, q), psub(n, q), psub(a, q));
-    let ps2 = seq![d0, d1, d2, d3, d4];
-    assert(prems(ps2, seq![eq(dl, psub(m, q), psub(m, q), psub(a, q)), eq(dl, psub(n, q), psub(n, q), psub(a, q)),
+    // the parameters' premises, renamed
+    let g = j->Eq_0;
+    let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+    let pj2 = crate::ti_syntax::proj_pjs(sig, dl, psub(m, q));
+    crate::ti_proj::proj_fire_head(sig, m);
+    crate::ti_subst::proj_pjs_psub(sig, g, dl, m, q);
+    assert(ps.len() == 5 + pj.len());
+    let qs = Seq::new(pj.len(), |k: int| crate::ti_sub::pick(sig, pj2[k]));
+    assert forall|k: int| 0 <= k < pj.len() implies valid(sig, #[trigger] crate::ti_sub::pick(sig, pj2[k]))
+        && concl(crate::ti_sub::pick(sig, pj2[k])) == pj2[k] by {
+        assert(concl(ps[5 + k]) == pj[k]);
+        let dk = d_ren(sig, ps[5 + k], w, dl, r);
+        crate::ti_sub::pick_of(sig, dk);
+    }
+    let ps2 = seq![d0, d1, d2, d3, d4] + qs;
+    let js = seq![eq(dl, psub(m, q), psub(m, q), psub(a, q)), eq(dl, psub(n, q), psub(n, q), psub(a, q)),
         eq(dl, psub(x, q), psub(x, q), psub(st, q)), eq(dl, psub(a, q), psub(a, q), sort(l)),
-        eq(dl, psub(n, q), psub(n, q), crate::ti_syntax::proj_fty(sig, psub(m, q)))]));
+        eq(dl, psub(n, q), psub(n, q), crate::ti_syntax::proj_fty(sig, psub(m, q)))] + pj2;
+    assert forall|k: int| 0 <= k < ps2.len() implies concl(#[trigger] ps2[k]) == js[k] by {
+        if k >= 5 {
+            assert(ps2[k] == qs[k - 5]);
+        }
+    }
+    assert(prems(ps2, js));
     assert(step_ok(sig, Rule::ProjIota(l), j2, ps2)) by { reveal(crate::ti_syntax::proj_iota_ok); }
     valid_node(sig, Rule::ProjIota(l), j2, ps2);
     node(Rule::ProjIota(l), j2, ps2)

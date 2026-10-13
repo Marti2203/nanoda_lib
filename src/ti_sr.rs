@@ -629,9 +629,29 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
     let e3 = get(sig, eq(g, ty, ty, sort(l)));
     let e4 = get(sig, eq(g, fld, fld, aa[q]));
     let ji = eq(g, m, fld, ty);
-    let pi = seq![e0, e1, e2, e3, e4];
-    assert(prems(pi, seq![eq(g, m, m, ty), eq(g, fld, fld, ty), eq(g, x, x, st), eq(g, ty, ty, sort(l)),
-        eq(g, fld, fld, crate::ti_syntax::proj_fty(sig, m))]));
+    // the constructor's parameters, typed at their sorts down its telescope
+    let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+    assert forall|k: int| 0 <= k < pj.len() implies valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
+        && concl(crate::ti_sub::pick(sig, pj[k])) == pj[k] by {
+        reveal(crate::ti_syntax::proj_pjs);
+        crate::ti_spine::tel_next(ds, body, aa, k);
+        assert(ds[k] == crate::expr_model::subst_expr_levels(sh.pdoms[k], lps, cl));
+        assert(sh.pdoms[k] is Sort);
+        crate::ti_spine::vsub_closed(ds[k], aa.subrange(0, k));
+        assert(pj[k] == eq(g, aa[k], aa[k], ds[k]));
+        let dk = get(sig, pj[k]);
+        crate::ti_sub::pick_of(sig, dk);
+    }
+    let qs = Seq::new(pj.len(), |k: int| crate::ti_sub::pick(sig, pj[k]));
+    let pi = seq![e0, e1, e2, e3, e4] + qs;
+    let js = seq![eq(g, m, m, ty), eq(g, fld, fld, ty), eq(g, x, x, st), eq(g, ty, ty, sort(l)),
+        eq(g, fld, fld, crate::ti_syntax::proj_fty(sig, m))] + pj;
+    assert forall|k: int| 0 <= k < pi.len() implies concl(#[trigger] pi[k]) == js[k] by {
+        if k >= 5 {
+            assert(pi[k] == qs[k - 5]);
+        }
+    }
+    assert(prems(pi, js));
     assert(step_ok(sig, Rule::ProjIota(l), ji, pi)) by {
         reveal(crate::ti_syntax::proj_iota_ok);
     }

@@ -544,6 +544,116 @@ pub open spec fn fpe(args: Seq<Cpt>, np: nat, k: nat) -> Seq<Cpt> {
     args.subrange(0, np as int) + Seq::new(k, |_i: int| Cpt::Bot)
 }
 
+/// The code of a function type whose codomain does not depend on its
+/// argument: one step, on bottom (so on every input), to the codomain.
+pub open spec fn arrow(a: Cpt, b: Cpt) -> Cpt {
+    Cpt::Pi(Box::new(a), seq![(Cpt::Bot, b)])
+}
+
+pub proof fn arrow_wf(a: Cpt, b: Cpt)
+    requires
+        wf(a),
+        wf(b),
+    ensures
+        wf(arrow(a, b)),
+{
+    let g = seq![(Cpt::Bot, b)];
+    assert(g[0] == (Cpt::Bot, b));
+    compat_refl(b);
+    assert(fun_ok(g));
+    assert(wf(Cpt::Bot));
+}
+
+/// Arrows are monotone in both codes.
+pub proof fn arrow_mono(a1: Cpt, b1: Cpt, a2: Cpt, b2: Cpt)
+    requires
+        le(a1, a2),
+        le(b1, b2),
+    ensures
+        le(arrow(a1, b1), arrow(a2, b2)),
+{
+    let (u, j) = (arrow(a1, b1), arrow(a2, b2));
+    assert(u->Pi_1[0] == (Cpt::Bot, b1));
+    assert(j->Pi_1[0] == (Cpt::Bot, b2));
+    gen_raise(u, j, false);
+}
+
+/// BELOW AN ARROW: a Pi whose domain lies below the arrow's and whose
+/// outputs all lie below its codomain.
+pub proof fn arrow_le_intro(p: Cpt, c0: Cpt, c1: Cpt)
+    requires
+        p is Pi,
+        le(*p->Pi_0, c0),
+        forall|k: int| 0 <= k < p->Pi_1.len() ==> le(#[trigger] p->Pi_1[k].1, c1),
+    ensures
+        le(p, arrow(c0, c1)),
+{
+    let ar = arrow(c0, c1);
+    let t = seq![ar];
+    let b = ht(ar);
+    assert(t[0] == ar);
+    parts_lower(ar);
+    assert(ar->Pi_1[0] == (Cpt::Bot, c1));
+    assert(ht(ar->Pi_1[0].0) < ht(ar));
+    assert(ht(c1) < ht(ar));
+    // the arrow's domains: its own
+    assert(pi_doms(t, b, 1) == seq![c0]) by {
+        reveal_with_fuel(pi_doms, 2);
+        assert(pi_doms(t, b, 0) == Seq::<Cpt>::empty());
+        assert(Seq::<Cpt>::empty().push(c0) =~= seq![c0]);
+    }
+    assert(seq![c0][0] == c0);
+    assert(fits(seq![c0], dec(b)));
+    assert(fits(seq![c0], ht(c0)));
+    le_set_budget(*p->Pi_0, seq![c0], dec(b), ht(c0));
+    // its outputs at any input: the codomain
+    assert(seq![c1][0] == c1);
+    assert(fits(seq![c1], dec(b)));
+    assert(fits(seq![c1], ht(c1)));
+    assert forall|k: int| 0 <= k < p->Pi_1.len() implies
+        le_set(#[trigger] p->Pi_1[k].1, sel_pi(t, p->Pi_1[k].0, b, t.len() as int), dec(b)) by {
+        let x = p->Pi_1[k].0;
+        assert(le(Cpt::Bot, x)) by { reveal_with_fuel(le_set, 2); }
+        assert(sel_f(ar->Pi_1, x, 1) =~= seq![c1]) by {
+            reveal_with_fuel(sel_f, 2);
+            assert(sel_f(ar->Pi_1, x, 0) == Seq::<Cpt>::empty());
+        }
+        assert(sel_pi(t, x, b, 1) =~= seq![c1]) by {
+            reveal_with_fuel(sel_pi, 2);
+            assert(sel_pi(t, x, b, 0) == Seq::<Cpt>::empty());
+        }
+        le_set_budget(p->Pi_1[k].1, seq![c1], dec(b), ht(c1));
+    }
+    assert(t[0] is Pi);
+}
+
+/// An arrow's codomain at any input is its codomain.
+pub proof fn cod_arrow(c0: Cpt, c1: Cpt, x: Cpt)
+    requires
+        wf(c0),
+        wf(c1),
+        wf(x),
+    ensures
+        cod(arrow(c0, c1), x) == c1,
+{
+    let ar = arrow(c0, c1);
+    let t = seq![ar];
+    assert(t[0] == ar);
+    assert(ar->Pi_1[0] == (Cpt::Bot, c1));
+    assert(le(Cpt::Bot, x)) by { reveal_with_fuel(le_set, 2); }
+    assert(sel_f(ar->Pi_1, x, 1) =~= seq![c1]) by {
+        reveal_with_fuel(sel_f, 2);
+        assert(sel_f(ar->Pi_1, x, 0) == Seq::<Cpt>::empty());
+    }
+    assert(selk(t, x, ht(ar), false) =~= seq![c1]) by {
+        reveal_with_fuel(sel_pi, 2);
+        assert(sel_pi(t, x, ht(ar), 0) == Seq::<Cpt>::empty());
+    }
+    assert(jall(seq![c1]) == c1) by {
+        reveal_with_fuel(joinall, 2);
+    }
+}
+
 /// The code of a simple type written in `outer`'s constructor (levels
 /// over `outer`'s, at its instance `ls`; variable `i` denoting
 /// `pe[pe.len() - 1 - i]`); type formers below rank `r`.

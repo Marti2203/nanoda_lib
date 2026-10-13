@@ -1139,6 +1139,7 @@ proof fn d_sub_piota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     d_sub(sig, ps[3], dl, s, s);
     d_sub(sig, ps[3], dl, s, s2);
     d_sub(sig, ps[4], dl, s, s);
+    assert(ps.len() == 5 + crate::ti_syntax::proj_pjs(sig, g, m).len());
     crate::ti_proj::proj_fty_psub(sig, m, s);
     crate::ti_proj::proj_fire_psub(sig, m, s);
     crate::ti_proj::proj_ty_unfold(sig, st, m->Proj_0 as nat, x);
@@ -1152,10 +1153,30 @@ proof fn d_sub_piota(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     assert(psub(m, s) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, s))));
     crate::ti_subst::psub_spine_const(s, st);
     let ij = eq(dl, psub(m, s), psub(n, s), psub(a, s));
-    let ip = seq![q0, q1, q2, q3, q4];
+    // the parameters' premises, substituted
+    let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+    let pj2 = crate::ti_syntax::proj_pjs(sig, dl, psub(m, s));
+    crate::ti_proj::proj_fire_head(sig, m);
+    crate::ti_subst::proj_pjs_psub(sig, g, dl, m, s);
+    let qs = Seq::new(pj.len(), |q: int| pick(sig, pj2[q]));
+    assert forall|q: int| 0 <= q < pj.len() implies valid(sig, #[trigger] pick(sig, pj2[q])) && concl(pick(sig, pj2[q])) == pj2[q] by {
+        assert(concl(ps[5 + q]) == pj[q]);
+        d_sub(sig, ps[5 + q], dl, s, s);
+        let dq = get(sig, pj2[q]);
+        pick_of(sig, dq);
+    }
+    let ip = seq![q0, q1, q2, q3, q4] + qs;
     assert(prems(ip, seq![eq(dl, psub(m, s), psub(m, s), psub(a, s)), eq(dl, psub(n, s), psub(n, s), psub(a, s)),
         eq(dl, psub(x, s), psub(x, s), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l)),
-        eq(dl, psub(n, s), psub(n, s), crate::ti_syntax::proj_fty(sig, psub(m, s)))]));
+        eq(dl, psub(n, s), psub(n, s), crate::ti_syntax::proj_fty(sig, psub(m, s)))] + pj2)) by {
+        assert forall|k: int| 0 <= k < ip.len() implies concl(#[trigger] ip[k]) == (seq![eq(dl, psub(m, s), psub(m, s), psub(a, s)), eq(dl, psub(n, s), psub(n, s), psub(a, s)),
+            eq(dl, psub(x, s), psub(x, s), psub(st, s)), eq(dl, psub(a, s), psub(a, s), sort(l)),
+            eq(dl, psub(n, s), psub(n, s), crate::ti_syntax::proj_fty(sig, psub(m, s)))] + pj2)[k] by {
+            if k >= 5 {
+                assert(ip[k] == qs[k - 5]);
+            }
+        }
+    }
     assert(step_ok(sig, Rule::ProjIota(l), ij, ip)) by { reveal(crate::ti_syntax::proj_iota_ok); }
     valid_node(sig, Rule::ProjIota(l), ij, ip);
     mk_d(sig, node(Rule::ProjIota(l), ij, ip));

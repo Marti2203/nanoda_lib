@@ -157,6 +157,76 @@ pub open spec fn pswap(sig: Sig, ps: Seq<Deriv>, x: nat, y: nat) -> Seq<Deriv> {
     Seq::new(ps.len(), |k: int| pick(sig_swap(sig, x, y), jswap(concl(ps[k]), x, y)))
 }
 
+/// RULE PROJIOTA'S PARAMETER PREMISES UNDER A LOCAL SWAP: the swapped
+/// redex's are the swapped premises.
+proof fn proj_pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        crate::ti_syntax::proj_pjs(sig_swap(sig, x, y), sswap(g, x, y), crate::swap_model::fswap(m, x, y)).len()
+            == crate::ti_syntax::proj_pjs(sig, g, m).len(),
+        forall|q: int| 0 <= q < crate::ti_syntax::proj_pjs(sig, g, m).len()
+            ==> #[trigger] crate::ti_syntax::proj_pjs(sig_swap(sig, x, y), sswap(g, x, y), crate::swap_model::fswap(m, x, y))[q]
+                == jswap(crate::ti_syntax::proj_pjs(sig, g, m)[q], x, y),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::proj_pjs);
+    reveal(crate::ti_syntax::proj_fire);
+    let s2 = sig_swap(sig, x, y);
+    let xm = *m->Proj_1;
+    crate::swap_model::fswap_spine(xm, x, y);
+    assert(crate::swap_model::fswap(m, x, y) == ExprSpec::Proj(m->Proj_0, Box::new(crate::swap_model::fswap(xm, x, y))));
+    let h = spine_head(xm);
+    let ind = sig.ienv.ctor_ind[h->Const_0];
+    reveal(crate::ti_syntax::proj_fire);
+    crate::ti_proj::struct_congr(sig, s2, ind);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+    let pj2 = crate::ti_syntax::proj_pjs(s2, sswap(g, x, y), crate::swap_model::fswap(m, x, y));
+    assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jswap(pj[q], x, y) by {
+        let ty = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[ind].lps, h->Const_1);
+        assert(sh.pdoms[q] is Sort);
+        assert(ty is Sort);
+        assert(crate::swap_model::fswap(ty, x, y) == ty);
+        assert(spine_args(crate::swap_model::fswap(xm, x, y))[q] == crate::swap_model::fswap(spine_args(xm)[q], x, y));
+    }
+}
+
+/// RULE PROJIOTA'S PARAMETER PREMISES UNDER CLOSING A LOCAL.
+proof fn proj_pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
+    requires
+        crate::ti_syntax::proj_fire(sig_with(sig, k, a), m),
+    ensures
+        crate::ti_syntax::proj_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, g.len(), m)).len()
+            == crate::ti_syntax::proj_pjs(sig_with(sig, k, a), g, m).len(),
+        forall|q: int| 0 <= q < crate::ti_syntax::proj_pjs(sig_with(sig, k, a), g, m).len()
+            ==> #[trigger] crate::ti_syntax::proj_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, g.len(), m))[q]
+                == jclose(k, a, crate::ti_syntax::proj_pjs(sig_with(sig, k, a), g, m)[q]),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::proj_pjs);
+    reveal(crate::ti_syntax::proj_fire);
+    let s1 = sig_with(sig, k, a);
+    let xm = *m->Proj_1;
+    let c = g.len();
+    crate::fclose::fclose_spine_const(k, c, xm);
+    assert(crate::fclose::fclose(k, c, m) == ExprSpec::Proj(m->Proj_0, Box::new(crate::fclose::fclose(k, c, xm))));
+    let h = spine_head(xm);
+    let ind = sig.ienv.ctor_ind[h->Const_0];
+    reveal(crate::ti_syntax::proj_fire);
+    crate::ti_proj::struct_congr(s1, sig, ind);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let pj = crate::ti_syntax::proj_pjs(s1, g, m);
+    let pj2 = crate::ti_syntax::proj_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, c, m));
+    assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jclose(k, a, pj[q]) by {
+        let ty = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[ind].lps, h->Const_1);
+        assert(sh.pdoms[q] is Sort);
+        assert(ty is Sort);
+        assert(crate::fclose::fclose(k, c, ty) == ty);
+        assert(spine_args(crate::fclose::fclose(k, c, xm))[q] == crate::fclose::fclose(k, c, spine_args(xm)[q]));
+    }
+}
+
 /// IOTA'S PARAMETER PREMISES UNDER A LOCAL SWAP: the swapped redex's are
 /// the swapped premises (the signature's shapes are untouched, the sorts
 /// mention no local).
@@ -387,6 +457,13 @@ proof fn step_swap_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat
         crate::ti_proj::proj_fty_locals(sig, m, x, y, 0, 0);
         crate::ti_proj::proj_fty_congr(sig, s2, mm);
         assert(concl(qs[4]) == jswap(concl(ps[4]), x, y));
+        proj_pjs_swap(sig, j->Eq_0, m, x, y);
+        let pj = crate::ti_syntax::proj_pjs(sig, j->Eq_0, m);
+        let pj2 = crate::ti_syntax::proj_pjs(s2, sswap(j->Eq_0, x, y), mm);
+        assert forall|k: int| 0 <= k < pj.len() implies #[trigger] concl(qs[5 + k]) == pj2[k] by {
+            assert(concl(ps[5 + k]) == pj[k]);
+            assert(concl(qs[5 + k]) == jswap(concl(ps[5 + k]), x, y));
+        }
     }
 }
 
@@ -464,6 +541,13 @@ proof fn step_close_proj(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<
         crate::ti_proj::proj_fty_congr(s1, sig, m);
         crate::ti_proj::proj_fty_locals(sig, m, 0, 0, k, c);
         assert(concl(qs[4]) == jclose(k, a, concl(ps[4])));
+        proj_pjs_close(sig, k, a, g, m);
+        let pj = crate::ti_syntax::proj_pjs(s1, g, m);
+        let pj2 = crate::ti_syntax::proj_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, c, m));
+        assert forall|q: int| 0 <= q < pj.len() implies #[trigger] concl(qs[5 + q]) == pj2[q] by {
+            assert(concl(ps[5 + q]) == pj[q]);
+            assert(concl(qs[5 + q]) == jclose(k, a, concl(ps[5 + q])));
+        }
     }
 }
 

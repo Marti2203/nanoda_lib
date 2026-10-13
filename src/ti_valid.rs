@@ -325,6 +325,24 @@ pub proof fn struct_iff(sig: Sig, sig2: Sig, s: u64, r: u64)
     }
 }
 
+/// Rule ProjIota's parameter premises are the same in an extension: the
+/// constructor's structure keeps its shape and declaration.
+pub proof fn proj_pjs_ext(sig: Sig, sig2: Sig, g: Ctx, m: ExprSpec)
+    requires
+        sig_ext(sig, sig2),
+        !sig.ienv.full,
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        crate::ti_syntax::proj_pjs(sig2, g, m) == crate::ti_syntax::proj_pjs(sig, g, m),
+{
+    reveal(crate::ti_syntax::proj_fire);
+    reveal(crate::ti_syntax::proj_pjs);
+    let h = crate::beta_model::spine_head(*m->Proj_1);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    assert(sig2.ienv.ctor_ind[h->Const_0] == s);
+    struct_grow(sig, sig2, s);
+}
+
 /// A structure stays one in an extension, with the same shape.
 pub proof fn struct_grow(sig: Sig, sig2: Sig, s: u64)
     requires
@@ -520,6 +538,7 @@ proof fn step_ext(sig: Sig, sig2: Sig, r: Rule, j: Jd, ps: Seq<Deriv>)
             reveal(crate::ti_syntax::proj_iota_ok);
             let st = concl(ps[2])->Eq_3;
             proj_grow(sig, sig2, st, j->Eq_1->Proj_0 as nat, *j->Eq_1->Proj_1, j->Eq_1);
+            proj_pjs_ext(sig, sig2, j->Eq_0, j->Eq_1);
         },
         Rule::StructEta(_) => {
             reveal(crate::ti_syntax::struct_eta_ok);

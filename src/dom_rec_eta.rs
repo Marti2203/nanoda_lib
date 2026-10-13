@@ -190,6 +190,8 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
         0 <= i < rshape(sig, c).fields[0].len(),
         derivable(sig, eq(g, fa[i], fa[i], xs[fq(sig, c, i)])),
         derivable(sig, eq(g, fa[i], fa[i], pa[fq(sig, c, i)])),
+        forall|q: int| 0 <= q < rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] pa[q], pa[q],
+            crate::dom_rel::ptype(sig, rshape(sig, c).ind, cl, q))),
     ensures
         hred(sig, ExprSpec::Proj(i as usize, Box::new(z)), fa[i]),
         derivable(sig, eq(g, ExprSpec::Proj(i as usize, Box::new(z)), fa[i], xs[fq(sig, c, i)])),
@@ -236,9 +238,26 @@ pub proof fn proj_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     let e3 = crate::ti_sub::get(sig, eq(g, xs[q], xs[q], sort(l)));
     let e4 = crate::ti_sub::get(sig, eq(g, fa[i], fa[i], pa[q]));
     let ji = eq(g, pc, fa[i], xs[q]);
-    let pi = seq![e0, e1, e2, e3, e4];
-    assert(crate::ti_syntax::prems(pi, seq![eq(g, pc, pc, xs[q]), eq(g, fa[i], fa[i], xs[q]), eq(g, cz, cz, st), eq(g, xs[q], xs[q], sort(l)),
-        eq(g, fa[i], fa[i], crate::ti_syntax::proj_fty(sig, pc))]));
+    // the constructor's parameters at their sorts
+    let pj = crate::ti_syntax::proj_pjs(sig, g, pc);
+    assert forall|k: int| 0 <= k < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
+        && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[k])) == pj[k] by {
+        reveal(crate::ti_syntax::proj_pjs);
+        assert((pa + fa)[k] == pa[k]);
+        assert(derivable(sig, eq(g, pa[k], pa[k], crate::dom_rel::ptype(sig, sh.ind, cl, k))));
+        let dk = crate::ti_sub::get(sig, pj[k]);
+        crate::ti_sub::pick_of(sig, dk);
+    }
+    let qs = Seq::new(pj.len(), |k: int| crate::ti_sub::pick(sig, pj[k]));
+    let pi = seq![e0, e1, e2, e3, e4] + qs;
+    let js = seq![eq(g, pc, pc, xs[q]), eq(g, fa[i], fa[i], xs[q]), eq(g, cz, cz, st), eq(g, xs[q], xs[q], sort(l)),
+        eq(g, fa[i], fa[i], crate::ti_syntax::proj_fty(sig, pc))] + pj;
+    assert forall|k: int| 0 <= k < pi.len() implies crate::ti_syntax::concl(#[trigger] pi[k]) == js[k] by {
+        if k >= 5 {
+            assert(pi[k] == qs[k - 5]);
+        }
+    }
+    assert(crate::ti_syntax::prems(pi, js));
     crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, rinst(sig, c, ls)), xs.subrange(0, sh.np as int));
     assert(crate::ti_syntax::step_ok(sig, crate::ti_syntax::Rule::ProjIota(l), ji, pi)) by {
         reveal(crate::ti_syntax::proj_iota_ok);
@@ -461,6 +480,8 @@ pub proof fn fterm_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
         hred(sig, xs.last(), spine_app(ExprSpec::Const(rshape(sig, c).ctors[0], cl), pa + fa)),
         forall|i: int| 0 <= i < fa.len() ==> derivable(sig, eq(g, #[trigger] fa[i], fa[i], xs[fq(sig, c, i)]))
             && derivable(sig, eq(g, fa[i], fa[i], pa[fq(sig, c, i)])),
+        forall|q: int| 0 <= q < rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] pa[q], pa[q],
+            crate::dom_rel::ptype(sig, rshape(sig, c).ind, cl, q))),
     ensures
         forall|i: int| 0 <= i < fa.len() ==> hred(sig, #[trigger] s_args(sig, c, ls, xs)[i], fa[i])
             && derivable(sig, eq(g, s_args(sig, c, ls, xs)[i], fa[i], xs[fq(sig, c, i)])),
@@ -638,6 +659,44 @@ pub proof fn par_ty_conv(sig: Sig, g: Ctx, c: u64, us: Seq<LevelSpec>, q: int, y
     crate::ti_chain::tchain_one(sig, g, y, y2);
 }
 
+/// THE MAJORS' CONSTRUCTORS' PARAMETERS at their sorts, at each
+/// constructor's own levels: the end's parameter equations at the
+/// recursors' instances, moved across the equivalent levels.
+pub proof fn pargs_at_cl(sig: Sig, rc0: crate::dom_rec_end::Rc)
+    requires
+        crate::dom_rec_end::rc_core(sig, rc0),
+    ensures
+        forall|q: int| 0 <= q < rshape(sig, rc0.c).np ==> derivable(sig, eq(rc0.g, #[trigger] rc0.pargs[q], rc0.pargs[q],
+            crate::dom_rel::ptype(sig, rshape(sig, rc0.c).ind, rc0.cl, q))),
+        forall|q: int| 0 <= q < rshape(sig, rc0.c).np ==> derivable(sig, eq(rc0.g, #[trigger] rc0.pargs2[q], rc0.pargs2[q],
+            crate::dom_rel::ptype(sig, rshape(sig, rc0.c).ind, rc0.cl2, q))),
+{
+    let sh = rshape(sig, rc0.c);
+    let (g, ri, ri2) = (rc0.g, rc0.ri(sig), rc0.ri2(sig));
+    crate::dom_rec_end::rec_canon_ok(sig, rc0.c);
+    assert(crate::dom_code::canon_shape(sig, sh.ind) == sh);
+    assert forall|q: int| 0 <= q < sh.np implies derivable(sig, eq(g, #[trigger] rc0.pargs[q], rc0.pargs[q],
+        crate::dom_rel::ptype(sig, sh.ind, rc0.cl, q))) by {
+        let pt = crate::dom_rel::ptype(sig, sh.ind, ri, q);
+        assert(derivable(sig, eq(g, rc0.xs[q], rc0.pargs[q], pt)));
+        crate::dom_psimple::der_diag(sig, g, rc0.xs[q], rc0.pargs[q], pt);
+        crate::ti_chain::tchain_refl(sig, g, rc0.pargs[q]);
+        assert(crate::dom_rel::peq(sig, g, sh.ind, ri, q, rc0.pargs[q], rc0.pargs[q]));
+        assert(sh.pdoms[q] is Sort);
+        crate::dom_rel::peq_lv(sig, g, sh.ind, ri, rc0.cl, q, rc0.pargs[q], rc0.pargs[q]);
+    }
+    assert forall|q: int| 0 <= q < sh.np implies derivable(sig, eq(g, #[trigger] rc0.pargs2[q], rc0.pargs2[q],
+        crate::dom_rel::ptype(sig, sh.ind, rc0.cl2, q))) by {
+        let pt = crate::dom_rel::ptype(sig, sh.ind, ri2, q);
+        assert(derivable(sig, eq(g, rc0.xs2[q], rc0.pargs2[q], pt)));
+        crate::dom_psimple::der_diag(sig, g, rc0.xs2[q], rc0.pargs2[q], pt);
+        crate::ti_chain::tchain_refl(sig, g, rc0.pargs2[q]);
+        assert(crate::dom_rel::peq(sig, g, sh.ind, ri2, q, rc0.pargs2[q], rc0.pargs2[q]));
+        assert(sh.pdoms[q] is Sort);
+        crate::dom_rel::peq_lv(sig, g, sh.ind, ri2, rc0.cl2, q, rc0.pargs2[q], rc0.pargs2[q]);
+    }
+}
+
 /// The field pairs at each side's field terms.
 #[verifier::spinoff_prover]
 pub proof fn con_fields(sig: Sig, rc0: crate::dom_rec_end::Rc)
@@ -657,6 +716,7 @@ pub proof fn con_fields(sig: Sig, rc0: crate::dom_rec_end::Rc)
     side_red(sig, g, c, ls2, xs2, t2);
     let rc = ctx_of(sig, rc0);
     fa_tys(sig, rc0);
+    pargs_at_cl(sig, rc0);
     fterm_red(sig, g, c, ls, xs, t, rc0.cl, rc0.pargs, rc0.args);
     fterm_red(sig, g, c, ls2, xs2, t2, rc0.cl2, rc0.pargs2, rc0.args2);
     assert forall|i: int| 0 <= i < rc.nf(sig) implies #[trigger] crate::dom_rec_end::rc_field(sig, rc, i) by {

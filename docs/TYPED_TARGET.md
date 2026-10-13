@@ -2422,10 +2422,21 @@ excludes them.
 a former's application through its code function); the field kinds ask
 of a nested former that its parameters are types (`rec_canon::tparams`),
 its level arity, and that it is no constructor; `sig_ext`/`env_le` carry
-the tables' stability. Open: the projection lemmas need the structure's
-parameter codes typed, from the former's approximation by projecting
-them onto its inputs (`dom_proj::proj`), then `proj_entry`,
-`proj_iota_sup` and the eta/recursor sites, then the flip.
+the tables' stability. Typed parameter codes: a former's type over
+sorts lies below the arrow chain of its sorts (`dom_canon::sbound_mem`),
+so the codes projected onto its typed approximation's inputs are types
+(`proj_chain_t`, `tf_spine_t`); with them a field over the parameters
+has its entry as a member (`field_entry_mem`, `proj_entry_ps`).
+**Rule ProjIota takes the constructor's parameters typed** (user's
+choice, 2026-10-13, as Iota's in P4b-2j): a field mentioning a parameter
+twice needs that parameter's members joined, so its denotation
+join-closed, which only its typing's soundness gives; the soundness
+induction has no other route to it (generation yields `derivable`
+facts, not derivations to recurse on). `ti_syntax::proj_pjs`; producers
+from the telescope (subject reduction) or the relation's parameter
+equations (`pjs_peq`, `pargs_at_cl`); the transformers carry them. Open:
+`proj_iota_sup` and the eta/recursor sites for such fields, then the
+flip.
 
 ### The conditional theorem (started 2026-10-12)
 

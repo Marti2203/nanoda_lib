@@ -122,6 +122,95 @@ pub proof fn proj_entry(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>,
     }
 }
 
+/// `proj_entry` for a field over the parameters (neither a parameter
+/// itself nor recursive), at a structure whose parameters are all types:
+/// the member lies below the canonical code at parameter codes that are
+/// types (`dom_canon::tf_spine_t`), whose entry is the field's code there,
+/// a member of the field at the parameters and earlier projections
+/// (`dom_canon::field_entry_mem`).
+pub proof fn proj_entry_ps(sig: Sig, s: u64, us: Seq<LevelSpec>, ps: Seq<ExprSpec>, rho: Env, a: Cpt, i: nat, y: ExprSpec)
+    requires
+        crate::dom_code::has_canon(sig, s),
+        canon_shape(sig, s).nmin() == 1,
+        canon_shape(sig, s).ni == 0,
+        crate::dom_model::consts_ranked(sig),
+        crate::dom_model::sem_const(sig, s, us),
+        !sig.ienv.ctor_ind.contains_key(s),
+        !sig.ienv.recs.contains_key(s),
+        ps.len() == canon_shape(sig, s).np,
+        i < canon_shape(sig, s).fields[0].len(),
+        crate::rec_canon::psimple(sig, s, canon_shape(sig, s).pdoms, canon_shape(sig, s).np, i, canon_shape(sig, s).fields[0][i as int]),
+        !crate::rec_canon::pvar_field(canon_shape(sig, s).pdoms, canon_shape(sig, s).np, i, canon_shape(sig, s).fields[0][i as int]),
+        forall|q: int| 0 <= q < canon_shape(sig, s).np ==> (#[trigger] canon_shape(sig, s).pdoms[q]) is Sort,
+        mem(sig, spine_app(ExprSpec::Const(s, us), ps), rho, a),
+        typed(a, Cpt::U),
+        a is Nd,
+        0 < tbl(a->Nd_1).len(),
+        tbl(a->Nd_1)[0] is Nd,
+        (i as int) < tbl(a->Nd_1)[0]->Nd_1.len(),
+        forall|j: nat| #[trigger] wf(rho(j)),
+    ensures ({
+        let e = tbl(a->Nd_1)[0]->Nd_1[i as int];
+        let t = vsub(crate::ti_proj::sfield(sig, s, i, us), ps + crate::ti_syntax::projs(y, i));
+        &&& is_centry(e) ==> mem(sig, t, rho, ecode(e))
+        &&& e != rmark()
+    }),
+{
+    let sh = canon_shape(sig, s);
+    let np = sh.np;
+    let lps = sig.consts[s].lps;
+    crate::dom_ctor_bound::ctor_shape_ind(sig, s);
+    // the former's type: the parameters, sorts, into a sort
+    let tb0 = crate::rec_canon::tbody(sig.consts[s].ty, sh.np + sh.ni);
+    assert(sh.pdoms + sh.idoms =~= sh.pdoms);
+    crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms, tb0, lps, us);
+    let tds = crate::dom_rec_shape::sls(sh.pdoms, lps, us);
+    let srt = crate::expr_model::subst_expr_levels(tb0, lps, us);
+    assert(crate::ti_syntax::dty_at(sig, s, us) == crate::rec_canon::binds(BinderKind::Pi, tds, srt));
+    assert forall|q: int| 0 <= q < tds.len() implies (#[trigger] tds[q]) is Sort by {
+        assert(sh.pdoms[q] is Sort);
+    }
+    let l = srt->Sort_0;
+    // below the canonical code at parameter codes that are types
+    let xs = crate::dom_canon::tf_spine_t(sig, s, us, tds, l, ps, rho, a);
+    let cc = crate::dom_code::canon_code(sig, s, us, xs);
+    crate::dom_rel_mono::tbl_entry_le(a, cc, 0, i as int);
+    crate::dom_sem::nd_le_inv(a->Nd_0, a->Nd_1, cc);
+    let e = tbl(a->Nd_1)[0]->Nd_1[i as int];
+    let ec = tbl(cc->Nd_1)[0]->Nd_1[i as int];
+    assert(crate::dom_code::tabled(sig, s, us, xs));
+    crate::dom_code::cblocks_at(sig, s, us, xs, sh.nmin());
+    crate::dom_code::centries_at(sig, s, us, xs, 0, sh.fields[0].len());
+    assert(ec == crate::dom_code::centry_at(sig, s, us, xs, 0, i));
+    let f = sh.fields[0][i as int];
+    crate::ti_valid::psimple_not_direct(sig, s, sh.pdoms, sh.us(), np, sh.ni, i, f);
+    let pe = crate::dom_code::fpe(xs, np, i);
+    let code = crate::dom_code::ceval(sig, crate::dom_code::rk(sig, s), s, us, pe, f);
+    assert(ecode(ec) == code);
+    if e == rmark() {
+        crate::dom_sem::nd_le_inv(NdKey::Tag(1), Seq::empty(), ec);
+    }
+    if is_centry(e) {
+        assert(crate::dom_bound::args_w(sig, ps, rho, xs));
+        assert forall|q: int| 0 <= q < np implies mem(sig, #[trigger] ps[q], rho, xs[q]) by {}
+        assert(crate::dom_code::aw(xs)) by {
+            assert forall|q: int| 0 <= q < xs.len() implies wf(#[trigger] xs[q]) by {
+                assert(mem(sig, ps[q], rho, xs[q]));
+            }
+        }
+        crate::dom_canon::field_entry_mem(sig, s, sh.pdoms, np, i, us, xs, f, ps, crate::ti_syntax::projs(y, i), rho);
+        crate::dom_sem::nd_le_inv(e->Nd_0, e->Nd_1, ec);
+        assert(le(ecode(e), code));
+        reveal(crate::dom_model::typed);
+        let n = (vstd::math::max(crate::dom_compact::ht(a) as int, crate::dom_compact::ht(Cpt::U) as int) + 1) as nat;
+        assert(crate::dom_typing::has_type(n, a, Cpt::U));
+        assert(crate::dom_typing::has_type(n, ecode(e), Cpt::U));
+        crate::dom_model::typed_down(ecode(e), Cpt::U, n);
+        crate::dom_model::typed_wf(ecode(e), Cpt::U);
+        crate::dom_model::mem_down_e(sig, vsub(crate::ti_proj::sfield(sig, s, i, us), ps + crate::ti_syntax::projs(y, i)), rho, code, ecode(e));
+    }
+}
+
 /// Projections of equal subjects are equal.
 pub proof fn proj_sem_eq(sig: Sig, i: usize, x: ExprSpec, x2: ExprSpec, rho: Env)
     requires

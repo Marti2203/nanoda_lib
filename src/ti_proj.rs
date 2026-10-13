@@ -244,6 +244,17 @@ pub proof fn proj_ty_psub(sig: Sig, st: ExprSpec, i: nat, x: ExprSpec, t: Sub)
 }
 
 /// The projection redex commutes with substitution.
+/// A firing projection's subject is a constant's application.
+pub proof fn proj_fire_head(sig: Sig, m: ExprSpec)
+    requires
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        m is Proj,
+        spine_head(*m->Proj_1) is Const,
+{
+    reveal(crate::ti_syntax::proj_fire);
+}
+
 pub proof fn proj_fire_psub(sig: Sig, m: ExprSpec, t: Sub)
     requires
         crate::ti_syntax::proj_fire(sig, m),

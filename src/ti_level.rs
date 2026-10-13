@@ -450,6 +450,44 @@ pub proof fn elp_binds(bk: crate::expr_model::BinderKind, ds: Seq<ExprSpec>, b: 
     }
 }
 
+/// RULE PROJIOTA'S PARAMETER PREMISES UNDER LEVEL INSTANTIATION: the
+/// instantiated redex's are the instantiated premises (the structure's
+/// parameter sorts mention only its own level parameters).
+proof fn proj_pjs_ls(sig: Sig, g: Ctx, m: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        sig_lp_ok(sig, ks, vs),
+        crate::ti_syntax::proj_fire(sig, m),
+    ensures
+        crate::ti_syntax::proj_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs)).len() == crate::ti_syntax::proj_pjs(sig, g, m).len(),
+        forall|q: int| 0 <= q < crate::ti_syntax::proj_pjs(sig, g, m).len()
+            ==> #[trigger] crate::ti_syntax::proj_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs))[q]
+                == jls(crate::ti_syntax::proj_pjs(sig, g, m)[q], ks, vs),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::proj_pjs);
+    reveal(crate::ti_syntax::proj_fire);
+    let x = *m->Proj_1;
+    crate::level_inst::li_spine_const(x, ks, vs);
+    let m2 = subst_expr_levels(m, ks, vs);
+    assert(m2 == ExprSpec::Proj(m->Proj_0, Box::new(subst_expr_levels(x, ks, vs))));
+    let h = spine_head(x);
+    let ind = sig.ienv.ctor_ind[h->Const_0];
+    crate::ti_syntax::struct_of_basic(sig, ind);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, ind);
+    let sh = crate::dom_code::canon_shape(sig, ind);
+    let lps = sig.consts[ind].lps;
+    let tb = crate::rec_canon::tbody(sig.consts[ind].ty, sh.np + sh.ni);
+    assert(sig.consts.contains_key(ind));
+    elp_binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.idoms, tb, lps);
+    let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+    let pj2 = crate::ti_syntax::proj_pjs(sig, gls(g, ks, vs), m2);
+    assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jls(pj[q], ks, vs) by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+        crate::level_inst::expr_compose(sh.pdoms[q], lps, h->Const_1, ks, vs);
+        assert(spine_args(subst_expr_levels(x, ks, vs))[q] == subst_expr_levels(spine_args(x)[q], ks, vs));
+    }
+}
+
 /// IOTA'S PARAMETER PREMISES UNDER LEVEL INSTANTIATION: the instantiated
 /// redex's are the instantiated premises (their sorts mention no level
 /// parameter).
@@ -657,6 +695,14 @@ proof fn step_ls_proj(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs
         assert(concl(qs[3]) == jls(concl(ps[3]), ks, vs));
         crate::ti_proj::proj_fty_ls(sig, m, ks, vs);
         assert(concl(qs[4]) == jls(concl(ps[4]), ks, vs));
+        let g = j->Eq_0;
+        proj_pjs_ls(sig, g, m, ks, vs);
+        let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+        let pj2 = crate::ti_syntax::proj_pjs(sig, gls(g, ks, vs), subst_expr_levels(m, ks, vs));
+        assert forall|q: int| 0 <= q < pj.len() implies #[trigger] concl(qs[5 + q]) == pj2[q] by {
+            assert(concl(ps[5 + q]) == pj[q]);
+            assert(concl(qs[5 + q]) == jls(concl(ps[5 + q]), ks, vs));
+        }
     }
 }
 

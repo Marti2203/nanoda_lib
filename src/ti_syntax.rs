@@ -582,15 +582,35 @@ pub open spec fn proj_g_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> boo
 #[verifier::opaque]
 pub open spec fn proj_iota_ok(sig: Sig, l: LevelSpec, j: Jd, ps: Seq<Deriv>) -> bool {
     match j {
-        Jd::Eq(g, m, n, t) => !sig.ienv.full && m is Proj && ps.len() == 5 && concl(ps[2]) is Eq && {
+        Jd::Eq(g, m, n, t) => !sig.ienv.full && m is Proj && ps.len() >= 5 && concl(ps[2]) is Eq && {
             let st = concl(ps[2])->Eq_3;
             proj_fire(sig, m) && n == proj_result(sig, m) && proj_ty(sig, st, m->Proj_0 as nat, *m->Proj_1) is Some
                 && crate::beta_model::spine_head(st)->Const_0 == sig.ienv.ctor_ind[crate::beta_model::spine_head(*m->Proj_1)->Const_0]
                 && (proj_prop(sig, st) ==> is_zero(l))
                 && prems(ps, seq![eq(g, m, m, t), eq(g, n, n, t), eq(g, *m->Proj_1, *m->Proj_1, st), eq(g, t, t, sort(l)),
-                    eq(g, n, n, proj_fty(sig, m))])
+                    eq(g, n, n, proj_fty(sig, m))] + proj_pjs(sig, g, m))
         },
         _ => false,
+    }
+}
+
+/// THE CONSTRUCTOR'S PARAMETERS, TYPED (rule ProjIota's last premises;
+/// docs/TYPED_TARGET.md, "Slice: structure fields over the parameters"):
+/// at a structure whose parameters are all sorts, each parameter of the
+/// redex's constructor application at its sort, at the constructor's
+/// levels. The model needs them to join a parameter's members when a
+/// field mentions it more than once.
+#[verifier::opaque]
+pub open spec fn proj_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
+    let x = *m->Proj_1;
+    let h = crate::beta_model::spine_head(x);
+    let s = sig.ienv.ctor_ind[h->Const_0];
+    let sh = crate::dom_code::canon_shape(sig, s);
+    let ps = crate::beta_model::spine_args(x);
+    if ps.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort {
+        Seq::new(sh.np, |q: int| eq(g, ps[q], ps[q], crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[s].lps, h->Const_1)))
+    } else {
+        Seq::empty()
     }
 }
 

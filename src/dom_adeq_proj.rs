@@ -132,6 +132,12 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
             &&& derivable(sig, eq(dl, a[q], spine_args(st)[q], crate::dom_rel::ptype(sig, s, spine_head(st)->Const_1, q)))
             &&& derivable(sig, eq(dl, a[sh.np + i], a[sh.np + i], a[q]))
         }),
+        crate::dom_rel::cpar(sig, dl, spine_head(st)->Const_0, crate::dom_rel::cr(sig, x), st),
+        crate::dom_rel::iinst(sig, spine_head(st)->Const_0, crate::dom_rel::ir(sig, st, spine_head(st)->Const_0)) == spine_head(st)->Const_1,
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).np
+            && crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).pdoms[q] is Sort
+            ==> #[trigger] crate::dom_rel::peq(sig, dl, spine_head(st)->Const_0, spine_head(st)->Const_1, q,
+                spine_args(crate::dom_rel::cr(sig, x))[q], spine_args(st)[q]),
     ensures ({
         let s = spine_head(st)->Const_0;
         let a = spine_args(crate::dom_rel::cr(sig, x));
@@ -167,6 +173,9 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
     crate::ti_spine::const_typed(sig, dl, c, cl, th);
     reveal(crate::ti_syntax::struct_of);
     crate::dom_ctor_bound::ctor_shape(sig, s, 0);
+    // the parameters at the constructor's own levels
+    assert(cl.len() == sig.consts[s].lps.len());
+    pjs_peq(sig, dl, s, us, cx, st);
     // head reduction: to the constructor application, then the field
     let k = choose|k: nat| #[trigger] hiter(sig, x, k) == cx;
     hred_proj(sig, i, x, k);
@@ -207,15 +216,54 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
     let e2 = crate::ti_sub::get(sig, eq(dl, cx, cx, st));
     let e4 = crate::ti_sub::get(sig, eq(dl, fld, fld, a[q]));
     let ji = eq(dl, pcx, fld, t);
-    let pi = seq![e0, e1, e2, d1, e4];
-    assert(crate::ti_syntax::prems(pi, seq![eq(dl, pcx, pcx, t), eq(dl, fld, fld, t), eq(dl, cx, cx, st), eq(dl, t, t, sort(l)),
-        eq(dl, fld, fld, crate::ti_syntax::proj_fty(sig, pcx))]));
+    // the constructor's parameters at their sorts
+    let pj = crate::ti_syntax::proj_pjs(sig, dl, pcx);
+    assert forall|k: int| 0 <= k < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
+        && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[k])) == pj[k] by {
+        reveal(crate::ti_syntax::proj_pjs);
+        assert(sh.pdoms[k] is Sort);
+        assert(crate::dom_rel::peq(sig, dl, s, cl, k, a[k], a[k]));
+        let dk = crate::ti_sub::get(sig, pj[k]);
+        crate::ti_sub::pick_of(sig, dk);
+    }
+    let qs = Seq::new(pj.len(), |k: int| crate::ti_sub::pick(sig, pj[k]));
+    let pi = seq![e0, e1, e2, d1, e4] + qs;
+    let js = seq![eq(dl, pcx, pcx, t), eq(dl, fld, fld, t), eq(dl, cx, cx, st), eq(dl, t, t, sort(l)),
+        eq(dl, fld, fld, crate::ti_syntax::proj_fty(sig, pcx))] + pj;
+    assert forall|k: int| 0 <= k < pi.len() implies crate::ti_syntax::concl(#[trigger] pi[k]) == js[k] by {
+        if k >= 5 {
+            assert(pi[k] == qs[k - 5]);
+        }
+    }
+    assert(crate::ti_syntax::prems(pi, js));
     assert(crate::ti_syntax::step_ok(sig, Rule::ProjIota(l), ji, pi)) by {
         reveal(crate::ti_syntax::proj_iota_ok);
     }
     crate::ti_meta::valid_node(sig, Rule::ProjIota(l), ji, pi);
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(Rule::ProjIota(l), ji, pi));
     dtrans(sig, dl, px, pcx, fld, t);
+}
+
+/// THE CONSTRUCTOR'S PARAMETERS AT ITS OWN LEVELS: from the relation's
+/// parameter equations at the type's instance (`dom_rel::cpar`), moved to
+/// the constructor head's equivalent levels.
+pub proof fn pjs_peq(sig: Sig, dl: Ctx, s: u64, us: Seq<crate::level_model::LevelSpec>, cx: ExprSpec, st: ExprSpec)
+    requires
+        us.len() == sig.consts[s].lps.len(),
+        crate::conv_cr::levs_eq(spine_head(cx)->Const_1, us),
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+            ==> #[trigger] crate::dom_rel::peq(sig, dl, s, us, q, spine_args(cx)[q], spine_args(st)[q]),
+    ensures
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+            ==> #[trigger] crate::dom_rel::peq(sig, dl, s, spine_head(cx)->Const_1, q, spine_args(cx)[q], spine_args(cx)[q]),
+{
+    let cl = spine_head(cx)->Const_1;
+    crate::ti_ls2::levs_eq_sym(cl, us);
+    assert forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+        implies #[trigger] crate::dom_rel::peq(sig, dl, s, cl, q, spine_args(cx)[q], spine_args(cx)[q]) by {
+        crate::dom_rel::peq_lv(sig, dl, s, us, cl, q, spine_args(cx)[q], spine_args(st)[q]);
+        crate::dom_rel::peq_symm(sig, dl, s, cl, q, spine_args(cx)[q], spine_args(st)[q]);
+    }
 }
 
 /// A constructor application's declared field type is the parameter the
@@ -366,6 +414,9 @@ pub proof fn pcong_tail(sig: Sig, n: nat, nn: nat, dl: Ctx, rho: crate::dom_mode
     crate::ti_chain::conv_chain(sig, dl, aa2[np + i], aa2[np + i], ti, ti2);
     assert(crate::dom_rel::peq(sig, dl, s, us, q, aa[q], spine_args(sst)[q]));
     assert(crate::dom_rel::peq(sig, dl, s, us, q, aa2[q], spine_args(sst)[q]));
+    assert(crate::dom_rel::cpar(sig, dl, s, cx, sst));
+    assert(crate::dom_rel::cpar(sig, dl, s, cx2, sst));
+    assert(crate::dom_rel::iinst(sig, s, crate::dom_rel::ir(sig, sst, s)) == us);
     proj_side(sig, dl, i, xx, sst, tt, l);
     crate::ti_proj::proj_ty_indep(sig, sst, i as nat, xx, xx2);
     proj_side(sig, dl, i, xx2, sst, tt, l);
@@ -482,6 +533,9 @@ pub proof fn seta_tail_field(sig: Sig, n: nat, dl: Ctx, rho: crate::dom_model::E
     let (lt, _dt) = crate::ti_sub::get_t(sig, dl, ti, ti);
     crate::ti_meta::mk_d(sig, _dt);
     // the projections reduce to the fields, derivably
+    assert(crate::dom_rel::cpar(sig, dl, s, x, tt));
+    assert(crate::dom_rel::cpar(sig, dl, s, x2, tt));
+    assert(crate::dom_rel::iinst(sig, s, crate::dom_rel::ir(sig, tt, s)) == us);
     proj_side(sig, dl, ui, mm, tt, ti, lt);
     crate::ti_proj::proj_ty_indep(sig, tt, i as nat, mm, nn);
     proj_side(sig, dl, ui, nn, tt, ti, lt);

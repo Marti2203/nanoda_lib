@@ -655,6 +655,37 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
     }
 }
 
+/// Rule ProjIota's parameter premises substitute with the redex.
+pub proof fn proj_pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: crate::ti_syntax::Ctx, m: ExprSpec, t: Sub)
+    requires
+        m is Proj,
+        crate::beta_model::spine_head(*m->Proj_1) is Const,
+    ensures
+        crate::ti_syntax::proj_pjs(sig, g2, psub(m, t)).len() == crate::ti_syntax::proj_pjs(sig, g, m).len(),
+        forall|q: int| 0 <= q < crate::ti_syntax::proj_pjs(sig, g, m).len() ==> #[trigger] crate::ti_syntax::proj_pjs(sig, g, m)[q] is Eq
+            && crate::ti_syntax::proj_pjs(sig, g, m)[q]->Eq_0 == g,
+        forall|q: int| 0 <= q < crate::ti_syntax::proj_pjs(sig, g, m).len() ==> #[trigger] crate::ti_syntax::proj_pjs(sig, g2, psub(m, t))[q]
+            == crate::ti_syntax::eq(g2, psub(crate::ti_syntax::proj_pjs(sig, g, m)[q]->Eq_1, t),
+                psub(crate::ti_syntax::proj_pjs(sig, g, m)[q]->Eq_2, t), psub(crate::ti_syntax::proj_pjs(sig, g, m)[q]->Eq_3, t)),
+{
+    use crate::beta_model::{spine_head, spine_args};
+    reveal(crate::ti_syntax::proj_pjs);
+    let x = *m->Proj_1;
+    psub_spine_const(t, x);
+    assert(psub(m, t) == ExprSpec::Proj(m->Proj_0, Box::new(psub(x, t))));
+    let h = spine_head(x);
+    let sh = crate::dom_code::canon_shape(sig, sig.ienv.ctor_ind[h->Const_0]);
+    let (pj, pj2) = (crate::ti_syntax::proj_pjs(sig, g, m), crate::ti_syntax::proj_pjs(sig, g2, psub(m, t)));
+    assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q]
+        == crate::ti_syntax::eq(g2, psub(pj[q]->Eq_1, t), psub(pj[q]->Eq_2, t), psub(pj[q]->Eq_3, t)) by {
+        let ty = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[sig.ienv.ctor_ind[h->Const_0]].lps, h->Const_1);
+        assert(sh.pdoms[q] is Sort);
+        assert(ty is Sort);
+        assert(psub(ty, t) == ty);
+        assert(spine_args(psub(x, t))[q] == psub(spine_args(x)[q], t));
+    }
+}
+
 pub proof fn psub_fire(t: Sub, sig: crate::ti_syntax::Sig, sp: ExprSpec)
     requires
         crate::ti_hred::rec_fire(sig, sp),

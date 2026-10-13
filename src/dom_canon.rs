@@ -588,6 +588,259 @@ pub proof fn ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: S
     canon_typed(sig, jd, lsub(sig, outer, ls, us), ca);
 }
 
+/// The arrow chain of a telescope of sorts ending in a sort: an upper
+/// bound for every member of the telescope's Pi type (`sbound_mem`).
+pub open spec fn sbound(tds: Seq<ExprSpec>, l: LevelSpec) -> Cpt
+    decreases tds.len(),
+{
+    if tds.len() == 0 {
+        sortc(l)
+    } else {
+        arrow(sortc(tds[0]->Sort_0), sbound(tds.drop_first(), l))
+    }
+}
+
+/// The bound is well formed.
+pub proof fn sbound_wf(tds: Seq<ExprSpec>, l: LevelSpec)
+    ensures
+        wf(sbound(tds, l)),
+    decreases tds.len(),
+{
+    crate::dom_sound::typed_basic();
+    typed_wf(sortc(l), Cpt::U);
+    if tds.len() > 0 {
+        sbound_wf(tds.drop_first(), l);
+        typed_wf(sortc(tds[0]->Sort_0), Cpt::U);
+        crate::dom_code::arrow_wf(sortc(tds[0]->Sort_0), sbound(tds.drop_first(), l));
+    }
+}
+
+/// A PI TYPE OVER SORTS lies, at every environment, below the arrow chain
+/// of its sorts' codes: its domain is a sort's member, and every output
+/// of its generator a member of the rest.
+pub proof fn sbound_mem(sig: Sig, tds: Seq<ExprSpec>, l: LevelSpec, rho: Env, d: Cpt)
+    requires
+        forall|q: int| 0 <= q < tds.len() ==> (#[trigger] tds[q]) is Sort,
+        mem(sig, crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)), rho, d),
+    ensures
+        le(d, sbound(tds, l)),
+    decreases tds.len(),
+{
+    reveal(mem);
+    let t = crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l));
+    let w = choose|w: Wit| #[trigger] mem_w(sig, t, rho, d, w);
+    if d is Bot {
+        assert(le(Cpt::Bot, sbound(tds, l))) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+        return;
+    }
+    if tds.len() == 0 {
+        assert(d == sortc(l));
+        le_refl(d);
+        return;
+    }
+    let rest = tds.drop_first();
+    let tb = crate::rec_canon::binds(BinderKind::Pi, rest, ExprSpec::Sort(l));
+    assert(t == ExprSpec::Bind(BinderKind::Pi, Box::new(tds[0]), Box::new(tb)));
+    match w {
+        Wit::Gen(a, gen, wa, ws) => {
+            // the domain: a member of its sort
+            let l0 = tds[0]->Sort_0;
+            assert(mem_w(sig, tds[0], rho, a, *wa));
+            if a is Bot {
+                assert(le(a, sortc(l0))) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+            } else {
+                assert(a == sortc(l0));
+                le_refl(a);
+            }
+            // every output: a member of the rest, below its bound
+            assert(crate::dom_model::entries_ok(sig, tb, rho, a, gen, ws));
+            assert forall|q: int| 0 <= q < rest.len() implies (#[trigger] rest[q]) is Sort by {
+                assert(rest[q] == tds[q + 1]);
+            }
+            assert forall|k: int| 0 <= k < gen->Pi_1.len() implies le(#[trigger] gen->Pi_1[k].1, sbound(rest, l)) by {
+                assert(gsteps(gen) == gen->Pi_1);
+                assert(typed(gsteps(gen)[k].0, a));
+                assert(mem_w(sig, tb, ext(rho, gsteps(gen)[k].0), gsteps(gen)[k].1, ws[k]));
+                sbound_mem(sig, rest, l, ext(rho, gsteps(gen)[k].0), gsteps(gen)[k].1);
+            }
+            crate::dom_code::arrow_le_intro(gen, sortc(l0), sbound(rest, l));
+            le_trans(d, gen, sbound(tds, l));
+        },
+        _ => {
+            assert(false);
+        },
+    }
+}
+
+/// Bottom applied to anything is bottom.
+pub proof fn apps_bot(ws: Seq<Cpt>)
+    ensures
+        crate::dom_rec::apps(Cpt::Bot, ws) == Cpt::Bot,
+    decreases ws.len(),
+{
+    if ws.len() > 0 {
+        apps_bot(ws.drop_last());
+    }
+}
+
+/// THE PARAMETERS' CODES MADE TYPES: down a former's telescope of sorts,
+/// each argument's code projected onto the typed approximation's inputs
+/// is typed at the domain, below the sort's code, so a type; the
+/// application is unchanged, so it ends below the canonical code at the
+/// projected codes.
+pub proof fn proj_chain_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>, l: LevelSpec, pre: Seq<Cpt>,
+    f: Cpt, a: Cpt, ws0: Seq<Cpt>) -> (xs: Seq<Cpt>)
+    requires
+        forall|q: int| 0 <= q < tds.len() ==> (#[trigger] tds[q]) is Sort,
+        ws0.len() == tds.len(),
+        forall|q: int| 0 <= q < ws0.len() ==> wf(#[trigger] ws0[q]),
+        typed(f, a),
+        typed(a, Cpt::U),
+        le(a, sbound(tds, l)),
+        tf_fun(sig, c, ls, crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)), pre, f),
+    ensures
+        xs.len() == tds.len(),
+        forall|q: int| 0 <= q < xs.len() ==> le(#[trigger] xs[q], ws0[q]) && wf(xs[q]) && typed(xs[q], Cpt::U),
+        le(crate::dom_rec::apps(f, ws0), canon_code(sig, c, ls, pre + xs)),
+    decreases tds.len(),
+{
+    crate::dom_sound::typed_basic();
+    typed_wf(f, a);
+    typed_wf(a, Cpt::U);
+    let t = crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l));
+    if tds.len() == 0 {
+        assert(pre + Seq::<Cpt>::empty() =~= pre);
+        assert(crate::dom_rec::apps(f, ws0) == f);
+        if f is Bot {
+            assert(le(Cpt::Bot, canon_code(sig, c, ls, pre))) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+        }
+        return Seq::<Cpt>::empty();
+    }
+    let rest = tds.drop_first();
+    let trest = crate::rec_canon::binds(BinderKind::Pi, rest, ExprSpec::Sort(l));
+    assert(t == ExprSpec::Bind(BinderKind::Pi, Box::new(tds[0]), Box::new(trest)));
+    assert forall|q: int| 0 <= q < rest.len() implies (#[trigger] rest[q]) is Sort by {
+        assert(rest[q] == tds[q + 1]);
+    }
+    let bots = Seq::new(tds.len(), |_q: int| Cpt::Bot);
+    if !(f is Lam) {
+        // the approximation is bottom, and so is everything it gives
+        assert(f is Bot);
+        crate::dom_tele::apps_front(f, ws0);
+        apps_bot(ws0);
+        assert(le(Cpt::Bot, canon_code(sig, c, ls, pre + bots))) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+        assert forall|q: int| 0 <= q < bots.len() implies le(#[trigger] bots[q], ws0[q]) && wf(bots[q]) && typed(bots[q], Cpt::U) by {
+            assert(le(Cpt::Bot, ws0[q])) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+        }
+        return bots;
+    }
+    // one step: the projected argument, typed at the domain
+    let l0 = tds[0]->Sort_0;
+    let brest = sbound(rest, l);
+    let ar = arrow(sortc(l0), brest);
+    assert(sbound(tds, l) == ar);
+    let n = vstd::math::max(cstage(f, a) as int, cstage(a, Cpt::U) as int) as nat;
+    typed_up(f, a, n);
+    typed_up(a, Cpt::U, n);
+    crate::dom_typing::ty_inv(n, f, a);
+    let w0 = ws0[0];
+    let x = crate::dom_proj::proj(f, w0);
+    crate::dom_proj::proj_props(f, w0);
+    crate::dom_proj::proj_typed(n, f, a, w0);
+    crate::dom_proj::app_typed_at(n, f, a, x);
+    let m = (n - 1) as nat;
+    let f2 = app(f, x);
+    let a2 = cod(a, x);
+    typed_down(x, *a->Pi_0, m);
+    typed_down(f2, a2, m);
+    typed_down(a2, Cpt::U, m);
+    // the domain lies below the sort's code, so `x` is a type
+    sbound_wf(tds, l);
+    sbound_wf(rest, l);
+    typed_wf(sortc(l0), Cpt::U);
+    pi_dom_le(a, ar);
+    let sc = sortc(l0);
+    assert(typed(sc, Cpt::U));
+    let k = vstd::math::max(cstage(x, *a->Pi_0) as int, cstage(sc, Cpt::U) as int) as nat;
+    typed_up(x, *a->Pi_0, k);
+    typed_up(sc, Cpt::U, k);
+    crate::dom_typing::ty_weak(k, x, *a->Pi_0, sc);
+    if sc is Prop {
+        crate::dom_typing::prop_is_type(k, x);
+    }
+    typed_down(x, Cpt::U, k);
+    // the codomain lies below the rest's bound
+    crate::dom_code::cod_arrow(sortc(l0), brest, x);
+    appk_mono_fun(a, ar, x, false);
+    // the code function one input further
+    crate::dom_sem_rel::tf_app(sig, c, ls, tds[0], trest, pre, f, x);
+    let xs2 = proj_chain_t(sig, c, ls, rest, l, pre.push(x), f2, a2, ws0.drop_first());
+    let xs = seq![x] + xs2;
+    crate::dom_tele::apps_front(f, ws0);
+    assert(app(f, w0) == f2);
+    assert(pre.push(x) + xs2 =~= pre + xs);
+    assert forall|q: int| 0 <= q < xs.len() implies le(#[trigger] xs[q], ws0[q]) && wf(xs[q]) && typed(xs[q], Cpt::U) by {
+        if q > 0 {
+            assert(xs[q] == xs2[q - 1]);
+            assert(ws0.drop_first()[q - 1] == ws0[q]);
+        }
+    }
+    xs
+}
+
+/// A MEMBER OF A FORMER'S APPLICATION over parameters of sorts lies below
+/// the canonical code at codes of its arguments that are types.
+pub proof fn tf_spine_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>, l: LevelSpec, args: Seq<ExprSpec>, rho: Env, u: Cpt)
+    -> (xs: Seq<Cpt>)
+    requires
+        sem_const(sig, c, ls),
+        !sig.ienv.ctor_ind.contains_key(c),
+        !sig.ienv.recs.contains_key(c),
+        dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)),
+        forall|q: int| 0 <= q < tds.len() ==> (#[trigger] tds[q]) is Sort,
+        args.len() == tds.len(),
+        mem(sig, spine_app(ExprSpec::Const(c, ls), args), rho, u),
+    ensures
+        crate::dom_bound::args_w(sig, args, rho, xs),
+        forall|q: int| 0 <= q < xs.len() ==> typed(#[trigger] xs[q], Cpt::U),
+        le(u, canon_code(sig, c, ls, xs)),
+{
+    crate::dom_sound::typed_basic();
+    let (hw, ws0) = crate::dom_bound::spine_mem(sig, ExprSpec::Const(c, ls), args, rho, u);
+    assert forall|q: int| 0 <= q < ws0.len() implies wf(#[trigger] ws0[q]) by {
+        assert(mem(sig, args[q], rho, ws0[q]) && wf(ws0[q]));
+    }
+    crate::dom_sem::mem_sem(sig, c, ls, rho, hw);
+    if hw is Bot {
+        apps_bot(ws0);
+        let bots = Seq::new(args.len(), |_q: int| Cpt::Bot);
+        assert forall|q: int| 0 <= q < args.len() implies #[trigger] mem(sig, args[q], rho, bots[q]) && wf(bots[q]) by {
+            crate::dom_model::mem_bot(sig, args[q], rho);
+            reveal(mem);
+        }
+        assert(le(u, Cpt::Bot));
+        assert(le(Cpt::Bot, canon_code(sig, c, ls, bots))) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
+        le_trans(u, Cpt::Bot, canon_code(sig, c, ls, bots));
+        return bots;
+    }
+    let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, c, ls, hw, a, v);
+    typed_wf(v, a);
+    sbound_mem(sig, tds, l, bot_env(), a);
+    assert(Seq::<Cpt>::empty() + ws0 =~= ws0);
+    let xs = proj_chain_t(sig, c, ls, tds, l, Seq::empty(), v, a, ws0);
+    assert(Seq::<Cpt>::empty() + xs =~= xs);
+    assert forall|i: int| 0 <= i < ws0.len() implies le(#[trigger] ws0[i], ws0[i]) by { le_refl(ws0[i]); }
+    assert(crate::dom_sem::pre_le(ws0, ws0));
+    assert(crate::dom_rec::all_wf(ws0));
+    crate::dom_rec::apps_mono(hw, v, ws0, ws0);
+    le_trans(u, crate::dom_rec::apps(hw, ws0), crate::dom_rec::apps(v, ws0));
+    le_trans(u, crate::dom_rec::apps(v, ws0), canon_code(sig, c, ls, xs));
+    assert forall|q: int| 0 <= q < args.len() implies #[trigger] mem(sig, args[q], rho, xs[q]) && wf(xs[q]) by {
+        crate::dom_model::mem_down_e(sig, args[q], rho, ws0[q], xs[q]);
+    }
+    xs
+}
+
 /// A SIMPLE TYPE OVER THE PARAMETERS HAS ITS CODE AS A MEMBER, read at
 /// the instance the code is evaluated at, wherever the parameters' slots
 /// hold at least the parameters' codes: a parameter's slot by its value, a
@@ -689,6 +942,69 @@ pub proof fn ceval_mem(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
     crate::dom_sem::mem_sem(sig, j, ul, env, v);
     canon_wf(sig, j, ul, ca);
     crate::dom_bound::spine_mem_intro(sig, ExprSpec::Const(j, ul), args2, env, v, ca, code);
+}
+
+/// A FIELD OVER THE PARAMETERS at the parameters and any earlier
+/// projections has its code at the parameters' codes as a member: the
+/// code is a member of the field read with those codes in the parameters'
+/// slots and bottom in the earlier fields' (`ceval_mem`), and the terms
+/// substituted there hold them (`dom_model::mem_psub_back`).
+pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i: nat, us: Seq<LevelSpec>, xs: Seq<Cpt>,
+    f: ExprSpec, ps: Seq<ExprSpec>, ys: Seq<ExprSpec>, rho: Env)
+    requires
+        crate::dom_model::consts_ranked(sig),
+        crate::rec_canon::psimple(sig, s, pdoms, np, i, f),
+        xs.len() == np,
+        aw(xs),
+        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] xs[q], Cpt::U),
+        ps.len() == np,
+        ys.len() == i,
+        forall|q: int| 0 <= q < np ==> mem(sig, #[trigger] ps[q], rho, xs[q]),
+        forall|j: nat| #[trigger] wf(rho(j)),
+    ensures
+        mem(sig, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(f, sig.consts[s].lps, us), ps + ys), rho,
+            ceval(sig, rk(sig, s), s, us, fpe(xs, np, i), f)),
+{
+    let pe = fpe(xs, np, i);
+    fpe_aw(xs, np, i);
+    let n = np + i;
+    let zs = ps + ys;
+    let f2 = crate::expr_model::subst_expr_levels(f, sig.consts[s].lps, us);
+    let code = ceval(sig, rk(sig, s), s, us, pe, f);
+    let rho2: Env = |v: nat| if v < i { Cpt::Bot } else if v < n { xs[n - 1 - v] } else { rho((v - n) as nat) };
+    crate::dom_sound::typed_basic();
+    typed_wf(Cpt::Bot, Cpt::U);
+    assert forall|j: nat| #[trigger] wf(rho2(j)) by {
+        if i <= j < n {
+            assert(wf(xs[n - 1 - j]));
+        }
+    }
+    assert forall|q: int| 0 <= q < np implies le(#[trigger] pe[q], rho2((i + np - 1 - q) as nat)) by {
+        assert(pe[q] == xs[q]);
+        le_refl(xs[q]);
+    }
+    assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
+        assert(pe[q] == xs[q]);
+    }
+    ceval_mem(sig, s, pdoms, np, i, us, pe, f, rho2);
+    // the substitution covers the environment
+    let sb = crate::ti_beta::tsub(zs, n);
+    assert forall|v: nat| #[trigger] mem(sig, sb(v), rho, rho2(v)) by {
+        crate::ti_beta::tsub_at(zs, n, v);
+        if v < i {
+            crate::dom_model::mem_bot(sig, zs[n - 1 - v], rho);
+            reveal(mem);
+        } else if v < n {
+            assert(zs[n - 1 - v] == ps[n - 1 - v]);
+        } else {
+            crate::dom_iota::var_mem(sig, (v - n) as nat, rho);
+        }
+    }
+    assert(crate::dom_model::covers(sig, sb, rho, rho2));
+    reveal(mem);
+    let w = choose|w: Wit| #[trigger] mem_w(sig, f2, rho2, code, w);
+    crate::dom_model::mem_psub_back(sig, f2, sb, rho, rho2, code, w);
+    crate::ti_beta::vsub_tsub(f2, zs);
 }
 
 /// A SIMPLE TYPE OVER THE PARAMETERS HAS A TYPE AS CODE, its type
