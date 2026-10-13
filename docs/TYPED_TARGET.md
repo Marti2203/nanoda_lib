@@ -2487,8 +2487,8 @@ above the arrow's members (`ps_bound`); the codes of lifted terms
 arrows (`pranked`, `pcapp`, `psd`, `blind_ty`); the typings in the
 parameters' context state the codomain with its binder dropped
 (`ptyped`'s `pbinds_typed`), which nanoda's constructor typing gives
-(`dom_field_ty::prebuild_arrow`). **The transfer between instances**
-(`rec_canon::arrows_live` is now true): an arrow's type relation at two
+(`dom_field_ty::prebuild_arrow`). **The transfer between instances:**
+an arrow's type relation at two
 instances (`dom_lift::ps_rel`) is the Pi relation at its parts; a value's
 move (`ps_below_arrow`, `ps_below_arrow_arg`) runs at the source's stage:
 each target argument is projected onto the source's inputs, moved back
@@ -2504,6 +2504,28 @@ The codes involved are well formed (`aw`), which the constructor
 invariant (`dom_con_rel::cf_inv`) now carries, with `iota_ok`. Probes:
 `rec_hyps` with an arrow field, the field-argument context with one, and
 `ps_below`'s arrow branch do not prove `false`.
+
+**Slice: sort leaves (2026-10-13).** A field type over the parameters may
+have a sort among its leaves (`lt : α → α → Prop`, `List Prop`) when the
+sort's level is zero at every instance or at none
+(`rec_canon::psort`, `stable_lvl`): then its code is the same at every
+instance (`dom_code::scode`, `Prop` or `U`), which the code family needs
+because it reads levels only up to the former's (`ceval_sl`). Sorts at
+an arbitrary level (`HasEquiv`'s `Sort v`) stay out: their code would be
+`Prop` at some instances and `U` at others. Core by dependency closure:
+400 → 434 (`LT`, `LE`, `Dvd`, `HasSubset`, `HasSSubset` and their
+uses). Substitution keeps a stable level stable for
+any value lengths (`scode_sl`, through `vpad`), but can make an unstable
+one stable, so `sl_kinds` and `blind_sl` state the kinds as implications
+from the field to its instance. The relation: a sort leaf at two
+instances is related at its code by `dom_adeq_base::sort_rel`
+(`ps_rel`); a value moves below it as at a parameter (`par_xfer`), read
+at the target's sort, whose level is equivalent (`dom_lift::ps_below_sort`).
+`stable_lvl` and `scode` are opaque: their quantified bodies blew the
+resource limits of proofs that unfold the field kinds or the codes.
+Probes (`rec_hyps` with a sort field and with an arrow into a sort, the
+field-argument context, `ps_rel`'s and `ps_below`'s sort branches) do not
+prove `false`.
 
 ### The conditional theorem (started 2026-10-12)
 

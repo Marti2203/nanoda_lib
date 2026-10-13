@@ -3149,7 +3149,6 @@ pub proof fn field_arg_par(sig: Sig, rc: Rc, k: nat)
     crate::dom_lift::par_xfer(sig, rc.nn, (n - 1) as nat, rc.g, rc.xs[q], pv[q], y, y2, fk, wv, e, dd);
 }
 
-/// A field argument of the major's inductive or a closed type:
 /// The parameters' values on both sides at every stage up to the high one
 /// (`ps_below`'s parameter hypothesis), their codes well formed.
 #[verifier::spinoff_prover]
@@ -3164,11 +3163,14 @@ pub proof fn rc_ptr_all_at(sig: Sig, rc: Rc)
     let ps = rc.xs.subrange(0, rc.np(sig) as int);
     let pv = rc.pv(sig);
     assert(crate::dom_rec::all_wf(rc.fs));
-    assert forall|q: int| 0 <= q < pv.len() implies
-        #[trigger] wf(pv[q]) && (pv[q] is Bot || (rel_ty(sig, rc.nn, rc.g, ps[q], ps[q], pv[q]) && has_type(rc.nn, pv[q], Cpt::U))) by {
-        assert(pv[q] == rc.fs[q]);
-        assert(ps[q] == rc.xs[q]);
-        rc_par(sig, rc, q);
+    assert(crate::dom_lift::pself_ok(sig, rc.nn, rc.g, ps, pv)) by {
+        reveal(crate::dom_lift::pself_ok);
+        assert forall|q: int| 0 <= q < pv.len() implies
+            #[trigger] wf(pv[q]) && (pv[q] is Bot || (rel_ty(sig, rc.nn, rc.g, ps[q], ps[q], pv[q]) && has_type(rc.nn, pv[q], Cpt::U))) by {
+            assert(pv[q] == rc.fs[q]);
+            assert(ps[q] == rc.xs[q]);
+            rc_par(sig, rc, q);
+        }
     }
     crate::dom_lift::par_ptr_all_at(sig, rc.nn, rc.g, ps, pv);
 }

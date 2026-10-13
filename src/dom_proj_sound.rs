@@ -1020,6 +1020,7 @@ pub open spec fn pjs_sound(sig: Sig, m: ExprSpec, rho: Env) -> bool {
 }
 
 /// `proj_iota_sup` by the projected field's kind.
+#[verifier::spinoff_prover]
 proof fn proj_iota_sup_at(sig: Sig, m: ExprSpec, rho: Env, u: Cpt)
     requires
         crate::ti_syntax::proj_fire(sig, m),

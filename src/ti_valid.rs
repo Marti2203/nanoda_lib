@@ -260,7 +260,7 @@ pub proof fn psimple_grow(sig: Sig, sig2: Sig, ind: u64, pdoms: Seq<ExprSpec>, n
         _ => {},
     }
     if crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) && !crate::rec_canon::pvar_field(pdoms, np, k, e)
-        && !crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) {
+        && !crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) && !(e is Sort) {
         psapp_head(sig, ind, pdoms, np, k, e);
         let j = crate::beta_model::spine_head(e)->Const_0;
         assert(sig2.consts[j] == sig.consts[j]);
@@ -275,7 +275,7 @@ pub proof fn psimple_not_direct(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, us: Se
     ensures
         !crate::rec_canon::direct_occ(e, ind, us, np, ni, k),
 {
-    if !crate::rec_canon::pvar_field(pdoms, np, k, e) && !crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) {
+    if !crate::rec_canon::pvar_field(pdoms, np, k, e) && !crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) && !(e is Sort) {
         psapp_head(sig, ind, pdoms, np, k, e);
     }
 }

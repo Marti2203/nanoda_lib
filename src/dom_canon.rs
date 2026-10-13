@@ -45,6 +45,7 @@ pub open spec fn pranked(sig: Sig, e: ExprSpec, r: int) -> bool
         ExprSpec::Const(j, _) => 0 <= rk(sig, j) < r && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
         ExprSpec::Var(_) => true,
         ExprSpec::Bind(BinderKind::Pi, a, b) => pranked(sig, *a, r) && pranked(sig, *b, r),
+        ExprSpec::Sort(_) => true,
         _ => false,
     }
 }
@@ -71,6 +72,7 @@ pub open spec fn pcapp(sig: Sig, e: ExprSpec, ind: u64) -> bool
         ExprSpec::Const(j, _) => j != ind && !sig.ienv.ctor_ind.contains_key(j) && !sig.ienv.recs.contains_key(j),
         ExprSpec::Var(_) => true,
         ExprSpec::Bind(BinderKind::Pi, a, b) => pcapp(sig, *a, ind) && pcapp(sig, *b, ind),
+        ExprSpec::Sort(_) => true,
         _ => false,
     }
 }
@@ -236,8 +238,11 @@ pub proof fn sl_kinds(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
         let e2 = crate::expr_model::subst_expr_levels(e, ks, vs);
         &&& simple_ty(sig, ind, e2) == simple_ty(sig, ind, e)
         &&& simple_app(sig, ind, e2) == simple_app(sig, ind, e)
-        &&& crate::rec_canon::psimple(sig, ind, pdoms, np, k, e2) == crate::rec_canon::psimple(sig, ind, pdoms, np, k, e)
-        &&& crate::rec_canon::psapp(sig, ind, pdoms, np, k, e2) == crate::rec_canon::psapp(sig, ind, pdoms, np, k, e)
+        &&& crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) ==> crate::rec_canon::psimple(sig, ind, pdoms, np, k, e2)
+        &&& crate::rec_canon::psapp(sig, ind, pdoms, np, k, e) ==> crate::rec_canon::psapp(sig, ind, pdoms, np, k, e2)
+        &&& crate::rec_canon::parrow(sig, ind, pdoms, np, k, e) ==> crate::rec_canon::parrow(sig, ind, pdoms, np, k, e2)
+        &&& crate::rec_canon::pvar_field(pdoms, np, k, e2) == crate::rec_canon::pvar_field(pdoms, np, k, e)
+        &&& (e is Sort <==> e2 is Sort) && (e is Var <==> e2 is Var) && (e is Bind <==> e2 is Bind)
         &&& ranked(sig, e2, r) == ranked(sig, e, r)
         &&& pranked(sig, e2, r) == pranked(sig, e, r)
         &&& (spine_head(e) is Const <==> spine_head(e2) is Const)
@@ -247,6 +252,11 @@ pub proof fn sl_kinds(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
     }),
     decreases e,
 {
+    if let ExprSpec::Sort(l) = e {
+        if crate::rec_canon::psort(e) {
+            crate::dom_code::scode_sl(l, ks, vs);
+        }
+    }
     if let ExprSpec::App(f, x) = e {
         sl_kinds(sig, ind, pdoms, np, k, *f, r, ks, vs);
         sl_kinds(sig, ind, pdoms, np, k, *x, r, ks, vs);
@@ -472,6 +482,17 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
             le_trans(d, gen, crate::dom_code::arrow(ca, cb));
             return;
         }
+    }
+    if let ExprSpec::Sort(l) = e {
+        // a sort: its members are bottom and its code
+        crate::dom_code::scode_sl(l, Seq::empty(), Seq::empty());
+        crate::dom_adeq::mem_sort(sig, l, rho, d);
+        if d is Bot {
+            reveal_with_fuel(le_set, 2);
+        } else {
+            le_refl(d);
+        }
+        return;
     }
     crate::dom_psimple::psimple_facts(sig, ind, pdoms, np, k, e, r);
     let h = spine_head(e);
@@ -920,6 +941,12 @@ pub proof fn ceval_mem(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
     let lps = sig.consts[ind].lps;
     let e2 = crate::expr_model::subst_expr_levels(e, lps, ls);
     let code = ceval(sig, r, ind, ls, pe, e);
+    if let ExprSpec::Sort(l) = e {
+        // a sort: its code, the same at every instance
+        crate::dom_code::scode_sl(l, lps, ls);
+        crate::dom_adeq::mem_sort(sig, crate::level_model::subst_level_spec(l, lps, ls), env, code);
+        return;
+    }
     if crate::rec_canon::pvar_field(pdoms, np, k, e) {
         let v = e->Var_0;
         let q = (k + np - 1 - v) as int;
@@ -1170,6 +1197,10 @@ pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pd
             arrow_typed(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe2, *b));
             return;
         }
+    }
+    if e is Sort {
+        reveal(crate::dom_code::scode);
+        return;
     }
     crate::dom_psimple::psapp_args(sig, outer, pdoms, np, k, e);
     let h = spine_head(e);

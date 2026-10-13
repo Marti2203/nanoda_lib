@@ -164,26 +164,33 @@ pub open spec fn psimple(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: n
 {
     pvar_field(pdoms, np, k, e) || (psapp(sig, ind, pdoms, np, k, e) && spine_head(e) is Const
         && spine_args(e).len() == tarity(sig.consts[spine_head(e)->Const_0].ty))
-        || parrow(sig, ind, pdoms, np, k, e)
+        || parrow(sig, ind, pdoms, np, k, e) || psort(e)
 }
 
 /// A FUNCTION TYPE between simple types over the parameters, its codomain
 /// not depending on its argument: the binder is one more slot before the
-/// parameters, which a simple type never names. Staged: not yet admitted
-/// (`arrows_live`; docs/TYPED_TARGET.md, "Slice: arrow fields").
+/// parameters, which a simple type never names (docs/TYPED_TARGET.md,
+/// "Slice: arrow fields").
 pub open spec fn parrow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
     decreases e, 0int,
 {
-    arrows_live() && match e {
+    match e {
         ExprSpec::Bind(BinderKind::Pi, a, b) => psimple(sig, ind, pdoms, np, k, *a) && psimple(sig, ind, pdoms, np, k + 1, *b),
         _ => false,
     }
 }
 
-/// Whether arrow fields are admitted: not until the logical relation's
-/// transfer between a field type's instances covers function types.
-pub open spec fn arrows_live() -> bool {
-    true
+/// A SORT whose level is zero at every instance or at none (`Prop`,
+/// `Type u`), so its code is the same at every instance
+/// (docs/TYPED_TARGET.md, "Slice: sort leaves").
+pub open spec fn psort(e: ExprSpec) -> bool {
+    e is Sort && stable_lvl(e->Sort_0)
+}
+
+/// A level zero at every instance or at none.
+#[verifier::opaque]
+pub open spec fn stable_lvl(l: LevelSpec) -> bool {
+    crate::ti_syntax::is_zero(l) || crate::ti_syntax::never_zero(l)
 }
 
 pub open spec fn psapp(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool

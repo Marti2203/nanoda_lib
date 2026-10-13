@@ -583,7 +583,7 @@ pub open spec fn psd(sig: crate::ti_syntax::Sig, e: ExprSpec) -> bool
 {
     let h = crate::beta_model::spine_head(e);
     let n = crate::beta_model::spine_args(e).len();
-    e is Var || match e {
+    e is Var || e is Sort || match e {
         ExprSpec::Bind(BinderKind::Pi, a, b) => psd(sig, *a) && psd(sig, *b),
         _ => {
             &&& h is Const
@@ -649,7 +649,7 @@ pub proof fn psd_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, 
         psd_down(big, small, *b);
         return;
     }
-    if !(e is Var) {
+    if !(e is Var) && !(e is Sort) {
         psd_args_down(big, small, e);
         crate::twin::all_consts_head(e, small.consts.dom());
     }
@@ -741,7 +741,7 @@ pub proof fn psimple_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::S
             return;
         }
     }
-    if !crate::rec_canon::pvar_field(pdoms, np, k, e) {
+    if !crate::rec_canon::pvar_field(pdoms, np, k, e) && !(e is Sort) {
         psapp_down(big, small, ind, pdoms, np, k, e);
         crate::twin::all_consts_head(e, small.consts.dom());
     }
@@ -1001,6 +1001,19 @@ pub proof fn prebuild(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: c
         if crate::rec_canon::parrow(s, ind, pdoms, np, k, e) {
             return prebuild_arrow(s, gc, tw, r, ind, pdoms, k, *ta, *tb, te);
         }
+    }
+    if let ExprSpec::Sort(l) = e {
+        // a sort: typed at its successor in any well-formed context
+        let d = crate::ti_sub::get(s, crate::ti_syntax::eq(gc, e, e, te));
+        crate::ti_gen::gen(s, d);
+        let w = crate::ti_sub::get(tt, crate::ti_syntax::Jd::Wf(pdoms));
+        assert(crate::conv_cr::lev_eq(l, l));
+        let du = crate::ti_sub::d_univ(tt, w, l, l);
+        crate::ti_meta::mk_d(tt, du);
+        assert(crate::rec_canon::plow(e, k) == e);
+        let ls = crate::ti_syntax::succ(l);
+        assert(crate::dom_psimple::ty_in(tt, pdoms, e));
+        return ls;
     }
     let h = crate::beta_model::spine_head(e);
     let a = crate::beta_model::spine_args(e);

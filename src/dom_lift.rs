@@ -755,6 +755,20 @@ pub proof fn ps_rel(sig: Sig, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: S
         assert(rel_ty(sig, n, g, a[np - 1 - i], a2[np - 1 - i], c));
         return;
     }
+    if let ExprSpec::Sort(l) = e {
+        // a sort: the two instances' levels are equivalent, at its code
+        let (l1, l2) = (crate::level_model::subst_level_spec(l, ks, ls), crate::level_model::subst_level_spec(l, ks, ls2));
+        crate::dom_code::scode_sl(l, ks, ls);
+        crate::dom_code::scode_sl(l, ks, ls2);
+        crate::ti_spine::vsub_closed(e1, a);
+        crate::ti_spine::vsub_closed(e2, a2);
+        assert(crate::conv_cr::lev_eq(l, l));
+        crate::ti_ls2::ll_pair(l, l, ks, ls, ls2);
+        assert(ceval(sig, rj, j, Seq::empty(), pv, e) == crate::dom_code::scode(l));
+        head_le(c, crate::dom_code::scode(l));
+        crate::dom_adeq_base::sort_rel(sig, n, g, l1, l2, c);
+        return;
+    }
     if let ExprSpec::Bind(BinderKind::Pi, ta0, tb0) = e {
         if crate::rec_canon::parrow(sig, j, sh.pdoms, np, 0, e) {
             // an arrow: the domains related below the domain's code, the
@@ -1065,6 +1079,62 @@ pub proof fn app_ptr_all(sig: Sig, n0: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, 
             }
         }
     }
+}
+
+/// `ps_below` at a sort: the value's relation moved below the sort's code
+/// at the source's instance (`par_xfer`), then read at the target's, whose
+/// level is equivalent.
+#[verifier::spinoff_prover]
+pub proof fn ps_below_sort(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<LevelSpec>, e: ExprSpec, a: Seq<ExprSpec>, a2: Seq<ExprSpec>, pv: Seq<Cpt>,
+    y: ExprSpec, y2: ExprSpec, fw: Cpt, fv: Cpt, c1: Cpt, c2: Cpt)
+    requires
+        e is Sort,
+        crate::rec_canon::psort(e),
+        ls.len() == sig.consts[j].lps.len(),
+        crate::conv_cr::levs_eq(ls, ls2),
+        n <= n0,
+        derivable(sig, Jd::Wf(g)),
+        le(c1, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
+        le(c2, ceval(sig, rk(sig, j), j, Seq::empty(), pv, e)),
+        rel_tm(sig, n0, g, y, y2, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls), a), fw, c1),
+        has_type(n0, fw, c1),
+        has_type(n0, c1, Cpt::U),
+        has_type(n, fv, c2),
+        has_type(n, c2, Cpt::U),
+        wf(fv),
+        !(fv is Bot),
+        le(fv, fw),
+    ensures
+        rel_tm(sig, n, g, y, y2, crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(e, sig.consts[j].lps, ls2), a2), fv, c2),
+{
+    let ks = sig.consts[j].lps;
+    let l = e->Sort_0;
+    let (l1, l2) = (crate::level_model::subst_level_spec(l, ks, ls), crate::level_model::subst_level_spec(l, ks, ls2));
+    let (s1, s2) = (ExprSpec::Sort(l1), ExprSpec::Sort(l2));
+    crate::dom_code::scode_sl(l, ks, ls);
+    crate::dom_code::scode_sl(l, ks, ls2);
+    crate::ti_spine::vsub_closed(s1, a);
+    crate::ti_spine::vsub_closed(s2, a2);
+    let pc = crate::dom_code::scode(l);
+    assert(ceval(sig, rk(sig, j), j, Seq::empty(), pv, e) == pc);
+    head_le(fv, fw);
+    if c1 is Bot {
+        ty_of_bot(n0, fw);
+    }
+    if c2 is Bot {
+        ty_of_bot(n, fv);
+    }
+    head_le(c1, pc);
+    head_le(c2, pc);
+    assert(c1 == pc && c2 == pc);
+    assert(pc == crate::dom_model::sortc(l1));
+    crate::dom_adeq_base::sort_rel(sig, n0, g, l1, l1, pc);
+    par_xfer(sig, n0, n, g, s1, pc, y, y2, fw, fv, c1, c2);
+    crate::dom_adeq_base::to_sort_sort(sig, g, l2);
+    crate::dom_adeq_base::rs_sort(sig, l2);
+    assert(crate::ti_syntax::is_zero(l2) == crate::ti_syntax::is_zero(l1));
+    crate::dom_rel::tm_sort(sig, n, g, y, y2, s1, fv);
+    crate::dom_rel::tm_sort(sig, n, g, y, y2, s2, fv);
 }
 
 /// `ps_below` at an arrow: at the source's stage, each target argument
@@ -1393,6 +1463,10 @@ pub proof fn ps_below(sig: Sig, n0: nat, n: nat, g: Ctx, j: u64, ls: Seq<LevelSp
         assert(rel_tm(sig, n0, g, y, y2, a[np - 1 - i], fw, c1));
         return;
     }
+    if let ExprSpec::Sort(l) = e {
+        ps_below_sort(sig, n0, n, g, j, ls, ls2, e, a, a2, pv, y, y2, fw, fv, c1, c2);
+        return;
+    }
     if let ExprSpec::Bind(BinderKind::Pi, _, _) = e {
         if crate::rec_canon::parrow(sig, j, sh.pdoms, np, 0, e) {
             ps_below_arrow(sig, n0, n, g, j, ls, ls2, e, a, a2, pv, y, y2, fw, fv, c1, c2);
@@ -1644,6 +1718,7 @@ pub proof fn closed_rel2(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, ls1: Seq
 
 /// `ptr_all` at a closed simple type's head, from its arguments at two
 /// level-equivalent instances (`closed_below2`'s parameters, at every stage).
+#[verifier::spinoff_prover]
 pub proof fn closed_ptr_all2(sig: Sig, n0: nat, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelSpec>, ls2: Seq<LevelSpec>,
     kk: u64, r1: ExprSpec, r2: ExprSpec, ca: Seq<Cpt>, cs: Seq<Cpt>)
     requires
@@ -1824,15 +1899,23 @@ pub proof fn par_ptr_all(sig: Sig, nn: nat, g: Ctx, j: u64, t: ExprSpec, t2: Exp
     }
 }
 
+/// Each parameter value related to itself at its code at the high stage,
+/// the codes well formed.
+#[verifier::opaque]
+pub open spec fn pself_ok(sig: Sig, nn: nat, g: Ctx, a: Seq<ExprSpec>, pv: Seq<Cpt>) -> bool {
+    forall|q: int| 0 <= q < pv.len() ==>
+        #[trigger] wf(pv[q]) && (pv[q] is Bot || (rel_ty(sig, nn, g, a[q], a[q], pv[q]) && has_type(nn, pv[q], Cpt::U)))
+}
+
 /// `ptr_all_at` at one parameter sequence on both sides, each related to
 /// itself at its code at the high stage.
 pub proof fn par_ptr_all_at(sig: Sig, nn: nat, g: Ctx, a: Seq<ExprSpec>, pv: Seq<Cpt>)
     requires
-        forall|q: int| 0 <= q < pv.len() ==>
-            #[trigger] wf(pv[q]) && (pv[q] is Bot || (rel_ty(sig, nn, g, a[q], a[q], pv[q]) && has_type(nn, pv[q], Cpt::U))),
+        pself_ok(sig, nn, g, a, pv),
     ensures
         ptr_all_at(sig, nn, g, a, a, pv),
 {
+    reveal(pself_ok);
     assert forall|k: nat| #![trigger ptr_at(sig, k, k, g, a, a, pv)] k <= nn implies
         ptr_at(sig, k, k, g, a, a, pv) && prel_at(sig, k, g, a, a, pv) by {
         assert forall|q: int, y: ExprSpec, y2: ExprSpec, w: Cpt, v: Cpt, c1: Cpt, c2: Cpt|
@@ -2262,6 +2345,7 @@ pub proof fn pfield_facts(sig: Sig, j: u64, p: int, k: int)
         let f = sh.fields[p][k];
         let e = crate::rec_canon::plow(f, k as nat);
         &&& crate::rec_canon::psapp(sig, j, sh.pdoms, sh.np, k as nat, f) || crate::rec_canon::parrow(sig, j, sh.pdoms, sh.np, k as nat, f)
+            || crate::rec_canon::psort(f)
         &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, k as nat, f)
         &&& crate::dom_canon::pranked(sig, f, rk(sig, j))
         &&& crate::rec_canon::psimple(sig, j, sh.pdoms, sh.np, 0, e)

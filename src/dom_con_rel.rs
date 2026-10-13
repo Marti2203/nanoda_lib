@@ -1292,10 +1292,13 @@ pub proof fn cf_end_pfield(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Le
         assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
         crate::dom_lift::par_xfer(sig, nn, n, g, xs[q], pv[q], z, z2, w1, v1, e1, e2);
     }
-    assert forall|q: int| 0 <= q < pv.len() implies
-        #[trigger] rel_ty(sig, nn, g, a[q], a[q], pv[q]) && has_type(nn, pv[q], Cpt::U) && wf(pv[q]) by {
-        let _s = sh.pdoms[q];
-        assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
+    assert(crate::dom_lift::pself_ok(sig, nn, g, a, pv)) by {
+        reveal(crate::dom_lift::pself_ok);
+        assert forall|q: int| 0 <= q < pv.len() implies
+            #[trigger] wf(pv[q]) && (pv[q] is Bot || (rel_ty(sig, nn, g, a[q], a[q], pv[q]) && has_type(nn, pv[q], Cpt::U))) by {
+            let _s = sh.pdoms[q];
+            assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
+        }
     }
     crate::dom_lift::par_ptr_all_at(sig, nn, g, a, pv);
     crate::dom_lift::ps_below(sig, nn, n, g, ind, ls, ls, e, a, a, pv, y, y2, w, v, d, ec);
@@ -1349,7 +1352,8 @@ pub proof fn ctor_pfield_ty(sig: Sig, c: u64, ls: Seq<LevelSpec>, ind: u64, pc: 
         crate::rec_canon::psapp(sig, ind, crate::dom_code::canon_shape(sig, ind).pdoms, np, i as nat,
             crate::dom_code::canon_shape(sig, ind).fields[pc as int][i])
         || crate::rec_canon::parrow(sig, ind, crate::dom_code::canon_shape(sig, ind).pdoms, np, i as nat,
-            crate::dom_code::canon_shape(sig, ind).fields[pc as int][i]),
+            crate::dom_code::canon_shape(sig, ind).fields[pc as int][i])
+        || crate::rec_canon::psort(crate::dom_code::canon_shape(sig, ind).fields[pc as int][i]),
     ensures
         tel_dom(crate::ti_syntax::dty_at(sig, c, ls), xs, (np + i) as nat)
             == crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(

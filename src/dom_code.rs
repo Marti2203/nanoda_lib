@@ -663,6 +663,7 @@ pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq
     match e {
         ExprSpec::Var(i) => if i < pe.len() { pe[pe.len() - 1 - i] } else { Cpt::Bot },
         ExprSpec::Bind(BinderKind::Pi, a, b) => arrow(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe.push(Cpt::Bot), *b)),
+        ExprSpec::Sort(l) => scode(l),
         _ => match spine_head(e) {
             ExprSpec::Const(jd, us) => if 0 <= rk(sig, jd) < r {
                 canon_code(sig, jd, lsub(sig, outer, ls, us), cargs(sig, r, outer, ls, pe, e))
@@ -671,6 +672,93 @@ pub open spec fn ceval(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq
             },
             _ => Cpt::Bot,
         },
+    }
+}
+
+/// A sort's code where its level is zero at every instance or at none;
+/// bottom otherwise.
+#[verifier::opaque]
+pub open spec fn scode(l: LevelSpec) -> Cpt {
+    if crate::ti_syntax::is_zero(l) { Cpt::Prop } else if crate::ti_syntax::never_zero(l) { Cpt::U } else { Cpt::Bot }
+}
+
+
+/// `vs` cut or padded to `ks`'s length, each padded key mapped to itself.
+pub open spec fn vpad(ks: Seq<u64>, vs: Seq<LevelSpec>) -> Seq<LevelSpec> {
+    Seq::new(ks.len(), |i: int| if i < vs.len() { vs[i] } else { LevelSpec::Param(ks[i]) })
+}
+
+/// A found key is at its index.
+pub proof fn fli_at(ks: Seq<u64>, q: u64)
+    ensures
+        crate::level_model::find_level_idx(ks, q) matches Some(i) ==> i < ks.len() && ks[i as int] == q,
+    decreases ks.len(),
+{
+    if ks.len() > 0 && ks[0] != q {
+        let t = ks.subrange(1, ks.len() as int);
+        fli_at(t, q);
+        if let Some(p) = crate::level_model::find_level_idx(t, q) {
+            assert(ks[(p + 1) as int] == t[p as int]);
+        }
+    }
+}
+
+/// Padding the values changes no substitution.
+pub proof fn sl_vpad(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        crate::level_model::subst_level_spec(l, ks, vs) == crate::level_model::subst_level_spec(l, ks, vpad(ks, vs)),
+    decreases l,
+{
+    match l {
+        LevelSpec::Succ(a) => sl_vpad(*a, ks, vs),
+        LevelSpec::Max(a, b) => {
+            sl_vpad(*a, ks, vs);
+            sl_vpad(*b, ks, vs);
+        },
+        LevelSpec::IMax(a, b) => {
+            sl_vpad(*a, ks, vs);
+            sl_vpad(*b, ks, vs);
+        },
+        LevelSpec::Param(q) => fli_at(ks, q),
+        _ => {},
+    }
+}
+
+/// A stable sort keeps its code under level substitution, and its kind.
+pub proof fn scode_sl(l: LevelSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::rec_canon::stable_lvl(l),
+    ensures ({
+        let l2 = crate::level_model::subst_level_spec(l, ks, vs);
+        &&& crate::rec_canon::stable_lvl(l2)
+        &&& crate::ti_syntax::is_zero(l2) == crate::ti_syntax::is_zero(l)
+        &&& crate::ti_syntax::never_zero(l2) == crate::ti_syntax::never_zero(l)
+        &&& scode(l2) == scode(l)
+        &&& scode(l) == crate::dom_model::sortc(l2)
+        &&& scode(l) == crate::dom_model::sortc(l)
+    }),
+{
+    reveal(crate::rec_canon::stable_lvl);
+    reveal(scode);
+    let l2 = crate::level_model::subst_level_spec(l, ks, vs);
+    let vp = vpad(ks, vs);
+    sl_vpad(l, ks, vs);
+    crate::level_model::subst_level_spec_interp_forall(l, ks, vp);
+    let r0 = Map::<nat, nat>::empty();
+    assert(crate::level_model::interp(l2, r0) == crate::level_model::interp(l, crate::level_model::subst_env(r0, ks, vp)));
+    if crate::ti_syntax::is_zero(l) {
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, rho) == 0 by {
+            assert(crate::level_model::interp(l2, rho) == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vp)));
+        }
+        assert(crate::level_model::interp(l, r0) == 0);
+        assert(!crate::ti_syntax::never_zero(l));
+        assert(!crate::ti_syntax::never_zero(l2));
+    } else {
+        assert forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l2, rho) > 0 by {
+            assert(crate::level_model::interp(l2, rho) == crate::level_model::interp(l, crate::level_model::subst_env(rho, ks, vp)));
+        }
+        assert(crate::level_model::interp(l2, r0) > 0);
+        assert(!crate::ti_syntax::is_zero(l2));
     }
 }
 
@@ -828,6 +916,7 @@ pub proof fn ceval_spine(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: S
     requires
         !(e is Var),
         !(e is Bind),
+        !(e is Sort),
     ensures
         ceval(sig, r, outer, ls, pe, e) == match spine_head(e) {
             ExprSpec::Const(jd, us) => if 0 <= rk(sig, jd) < r {
@@ -928,6 +1017,9 @@ pub proof fn ceval_wf(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<
             ceval_wf(sig, r, outer, ls, pe.push(Cpt::Bot), *b);
             arrow_wf(ceval(sig, r, outer, ls, pe, *a), ceval(sig, r, outer, ls, pe.push(Cpt::Bot), *b));
         },
+        ExprSpec::Sort(_) => {
+            reveal(scode);
+        },
         _ => {
             if let ExprSpec::Const(jd, us) = spine_head(e) {
                 if 0 <= rk(sig, jd) < r {
@@ -1011,6 +1103,9 @@ pub proof fn ceval_mono(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, p1: Se
             ceval_mono(sig, r, outer, ls, p1.push(Cpt::Bot), p2.push(Cpt::Bot), *b);
             arrow_mono(ceval(sig, r, outer, ls, p1, *a), ceval(sig, r, outer, ls, p1.push(Cpt::Bot), *b),
                 ceval(sig, r, outer, ls, p2, *a), ceval(sig, r, outer, ls, p2.push(Cpt::Bot), *b));
+        },
+        ExprSpec::Sort(l) => {
+            le_refl(scode(l));
         },
         _ => {
             if let ExprSpec::Const(jd, us) = spine_head(e) {
@@ -1129,6 +1224,7 @@ pub open spec fn blind_ty(sig: Sig, e: ExprSpec) -> bool
         ExprSpec::App(f, x) => blind_ty(sig, *f) && blind_ty(sig, *x),
         ExprSpec::Const(j, _) => former_blind(sig, j),
         ExprSpec::Bind(_, t, b) => blind_ty(sig, *t) && blind_ty(sig, *b),
+        ExprSpec::Sort(l) => crate::rec_canon::stable_lvl(l),
         _ => true,
     }
 }
@@ -1250,9 +1346,14 @@ pub proof fn cargs_blind(sig: Sig, r: int, outer: u64, u1: Seq<LevelSpec>, u2: S
 /// Level substitution keeps a type blind.
 pub proof fn blind_sl(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
     ensures
-        blind_ty(sig, crate::expr_model::subst_expr_levels(e, ks, vs)) == blind_ty(sig, e),
+        blind_ty(sig, e) ==> blind_ty(sig, crate::expr_model::subst_expr_levels(e, ks, vs)),
     decreases e,
 {
+    if let ExprSpec::Sort(l) = e {
+        if blind_ty(sig, e) {
+            scode_sl(l, ks, vs);
+        }
+    }
     if let ExprSpec::App(f, x) = e {
         blind_sl(sig, *f, ks, vs);
         blind_sl(sig, *x, ks, vs);
@@ -1282,6 +1383,10 @@ pub proof fn ceval_sl(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pe: Seq<
         ExprSpec::App(f, x) => {
             ceval_sl(sig, r, outer, ls, pe, *f, ks, vs);
             ceval_sl(sig, r, outer, ls, pe, *x, ks, vs);
+        },
+        ExprSpec::Sort(l) => {
+            scode_sl(l, ks, vs);
+            return;
         },
         ExprSpec::Bind(BinderKind::Pi, a, b) => {
             ceval_sl(sig, r, outer, ls, pe, *a, ks, vs);
