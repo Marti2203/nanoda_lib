@@ -2580,6 +2580,30 @@ parameter's value, `prop_param_typed`), so the field values are bottom
 (`typed_prop_bot`) and the smashed constructor value too. nanoda, like Lean's kernel, does no structure eta at
 propositions (`tc.rs::iota_try_eta_struct`, `may_be_prop`).
 
+**Slice: outParam parameters (2026-10-22).** Lean exports keep a
+class's `outParam (Type w)` / `semiOutParam` as the declared domain of the
+inductive's parameter (only the recursor rules strip it). A parameter's
+domain may now be `rec_canon::pdom_ok`: a sort, or a one-level constant
+applied to a sort; `pdom_lvl` is its sort's level. The constant is
+recognised by its declaration, not its name
+(`dom_adeq_syn::sort_alias`: `c.{u} (a : Sort u) : Sort u := a`), and
+`pdom_alias` asks it of a domain with the instance one level up.
+`dom_code::canon_aliases` (in `sig_sr`, `sig_sr_h`, `rec_hyps`) is the
+new hypothesis: every canonical former's sort-shaped parameter domains
+are sound aliases (Core 35/35 and Init 65/65, checked by the scratch
+script `alias_check.py`); `pdoms_alias(sig, ind)` is it at one former, carried
+by `canon_ok`, `canon_sr`, `rec_model(_h)`, `struct_sem(_h)` and the
+certified field-typing guard `dom_canon::pfield_in`. Two readings of a
+parameter's domain: `dom_rel::praw`, the declared domain at the instance
+(what telescopes, spine typings and `proj_pjs` read), and
+`dom_rel::ptype`, its sort (what `peq`/`pconv` and the model read).
+`ptype_conv`/`ptype_vsub` move typings between them (`alias_conv`:
+Delta, application congruence, Beta); `pdom_hred` makes the alias
+head-reduce to its sort, so the logical relation sees a sort
+(`dom_con_rel::sort_code_h`); `dom_sound::pdom_mem` makes the two denote
+alike. The certified field typings get the alias facts from the
+certificate signature's well-formedness (`dom_field_ty::pdom_alias_down`).
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

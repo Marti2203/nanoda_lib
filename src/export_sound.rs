@@ -643,6 +643,7 @@ proof fn cert_sig_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, c0: int)
         let s = crate::metatheory::jsig(m_dty(ef, c0), m_denv(ef, c0), Map::empty());
         &&& crate::dom_rec_end::sig_sr(s)
         &&& forall|ks: Seq<u64>, vs: Seq<crate::level_model::LevelSpec>| ks.len() == vs.len() ==> #[trigger] crate::ti_level::sig_lp_ok(s, ks, vs)
+        &&& crate::ti_sr::sig_wf(s)
     }),
 {
     let (d0, n0) = (m_dty(ef, c0), m_denv(ef, c0));
@@ -650,6 +651,8 @@ proof fn cert_sig_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, c0: int)
     assert(below_ok(ef, c0));
     assert(crate::kclaims::kh(d0, n0));
     assert(crate::kclaims::ind_ok(s));
+    assert(!s.ienv.full) by { reveal(crate::ti_syntax::iota_ok); }
+    assert(crate::kclaims::kh_frag(d0, n0));
     lps_at(ef, c0);
 }
 
@@ -830,7 +833,14 @@ proof fn pfield_ty_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, ind: u64, p
     assert(Seq::<ExprSpec>::empty() + xs =~= xs);
     crate::ti_beta::wf_prefix(tt, xs, sh.np as int);
     assert(xs.subrange(0, sh.np as int) =~= sh.pdoms);
-    assert forall|q: int| 0 <= q < sh.pdoms.len() implies g[q] == #[trigger] sh.pdoms[q] && sh.pdoms[q] is Sort by {}
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies g[q] == #[trigger] sh.pdoms[q] && crate::rec_canon::pdom_ok(sh.pdoms[q]) by {}
+    // the parameters' domains sound in both signatures
+    crate::dom_lift::eq_ctx_wf(s, g, f, f, crate::ti_syntax::sort(li));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies crate::dom_adeq_syn::pdom_alias(s, #[trigger] sh.pdoms[q])
+        && crate::dom_adeq_syn::pdom_alias(tt, sh.pdoms[q]) by {
+        crate::dom_code::pdoms_alias_at(tw, ind, q);
+        crate::dom_field_ty::pdom_alias_down(tw, s, g, q, r);
+    }
     let _l = crate::dom_field_ty::prebuild(s, g, tw, r, ind, sh.pdoms, k as nat, f, crate::ti_syntax::sort(li));
 }
 
@@ -932,6 +942,9 @@ proof fn fields_ty_locals(s0: crate::ti_syntax::Sig, d: Map<nat, ExprSpec>)
         crate::dom_field_ty::simple_ty_eq(s0, s1, ind, f);
         crate::dom_field_ty::psd_eq(s0, s1, f);
         crate::dom_field_ty::pcapp_eq(s0, s1, f, ind);
+        crate::dom_ctor_bound::ctor_shape_ind(s1, ind);
+        crate::dom_code::pdoms_alias_ctx(s1, s0, ind);
+        crate::dom_code::pdoms_alias_intro(s0, ind);
         assert(crate::dom_canon::pfield_in(s0, ind, p, k));
         assert(crate::dom_canon::pftyped(s0, ind, p, k));
         ptyped_locals(s0, d, crate::dom_code::rk(s0, ind), sh.pdoms, crate::rec_canon::plow(f, k as nat));

@@ -521,8 +521,8 @@ pub open spec fn pty_ok(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, q: int, 
 /// typed (`pty_ok`).
 pub open spec fn pr_ok(sig: Sig, nn: nat, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, xs2: Seq<ExprSpec>, pv: Seq<Cpt>) -> bool {
     let sh = crate::dom_code::canon_shape(sig, ind);
-    &&& forall|q: int| 0 <= q < pv.len() && sh.pdoms[q] is Sort ==> #[trigger] par_ok(sig, nn, g, xs[q], xs2[q], pv[q])
-    &&& forall|q: int| 0 <= q < pv.len() && sh.pdoms[q] is Sort ==> #[trigger] pty_ok(sig, g, ind, ls, q, xs[q], xs2[q])
+    &&& forall|q: int| 0 <= q < pv.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) ==> #[trigger] par_ok(sig, nn, g, xs[q], xs2[q], pv[q])
+    &&& forall|q: int| 0 <= q < pv.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) ==> #[trigger] pty_ok(sig, g, ind, ls, q, xs[q], xs2[q])
 }
 
 /// The type parameters' typing moves between equivalent instances.
@@ -536,10 +536,9 @@ pub proof fn pr_ok_lv(sig: Sig, nn: nat, g: Ctx, ind: u64, ls: Seq<LevelSpec>, l
 {
     let sh = crate::dom_code::canon_shape(sig, ind);
     let lps = sig.consts[ind].lps;
-    assert forall|q: int| 0 <= q < pv.len() && sh.pdoms[q] is Sort implies #[trigger] pty_ok(sig, g, ind, ls2, q, xs[q], xs2[q]) by {
+    assert forall|q: int| 0 <= q < pv.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] pty_ok(sig, g, ind, ls2, q, xs[q], xs2[q]) by {
         assert(pty_ok(sig, g, ind, ls, q, xs[q], xs2[q]));
-        let l0 = sh.pdoms[q]->Sort_0;
-        assert(sh.pdoms[q] == ExprSpec::Sort(l0));
+        let l0 = crate::rec_canon::pdom_lvl(sh.pdoms[q]);
         let (l1, l2) = (crate::level_model::subst_level_spec(l0, lps, ls), crate::level_model::subst_level_spec(l0, lps, ls2));
         crate::ti_ls2::ll_pair(l0, l0, lps, ls, ls2);
         crate::dom_levels::sort_retype2(sig, g, xs[q], xs2[q], l2, l1);
@@ -566,6 +565,32 @@ pub proof fn sort_code(sig: Sig, n: nat, g: Ctx, l: LevelSpec, t2: ExprSpec, d: 
             crate::ti_hred::hred_stuck_self(sig, s, crate::dom_rel::ir(sig, s, ind));
         },
         Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) | Cpt::Nd(NdKey::Tag(..), _) => ty_other(sig, n, g, s, t2, d),
+        _ => {},
+    }
+}
+
+/// `sort_code` for a type head-reducing to a sort.
+pub proof fn sort_code_h(sig: Sig, n: nat, g: Ctx, t: ExprSpec, l: LevelSpec, t2: ExprSpec, d: Cpt)
+    requires
+        crate::ti_hred::hred(sig, t, ExprSpec::Sort(l)),
+        rel_ty(sig, n, g, t, t2, d),
+    ensures
+        d is Bot || d is U || d is Prop,
+{
+    let s = ExprSpec::Sort(l);
+    crate::ti_hred::stuck_shapes(sig, s);
+    match d {
+        Cpt::Pi(_, _) => {
+            ty_pi(sig, n, g, t, t2, d);
+            let pp = pi(rp(sig, t).0, rp(sig, t).1);
+            crate::ti_hred::stuck_shapes(sig, pp);
+            crate::ti_hred::hred_det(sig, t, s, pp);
+        },
+        Cpt::Nd(NdKey::Ty(ind, _, _), _) => {
+            ty_ind(sig, n, g, t, t2, d);
+            crate::ti_hred::hred_det(sig, t, s, crate::dom_rel::ir(sig, t, ind));
+        },
+        Cpt::Lam(_) | Cpt::Nd(NdKey::Con(..), _) | Cpt::Nd(NdKey::Tag(..), _) => ty_other(sig, n, g, t, t2, d),
         _ => {},
     }
 }
@@ -737,7 +762,7 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
     let t = trest(crate::ti_syntax::dty_at(sig, c, ls), xs);
     let ta = *t->Bind_1;
     let d0 = *a->Pi_0;
-    if k < np && sh.pdoms[k as int] is Sort {
+    if k < np && crate::rec_canon::pdom_ok(sh.pdoms[k as int]) {
         // the new parameter: a type, at a sort's code
         crate::dom_ctor_bound::ctor_shape(sig, ind, pc as int);
         ctor_inst(sig, c, ls, ind, pc, np);
@@ -751,14 +776,14 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
         crate::dom_rec_end::tel_dom_binds(dsh, spine_app(ExprSpec::Const(ind, usl), crate::dom_rec_shape::sls(args0, lps, ls)), ys, k as int);
         let pd = crate::expr_model::subst_expr_levels(sh.pdoms[k as int], lps, ls);
         assert(dsh[k as int] == pd);
+        crate::rec_canon::pdom_facts(sh.pdoms[k as int], lps, ls);
         crate::ti_spine::vsub_closed(pd, ys.subrange(0, k as int));
         assert(ta == pd);
-        if lps.len() == 0 {
-            assert(lps =~= Seq::<u64>::empty());
-            crate::dom_canon::sl_none(sh.pdoms[k as int], ls);
-        }
-        let l = ta->Sort_0;
-        sort_code(sig, nn, g, l, ta, d0);
+        let l = crate::rec_canon::pdom_lvl(pd);
+        crate::dom_code::pdoms_alias_at(sig, ind, k as int);
+        crate::dom_adeq_syn::pdom_alias_sl(sig, sh.pdoms[k as int], lps, ls);
+        crate::dom_adeq_syn::pdom_hred(sig, pd);
+        sort_code_h(sig, nn, g, ta, l, ta, d0);
         crate::dom_sound::typed_basic();
         if d0 is Bot {
             ty_of_bot(nn, w);
@@ -777,9 +802,13 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
         }
         assert(par_ok(sig, nn, g, x, x2, w));
         crate::dom_psimple::der_diag(sig, g, x, x2, ta);
+        crate::dom_lift::eq_ctx_wf(sig, g, x, x2, ta);
+        crate::dom_adeq_syn::ptype_conv(sig, g, ind, ls, k as int, x, x2);
+        crate::dom_adeq_syn::ptype_conv(sig, g, ind, ls, k as int, x, x);
+        crate::dom_adeq_syn::ptype_conv(sig, g, ind, ls, k as int, x2, x2);
         assert(pty_ok(sig, g, ind, ls, k as int, x, x2));
     }
-    assert forall|q: int| 0 <= q < pv2.len() && sh.pdoms[q] is Sort implies #[trigger] par_ok(sig, nn, g, ys[q], ys2[q], pv2[q]) by {
+    assert forall|q: int| 0 <= q < pv2.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] par_ok(sig, nn, g, ys[q], ys2[q], pv2[q]) by {
         if q < pv.len() {
             assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
             assert(ys[q] == xs[q] && ys2[q] == xs2[q] && pv2[q] == pv[q]);
@@ -787,7 +816,7 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
             assert(ys[q] == x && ys2[q] == x2);
         }
     }
-    assert forall|q: int| 0 <= q < pv2.len() && sh.pdoms[q] is Sort implies #[trigger] par_ok(sig, nn, g, ys[q], xs.push(x2)[q], pv2[q]) by {
+    assert forall|q: int| 0 <= q < pv2.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] par_ok(sig, nn, g, ys[q], xs.push(x2)[q], pv2[q]) by {
         if q < pv.len() {
             assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
             assert(ys[q] == xs[q] && xs.push(x2)[q] == xs[q] && pv2[q] == pv[q]);
@@ -795,7 +824,7 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
             assert(ys[q] == x && xs.push(x2)[q] == x2);
         }
     }
-    assert forall|q: int| 0 <= q < pv2.len() && sh.pdoms[q] is Sort implies #[trigger] par_ok(sig, nn, g, xs2.push(x)[q], ys2[q], pv2[q]) by {
+    assert forall|q: int| 0 <= q < pv2.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] par_ok(sig, nn, g, xs2.push(x)[q], ys2[q], pv2[q]) by {
         if q < pv.len() {
             assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
             assert(xs2.push(x)[q] == xs2[q] && ys2[q] == xs2[q] && pv2[q] == pv[q]);
@@ -803,7 +832,7 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
             assert(xs2.push(x)[q] == x && ys2[q] == x2);
         }
     }
-    assert forall|q: int| 0 <= q < pv2.len() && sh.pdoms[q] is Sort implies #[trigger] pty_ok(sig, g, ind, ls, q, ys[q], ys2[q]) by {
+    assert forall|q: int| 0 <= q < pv2.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] pty_ok(sig, g, ind, ls, q, ys[q], ys2[q]) by {
         if q < pv.len() {
             assert(pty_ok(sig, g, ind, ls, q, xs[q], xs2[q]));
             assert(ys[q] == xs[q] && ys2[q] == xs2[q] && xs.push(x2)[q] == xs[q] && xs2.push(x)[q] == xs2[q]);
@@ -811,7 +840,7 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
             assert(ys[q] == x && ys2[q] == x2 && xs.push(x2)[q] == x2 && xs2.push(x)[q] == x);
         }
     }
-    assert forall|q: int| 0 <= q < pv2.len() && sh.pdoms[q] is Sort implies #[trigger] pty_ok(sig, g, ind, ls, q, ys[q], xs.push(x2)[q]) by {
+    assert forall|q: int| 0 <= q < pv2.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] pty_ok(sig, g, ind, ls, q, ys[q], xs.push(x2)[q]) by {
         if q < pv.len() {
             assert(pty_ok(sig, g, ind, ls, q, xs[q], xs2[q]));
             assert(ys[q] == xs[q] && ys2[q] == xs2[q] && xs.push(x2)[q] == xs[q] && xs2.push(x)[q] == xs2[q]);
@@ -819,7 +848,7 @@ pub proof fn pr_step(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpe
             assert(ys[q] == x && ys2[q] == x2 && xs.push(x2)[q] == x2 && xs2.push(x)[q] == x);
         }
     }
-    assert forall|q: int| 0 <= q < pv2.len() && sh.pdoms[q] is Sort implies #[trigger] pty_ok(sig, g, ind, ls, q, xs2.push(x)[q], ys2[q]) by {
+    assert forall|q: int| 0 <= q < pv2.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] pty_ok(sig, g, ind, ls, q, xs2.push(x)[q], ys2[q]) by {
         if q < pv.len() {
             assert(pty_ok(sig, g, ind, ls, q, xs[q], xs2[q]));
             assert(ys[q] == xs[q] && ys2[q] == xs2[q] && xs.push(x2)[q] == xs[q] && xs2.push(x)[q] == xs2[q]);
@@ -957,7 +986,7 @@ pub proof fn direct_pconv(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, 
     crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, ind, t));
     reveal(crate::dom_code::prop_ok);
     if crate::dom_code::has_canon(sig, ind) {
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, ty), q, spine_args(ty)[q], spine_args(t)[q]) by {
             assert(spine_args(ty)[q] == xs[q] && spine_args(t)[q] == xs[q]);
             assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t)[q]));
@@ -1011,12 +1040,12 @@ pub proof fn cf_cpar(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, ls2: 
             assert(it2 == ls2);
             crate::ti_ls2::levs_eq_sym(it, it2);
         }
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, crate::dom_rel::ir(sig, t, ind)), q, xs[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
             assert(spine_args(t)[q] == xs[q]);
             assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t)[q]));
         }
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, crate::dom_rel::ir(sig, t, ind)), q, xs2[q], spine_args(crate::dom_rel::ir(sig, t, ind))[q]) by {
             assert(spine_args(t)[q] == xs[q] && spine_args(t2)[q] == xs2[q]);
             assert(crate::dom_rel::peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, spine_args(t)[q], spine_args(t2)[q]));
@@ -1152,7 +1181,7 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
         // the parameters: the same on both types, moved through their codes
         assert forall|q: int, z: ExprSpec, z2: ExprSpec, w1: Cpt, v1: Cpt, e1: Cpt, e2: Cpt|
             #![trigger rel_tm(sig, nn, g, z, z2, crate::dom_lift::pq(sig, ind, ty, q), w1, e1), rel_tm(sig, n, g, z, z2, crate::dom_lift::pq(sig, ind, t, q), v1, e2)]
-            0 <= q < sh.np && sh.pdoms[q] is Sort
+            0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             && rel_tm(sig, nn, g, z, z2, crate::dom_lift::pq(sig, ind, ty, q), w1, e1) && has_type(nn, w1, e1) && has_type(nn, e1, Cpt::U)
             && wf(e1) && le(e1, pv[q])
             && has_type(n, v1, e2) && has_type(n, e2, Cpt::U) && wf(e2) && le(e2, pv[q]) && wf(v1) && !(v1 is Bot) && le(v1, w1)
@@ -1163,14 +1192,14 @@ pub proof fn cf_end_field(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Lev
         head_le(a, top);
         crate::dom_lift::tbl_canon_le(sig, ind, pv, a, top);
         direct_pconv(sig, n, g, c, ls, ind, pc, np, xs, i, a);
-        assert forall|q: int, c2: Cpt| 0 <= q < sh.np && sh.pdoms[q] is Sort && wf(c2) && le(c2, pv[q]) && has_type(n, c2, Cpt::U)
+        assert forall|q: int, c2: Cpt| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) && wf(c2) && le(c2, pv[q]) && has_type(n, c2, Cpt::U)
             implies #[trigger] rel_ty(sig, n, g, crate::dom_lift::pq(sig, ind, t, q), crate::dom_lift::pq(sig, ind, t, q), c2) by {
             assert(par_ok(sig, nn, g, xs[q], xs2[q], pv[q]));
             crate::dom_adeq_base::ty_up(n, nn, c2, Cpt::U);
             crate::dom_rel_mono::decr_ty(sig, nn, g, xs[q], xs[q], c2, pv[q]);
             crate::dom_adeq_base::stab_ty_up(sig, n, nn, g, xs[q], xs[q], c2);
         }
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies
             #[trigger] crate::dom_lift::pq(sig, ind, ty, q) == crate::dom_lift::pq(sig, ind, t, q)
             && rel_ty(sig, nn, g, crate::dom_lift::pq(sig, ind, ty, q), crate::dom_lift::pq(sig, ind, ty, q), pv[q])
             && has_type(nn, pv[q], Cpt::U) && wf(pv[q]) by {
@@ -1265,11 +1294,15 @@ pub proof fn cf_end_pfield(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, ls: Seq<Le
     // the parameters: typed at their sorts at the instance, related, and
     // transferring
     let gl = crate::ti_level::gls(sh.pdoms, sig.consts[ind].lps, ls);
-    assert forall|q: int| 0 <= q < gl.len() implies gl[q] is Sort
+    assert forall|q: int| 0 <= q < gl.len() implies crate::rec_canon::pdom_ok(gl[q]) && crate::dom_adeq_syn::pdom_alias(sig, gl[q])
         && derivable(sig, eq(g, #[trigger] a[q], a[q], gl[q])) by {
+        assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
         assert(pty_ok(sig, g, ind, ls, q, xs[q], xs2[q]));
-        let _s = sh.pdoms[q];
-        assert(gl[q] == crate::dom_rel::ptype(sig, ind, ls, q));
+        assert(a[q] == xs[q]);
+        crate::rec_canon::pdom_facts(sh.pdoms[q], sig.consts[ind].lps, ls);
+        crate::dom_code::pdoms_alias_at(sig, ind, q);
+        crate::dom_adeq_syn::pdom_alias_sl(sig, sh.pdoms[q], sig.consts[ind].lps, ls);
+        crate::dom_adeq_syn::ptype_conv(sig, g, ind, ls, q, xs[q], xs[q]);
     }
     crate::dom_rel::lpad_id(ls, sig.consts[ind].lps.len());
     assert(crate::dom_rel::iinst(sig, ind, t) == ls);

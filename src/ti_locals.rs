@@ -185,11 +185,24 @@ proof fn proj_pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
     let pj2 = crate::ti_syntax::proj_pjs(s2, sswap(g, x, y), crate::swap_model::fswap(m, x, y));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jswap(pj[q], x, y) by {
         let ty = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[ind].lps, h->Const_1);
-        assert(sh.pdoms[q] is Sort);
-        assert(ty is Sort);
-        assert(crate::swap_model::fswap(ty, x, y) == ty);
+        assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
+        crate::rec_canon::pdom_facts(sh.pdoms[q], sig.consts[ind].lps, h->Const_1);
+        pdom_inert(ty, x, y, 0, 0);
         assert(spine_args(crate::swap_model::fswap(xm, x, y))[q] == crate::swap_model::fswap(spine_args(xm)[q], x, y));
     }
+}
+
+/// A PARAMETER'S DOMAIN IS INERT: no local, no variable, so swapping and
+/// closing locals and substituting leave it as it is.
+pub proof fn pdom_inert(e: ExprSpec, x: nat, y: nat, k: nat, c: nat)
+    requires
+        crate::rec_canon::pdom_ok(e),
+    ensures
+        crate::swap_model::fswap(e, x, y) == e,
+        crate::fclose::fclose(k, c, e) == e,
+{
+    reveal_with_fuel(crate::swap_model::fswap, 3);
+    reveal_with_fuel(crate::fclose::fclose, 3);
 }
 
 /// RULE PROJIOTA'S PARAMETER PREMISES UNDER CLOSING A LOCAL.
@@ -220,9 +233,9 @@ proof fn proj_pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
     let pj2 = crate::ti_syntax::proj_pjs(sig, gclose(k, a, g), crate::fclose::fclose(k, c, m));
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q] == jclose(k, a, pj[q]) by {
         let ty = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[ind].lps, h->Const_1);
-        assert(sh.pdoms[q] is Sort);
-        assert(ty is Sort);
-        assert(crate::fclose::fclose(k, c, ty) == ty);
+        assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
+        crate::rec_canon::pdom_facts(sh.pdoms[q], sig.consts[ind].lps, h->Const_1);
+        pdom_inert(ty, 0, 0, k, c);
         assert(spine_args(crate::fclose::fclose(k, c, xm))[q] == crate::fclose::fclose(k, c, spine_args(xm)[q]));
     }
 }
@@ -272,8 +285,7 @@ proof fn pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
         crate::ti_syntax::iota_pdom_id(sig, m, q);
         let pi = crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, spine_head(m)->Const_1);
         assert(spine_head(crate::swap_model::fswap(m, x, y)) == spine_head(m));
-        assert(pi is Sort);
-        assert(crate::swap_model::fswap(pi, x, y) == pi);
+        pdom_inert(pi, x, y, 0, 0);
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pi));
         assert(spine_args(crate::swap_model::fswap(m, x, y))[q] == crate::swap_model::fswap(args[q], x, y));
         assert(spine_args(crate::swap_model::fswap(major, x, y))[q] == crate::swap_model::fswap(cargs[q], x, y));
@@ -324,8 +336,7 @@ proof fn pjs_close(sig: Sig, k: nat, a: ExprSpec, g: Ctx, m: ExprSpec)
         crate::ti_syntax::iota_pdom_id(s1, m, q);
         let pi = crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, spine_head(m)->Const_1);
         assert(spine_head(crate::fclose::fclose(k, g.len(), m)) == spine_head(m));
-        assert(pi is Sort);
-        assert(crate::fclose::fclose(k, g.len(), pi) == pi);
+        pdom_inert(pi, 0, 0, k, g.len());
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pi));
         assert(spine_args(crate::fclose::fclose(k, g.len(), m))[q] == crate::fclose::fclose(k, g.len(), args[q]));
         assert(spine_args(crate::fclose::fclose(k, g.len(), major))[q] == crate::fclose::fclose(k, g.len(), cargs[q]));

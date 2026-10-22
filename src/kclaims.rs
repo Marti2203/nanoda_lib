@@ -157,7 +157,7 @@ pub open spec fn ctor_forms(sig: crate::ti_syntax::Sig) -> bool {
 pub open spec fn rec_small(sig: crate::ti_syntax::Sig, c: u64) -> bool {
     let sh = crate::dom_rec_ty::rshape(sig, c);
     &&& sh.ni == 0
-    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q])
 }
 
 /// The fragment, from its hypotheses, the certified tables and the

@@ -126,6 +126,8 @@ pub proof fn struct_type_arity(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec)
         crate::ti_syntax::struct_ty(sig, t),
         forall|q: int| 0 <= q < spine_args(t).len() ==> #[trigger] derivable(sig, eq(g, spine_args(t)[q], spine_args(t)[q],
             crate::ti_spine::vsub(crate::dom_rel::ptype(sig, spine_head(t)->Const_0, spine_head(t)->Const_1, q), spine_args(t).subrange(0, q)))),
+        forall|q: int| 0 <= q < spine_args(t).len() ==> #[trigger] derivable(sig, eq(g, spine_args(t)[q], spine_args(t)[q],
+            crate::ti_spine::vsub(crate::dom_rel::praw(sig, spine_head(t)->Const_0, spine_head(t)->Const_1, q), spine_args(t).subrange(0, q)))),
 {
     let (s, us) = (spine_head(t)->Const_0, spine_head(t)->Const_1);
     let ps = spine_args(t);
@@ -188,10 +190,16 @@ pub proof fn struct_type_arity(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec)
         crate::ti_spine::tel_next(dd, sb, ps, i);
     }
     crate::ti_spine::spine_ty(sig, g, h, ty0, ps, sort(l));
+    crate::dom_lift::eq_ctx_wf(sig, g, t, t, sort(l));
     assert forall|q: int| 0 <= q < ps.len() implies #[trigger] derivable(sig, eq(g, ps[q], ps[q],
-        crate::ti_spine::vsub(crate::dom_rel::ptype(sig, s, us, q), ps.subrange(0, q)))) by {
+        crate::ti_spine::vsub(crate::dom_rel::praw(sig, s, us, q), ps.subrange(0, q)))) by {
         crate::ti_spine::tel_next(dd, sb, ps, q);
         assert(derivable(sig, eq(g, ps[q], ps[q], crate::ti_spine::sdom(ty0, ps, q))));
+    }
+    assert forall|q: int| 0 <= q < ps.len() implies #[trigger] derivable(sig, eq(g, ps[q], ps[q],
+        crate::ti_spine::vsub(crate::dom_rel::ptype(sig, s, us, q), ps.subrange(0, q)))) by {
+        assert(derivable(sig, eq(g, ps[q], ps[q], crate::ti_spine::vsub(crate::dom_rel::praw(sig, s, us, q), ps.subrange(0, q)))));
+        crate::dom_adeq_syn::ptype_vsub(sig, g, s, us, q, ps[q], ps[q], ps.subrange(0, q));
     }
 }
 
@@ -237,7 +245,7 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         crate::dom_adeq_proj::pfield(sig, s, k as nat, us);
         let q = (np + k - 1 - sh.fields[0][k]->Var_0) as int;
         crate::iota_sr::ptype_at_s(sig, sh, us, q);
-        let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[s].lps, us);
+        let lq = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(sh.pdoms[q]), sig.consts[s].lps, us);
         crate::ti_spine::vsub_closed(sort(lq), ps.subrange(0, q));
         crate::dom_adeq_proj::pfield_vsub(sig, s, k as nat, us, ps + pj);
         assert((ps + pj)[q] == ps[q]);
@@ -251,7 +259,7 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], ps[q],
             crate::dom_rel::ptype(sig, s, us, q))) by {
             crate::iota_sr::ptype_at_s(sig, sh, us, q);
-            let lq = crate::level_model::subst_level_spec(sh.pdoms[q]->Sort_0, sig.consts[s].lps, us);
+            let lq = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(sh.pdoms[q]), sig.consts[s].lps, us);
             crate::ti_spine::vsub_closed(sort(lq), ps.subrange(0, q));
         }
         crate::dom_adeq_proj::sfield_conv(sig, g, s, k as nat, us, us, ps, ps, pj, pj)
@@ -267,7 +275,7 @@ pub proof fn struct_proj_typed(sig: Sig, g: Ctx, t: ExprSpec, l: LevelSpec, x: E
         assert(crate::rec_canon::pprop(sh.pdoms, np, k as nat, f));
         if crate::rec_canon::pvar_field(sh.pdoms, np, k as nat, f) {
             let q = (np + k - 1 - f->Var_0) as int;
-            let l0 = sh.pdoms[q]->Sort_0;
+            let l0 = crate::rec_canon::pdom_lvl(sh.pdoms[q]);
             assert(crate::rec_canon::stable_lvl(l0)) by { reveal(crate::rec_canon::stable_lvl); }
             crate::dom_code::scode_sl(l0, sig.consts[s].lps, us);
         }
@@ -430,7 +438,7 @@ pub proof fn struct_cx_typed(sig: Sig, g: Ctx, st: ExprSpec, lt: LevelSpec, x: E
         if i < np {
             assert(cargs.subrange(0, i) =~= a0.subrange(0, i));
             assert(cargs[i] == a0[i]);
-            assert(derivable(sig, eq(g, a0[i], a0[i], crate::ti_spine::vsub(crate::dom_rel::ptype(sig, s, us, i), a0.subrange(0, i)))));
+            assert(derivable(sig, eq(g, a0[i], a0[i], crate::ti_spine::vsub(crate::dom_rel::praw(sig, s, us, i), a0.subrange(0, i)))));
         } else {
             let k = i - np;
             struct_proj_typed(sig, g, st, lt, x, k);

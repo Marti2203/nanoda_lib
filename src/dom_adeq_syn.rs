@@ -118,6 +118,436 @@ pub proof fn d_pi_self(sig: Sig, dl: Ctx, a: ExprSpec, b: ExprSpec, l1: LevelSpe
     mk_t(sig, r, imax(l1, l2));
 }
 
+/// A SORT ALIAS: a definition `c.{u} (a : Sort u) : Sort u := a`
+/// (Lean's `outParam`, `semiOutParam`), recognised by its declaration.
+pub open spec fn sort_alias(sig: Sig, c: u64) -> bool {
+    &&& sig.consts.contains_key(c)
+    &&& sig.consts[c].lps.len() == 1
+    &&& {
+        let s = ExprSpec::Sort(LevelSpec::Param(sig.consts[c].lps[0]));
+        &&& sig.consts[c].ty == pi(s, s)
+        &&& sig.consts[c].val == Some(lam(s, ExprSpec::Var(0)))
+    }
+}
+
+/// A SORT ALIAS AT A SORT IS THAT SORT: unfolding (`Delta`), applying, and
+/// a beta step, at the alias's instance one level up.
+pub proof fn alias_conv(sig: Sig, g: Ctx, c: u64, lu: LevelSpec, l: LevelSpec)
+    requires
+        sort_alias(sig, c),
+        def_ok(sig, c, seq![lu]),
+        crate::conv_cr::lev_eq(lu, succ(l)),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, app(ExprSpec::Const(c, seq![lu]), sort(l)), sort(l), sort(lu))),
+{
+    let p = sig.consts[c].lps[0];
+    let s = sort(lu);
+    let s0 = ExprSpec::Sort(LevelSpec::Param(p));
+    let v = lam(s, ExprSpec::Var(0));
+    let ty = pi(s, s);
+    // the definition at the instance
+    assert(crate::expr_model::subst_expr_levels(pi(s0, s0), seq![p], seq![lu]) == ty) by {
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        assert(crate::level_model::find_level_idx(seq![p], p) == Some(0nat));
+    }
+    assert(crate::expr_model::subst_expr_levels(lam(s0, ExprSpec::Var(0)), seq![p], seq![lu]) == v) by {
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        assert(crate::level_model::find_level_idx(seq![p], p) == Some(0nat));
+    }
+    assert(sig.consts[c].lps == seq![p]);
+    assert(dty_at(sig, c, seq![lu]) == ty);
+    assert(dval(sig, c, seq![lu]) == v);
+    // the sort, its Pi and the identity on it, typed
+    let w = get(sig, Jd::Wf(g));
+    assert(crate::conv_cr::lev_eq(lu, lu));
+    let du = crate::ti_sub::d_univ(sig, w, lu, lu);
+    mk_d(sig, du);
+    let gs = g.push(s);
+    crate::dom_rule_ty::wf_push(sig, g, s, succ(lu));
+    let ws = get(sig, Jd::Wf(gs));
+    let dus = crate::ti_sub::d_univ(sig, ws, lu, lu);
+    mk_d(sig, dus);
+    d_pi_self(sig, g, s, s, succ(lu), succ(lu));
+    let dv = crate::ti_sub::d_var(sig, ws, 0);
+    assert(var_ty(gs, 0) == s) by {
+        assert(gs[gs.len() - 1 - 0] == s);
+    }
+    mk_d(sig, dv);
+    let lj = eq(g, v, v, ty);
+    let q0 = get(sig, eq(g, s, s, sort(succ(lu))));
+    let q1 = get(sig, eq(gs, s, s, sort(succ(lu))));
+    let q2 = get(sig, eq(gs, ExprSpec::Var(0), ExprSpec::Var(0), s));
+    let lp = seq![q0, q1, q2, q2];
+    assert(prems(lp, seq![eq(g, s, s, sort(succ(lu))), eq(gs, s, s, sort(succ(lu))),
+        eq(gs, ExprSpec::Var(0), ExprSpec::Var(0), s), eq(gs, ExprSpec::Var(0), ExprSpec::Var(0), s)]));
+    valid_node(sig, Rule::LamCong(succ(lu), succ(lu)), lj, lp);
+    mk_d(sig, node(Rule::LamCong(succ(lu), succ(lu)), lj, lp));
+    // Delta
+    let lt = imax(succ(lu), succ(lu));
+    let cc = ExprSpec::Const(c, seq![lu]);
+    let dj = eq(g, cc, v, ty);
+    assert(crate::expr_model::nlbv(ty) == 0) by {
+        reveal_with_fuel(crate::expr_model::nlbv, 3);
+    }
+    let dt = get(sig, eq(g, ty, ty, sort(lt)));
+    let dl = get(sig, lj);
+    let dp = seq![w, dt, dl];
+    assert(prems(dp, seq![Jd::Wf(g), eq(g, ty, ty, sort(lt)), eq(g, v, v, ty)]));
+    valid_node(sig, Rule::Delta(lt), dj, dp);
+    mk_d(sig, node(Rule::Delta(lt), dj, dp));
+    // the argument at the alias's domain
+    let wl = crate::ti_sub::d_univ(sig, w, l, l);
+    mk_d(sig, wl);
+    assert(crate::conv_cr::lev_eq(succ(l), lu)) by {
+        assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(succ(l), r) == crate::level_model::interp(lu, r) by {
+            assert(crate::level_model::interp(lu, r) == crate::level_model::interp(succ(l), r));
+        }
+    }
+    let wsl = crate::ti_sub::d_univ(sig, w, succ(l), lu);
+    mk_d(sig, wsl);
+    dconv(sig, g, sort(l), sort(l), sort(succ(l)), s, succ(succ(l)));
+    // congruence, then the beta step
+    crate::jkernel::app_cong_d(sig, g, cc, v, sort(l), sort(l), s, s, succ(lu), succ(lu));
+    beta_d(sig, g, s, ExprSpec::Var(0), s, sort(l), succ(lu), succ(lu));
+    assert(inst(0, sort(l), ExprSpec::Var(0)) == sort(l));
+    assert(inst(0, sort(l), s) == s);
+    assert(crate::dom_rel::sapp(cc, sort(l)) == app(cc, sort(l)));
+    dtrans(sig, g, app(cc, sort(l)), app(v, sort(l)), sort(l), s);
+}
+
+/// A PARAMETER'S DOMAIN IS SOUND: a sort, or a ranked sort alias at a
+/// sort, one level up.
+pub open spec fn pdom_alias(sig: Sig, e: ExprSpec) -> bool {
+    e is Sort || {
+        let c = e->App_0->Const_0;
+        &&& sort_alias(sig, c)
+        &&& sig.rank.contains_key(c)
+        &&& crate::conv_cr::lev_eq(e->App_0->Const_1[0], succ(e->App_1->Sort_0))
+    }
+}
+
+/// THE DECLARED DOMAIN CONVERTS TO ITS SORT, at any level instance.
+pub proof fn pdom_conv(sig: Sig, g: Ctx, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        pdom_alias(sig, e),
+        ks.len() == vs.len(),
+        derivable(sig, Jd::Wf(g)),
+    ensures ({
+        let l1 = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(e), ks, vs);
+        derivable(sig, eq(g, crate::expr_model::subst_expr_levels(e, ks, vs), sort(l1), sort(succ(l1))))
+    }),
+{
+    crate::rec_canon::pdom_facts(e, ks, vs);
+    let l1 = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(e), ks, vs);
+    let w = get(sig, Jd::Wf(g));
+    assert(crate::conv_cr::lev_eq(l1, l1));
+    if e is Sort {
+        let d = crate::ti_sub::d_univ(sig, w, l1, l1);
+        mk_d(sig, d);
+    } else {
+        let c = e->App_0->Const_0;
+        let (lu, l0) = (e->App_0->Const_1[0], e->App_1->Sort_0);
+        let lu1 = crate::level_model::subst_level_spec(lu, ks, vs);
+        let e1 = crate::expr_model::subst_expr_levels(e, ks, vs);
+        assert(e1 == app(ExprSpec::Const(c, seq![lu1]), sort(l1))) by {
+            reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+            assert(e->App_0->Const_1 =~= seq![lu]);
+            assert(crate::level_model::subst_levels_spec(seq![lu], ks, vs) =~= seq![lu1]);
+        }
+        // the instance is one above
+        crate::ti_ls2::levs_eq_refl(vs);
+        crate::ti_ls2::ll_pair(lu, succ(l0), ks, vs, vs);
+        assert(crate::level_model::subst_level_spec(succ(l0), ks, vs) == succ(l1));
+        // the alias at that instance is a definition
+        let p = sig.consts[c].lps[0];
+        let v1 = lam(sort(lu1), ExprSpec::Var(0));
+        assert(dval(sig, c, seq![lu1]) == v1) by {
+            reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+            assert(crate::level_model::find_level_idx(seq![p], p) == Some(0nat));
+        }
+        assert(crate::expr_model::nlbv(v1) == 0) by { reveal_with_fuel(crate::expr_model::nlbv, 3); }
+        assert(crank(sig, v1) == 0) by { reveal_with_fuel(crank, 3); }
+        assert(def_ok(sig, c, seq![lu1]));
+        alias_conv(sig, g, c, lu1, l1);
+        let du = crate::ti_sub::d_univ(sig, w, lu1, succ(l1));
+        mk_d(sig, du);
+        dconv(sig, g, e1, sort(l1), sort(lu1), sort(succ(l1)), succ(lu1));
+    }
+}
+
+/// A PARAMETER'S DECLARED DOMAIN AND ITS SORT type the same conversions.
+pub proof fn ptype_conv(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, q: int, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::dom_code::pdoms_alias(sig, ind),
+        0 <= q < crate::dom_code::canon_shape(sig, ind).np,
+        crate::dom_code::canon_shape(sig, ind).pdoms.len() == crate::dom_code::canon_shape(sig, ind).np,
+        ls.len() == sig.consts[ind].lps.len(),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, x, y, crate::dom_rel::ptype(sig, ind, ls, q)))
+            == derivable(sig, eq(g, x, y, crate::dom_rel::praw(sig, ind, ls, q))),
+{
+    if !crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q]) {
+        return;
+    }
+    let e = crate::dom_code::canon_shape(sig, ind).pdoms[q];
+    let lps = sig.consts[ind].lps;
+    let raw = crate::expr_model::subst_expr_levels(e, lps, ls);
+    let l1 = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(e), lps, ls);
+    crate::dom_code::pdoms_alias_at(sig, ind, q);
+    pdom_conv(sig, g, e, lps, ls);
+    assert(crate::dom_rel::ptype(sig, ind, ls, q) == sort(l1));
+    dsym(sig, g, raw, sort(l1), sort(succ(l1)));
+    if derivable(sig, eq(g, x, y, sort(l1))) {
+        dconv(sig, g, x, y, sort(l1), raw, succ(l1));
+    }
+    if derivable(sig, eq(g, x, y, raw)) {
+        dconv(sig, g, x, y, raw, sort(l1), succ(l1));
+    }
+}
+
+/// `ptype_conv` under the earlier parameters' values.
+pub proof fn ptype_vsub(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, q: int, x: ExprSpec, y: ExprSpec, pre: Seq<ExprSpec>)
+    requires
+        crate::dom_code::pdoms_alias(sig, ind),
+        0 <= q < crate::dom_code::canon_shape(sig, ind).np,
+        crate::dom_code::canon_shape(sig, ind).pdoms.len() == crate::dom_code::canon_shape(sig, ind).np,
+        ls.len() == sig.consts[ind].lps.len(),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, x, y, crate::ti_spine::vsub(crate::dom_rel::ptype(sig, ind, ls, q), pre)))
+            == derivable(sig, eq(g, x, y, crate::ti_spine::vsub(crate::dom_rel::praw(sig, ind, ls, q), pre))),
+{
+    let e = crate::dom_code::canon_shape(sig, ind).pdoms[q];
+    if crate::rec_canon::pdom_ok(e) {
+        crate::rec_canon::pdom_facts(e, sig.consts[ind].lps, ls);
+        let l1 = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(e), sig.consts[ind].lps, ls);
+        assert(crate::expr_model::nlbv(sort(l1)) == 0) by {
+            reveal_with_fuel(crate::expr_model::nlbv, 2);
+        }
+        crate::ti_spine::vsub_closed(sort(l1), pre);
+        crate::ti_spine::vsub_closed(crate::dom_rel::praw(sig, ind, ls, q), pre);
+        ptype_conv(sig, g, ind, ls, q, x, y);
+    }
+}
+
+/// Level substitution keeps a parameter's domain sound.
+pub proof fn pdom_alias_sl(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        pdom_alias(sig, e),
+        ks.len() == vs.len(),
+    ensures
+        pdom_alias(sig, crate::expr_model::subst_expr_levels(e, ks, vs)),
+{
+    crate::rec_canon::pdom_facts(e, ks, vs);
+    if !(e is Sort) {
+        let l0 = e->App_1->Sort_0;
+        let lu = e->App_0->Const_1[0];
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        assert(e->App_0->Const_1 =~= seq![lu]);
+        let lu1 = crate::level_model::subst_level_spec(lu, ks, vs);
+        assert(crate::level_model::subst_levels_spec(seq![lu], ks, vs) =~= seq![lu1]);
+        crate::ti_ls2::levs_eq_refl(vs);
+        crate::ti_ls2::ll_pair(lu, succ(l0), ks, vs, vs);
+        assert(crate::level_model::subst_level_spec(succ(l0), ks, vs) == succ(crate::level_model::subst_level_spec(l0, ks, vs)));
+    }
+}
+
+/// A sound parameter's domain converts to its sort.
+pub proof fn pdom_conv0(sig: Sig, g: Ctx, e: ExprSpec)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        pdom_alias(sig, e),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, e, sort(crate::rec_canon::pdom_lvl(e)), sort(succ(crate::rec_canon::pdom_lvl(e))))),
+{
+    let l0 = crate::rec_canon::pdom_lvl(e);
+    pdom_conv(sig, g, e, Seq::empty(), Seq::empty());
+    crate::dom_canon::subst_level_none(l0, Seq::empty());
+    crate::rec_canon::pdom_facts(e, Seq::empty(), Seq::empty());
+    assert(crate::expr_model::subst_expr_levels(e, Seq::empty(), Seq::empty()) == e) by {
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        if !(e is Sort) {
+            let lu = e->App_0->Const_1[0];
+            crate::dom_canon::subst_level_none(lu, Seq::empty());
+            assert(crate::level_model::subst_levels_spec(e->App_0->Const_1, Seq::empty(), Seq::empty()) =~= e->App_0->Const_1);
+        }
+    }
+}
+
+/// A sound parameter's domain is a type.
+pub proof fn pdom_self(sig: Sig, g: Ctx, e: ExprSpec)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        pdom_alias(sig, e),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        tconvd(sig, g, e, e),
+        exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, e, e, sort(l))),
+{
+    let l0 = crate::rec_canon::pdom_lvl(e);
+    pdom_conv(sig, g, e, Seq::empty(), Seq::empty());
+    crate::dom_canon::subst_level_none(l0, Seq::empty());
+    crate::rec_canon::pdom_facts(e, Seq::empty(), Seq::empty());
+    let e0 = crate::expr_model::subst_expr_levels(e, Seq::empty(), Seq::empty());
+    assert(e0 == e) by {
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        if !(e is Sort) {
+            let lu = e->App_0->Const_1[0];
+            crate::dom_canon::subst_level_none(lu, Seq::empty());
+            assert(crate::level_model::subst_levels_spec(e->App_0->Const_1, Seq::empty(), Seq::empty()) =~= e->App_0->Const_1);
+        }
+    }
+    let d = get(sig, eq(g, e, sort(l0), sort(succ(l0))));
+    let dl = d_left(sig, d);
+    mk_d(sig, dl);
+    mk_t(sig, dl, succ(l0));
+}
+
+/// A parameter's domain at two level-equivalent instances converts.
+pub proof fn pdom_pair(sig: Sig, dl: Ctx, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, vs2: Seq<LevelSpec>)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        pdom_alias(sig, e),
+        ks.len() == vs.len(),
+        crate::conv_cr::levs_eq(vs, vs2),
+        derivable(sig, Jd::Wf(dl)),
+    ensures
+        tconvd(sig, dl, crate::expr_model::subst_expr_levels(e, ks, vs), crate::expr_model::subst_expr_levels(e, ks, vs2)),
+{
+    let l0 = crate::rec_canon::pdom_lvl(e);
+    let (e1, e2) = (crate::expr_model::subst_expr_levels(e, ks, vs), crate::expr_model::subst_expr_levels(e, ks, vs2));
+    let (l1, l2) = (crate::level_model::subst_level_spec(l0, ks, vs), crate::level_model::subst_level_spec(l0, ks, vs2));
+    assert(vs2.len() == ks.len());
+    pdom_conv(sig, dl, e, ks, vs);
+    pdom_conv(sig, dl, e, ks, vs2);
+    crate::ti_ls2::ll_pair(l0, l0, ks, vs, vs2);
+    let w = get(sig, Jd::Wf(dl));
+    let u = crate::ti_sub::d_univ(sig, w, l1, l2);
+    mk_d(sig, u);
+    assert(crate::conv_cr::lev_eq(succ(l2), succ(l1))) by {
+        assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(succ(l2), r) == crate::level_model::interp(succ(l1), r) by {
+            assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+        }
+    }
+    let u2 = crate::ti_sub::d_univ(sig, w, succ(l2), succ(l1));
+    mk_d(sig, u2);
+    dsym(sig, dl, e2, sort(l2), sort(succ(l2)));
+    dconv(sig, dl, sort(l2), e2, sort(succ(l2)), sort(succ(l1)), succ(succ(l2)));
+    dtrans(sig, dl, e1, sort(l1), sort(l2), sort(succ(l1)));
+    dtrans(sig, dl, e1, sort(l2), e2, sort(succ(l1)));
+    let dp = get(sig, eq(dl, e1, e2, sort(succ(l1))));
+    mk_t(sig, dp, succ(l1));
+}
+
+/// Soundness of a parameter's domain moves between level-equivalent
+/// instances of it.
+pub proof fn pdom_alias_lv(sig: Sig, e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>, vs2: Seq<LevelSpec>)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        ks.len() == vs.len(),
+        crate::conv_cr::levs_eq(vs, vs2),
+        pdom_alias(sig, crate::expr_model::subst_expr_levels(e, ks, vs)),
+    ensures
+        pdom_alias(sig, crate::expr_model::subst_expr_levels(e, ks, vs2)),
+        crate::conv_cr::lev_eq(crate::rec_canon::pdom_lvl(crate::expr_model::subst_expr_levels(e, ks, vs)),
+            crate::rec_canon::pdom_lvl(crate::expr_model::subst_expr_levels(e, ks, vs2))),
+{
+    crate::rec_canon::pdom_facts(e, ks, vs);
+    crate::rec_canon::pdom_facts(e, ks, vs2);
+    let l0 = crate::rec_canon::pdom_lvl(e);
+    crate::ti_ls2::ll_pair(l0, l0, ks, vs, vs2);
+    if !(e is Sort) {
+        let lu = e->App_0->Const_1[0];
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        assert(e->App_0->Const_1 =~= seq![lu]);
+        let (lu1, lu2) = (crate::level_model::subst_level_spec(lu, ks, vs), crate::level_model::subst_level_spec(lu, ks, vs2));
+        assert(crate::level_model::subst_levels_spec(seq![lu], ks, vs) =~= seq![lu1]);
+        assert(crate::level_model::subst_levels_spec(seq![lu], ks, vs2) =~= seq![lu2]);
+        crate::ti_ls2::ll_pair(lu, lu, ks, vs, vs2);
+        let (l1, l2) = (crate::level_model::subst_level_spec(l0, ks, vs), crate::level_model::subst_level_spec(l0, ks, vs2));
+        assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(lu2, r) == crate::level_model::interp(succ(l2), r) by {
+            assert(crate::level_model::interp(lu1, r) == crate::level_model::interp(succ(l1), r));
+            assert(crate::level_model::interp(lu1, r) == crate::level_model::interp(lu2, r));
+            assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+        }
+    }
+}
+
+/// Two sound domains at equivalent sorts convert.
+pub proof fn pdom_pair_i(sig: Sig, g: Ctx, e1: ExprSpec, e2: ExprSpec)
+    requires
+        crate::rec_canon::pdom_ok(e1),
+        crate::rec_canon::pdom_ok(e2),
+        pdom_alias(sig, e1),
+        pdom_alias(sig, e2),
+        crate::conv_cr::lev_eq(crate::rec_canon::pdom_lvl(e1), crate::rec_canon::pdom_lvl(e2)),
+        derivable(sig, Jd::Wf(g)),
+    ensures
+        derivable(sig, eq(g, e1, e2, sort(succ(crate::rec_canon::pdom_lvl(e1))))),
+        tconvd(sig, g, e1, e2),
+{
+    let (l1, l2) = (crate::rec_canon::pdom_lvl(e1), crate::rec_canon::pdom_lvl(e2));
+    pdom_conv0(sig, g, e1);
+    pdom_conv0(sig, g, e2);
+    let w = get(sig, Jd::Wf(g));
+    let u = crate::ti_sub::d_univ(sig, w, l1, l2);
+    mk_d(sig, u);
+    assert(crate::conv_cr::lev_eq(succ(l2), succ(l1))) by {
+        assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(succ(l2), r) == crate::level_model::interp(succ(l1), r) by {
+            assert(crate::level_model::interp(l1, r) == crate::level_model::interp(l2, r));
+        }
+    }
+    let u2 = crate::ti_sub::d_univ(sig, w, succ(l2), succ(l1));
+    mk_d(sig, u2);
+    dsym(sig, g, e2, sort(l2), sort(succ(l2)));
+    dconv(sig, g, sort(l2), e2, sort(succ(l2)), sort(succ(l1)), succ(succ(l2)));
+    dtrans(sig, g, e1, sort(l1), sort(l2), sort(succ(l1)));
+    dtrans(sig, g, e1, sort(l2), e2, sort(succ(l1)));
+    let dp = get(sig, eq(g, e1, e2, sort(succ(l1))));
+    mk_t(sig, dp, succ(l1));
+}
+
+/// A sound parameter domain head-reduces to its sort: unfolding the
+/// alias, then a beta step.
+pub proof fn pdom_hred(sig: Sig, e: ExprSpec)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        pdom_alias(sig, e),
+    ensures
+        crate::ti_hred::hred(sig, e, sort(crate::rec_canon::pdom_lvl(e))),
+{
+    if e is Sort {
+        crate::ti_hred::hred_refl(sig, e);
+    } else {
+        let c = e->App_0->Const_0;
+        let lu = e->App_0->Const_1[0];
+        let l = e->App_1->Sort_0;
+        let p = sig.consts[c].lps[0];
+        assert(e->App_0->Const_1 =~= seq![lu]);
+        assert(crate::ti_syntax::is_def(sig, c, seq![lu]));
+        let s0 = ExprSpec::Sort(LevelSpec::Param(p));
+        let body = lam(ExprSpec::Sort(lu), ExprSpec::Var(0));
+        assert(crate::ti_syntax::dval(sig, c, seq![lu]) == body) by {
+            reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+            reveal_with_fuel(crate::level_model::subst_level_spec, 2);
+            assert(sig.consts[c].lps =~= seq![p]);
+        }
+        let e1 = ExprSpec::App(Box::new(body), Box::new(sort(l)));
+        assert(crate::ti_hred::hstep(sig, *e->App_0) == Some(body));
+        assert(crate::ti_hred::hstep(sig, e) == Some(e1));
+        crate::ti_hred::hred_step(sig, e);
+        crate::subst_algebra::lift_zero(0, sort(l));
+        assert(crate::ti_hred::hstep(sig, e1) == Some(sort(l)));
+        crate::ti_hred::hred_step(sig, e1);
+        crate::ti_hred::hred_trans(sig, e, e1, sort(l));
+    }
+}
+
 /// A beta step, typed.
 pub proof fn beta_d(sig: Sig, dl: Ctx, a: ExprSpec, body: ExprSpec, bt: ExprSpec, x: ExprSpec, l1: LevelSpec, l2: LevelSpec)
     requires

@@ -345,7 +345,7 @@ pub proof fn pconv_symm(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec)
     let (i1, i2) = (crate::dom_rel::iinst(sig, ind, ir(sig, t, ind)), crate::dom_rel::iinst(sig, ind, ir(sig, t2, ind)));
     if crate::dom_code::has_canon(sig, ind) {
         crate::ti_ls2::levs_eq_sym(i1, i2);
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] peq(sig, g, ind, i2, q, a2[q], a[q]) by {
             peq_symm(sig, g, ind, i1, q, a[q], a2[q]);
             crate::dom_rel::peq_lv(sig, g, ind, i1, i2, q, a2[q], a[q]);
@@ -372,7 +372,7 @@ pub proof fn pconv_trans(sig: Sig, g: Ctx, ind: u64, t1: ExprSpec, t2: ExprSpec,
     if crate::dom_code::has_canon(sig, ind) {
         crate::ti_ls2::levs_eq_sym(i1, i2);
         crate::ti_ls2::levs_eq_trans(i1, i2, i3);
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] peq(sig, g, ind, i1, q, a1[q], a3[q]) by {
             crate::dom_rel::peq_lv(sig, g, ind, i2, i1, q, a2[q], a3[q]);
             peq_trans(sig, g, ind, i1, q, a1[q], a2[q], a3[q]);
@@ -485,7 +485,7 @@ pub proof fn cpar_conv(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec, s: 
         if xl.len() == sig.consts[ind].lps.len() {
             crate::ti_ls2::levs_eq_trans(xl, it, is);
         }
-        assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies #[trigger] peq(sig, g, ind, is, q, a[q], c[q]) by {
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] peq(sig, g, ind, is, q, a[q], c[q]) by {
             assert(peq(sig, g, ind, it, q, a[q], b[q]));
             assert(peq(sig, g, ind, it, q, b[q], c[q]));
             peq_trans(sig, g, ind, it, q, a[q], b[q], c[q]);

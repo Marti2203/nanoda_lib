@@ -180,7 +180,7 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     pargs: Seq<ExprSpec>, args: Seq<ExprSpec>)
     requires
         rec_hyps(sig, c),
-        forall|q: int| 0 <= q < rshape(sig, c).np ==> (#[trigger] rshape(sig, c).pdoms[q]) is Sort,
+        forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, c).pdoms[q]),
         lv.len() == sig.ienv.recs[c].uparams.len(),
         0 <= j < rshape(sig, c).nmin(),
         heads.len() == rshape(sig, c).np + rshape(sig, c).nmin() + 1,
@@ -304,10 +304,13 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     assert(rd.major_idx == pre);
     assert(crate::ti_syntax::iota_lv(sig, m1)) by { reveal(crate::ti_syntax::iota_lv); }
     assert(l == crate::ti_syntax::iota_lm(sig, m1)) by { reveal(crate::ti_syntax::iota_lm); }
+    crate::dom_rec_end::rec_canon_ok(sig, c);
+    crate::dom_lift::eq_ctx_wf(sig, g, m1, m1, t);
     assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
         crate::ti_syntax::iota_pdom_id(sig, m1, q);
         let _pq = crate::dom_rec_ty::rshape(sig, c).pdoms[q];
         assert(xs1[q] == heads[q] && (pargs + args)[q] == pargs[q]);
+        crate::dom_adeq_syn::ptype_conv(sig, g, crate::dom_rec_ty::rshape(sig, c).ind, crate::dom_rec_ty::rinst(sig, c, lv), q, heads[q], pargs[q]);
     }
     let ps2 = seq![d0, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
     assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))

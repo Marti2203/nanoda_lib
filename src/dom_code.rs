@@ -387,7 +387,7 @@ pub open spec fn sdoms_typed(sig: Sig, r: int, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = canon_shape(sig, h->Const_0);
     h is Const && has_canon(sig, h->Const_0) ==>
-        forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort
+        forall|q: int| 0 <= q < a.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             ==> crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
 }
@@ -439,7 +439,7 @@ pub open spec fn fields_typed_h(sig: Sig, ind: u64) -> bool {
 /// boundary (its heads take sorts) in place of its typing.
 pub open spec fn pfield_ok_h(sig: Sig, ind: u64, p: int, k: int) -> bool {
     let sh = canon_shape(sig, ind);
-    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q])
     &&& crate::dom_field_ty::psd(sig, sh.fields[p][k])
     &&& crate::dom_canon::pcapp(sig, sh.fields[p][k], ind)
 }
@@ -449,7 +449,7 @@ pub open spec fn pfield_ok_h(sig: Sig, ind: u64, p: int, k: int) -> bool {
 /// below `ind` (docs/TYPED_TARGET.md, S6 "Parameters", P3b).
 pub open spec fn pfield_ok(sig: Sig, ind: u64, p: int, k: int) -> bool {
     let sh = canon_shape(sig, ind);
-    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q])
     &&& crate::dom_psimple::ptyped(sig, rk(sig, ind), sh.pdoms, crate::rec_canon::plow(sh.fields[p][k], k as nat))
     &&& crate::dom_canon::pranked(sig, sh.fields[p][k], rk(sig, ind))
 }
@@ -463,12 +463,78 @@ pub open spec fn prop_ok(sig: Sig, ind: u64) -> bool {
         && (canon_shape(sig, ind).nmin() == 0 || (smash(sig, ind) && crate::rec_canon::shape_props(canon_shape(sig, ind)))))
 }
 
+/// Every parameter domain of `ind` that is a sort or an alias at one is
+/// sound (`dom_adeq_syn::pdom_alias`).
+#[verifier::opaque]
+pub open spec fn pdoms_alias(sig: Sig, ind: u64) -> bool {
+    let sh = canon_shape(sig, ind);
+    forall|q: int| 0 <= q < sh.pdoms.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) ==> #[trigger] crate::dom_adeq_syn::pdom_alias(sig, sh.pdoms[q])
+}
+
+/// EVERY CANONICAL FORMER'S SORT-SHAPED PARAMETER DOMAINS ARE SOUND: a
+/// sort, or a sort alias at one (docs/TYPED_TARGET.md, "outParam").
+#[verifier::opaque]
+pub open spec fn canon_aliases(sig: Sig) -> bool {
+    forall|ind: u64| #[trigger] has_canon(sig, ind) ==> pdoms_alias(sig, ind)
+}
+
+pub proof fn canon_aliases_at(sig: Sig, ind: u64)
+    requires
+        canon_aliases(sig),
+        has_canon(sig, ind),
+    ensures
+        pdoms_alias(sig, ind),
+{
+    reveal(canon_aliases);
+}
+
+pub proof fn pdoms_alias_intro(sig: Sig, ind: u64)
+    requires
+        forall|q: int| 0 <= q < canon_shape(sig, ind).pdoms.len() && crate::rec_canon::pdom_ok(canon_shape(sig, ind).pdoms[q])
+            ==> #[trigger] crate::dom_adeq_syn::pdom_alias(sig, canon_shape(sig, ind).pdoms[q]),
+    ensures
+        pdoms_alias(sig, ind),
+{
+    reveal(pdoms_alias);
+}
+
+pub proof fn pdoms_alias_at(sig: Sig, ind: u64, q: int)
+    requires
+        pdoms_alias(sig, ind),
+        0 <= q < canon_shape(sig, ind).pdoms.len(),
+        crate::rec_canon::pdom_ok(canon_shape(sig, ind).pdoms[q]),
+    ensures
+        crate::dom_adeq_syn::pdom_alias(sig, canon_shape(sig, ind).pdoms[q]),
+{
+    reveal(pdoms_alias);
+}
+
+/// The parameters' context, sound in any signature with the same
+/// constants and ranks.
+pub proof fn pdoms_alias_ctx(sig: Sig, ss: Sig, ind: u64)
+    requires
+        pdoms_alias(sig, ind),
+        forall|q: int| 0 <= q < canon_shape(sig, ind).pdoms.len() ==> crate::rec_canon::pdom_ok(#[trigger] canon_shape(sig, ind).pdoms[q]),
+        ss.consts == sig.consts,
+        ss.rank == sig.rank,
+    ensures
+        forall|q: int| 0 <= q < canon_shape(sig, ind).pdoms.len() ==> crate::rec_canon::pdom_ok(#[trigger] canon_shape(sig, ind).pdoms[q])
+            && crate::dom_adeq_syn::pdom_alias(ss, canon_shape(sig, ind).pdoms[q]),
+{
+    reveal(pdoms_alias);
+    let pd = canon_shape(sig, ind).pdoms;
+    assert forall|q: int| 0 <= q < pd.len() implies crate::rec_canon::pdom_ok(#[trigger] pd[q])
+        && crate::dom_adeq_syn::pdom_alias(ss, pd[q]) by {
+        assert(crate::dom_adeq_syn::pdom_alias(sig, pd[q]));
+    }
+}
+
 /// `ind` at `ls` has its canonical table over `args`.
 /// `ind` has canonical tables: ranked, with a canonical recursor, no level
 /// parameters, typed field types, and neither a constructor nor a
 /// recursor.
 pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && prop_ok(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && prop_ok(sig, ind) && pdoms_alias(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }
@@ -476,7 +542,7 @@ pub open spec fn canon_ok(sig: Sig, ind: u64) -> bool {
 /// What subject reduction needs of `ind`: its canonical tables' syntactic
 /// half, at any sort.
 pub open spec fn canon_sr(sig: Sig, ind: u64) -> bool {
-    rk(sig, ind) >= 0 && has_canon(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
+    rk(sig, ind) >= 0 && has_canon(sig, ind) && pdoms_alias(sig, ind) && fields_typed(sig, ind) && crate::ti_syntax::iota_ok(sig)
         && fields_blind(sig, ind) && crate::dom_levels::sig_lps(sig) && crate::dom_levels::lps_distinct(sig.consts[ind].lps)
         && !sig.ienv.ctor_ind.contains_key(ind) && !sig.ienv.recs.contains_key(ind)
 }

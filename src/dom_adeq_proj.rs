@@ -83,7 +83,7 @@ pub proof fn pfield(sig: Sig, s: u64, i: nat, ls: Seq<LevelSpec>)
         let f = sh.fields[0][i as int];
         &&& f is Var
         &&& i <= f->Var_0 < i + sh.np
-        &&& sh.pdoms[(sh.np + i - 1 - f->Var_0) as int] is Sort
+        &&& crate::rec_canon::pdom_ok(sh.pdoms[(sh.np + i - 1 - f->Var_0) as int])
         &&& crate::ti_proj::sfield(sig, s, i, ls) == f
     }),
 {
@@ -181,15 +181,22 @@ pub proof fn sfield_conv(sig: Sig, g: Ctx, s: u64, i: nat, us: Seq<LevelSpec>, u
             let dz = crate::ti_sub::get(ss, eq(sh.pdoms, e, e, sort(lz)));
             let wz = crate::ti_meta::d_wf(ss, dz);
             crate::ti_meta::mk_d(ss, wz);
+            assert forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] crate::dom_adeq_syn::pdom_alias(sig, sh.pdoms[q]) by {
+                crate::dom_code::pdoms_alias_at(sig, s, q);
+            }
             crate::dom_psimple::pprop_zero(sig, s, sh.pdoms, np, rr, e)
         } else {
             choose|l: LevelSpec| #[trigger] derivable(ss, eq(sh.pdoms, e, e, sort(l)))
         };
         let gl = crate::ti_level::gls(sh.pdoms, lps, us);
-        assert forall|q: int| 0 <= q < gl.len() implies gl[q] is Sort
+        assert forall|q: int| 0 <= q < gl.len() implies crate::rec_canon::pdom_ok(gl[q]) && crate::dom_adeq_syn::pdom_alias(sig, gl[q])
             && derivable(sig, eq(g, #[trigger] ps[q], ps2[q], gl[q])) by {
-            let _s = sh.pdoms[q];
-            assert(gl[q] == crate::dom_rel::ptype(sig, s, us, q));
+            assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
+            assert(derivable(sig, eq(g, ps[q], ps2[q], crate::dom_rel::ptype(sig, s, us, q))));
+            crate::rec_canon::pdom_facts(sh.pdoms[q], lps, us);
+            crate::dom_code::pdoms_alias_at(sig, s, q);
+            crate::dom_adeq_syn::pdom_alias_sl(sig, sh.pdoms[q], lps, us);
+            crate::dom_adeq_syn::ptype_conv(sig, g, s, us, q, ps[q], ps2[q]);
         }
         crate::dom_psimple::ps_pair(sig, g, s, us, us2, e, sort(l0), ps, ps2);
         if crate::rec_canon::pprop(sh.pdoms, np, i, f) {
@@ -244,7 +251,7 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
         crate::dom_rel::cpar(sig, dl, spine_head(st)->Const_0, crate::dom_rel::cr(sig, x), st),
         crate::dom_rel::iinst(sig, spine_head(st)->Const_0, crate::dom_rel::ir(sig, st, spine_head(st)->Const_0)) == spine_head(st)->Const_1,
         forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).np
-            && crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).pdoms[q] is Sort
+            && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, spine_head(st)->Const_0).pdoms[q])
             ==> #[trigger] crate::dom_rel::peq(sig, dl, spine_head(st)->Const_0, spine_head(st)->Const_1, q,
                 spine_args(crate::dom_rel::cr(sig, x))[q], spine_args(st)[q]),
     ensures ({
@@ -323,11 +330,14 @@ pub proof fn proj_side(sig: Sig, dl: Ctx, i: usize, x: ExprSpec, st: ExprSpec, t
     let ji = eq(dl, pcx, fld, t);
     // the constructor's parameters at their sorts
     let pj = crate::ti_syntax::proj_pjs(sig, dl, pcx);
+    assert(proj_sem(sig));
+    assert(struct_sem(sig, s));
     assert forall|k: int| 0 <= k < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[k]))
         && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[k])) == pj[k] by {
         reveal(crate::ti_syntax::proj_pjs);
-        assert(sh.pdoms[k] is Sort);
+        assert(crate::rec_canon::pdom_ok(sh.pdoms[k]));
         assert(crate::dom_rel::peq(sig, dl, s, cl, k, a[k], a[k]));
+        crate::dom_adeq_syn::ptype_conv(sig, dl, s, cl, k, a[k], a[k]);
         let dk = crate::ti_sub::get(sig, pj[k]);
         crate::ti_sub::pick_of(sig, dk);
     }
@@ -356,15 +366,15 @@ pub proof fn pjs_peq(sig: Sig, dl: Ctx, s: u64, us: Seq<crate::level_model::Leve
     requires
         us.len() == sig.consts[s].lps.len(),
         crate::conv_cr::levs_eq(spine_head(cx)->Const_1, us),
-        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, s).pdoms[q])
             ==> #[trigger] crate::dom_rel::peq(sig, dl, s, us, q, spine_args(cx)[q], spine_args(st)[q]),
     ensures
-        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, s).pdoms[q])
             ==> #[trigger] crate::dom_rel::peq(sig, dl, s, spine_head(cx)->Const_1, q, spine_args(cx)[q], spine_args(cx)[q]),
 {
     let cl = spine_head(cx)->Const_1;
     crate::ti_ls2::levs_eq_sym(cl, us);
-    assert forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+    assert forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, s).pdoms[q])
         implies #[trigger] crate::dom_rel::peq(sig, dl, s, cl, q, spine_args(cx)[q], spine_args(cx)[q]) by {
         crate::dom_rel::peq_lv(sig, dl, s, us, cl, q, spine_args(cx)[q], spine_args(st)[q]);
         crate::dom_rel::peq_symm(sig, dl, s, cl, q, spine_args(cx)[q], spine_args(st)[q]);
@@ -445,7 +455,7 @@ pub proof fn proj_ctor_levels(sig: Sig, dl: Ctx, s: u64, m: ExprSpec, st: ExprSp
     ensures
         spine_head(crate::dom_rel::cr(sig, m))->Const_1.len() == sig.consts[s].lps.len(),
         crate::conv_cr::levs_eq(spine_head(crate::dom_rel::cr(sig, m))->Const_1, spine_head(st)->Const_1),
-        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, s).pdoms[q])
             ==> #[trigger] crate::dom_rel::peq(sig, dl, s, spine_head(st)->Const_1, q, spine_args(crate::dom_rel::cr(sig, m))[q],
                 spine_args(st)[q]),
 {
@@ -512,7 +522,7 @@ pub proof fn cfty_conv(sig: Sig, dl: Ctx, s: u64, i: nat, cx: ExprSpec, st: Expr
         spine_head(st)->Const_1.len() == sig.consts[s].lps.len(),
         spine_args(st).len() == crate::dom_code::canon_shape(sig, s).np,
         crate::conv_cr::levs_eq(spine_head(cx)->Const_1, spine_head(st)->Const_1),
-        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, s).pdoms[q])
             ==> #[trigger] crate::dom_rel::peq(sig, dl, s, spine_head(st)->Const_1, q, spine_args(cx)[q], spine_args(st)[q]),
         derivable(sig, crate::ti_syntax::Jd::Wf(dl)),
     ensures
@@ -535,7 +545,7 @@ pub proof fn cfty_conv(sig: Sig, dl: Ctx, s: u64, i: nat, cx: ExprSpec, st: Expr
         pfield_vsub(sig, s, i, us, ps + pj);
         assert((ps + pj)[q] == ps[q]);
         assert(crate::dom_rel::peq(sig, dl, s, us, q, a[q], ps[q]));
-        let lq = sh.pdoms[q]->Sort_0;
+        let lq = crate::rec_canon::pdom_lvl(sh.pdoms[q]);
         let l = crate::level_model::subst_level_spec(lq, sig.consts[s].lps, us);
         assert(crate::dom_rel::ptype(sig, s, us, q) == sort(l));
         l
@@ -545,7 +555,7 @@ pub proof fn cfty_conv(sig: Sig, dl: Ctx, s: u64, i: nat, cx: ExprSpec, st: Expr
         crate::ti_ls2::levs_eq_sym(cl, us);
         assert forall|q: int| 0 <= q < np implies derivable(sig, eq(dl, #[trigger] ps[q], a.subrange(0, np as int)[q],
             crate::dom_rel::ptype(sig, s, us, q))) by {
-            assert(sh.pdoms[q] is Sort);
+            assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
             crate::dom_rel::peq_symm(sig, dl, s, us, q, a[q], ps[q]);
         }
         let zs = a.subrange(np as int, (np + i) as int);

@@ -148,8 +148,22 @@ pub open spec fn fq(sig: Sig, ind: u64, t: ExprSpec, p: int, k: int) -> ExprSpec
     crate::ti_spine::vsub(f, crate::beta_model::spine_args(x).subrange(0, sh.np as int) + Seq::new(k as nat, |_i: int| ExprSpec::Closed))
 }
 
-/// The declared sort of `ind`'s parameter `q` at the level instance `ls`.
+/// The declared sort of `ind`'s parameter `q` at the level instance `ls`
+/// (a sort alias applied to a sort, Lean's `outParam (Sort u)`, read as
+/// that sort).
 pub open spec fn ptype(sig: Sig, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int) -> ExprSpec {
+    let d = crate::dom_code::canon_shape(sig, ind).pdoms[q];
+    if crate::rec_canon::pdom_ok(d) {
+        crate::ti_syntax::sort(crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(d), sig.consts[ind].lps, ls))
+    } else {
+        crate::expr_model::subst_expr_levels(d, sig.consts[ind].lps, ls)
+    }
+}
+
+/// The declared domain of `ind`'s parameter `q` at the level instance
+/// `ls`, as the telescopes have it (`ptype` reads a sort alias at a sort as
+/// that sort).
+pub open spec fn praw(sig: Sig, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int) -> ExprSpec {
     crate::expr_model::subst_expr_levels(crate::dom_code::canon_shape(sig, ind).pdoms[q], sig.consts[ind].lps, ls)
 }
 
@@ -193,11 +207,11 @@ pub proof fn peq_lv(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::Leve
         peq(sig, g, ind, ls, q, x, y),
         crate::conv_cr::levs_eq(ls, ls2),
         ls.len() == sig.consts[ind].lps.len(),
-        crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort,
+        crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q]),
     ensures
         peq(sig, g, ind, ls2, q, x, y),
 {
-    let l0 = crate::dom_code::canon_shape(sig, ind).pdoms[q]->Sort_0;
+    let l0 = crate::rec_canon::pdom_lvl(crate::dom_code::canon_shape(sig, ind).pdoms[q]);
     let lps = sig.consts[ind].lps;
     let (l1, l2) = (crate::level_model::subst_level_spec(l0, lps, ls), crate::level_model::subst_level_spec(l0, lps, ls2));
     crate::ti_ls2::ll_pair(l0, l0, lps, ls, ls2);
@@ -213,7 +227,7 @@ pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> b
         &&& crate::beta_model::spine_head(x)->Const_1.len() == sig.consts[ind].lps.len()
             ==> crate::conv_cr::levs_eq(crate::beta_model::spine_head(x)->Const_1, iinst(sig, ind, ir(sig, t, ind)))
         &&& forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
-            && crate::dom_code::canon_shape(sig, ind).pdoms[q] is Sort
+            && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q])
             ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
     }
 }
@@ -229,7 +243,7 @@ pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) ->
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() == a.len()
         && crate::conv_cr::levs_eq(iinst(sig, ind, ir(sig, t, ind)), iinst(sig, ind, ir(sig, t2, ind)))
-        && (forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q]))
+        && (forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q]))
         && forall|q: int| 0 <= q < a.len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))
             ==> #[trigger] crate::ti_chain::mchain(sig, g, a[q], a2[q])
 }

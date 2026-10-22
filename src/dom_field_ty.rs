@@ -544,7 +544,7 @@ proof fn sdoms_rebuilt(tw: crate::ti_syntax::Sig, r: int, e: ExprSpec, t0: ExprS
         assert(n == xs.len());
         assert(crate::rec_canon::tdoms(ty, n) == xs);
         crate::dom_rel::lpad_id(us, lps.len());
-        assert forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort implies
+        assert forall|q: int| 0 <= q < a.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies
             crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(tw, j, crate::dom_rel::iinst(tw, j, e), q))) by {
             crate::ti_spine::tel_next(dsu, bu, a, q);
@@ -879,7 +879,9 @@ pub proof fn prebuild_arrow(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx,
         crate::dom_rec_end::sig_sr(s),
         crate::ti_syntax::derivable(s, crate::ti_syntax::eq(gc, crate::ti_syntax::pi(ta, tb), crate::ti_syntax::pi(ta, tb), te)),
         gc.len() == pdoms.len() + k,
-        forall|q: int| 0 <= q < pdoms.len() ==> gc[q] == #[trigger] pdoms[q] && pdoms[q] is Sort,
+        forall|q: int| 0 <= q < pdoms.len() ==> gc[q] == #[trigger] pdoms[q] && crate::rec_canon::pdom_ok(pdoms[q]),
+        forall|q: int| 0 <= q < pdoms.len() ==> crate::dom_adeq_syn::pdom_alias(s, #[trigger] pdoms[q])
+            && crate::dom_adeq_syn::pdom_alias(crate::ti_strip::strip_below(tw, r), pdoms[q]),
         crate::rec_canon::psimple(s, ind, pdoms, pdoms.len(), k, ta),
         crate::rec_canon::psimple(s, ind, pdoms, pdoms.len(), k + 1, tb),
         psd(s, ta),
@@ -913,7 +915,7 @@ pub proof fn prebuild_arrow(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx,
     // the parts, rebuilt
     let la = prebuild(s, gc, tw, r, ind, pdoms, k, ta, sort(l1));
     let gc2 = gc.push(ta);
-    assert forall|q: int| 0 <= q < pdoms.len() implies gc2[q] == #[trigger] pdoms[q] && pdoms[q] is Sort by {
+    assert forall|q: int| 0 <= q < pdoms.len() implies gc2[q] == #[trigger] pdoms[q] && crate::rec_canon::pdom_ok(pdoms[q]) by {
         assert(gc2[q] == gc[q]);
     }
     let lb = prebuild(s, gc2, tw, r, ind, pdoms, k + 1, tb, sort(l2));
@@ -955,6 +957,39 @@ pub proof fn prebuild_arrow(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx,
     lm
 }
 
+/// A sound parameter domain of the larger signature, in a context of the
+/// smaller one, is sound there and below any rank.
+pub proof fn pdom_alias_down(big: crate::ti_syntax::Sig, small: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, q: int, r: int)
+    requires
+        agree(big, small),
+        crate::ti_sr::sig_wf(small),
+        crate::ti_syntax::derivable(small, crate::ti_syntax::Jd::Wf(g)),
+        0 <= q < g.len(),
+        crate::rec_canon::pdom_ok(g[q]),
+        crate::dom_adeq_syn::pdom_alias(big, g[q]),
+    ensures
+        crate::dom_adeq_syn::pdom_alias(small, g[q]),
+        crate::dom_adeq_syn::pdom_alias(crate::ti_strip::strip_below(big, r), g[q]),
+{
+    let e = g[q];
+    if !(e is Sort) {
+        let c = e->App_0->Const_0;
+        crate::ti_beta::wf_prefix(small, g, q + 1);
+        let gq = g.subrange(0, q + 1);
+        let w = crate::ti_sub::get(small, crate::ti_syntax::Jd::Wf(gq));
+        let (_l, dl) = crate::ti_meta::d_wf_last(small, w);
+        assert(gq.last() == e);
+        crate::ti_level::d_consts(small, dl);
+        assert(crate::ti_level::all_consts(e, small.consts.dom())) by {
+            reveal_with_fuel(crate::ti_level::all_consts, 2);
+        }
+        assert(crate::ti_level::all_consts(*e->App_0, small.consts.dom()));
+        assert(small.consts.contains_key(c));
+        assert(big.consts[c] == small.consts[c]);
+        assert(crate::ti_syntax::is_def(small, c, seq![crate::level_model::LevelSpec::Zero]));
+    }
+}
+
 #[verifier::spinoff_prover]
 pub proof fn prebuild(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: crate::ti_syntax::Sig, r: int, ind: u64,
     pdoms: Seq<ExprSpec>, k: nat, e: ExprSpec, te: ExprSpec) -> (l: LevelSpec)
@@ -962,7 +997,9 @@ pub proof fn prebuild(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: c
         crate::dom_rec_end::sig_sr(s),
         crate::ti_syntax::derivable(s, crate::ti_syntax::eq(gc, e, e, te)),
         gc.len() == pdoms.len() + k,
-        forall|q: int| 0 <= q < pdoms.len() ==> gc[q] == #[trigger] pdoms[q] && pdoms[q] is Sort,
+        forall|q: int| 0 <= q < pdoms.len() ==> gc[q] == #[trigger] pdoms[q] && crate::rec_canon::pdom_ok(pdoms[q]),
+        forall|q: int| 0 <= q < pdoms.len() ==> crate::dom_adeq_syn::pdom_alias(s, #[trigger] pdoms[q])
+            && crate::dom_adeq_syn::pdom_alias(crate::ti_strip::strip_below(tw, r), pdoms[q]),
         crate::rec_canon::psimple(s, ind, pdoms, pdoms.len(), k, e),
         psd(s, e),
         agree(tw, s),
@@ -983,17 +1020,29 @@ pub proof fn prebuild(s: crate::ti_syntax::Sig, gc: crate::ti_syntax::Ctx, tw: c
     if crate::rec_canon::pvar_field(pdoms, np, k, e) {
         let i = e->Var_0;
         let q = (k + np - 1 - i) as int;
-        let lq = pdoms[q]->Sort_0;
+        let pq = pdoms[q];
+        let lq = crate::rec_canon::pdom_lvl(pq);
+        crate::rec_canon::pdom_facts(pq, Seq::empty(), Seq::empty());
         let d = crate::ti_sub::get(s, crate::ti_syntax::eq(gc, e, e, te));
         crate::ti_gen::gen(s, d);
-        assert(gc[gc.len() - 1 - i] == pdoms[q]);
-        assert(crate::ti_syntax::var_ty(gc, i) == crate::ti_syntax::sort(lq));
+        assert(gc[gc.len() - 1 - i] == pq);
+        crate::subst_algebra::lift_closed(i + 1, 0, pq);
+        assert(crate::ti_syntax::var_ty(gc, i) == pq);
+        // its declared domain converts with its sort, in both signatures
+        crate::dom_lift::eq_ctx_wf(s, gc, e, e, te);
+        crate::dom_adeq_syn::pdom_pair_i(s, gc, pq, crate::ti_syntax::sort(lq));
+        crate::ti_chain::tchain_one(s, gc, pq, crate::ti_syntax::sort(lq));
+        crate::ti_chain::tchain_trans(s, gc, te, pq, crate::ti_syntax::sort(lq));
         let w = crate::ti_sub::get(tt, crate::ti_syntax::Jd::Wf(pdoms));
         let j = (i - k) as nat;
         let dv = crate::ti_sub::d_var(tt, w, j);
-        assert(pdoms[pdoms.len() - 1 - j] == pdoms[q]);
-        assert(crate::ti_syntax::var_ty(pdoms, j) == crate::ti_syntax::sort(lq));
+        assert(pdoms[pdoms.len() - 1 - j] == pq);
+        crate::subst_algebra::lift_closed(j + 1, 0, pq);
+        assert(crate::ti_syntax::var_ty(pdoms, j) == pq);
         crate::ti_meta::mk_d(tt, dv);
+        crate::dom_adeq_syn::pdom_conv0(tt, pdoms, pq);
+        crate::dom_adeq_syn::dconv(tt, pdoms, ExprSpec::Var(j), ExprSpec::Var(j), pq, crate::ti_syntax::sort(lq),
+            crate::ti_syntax::succ(lq));
         assert(crate::rec_canon::plow(e, k) == ExprSpec::Var(j));
         return lq;
     }
@@ -1119,7 +1168,7 @@ proof fn pdoms_rebuilt(tw: crate::ti_syntax::Sig, r: int, dl: crate::ti_syntax::
         assert(n == xs.len());
         assert(crate::rec_canon::tdoms(ty, n) == xs);
         crate::dom_rel::lpad_id(us, lps.len());
-        assert forall|q: int| 0 <= q < a.len() && q < sh.np && sh.pdoms[q] is Sort implies
+        assert forall|q: int| 0 <= q < a.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies
             crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(tw, j, crate::dom_rel::iinst(tw, j, e), q))) by {
             crate::ti_spine::tel_next(dsu, bu, a, q);

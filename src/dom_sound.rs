@@ -2011,17 +2011,124 @@ proof fn sound_pjs(sig: Sig, d: Deriv, rho: Env)
     let s = sig.ienv.ctor_ind[h->Const_0];
     let sh = crate::dom_code::canon_shape(sig, s);
     let args = crate::beta_model::spine_args(x);
-    if args.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort {
+    if args.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q]) {
         let pj = crate::ti_syntax::proj_pjs(sig, g, m);
+        reveal(crate::ti_syntax::proj_fire);
+        crate::ti_syntax::struct_of_basic(sig, s);
+        crate::dom_ctor_bound::ctor_shape_ind(sig, s);
         assert forall|q: int| 0 <= q < sh.np implies #[trigger] crate::dom_model::jc(sig, args[q], rho)
             && crate::dom_proj_sound::tyd_sort(sig, args[q], rho) by {
             let t = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[s].lps, h->Const_1);
             assert(pj[q] == crate::ti_syntax::eq(g, args[q], args[q], t));
             assert(concl(ps[5 + q]) == pj[q]);
             sound(sig, ps[5 + q], rho);
-            assert(t is Sort);
-            assert(crate::dom_sound::tyd(sig, args[q], rho, ExprSpec::Sort(t->Sort_0)));
+            let lq = crate::rec_canon::pdom_lvl(t);
+            crate::rec_canon::pdom_facts(sh.pdoms[q], sig.consts[s].lps, h->Const_1);
+            crate::dom_code::canon_aliases_at(sig, s);
+            crate::dom_code::pdoms_alias_at(sig, s, q);
+            crate::dom_adeq_syn::pdom_alias_sl(sig, sh.pdoms[q], sig.consts[s].lps, h->Const_1);
+            assert forall|u: Cpt| #[trigger] mem(sig, t, rho, u) == mem(sig, ExprSpec::Sort(lq), rho, u) by {
+                pdom_mem(sig, t, rho, u);
+            }
+            sound_transfer(sig, args[q], args[q], t, ExprSpec::Sort(lq), rho);
+            assert(crate::dom_sound::tyd(sig, args[q], rho, ExprSpec::Sort(lq)));
         }
+    }
+}
+
+/// A definition's members are its value's (closed, so read anywhere).
+pub proof fn mem_const_def(sig: Sig, c: u64, ls: Seq<LevelSpec>, rho: Env, u: Cpt)
+    requires
+        crate::dom_model::unfolds(sig, c, ls),
+        crate::expr_model::nlbv(crate::ti_syntax::dval(sig, c, ls)) == 0,
+    ensures
+        mem(sig, ExprSpec::Const(c, ls), rho, u) ==> mem(sig, crate::ti_syntax::dval(sig, c, ls), rho, u),
+        mem(sig, crate::ti_syntax::dval(sig, c, ls), rho, u) ==> mem(sig, ExprSpec::Const(c, ls), rho, u),
+{
+    let v = crate::ti_syntax::dval(sig, c, ls);
+    crate::dom_model::mem_closed_env(sig, v, rho, u);
+    reveal(mem);
+    if mem(sig, ExprSpec::Const(c, ls), rho, u) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Const(c, ls), rho, u, w);
+        if u is Bot {
+            crate::dom_model::mem_bot(sig, v, rho);
+        } else {
+            assert(!crate::dom_model::sem_const(sig, c, ls));
+            assert(mem_w(sig, v, crate::dom_model::bot_env(), u, w));
+        }
+    }
+    if mem(sig, v, rho, u) {
+        let w = choose|w: Wit| #[trigger] mem_w(sig, v, crate::dom_model::bot_env(), u, w);
+        crate::dom_model::mem_wf(sig, v, crate::dom_model::bot_env(), u, w);
+        assert(mem_w(sig, ExprSpec::Const(c, ls), rho, u, w));
+    }
+}
+
+/// A SOUND PARAMETER'S DOMAIN HAS ITS SORT'S MEMBERS: a sort alias's members
+/// are its identity's, which apply to a sort's members as the sort
+/// (`beta_fwd`, `beta_bwd`).
+pub proof fn pdom_mem(sig: Sig, e: ExprSpec, rho: Env, a: Cpt)
+    requires
+        crate::rec_canon::pdom_ok(e),
+        crate::dom_adeq_syn::pdom_alias(sig, e),
+        forall|i: nat| #[trigger] wf(rho(i)),
+    ensures
+        mem(sig, e, rho, a) == mem(sig, crate::ti_syntax::sort(crate::rec_canon::pdom_lvl(e)), rho, a),
+{
+    if e is Sort {
+        return;
+    }
+    let c = e->App_0->Const_0;
+    let lu = e->App_0->Const_1[0];
+    let l = e->App_1->Sort_0;
+    let s = crate::ti_syntax::sort(l);
+    let su = crate::ti_syntax::sort(lu);
+    let cc = ExprSpec::Const(c, seq![lu]);
+    assert(e->App_0->Const_1 =~= seq![lu]);
+    assert(e == crate::dom_rel::sapp(cc, s));
+    // the alias unfolds to the identity on its sort
+    let p = sig.consts[c].lps[0];
+    let v = crate::ti_syntax::lam(su, ExprSpec::Var(0));
+    assert(crate::ti_syntax::dval(sig, c, seq![lu]) == v) by {
+        reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+        assert(crate::level_model::find_level_idx(seq![p], p) == Some(0nat));
+    }
+    assert(crate::expr_model::nlbv(v) == 0) by { reveal_with_fuel(crate::expr_model::nlbv, 3); }
+    assert(crate::ti_syntax::crank(sig, v) == 0) by { reveal_with_fuel(crate::ti_syntax::crank, 3); }
+    assert(crate::dom_model::unfolds(sig, c, seq![lu]));
+    // the sort typed at the alias's domain
+    sound_univ(sig, l, l, rho);
+    assert(crate::conv_cr::lev_eq(crate::ti_syntax::succ(l), lu)) by {
+        assert forall|r: Map<nat, nat>| #[trigger] crate::level_model::interp(crate::ti_syntax::succ(l), r) == crate::level_model::interp(lu, r) by {
+            assert(crate::level_model::interp(lu, r) == crate::level_model::interp(crate::ti_syntax::succ(l), r));
+        }
+    }
+    sound_univ(sig, crate::ti_syntax::succ(l), lu, rho);
+    sound_conv(sig, s, s, crate::ti_syntax::sort(crate::ti_syntax::succ(l)), su, rho);
+    assert(body_jc(sig, su, ExprSpec::Var(0), rho)) by {
+        assert forall|x: Cpt, a0: Cpt| #[trigger] dfit(sig, su, rho, a0, x) implies jc(sig, ExprSpec::Var(0), ext(rho, x)) by {
+            crate::dom_model::typed_wf(x, a0);
+            crate::dom_model::jc_var(sig, 0, ext(rho, x));
+        }
+    }
+    assert(crate::subst_algebra::inst(0, s, ExprSpec::Var(0)) == s) by {
+        reveal_with_fuel(crate::subst_algebra::inst, 2);
+    }
+    let bapp = ExprSpec::App(Box::new(v), Box::new(s));
+    assert(bapp == crate::dom_rel::sapp(v, s));
+    if mem(sig, e, rho, a) {
+        let (uf, ux) = crate::dom_adeq::app_parts(sig, cc, s, rho, a);
+        mem_const_def(sig, c, seq![lu], rho, uf);
+        crate::dom_adeq::mem_app_intro(sig, v, s, rho, uf, ux);
+        crate::dom_model::mem_down_e(sig, bapp, rho, crate::dom_compact::app(uf, ux), a);
+        beta_fwd(sig, su, ExprSpec::Var(0), s, rho, a);
+    }
+    if mem(sig, s, rho, a) {
+        beta_bwd(sig, su, ExprSpec::Var(0), s, rho, a);
+        let (uf, ux) = crate::dom_adeq::app_parts(sig, v, s, rho, a);
+        mem_const_def(sig, c, seq![lu], rho, uf);
+        crate::dom_adeq::mem_app_intro(sig, cc, s, rho, uf, ux);
+        crate::dom_model::mem_down_e(sig, e, rho, crate::dom_compact::app(uf, ux), a);
     }
 }
 

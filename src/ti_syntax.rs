@@ -453,10 +453,10 @@ pub open spec fn struct_of(sig: Sig, s: u64) -> bool {
         0 <= k < crate::dom_code::canon_shape(sig, s).fields[0].len() && 0 <= q < crate::dom_code::canon_shape(sig, s).np
         && !crate::rec_canon::pvar_field(crate::dom_code::canon_shape(sig, s).pdoms, crate::dom_code::canon_shape(sig, s).np, k as nat,
             crate::dom_code::canon_shape(sig, s).fields[0][k])
-        ==> crate::dom_code::canon_shape(sig, s).pdoms[q] is Sort
+        ==> crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, s).pdoms[q])
     &&& always_prop(sig, s) || ((crate::dom_code::never_prop(sig, s) || crate::dom_code::canon_shape(sig, s).fields[0].len() == 0)
-        && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && (#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]) is Sort ==>
-            never_zero(crate::dom_code::canon_shape(sig, s).pdoms[q]->Sort_0))
+        && forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, s).np && crate::rec_canon::pdom_ok(#[trigger] crate::dom_code::canon_shape(sig, s).pdoms[q]) ==>
+            never_zero(crate::rec_canon::pdom_lvl(crate::dom_code::canon_shape(sig, s).pdoms[q])))
     &&& forall|r1: u64, r2: u64| #![trigger crate::rec_canon::rec_canon(sig, r1), crate::rec_canon::rec_canon(sig, r2)]
         crate::rec_canon::rec_canon(sig, r1) && crate::rec_canon::rec_ind(sig, r1) == s
         && crate::rec_canon::rec_canon(sig, r2) && crate::rec_canon::rec_ind(sig, r2) == s ==> r1 == r2
@@ -612,7 +612,7 @@ pub open spec fn proj_pjs(sig: Sig, g: Ctx, m: ExprSpec) -> Seq<Jd> {
     let s = sig.ienv.ctor_ind[h->Const_0];
     let sh = crate::dom_code::canon_shape(sig, s);
     let ps = crate::beta_model::spine_args(x);
-    if ps.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort {
+    if ps.len() >= sh.np && forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q]) {
         Seq::new(sh.np, |q: int| eq(g, ps[q], ps[q], crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[s].lps, h->Const_1)))
     } else {
         Seq::empty()
@@ -810,7 +810,7 @@ pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
-        crate::dom_rec_end::rec_interp(sig, rid) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> (#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]) is Sort
+        crate::dom_rec_end::rec_interp(sig, rid) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> crate::rec_canon::pdom_ok(#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q])
     }),
 {
     crate::ti_syntax::frag_of(sig, crate::beta_model::spine_head(m)->Const_0);
@@ -829,8 +829,8 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
         let lv = crate::beta_model::spine_head(m)->Const_1;
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         let pd = sh.pdoms[q];
-        &&& pd is Sort
-        &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv) is Sort
+        &&& crate::rec_canon::pdom_ok(pd)
+        &&& crate::rec_canon::pdom_ok(crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv))
         &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv)
             == crate::expr_model::subst_expr_levels(pd, sh.lps, crate::dom_rec_ty::rinst(sig, rid, lv))
         &&& crate::level_inst::elp_in(pd, sig.ienv.recs[rid].uparams)
@@ -845,6 +845,7 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     crate::dom_rec_ty::rinst_id(sig, rid, lv, pd);
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     crate::dom_levels::elp_mono(pd, sh.lps, sig.ienv.recs[rid].uparams);
+    crate::rec_canon::pdom_facts(pd, sig.ienv.recs[rid].uparams, lv);
 }
 
 /// A derivation is valid: every rule instance is correct.

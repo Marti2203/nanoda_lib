@@ -289,13 +289,13 @@ proof fn walk_facts(
         &&& am.len() == np
         &&& crate::ti_syntax::dty_at(sig, cid, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, cb)
         &&& tds.len() == np + sh.fields[0].len()
-        &&& forall|q: int| 0 <= q < np ==> #[trigger] tds[q] == crate::dom_rel::ptype(sig, ind, ls, q)
+        &&& forall|q: int| 0 <= q < np ==> #[trigger] tds[q] == crate::dom_rel::praw(sig, ind, ls, q)
         &&& forall|k: int| 0 <= k < sh.fields[0].len() ==> #[trigger] tds[np + k] == crate::ti_proj::sfield(sig, ind, k as nat, ls)
         &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), ety, ety, crate::ti_syntax::sort(lt)))
         &&& crate::beta_model::spine_head(ety) == ExprSpec::Const(ind, ls)
         &&& crate::beta_model::spine_args(ety) == am
         &&& forall|q: int| 0 <= q < np ==> #[trigger] crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), am[q], am[q],
-            crate::ti_spine::vsub(crate::dom_rel::ptype(sig, ind, ls, q), am.subrange(0, q))))
+            crate::ti_spine::vsub(crate::dom_rel::praw(sig, ind, ls, q), am.subrange(0, q))))
         &&& cs[0] == crate::ti_syntax::dty_at(sig, cid, ls)
         &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), s, s, ety))
     }),

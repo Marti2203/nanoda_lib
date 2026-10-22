@@ -226,13 +226,18 @@ pub proof fn field_vsub_pre(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpe
 pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        forall|q: int| 0 <= q < rshape(sig, rid).np ==> (#[trigger] rshape(sig, rid).pdoms[q]) is Sort,
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, rid).pdoms[q]),
         0 <= q < rshape(sig, rid).np,
         q <= xs.len(),
+        crate::dom_code::pdoms_alias(sig, rshape(sig, rid).ind),
     ensures
         crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat)
-            == crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q),
+            == crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q),
         crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q) is Sort,
+        crate::rec_canon::pdom_ok(crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q)),
+        crate::dom_adeq_syn::pdom_alias(sig, crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q)),
+        crate::ti_hred::hred(sig, crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q),
+            crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q)),
 {
     let sh = rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
@@ -249,9 +254,50 @@ pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>
     crate::dom_rec_ty::rinst_id(sig, rid, lv, sh.pdoms[q]);
     let us = crate::dom_rec_ty::rinst(sig, rid, lv);
     crate::iota_sr::ptype_at(sig, rid, us, q);
-    let pt = crate::dom_rel::ptype(sig, sh.ind, us, q);
-    assert(rtds(sig, rid, lv)[q] == pt);
-    crate::ti_spine::vsub_closed(pt, xs.subrange(0, q));
+    let pr = crate::dom_rel::praw(sig, sh.ind, us, q);
+    assert(rtds(sig, rid, lv)[q] == pr);
+    crate::rec_canon::pdom_facts(sh.pdoms[q], sig.consts[sh.ind].lps, us);
+    crate::ti_spine::vsub_closed(pr, xs.subrange(0, q));
+    crate::dom_code::pdoms_alias_at(sig, sh.ind, q);
+    crate::dom_adeq_syn::pdom_alias_sl(sig, sh.pdoms[q], sig.consts[sh.ind].lps, us);
+    crate::dom_adeq_syn::pdom_hred(sig, pr);
+}
+
+/// `head_pdom` in a recursor's signature, with a typing at the
+/// telescope's domain moved to the parameter's sort and back.
+pub proof fn head_pdom_eq(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int, g: crate::ti_syntax::Ctx, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_rec_end::sig_rec(sig),
+        forall|q: int| 0 <= q < rshape(sig, rid).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, rid).pdoms[q]),
+        0 <= q < rshape(sig, rid).np,
+        q <= xs.len(),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat)))
+            || crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y,
+                crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q))),
+    ensures ({
+        let td = crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat);
+        let pt = crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q);
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, td))
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, pt))
+        &&& pt is Sort
+        &&& crate::ti_hred::hred(sig, td, pt)
+        &&& td == crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q)
+    }),
+{
+    let sh = rshape(sig, rid);
+    let td = crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat);
+    let pt = crate::dom_rel::ptype(sig, sh.ind, crate::dom_rec_ty::rinst(sig, rid, lv), q);
+    crate::dom_rec_end::rec_pdoms_alias(sig, rid);
+    head_pdom(sig, rid, lv, xs, q);
+    if crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, td)) {
+        crate::dom_lift::eq_ctx_wf(sig, g, x, y, td);
+    } else {
+        crate::dom_lift::eq_ctx_wf(sig, g, x, y, pt);
+    }
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    crate::dom_adeq_syn::ptype_conv(sig, g, sh.ind, crate::dom_rec_ty::rinst(sig, rid, lv), q, x, y);
 }
 
 /// The minor's binders at the instance: fields, then hypotheses.

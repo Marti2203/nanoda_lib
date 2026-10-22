@@ -169,7 +169,7 @@ proof fn uniq_proj(sig: Sig, g: Ctx, i: usize, x: ExprSpec, ta: ExprSpec, tb: Ex
         crate::dom_proj_sound::struct_fields(sig, s1);
         let _f = sh.fields[0][i as int];
         assert forall|q: int| 0 <= q < sh.np implies derivable(sig, eq(g, #[trigger] xs[q], ys[q], crate::dom_rel::ptype(sig, s1, us1, q))) by {
-            assert(sh.pdoms[q] is Sort);
+            assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
             assert(crate::dom_rel::peq(sig, g, s1, us1, q, xs[q], ys[q]));
         }
         crate::dom_lift::eq_ctx_wf(sig, g, x, x, st1);
@@ -670,7 +670,7 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
         let _f = sh.fields[0][i as int];
         assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ra[q], spine_args(st)[q],
             crate::dom_rel::ptype(sig, s, cl, q))) by {
-            assert(sh.pdoms[q] is Sort);
+            assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
             assert(crate::dom_rel::peq(sig, g, s, cl, q, ra[q], spine_args(st)[q]));
         }
         crate::dom_lift::eq_ctx_wf(sig, g, x, x, r);
@@ -695,7 +695,8 @@ pub proof fn sr_proj_fire(sig: Sig, g: Ctx, i: usize, x: ExprSpec, t: ExprSpec, 
         reveal(crate::ti_syntax::proj_pjs);
         crate::ti_spine::tel_next(ds, body, aa, k);
         assert(ds[k] == crate::expr_model::subst_expr_levels(sh.pdoms[k], lps, cl));
-        assert(sh.pdoms[k] is Sort);
+        assert(crate::rec_canon::pdom_ok(sh.pdoms[k]));
+        crate::rec_canon::pdom_facts(sh.pdoms[k], lps, cl);
         crate::ti_spine::vsub_closed(ds[k], aa.subrange(0, k));
         assert(pj[k] == eq(g, aa[k], aa[k], ds[k]));
         let dk = get(sig, pj[k]);

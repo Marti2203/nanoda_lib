@@ -648,8 +648,8 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
         let pi = crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, spine_head(m)->Const_1);
         assert(spine_head(psub(m, t)) == spine_head(m));
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pi));
-        assert(pi is Sort);
-        assert(psub(pi, t) == pi);
+        crate::rec_canon::pdom_facts(pi, Seq::empty(), Seq::empty());
+        psub_closed(pi, t);
         assert(spine_args(psub(m, t))[q] == psub(args[q], t));
         assert(spine_args(psub(major, t))[q] == psub(cargs[q], t));
     }
@@ -679,9 +679,9 @@ pub proof fn proj_pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx,
     assert forall|q: int| 0 <= q < pj.len() implies #[trigger] pj2[q]
         == crate::ti_syntax::eq(g2, psub(pj[q]->Eq_1, t), psub(pj[q]->Eq_2, t), psub(pj[q]->Eq_3, t)) by {
         let ty = crate::expr_model::subst_expr_levels(sh.pdoms[q], sig.consts[sig.ienv.ctor_ind[h->Const_0]].lps, h->Const_1);
-        assert(sh.pdoms[q] is Sort);
-        assert(ty is Sort);
-        assert(psub(ty, t) == ty);
+        assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
+        crate::rec_canon::pdom_facts(sh.pdoms[q], sig.consts[sig.ienv.ctor_ind[h->Const_0]].lps, h->Const_1);
+        psub_closed(ty, t);
         assert(spine_args(psub(x, t))[q] == psub(spine_args(x)[q], t));
     }
 }

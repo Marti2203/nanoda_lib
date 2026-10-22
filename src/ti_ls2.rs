@@ -888,7 +888,7 @@ pub proof fn ls_pair_nil(sig: Sig, m: ExprSpec, n: ExprSpec, t: ExprSpec, ks: Se
 pub proof fn lpair_sorts(sig: Sig, g: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>, vs2: Seq<LevelSpec>)
     requires
         derivable(sig, Jd::Wf(g)),
-        forall|q: int| 0 <= q < g.len() ==> (#[trigger] g[q]) is Sort,
+        forall|q: int| 0 <= q < g.len() ==> crate::rec_canon::pdom_ok(#[trigger] g[q]) && crate::dom_adeq_syn::pdom_alias(sig, g[q]),
         sig_lp_ok(sig, ks, vs),
         sig_lp_ok(sig, ks, vs2),
         levs_eq(vs, vs2),
@@ -906,10 +906,9 @@ pub proof fn lpair_sorts(sig: Sig, g: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>, vs2
     }
     assert forall|i: nat| i < g.len() implies #[trigger] tconvd(sig, dl, le_(var_ty(g, i), ks, vs), le_(var_ty(g, i), ks, vs2)) by {
         let a = g[g.len() - 1 - i];
-        let l = a->Sort_0;
-        assert(a == sort(l));
+        crate::rec_canon::pdom_facts(a, Seq::empty(), Seq::empty());
         crate::subst_algebra::lift_closed(i + 1, 0, a);
-        sort_pair(sig, dl, l, ks, vs, vs2);
+        crate::dom_adeq_syn::pdom_pair(sig, dl, a, ks, vs, vs2);
     }
 }
 

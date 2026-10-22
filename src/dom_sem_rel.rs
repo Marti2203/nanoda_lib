@@ -195,7 +195,7 @@ pub open spec fn tf_pconv(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, m: ExprS
     let li = crate::dom_rel::lpad(ls, sig.consts[c].lps.len());
     &&& crate::conv_cr::levs_eq(crate::dom_rel::iinst(sig, c, m), crate::dom_rel::iinst(sig, c, m2))
     &&& crate::conv_cr::levs_eq(crate::dom_rel::iinst(sig, c, m), li)
-    &&& (forall|q: int| 0 <= q < p.len() && q < sh.np && sh.pdoms[q] is Sort
+    &&& (forall|q: int| 0 <= q < p.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
         ==> #[trigger] crate::dom_rel::peq(sig, g, c, li, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]))
     &&& forall|q: int| 0 <= q < p.len()
         ==> #[trigger] crate::ti_chain::mchain(sig, g, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q])
@@ -224,6 +224,7 @@ pub open spec fn tf_shape(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Exp
 pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec,
     t: ExprSpec, t0: ExprSpec, tt: Seq<ExprSpec>, x: ExprSpec, x2: ExprSpec, w: Cpt)
     requires
+        crate::dom_code::canon_aliases(sig),
         tf_shape(sig, g, c, ls, tel, p, m, m2, t, t0, tt),
         tel is Bind && tel->Bind_0 == BinderKind::Pi,
         crate::beta_model::spine_args(m).len() == p.len(),
@@ -264,11 +265,16 @@ pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Ex
         assert(crate::beta_model::spine_args(sapp(m, x2)) == a1.push(x2));
         assert(crate::beta_model::spine_args(sapp(m2, x)) == a2.push(x));
         assert(crate::beta_model::spine_args(sapp(m2, x2)) == a2.push(x2));
-        if k < sh.np && sh.pdoms[k] is Sort {
+        if k < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[k]) {
             // a type parameter: its arguments convert as types
             assert(ds[k] == crate::expr_model::subst_expr_levels(sh.pdoms[k], lps, ls));
+            crate::rec_canon::pdom_facts(sh.pdoms[k], lps, ls);
             crate::ti_spine::vsub_closed(ds[k], tt);
-            let l = ta->Sort_0;
+            assert(derivable(sig, eq(g, x, x2, ds[k])));
+            crate::dom_code::canon_aliases_at(sig, c);
+            crate::dom_lift::eq_ctx_wf(sig, g, x, x2, ds[k]);
+            crate::dom_adeq_syn::ptype_conv(sig, g, c, ls, k, x, x2);
+            let l = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(sh.pdoms[k]), lps, ls);
             assert(derivable(sig, eq(g, x, x2, sort(l))));
             reveal(crate::ti_sub::tconvd);
             tchain_one(sig, g, x, x2);
@@ -283,14 +289,14 @@ pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Ex
         crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, c, m));
         crate::ti_ls2::levs_eq_refl(crate::dom_rel::iinst(sig, c, m2));
         let p2 = p.push(w);
-        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, c, li, q, a1.push(x)[q], a2.push(x2)[q]) by {
             if q < p.len() {
                 assert(crate::dom_rel::peq(sig, g, c, li, q, a1[q], a2[q]));
                 assert(a1.push(x)[q] == a1[q] && a2.push(x2)[q] == a2[q]);
             }
         }
-        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, c, li, q, a1.push(x)[q], a1.push(x2)[q]) by {
             if q < p.len() {
                 assert(crate::dom_rel::peq(sig, g, c, li, q, a1[q], a2[q]));
@@ -298,7 +304,7 @@ pub proof fn tf_shape_step(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: Ex
                 assert(a1.push(x)[q] == a1[q] && a1.push(x2)[q] == a1[q]);
             }
         }
-        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && sh.pdoms[q] is Sort
+        assert forall|q: int| 0 <= q < p2.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, c, li, q, a2.push(x)[q], a2.push(x2)[q]) by {
             if q < p.len() {
                 assert(crate::dom_rel::peq(sig, g, c, li, q, a1[q], a2[q]));
@@ -461,6 +467,7 @@ pub proof fn tf_arg_rel(sig: Sig, k: nat, g: Ctx, ta: ExprSpec, x: ExprSpec, x2:
 pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: ExprSpec, p: Seq<Cpt>, m: ExprSpec, m2: ExprSpec, t: ExprSpec, u: Cpt, a: Cpt,
     t0: ExprSpec, tt: Seq<ExprSpec>)
     requires
+        crate::dom_code::canon_aliases(sig),
         crate::beta_model::spine_head(m) is Const && crate::beta_model::spine_head(m)->Const_0 == c,
         crate::beta_model::spine_head(m2) is Const && crate::beta_model::spine_head(m2)->Const_0 == c,
         !sig.ienv.recs.contains_key(c),
@@ -547,7 +554,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
                 let li = crate::dom_rel::lpad(ls, lps.len());
                 let im = crate::dom_rel::iinst(sig, c, m);
                 crate::ti_ls2::levs_eq_sym(im, li);
-                assert forall|q: int| 0 <= q < sc.np && sc.pdoms[q] is Sort implies
+                assert forall|q: int| 0 <= q < sc.np && crate::rec_canon::pdom_ok(sc.pdoms[q]) implies
                     #[trigger] crate::dom_rel::peq(sig, g, c, im, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]) by {
                     crate::dom_rel::peq_lv(sig, g, c, li, im, q, crate::beta_model::spine_args(m)[q], crate::beta_model::spine_args(m2)[q]);
                 }
@@ -557,7 +564,7 @@ pub proof fn tf_rel(sig: Sig, n: nat, g: Ctx, c: u64, ls: Seq<LevelSpec>, tel: E
                 }
                 assert(crate::dom_rel::pconv(sig, g, c, m, m2));
             }
-            assert forall|q: int, c2: Cpt| 0 <= q < sc.np && sc.pdoms[q] is Sort && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
+            assert forall|q: int, c2: Cpt| 0 <= q < sc.np && crate::rec_canon::pdom_ok(sc.pdoms[q]) && wf(c2) && le(c2, cs[q]) && has_type(n, c2, Cpt::U)
                 implies #[trigger] rel_ty(sig, n, g, crate::dom_lift::pq(sig, c, m, q), crate::dom_lift::pq(sig, c, m2, q), c2) by {
                 if q < p.len() {
                     assert(cs[q] == p[q]);

@@ -148,12 +148,51 @@ pub open spec fn simple_app(sig: Sig, ind: u64, e: ExprSpec) -> bool
     }
 }
 
+/// A PARAMETER'S DOMAIN that is a sort: a sort, or a one-level constant
+/// applied to a sort (Lean's `outParam (Sort u)`; that the constant is a
+/// sort alias is asked where a typing converts through it,
+/// `dom_adeq_syn::sort_alias`).
+pub open spec fn pdom_ok(e: ExprSpec) -> bool {
+    e is Sort || (e is App && *e->App_0 is Const && e->App_0->Const_1.len() == 1 && *e->App_1 is Sort)
+}
+
+/// Its sort's level.
+pub open spec fn pdom_lvl(e: ExprSpec) -> LevelSpec {
+    if e is Sort { e->Sort_0 } else { e->App_1->Sort_0 }
+}
+
+/// A parameter's domain mentions no variable, and level substitution keeps
+/// it one, at the substituted level.
+pub proof fn pdom_facts(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        pdom_ok(e),
+    ensures
+        crate::expr_model::nlbv(e) == 0,
+        pdom_ok(crate::expr_model::subst_expr_levels(e, ks, vs)),
+        pdom_lvl(crate::expr_model::subst_expr_levels(e, ks, vs)) == crate::level_model::subst_level_spec(pdom_lvl(e), ks, vs),
+        crate::expr_model::nlbv(crate::expr_model::subst_expr_levels(e, ks, vs)) == 0,
+        e is Sort ==> crate::expr_model::subst_expr_levels(e, ks, vs) == ExprSpec::Sort(crate::level_model::subst_level_spec(pdom_lvl(e), ks, vs)),
+{
+    reveal_with_fuel(crate::expr_model::nlbv, 3);
+    reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+}
+
+/// A domain whose level instance is a parameter's domain is one.
+pub proof fn pdom_back(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        pdom_ok(crate::expr_model::subst_expr_levels(e, ks, vs)),
+    ensures
+        pdom_ok(e),
+{
+    reveal_with_fuel(crate::expr_model::subst_expr_levels, 3);
+}
+
 /// A FIELD TYPED BY A TYPE PARAMETER: the parameter's variable under the
 /// `k` earlier fields, the parameter's declared domain a sort.
 pub open spec fn pvar_field(pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool {
     &&& e is Var
     &&& k <= e->Var_0 < k + np
-    &&& pdoms[(k + np - 1 - e->Var_0) as int] is Sort
+    &&& crate::rec_canon::pdom_ok(pdoms[(k + np - 1 - e->Var_0) as int])
 }
 
 /// A SIMPLE TYPE OVER THE PARAMETERS: a type parameter's variable under
@@ -185,7 +224,7 @@ pub open spec fn parrow(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: na
 pub open spec fn pprop(pdoms: Seq<ExprSpec>, np: nat, k: nat, e: ExprSpec) -> bool
     decreases e,
 {
-    (pvar_field(pdoms, np, k, e) && crate::ti_syntax::is_zero(pdoms[(k + np - 1 - e->Var_0) as int]->Sort_0))
+    (pvar_field(pdoms, np, k, e) && crate::ti_syntax::is_zero(crate::rec_canon::pdom_lvl(pdoms[(k + np - 1 - e->Var_0) as int])))
     || match e {
         ExprSpec::Bind(BinderKind::Pi, _, b) => pprop(pdoms, np, k + 1, *b),
         _ => false,

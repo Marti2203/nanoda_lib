@@ -954,6 +954,8 @@ proof fn srg_inj(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, a0: Seq
     crate::ti_meta::mk_d(sig, w);
     // its own instance is the recursor's, up to equivalence
     let ys1 = cargs.subrange(0, np as int) + ctss(sig, rid, p, clv, cargs);
+    assert(crate::dom_rec_end::sig_rec(sig));
+    crate::dom_rec_end::rec_pdoms_alias(sig, rid);
     crate::dom_fund::ind_inj_args(sig, g, sh.ind, us, clv, ps + idx, ys1, crate::ti_syntax::sort(lt));
     crate::dom_rel::lpad_id(clv, lps.len());
     // the constructor at the recursor's instance

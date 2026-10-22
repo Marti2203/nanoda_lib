@@ -182,7 +182,8 @@ pub open spec fn pfield_in(sig: Sig, ind: u64, p: int, k: int) -> bool {
     &&& !crate::rec_canon::direct_occ(sh.fields[p][k], ind, sh.us(), sh.np, sh.ni, k as nat)
     &&& !crate::rec_canon::pvar_field(sh.pdoms, sh.np, k as nat, sh.fields[p][k])
     &&& !simple_ty(sig, ind, sh.fields[p][k])
-    &&& forall|q: int| 0 <= q < sh.np ==> (#[trigger] sh.pdoms[q]) is Sort
+    &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q])
+    &&& crate::dom_code::pdoms_alias(sig, ind)
     &&& crate::dom_field_ty::psd(sig, sh.fields[p][k])
     &&& pcapp(sig, sh.fields[p][k], ind)
 }
@@ -202,6 +203,7 @@ pub proof fn fields_typed_of(sig: Sig, ind: u64)
         crate::dom_rec_end::ctors_below(sig),
         fields_ty(sig),
         fields_typed_h(sig, ind),
+        crate::dom_code::pdoms_alias(sig, ind),
     ensures
         fields_typed(sig, ind),
 {
@@ -531,7 +533,8 @@ pub proof fn ps_bound(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
 /// The codes of `ind`'s type parameters among `args` are types.
 pub open spec fn sparams_typed(sig: Sig, ind: u64, args: Seq<Cpt>) -> bool {
     let sh = canon_shape(sig, ind);
-    has_canon(sig, ind) ==> forall|q: int| 0 <= q < sh.np && q < args.len() && sh.pdoms[q] is Sort ==> #[trigger] typed(args[q], Cpt::U)
+    has_canon(sig, ind) && crate::dom_code::pdoms_alias(sig, ind)
+        ==> forall|q: int| 0 <= q < sh.np && q < args.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) ==> #[trigger] typed(args[q], Cpt::U)
 }
 
 /// Bottom parameters' codes are types.
@@ -542,7 +545,7 @@ pub proof fn bots_sparams(sig: Sig, ind: u64, bn: Seq<Cpt>)
         sparams_typed(sig, ind, bn),
 {
     crate::dom_sound::typed_basic();
-    assert forall|q: int| 0 <= q < canon_shape(sig, ind).np && q < bn.len() && canon_shape(sig, ind).pdoms[q] is Sort
+    assert forall|q: int| 0 <= q < canon_shape(sig, ind).np && q < bn.len() && crate::rec_canon::pdom_ok(canon_shape(sig, ind).pdoms[q])
         implies #[trigger] typed(bn[q], Cpt::U) by {
         assert(bn[q] == Cpt::Bot);
     }
@@ -643,8 +646,8 @@ pub proof fn pprop_code(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pdoms:
         crate::rec_canon::psimple(sig, outer, pdoms, np, k, e),
         aw(pe),
         pe.len() == np + k,
-        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] pe[q], Cpt::U),
-        forall|q: int| 0 <= q < np && pdoms[q] is Sort && crate::ti_syntax::is_zero(pdoms[q]->Sort_0)
+        forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) ==> typed(#[trigger] pe[q], Cpt::U),
+        forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) && crate::ti_syntax::is_zero(crate::rec_canon::pdom_lvl(pdoms[q]))
             ==> typed(#[trigger] pe[q], Cpt::Prop),
     ensures
         typed(ceval(sig, r, outer, ls, pe, e), Cpt::Prop),
@@ -661,10 +664,10 @@ pub proof fn pprop_code(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pdoms:
         let pe2 = pe.push(Cpt::Bot);
         ps_ceval_typed(sig, r, outer, ls, pdoms, np, k, pe, *a);
         aw_push(pe, Cpt::Bot);
-        assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe2[q], Cpt::U) by {
+        assert forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) implies typed(#[trigger] pe2[q], Cpt::U) by {
             assert(pe2[q] == pe[q]);
         }
-        assert forall|q: int| 0 <= q < np && pdoms[q] is Sort && crate::ti_syntax::is_zero(pdoms[q]->Sort_0)
+        assert forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) && crate::ti_syntax::is_zero(crate::rec_canon::pdom_lvl(pdoms[q]))
             implies typed(#[trigger] pe2[q], Cpt::Prop) by {
             assert(pe2[q] == pe[q]);
         }
@@ -707,15 +710,42 @@ pub proof fn binds_eq(ds1: Seq<ExprSpec>, b1: ExprSpec, ds2: Seq<ExprSpec>, b2: 
     }
 }
 
+/// Extending a well-formed environment by well-formed values.
+pub proof fn exts_wf(rho: crate::dom_model::Env, ws: Seq<Cpt>)
+    requires
+        forall|i: nat| #[trigger] wf(rho(i)),
+        forall|i: int| 0 <= i < ws.len() ==> #[trigger] wf(ws[i]),
+    ensures
+        forall|i: nat| #[trigger] wf(crate::dom_tele::exts(rho, ws)(i)),
+    decreases ws.len(),
+{
+    if ws.len() > 0 {
+        let r2 = crate::dom_model::ext(rho, ws[0]);
+        assert forall|i: nat| #[trigger] wf(r2(i)) by {
+            if i > 0 {
+                assert(wf(rho((i - 1) as nat)));
+            }
+        }
+        assert forall|i: int| 0 <= i < ws.drop_first().len() implies #[trigger] wf(ws.drop_first()[i]) by {
+            assert(wf(ws[i + 1]));
+        }
+        exts_wf(r2, ws.drop_first());
+        assert(crate::dom_tele::exts(rho, ws) == crate::dom_tele::exts(r2, ws.drop_first()));
+    } else {
+        assert(crate::dom_tele::exts(rho, ws) == rho);
+    }
+}
+
 /// A TYPE FORMER'S INPUTS at its sort parameters are types.
 pub proof fn chain_sparams(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>, l: LevelSpec, ds: Seq<Cpt>, xs: Seq<Cpt>)
     requires
         dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)),
         crate::dom_tele::chain_ok(sig, tds, bot_env(), ds, xs),
+        ls.len() == sig.consts[c].lps.len(),
     ensures
         sparams_typed(sig, c, xs),
 {
-    if has_canon(sig, c) {
+    if has_canon(sig, c) && crate::dom_code::pdoms_alias(sig, c) {
         let sh = canon_shape(sig, c);
         crate::dom_ctor_bound::ctor_shape_ind(sig, c);
         let ty = sig.consts[c].ty;
@@ -724,11 +754,24 @@ pub proof fn chain_sparams(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSp
         crate::dom_rec_shape::sl_binds(BinderKind::Pi, sh.pdoms + sh.idoms, tb, lps, ls);
         binds_eq(crate::dom_rec_shape::sls(sh.pdoms + sh.idoms, lps, ls), crate::expr_model::subst_expr_levels(tb, lps, ls),
             tds, ExprSpec::Sort(l));
-        assert forall|q: int| 0 <= q < sh.np && q < xs.len() && sh.pdoms[q] is Sort implies #[trigger] typed(xs[q], Cpt::U) by {
+        assert forall|q: int| 0 <= q < sh.np && q < xs.len() && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies #[trigger] typed(xs[q], Cpt::U) by {
             assert(tds[q] == crate::expr_model::subst_expr_levels(sh.pdoms[q], lps, ls));
-            let l2 = tds[q]->Sort_0;
-            assert(crate::dom_sound::dfit(sig, tds[q], crate::dom_tele::exts(bot_env(), xs.subrange(0, q)), ds[q], xs[q]));
-            sort_mem_typed(sig, l2, crate::dom_tele::exts(bot_env(), xs.subrange(0, q)), ds[q], xs[q]);
+            let rho = crate::dom_tele::exts(bot_env(), xs.subrange(0, q));
+            assert(crate::dom_sound::dfit(sig, tds[q], rho, ds[q], xs[q]));
+            crate::rec_canon::pdom_facts(sh.pdoms[q], lps, ls);
+            crate::dom_code::pdoms_alias_at(sig, c, q);
+            crate::dom_adeq_syn::pdom_alias_sl(sig, sh.pdoms[q], lps, ls);
+            assert forall|i: int| 0 <= i < xs.subrange(0, q).len() implies #[trigger] wf(xs.subrange(0, q)[i]) by {
+                assert(crate::dom_sound::dfit(sig, tds[i], crate::dom_tele::exts(bot_env(), xs.subrange(0, i)), ds[i], xs[i]));
+                typed_wf(xs[i], ds[i]);
+            }
+            assert forall|j: nat| #[trigger] wf(bot_env()(j)) by {
+                crate::dom_sound::typed_basic();
+                typed_wf(Cpt::Bot, Cpt::U);
+            }
+            exts_wf(bot_env(), xs.subrange(0, q));
+            crate::dom_sound::pdom_mem(sig, tds[q], rho, ds[q]);
+            sort_mem_typed(sig, crate::rec_canon::pdom_lvl(tds[q]), rho, ds[q], xs[q]);
         }
     }
 }
@@ -787,7 +830,7 @@ pub open spec fn sbound(tds: Seq<ExprSpec>, l: LevelSpec) -> Cpt
     if tds.len() == 0 {
         sortc(l)
     } else {
-        arrow(sortc(tds[0]->Sort_0), sbound(tds.drop_first(), l))
+        arrow(sortc(crate::rec_canon::pdom_lvl(tds[0])), sbound(tds.drop_first(), l))
     }
 }
 
@@ -801,8 +844,8 @@ pub proof fn sbound_wf(tds: Seq<ExprSpec>, l: LevelSpec)
     typed_wf(sortc(l), Cpt::U);
     if tds.len() > 0 {
         sbound_wf(tds.drop_first(), l);
-        typed_wf(sortc(tds[0]->Sort_0), Cpt::U);
-        crate::dom_code::arrow_wf(sortc(tds[0]->Sort_0), sbound(tds.drop_first(), l));
+        typed_wf(sortc(crate::rec_canon::pdom_lvl(tds[0])), Cpt::U);
+        crate::dom_code::arrow_wf(sortc(crate::rec_canon::pdom_lvl(tds[0])), sbound(tds.drop_first(), l));
     }
 }
 
@@ -811,7 +854,8 @@ pub proof fn sbound_wf(tds: Seq<ExprSpec>, l: LevelSpec)
 /// of its generator a member of the rest.
 pub proof fn sbound_mem(sig: Sig, tds: Seq<ExprSpec>, l: LevelSpec, rho: Env, d: Cpt)
     requires
-        forall|q: int| 0 <= q < tds.len() ==> (#[trigger] tds[q]) is Sort,
+        forall|q: int| 0 <= q < tds.len() ==> crate::rec_canon::pdom_ok(#[trigger] tds[q]) && crate::dom_adeq_syn::pdom_alias(sig, tds[q]),
+        forall|i: nat| #[trigger] wf(rho(i)),
         mem(sig, crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)), rho, d),
     ensures
         le(d, sbound(tds, l)),
@@ -835,8 +879,11 @@ pub proof fn sbound_mem(sig: Sig, tds: Seq<ExprSpec>, l: LevelSpec, rho: Env, d:
     match w {
         Wit::Gen(a, gen, wa, ws) => {
             // the domain: a member of its sort
-            let l0 = tds[0]->Sort_0;
+            let l0 = crate::rec_canon::pdom_lvl(tds[0]);
             assert(mem_w(sig, tds[0], rho, a, *wa));
+            crate::dom_sound::pdom_mem(sig, tds[0], rho, a);
+            assert(mem(sig, ExprSpec::Sort(l0), rho, a));
+            let _w0 = choose|w: Wit| #[trigger] mem_w(sig, ExprSpec::Sort(l0), rho, a, w);
             if a is Bot {
                 assert(le(a, sortc(l0))) by { reveal_with_fuel(crate::dom_compact::le_set, 2); }
             } else {
@@ -845,13 +892,19 @@ pub proof fn sbound_mem(sig: Sig, tds: Seq<ExprSpec>, l: LevelSpec, rho: Env, d:
             }
             // every output: a member of the rest, below its bound
             assert(crate::dom_model::entries_ok(sig, tb, rho, a, gen, ws));
-            assert forall|q: int| 0 <= q < rest.len() implies (#[trigger] rest[q]) is Sort by {
+            assert forall|q: int| 0 <= q < rest.len() implies crate::rec_canon::pdom_ok(#[trigger] rest[q]) && crate::dom_adeq_syn::pdom_alias(sig, rest[q]) by {
                 assert(rest[q] == tds[q + 1]);
             }
             assert forall|k: int| 0 <= k < gen->Pi_1.len() implies le(#[trigger] gen->Pi_1[k].1, sbound(rest, l)) by {
                 assert(gsteps(gen) == gen->Pi_1);
                 assert(typed(gsteps(gen)[k].0, a));
                 assert(mem_w(sig, tb, ext(rho, gsteps(gen)[k].0), gsteps(gen)[k].1, ws[k]));
+                typed_wf(gsteps(gen)[k].0, a);
+                assert forall|i: nat| #[trigger] wf(ext(rho, gsteps(gen)[k].0)(i)) by {
+                    if i > 0 {
+                        assert(wf(rho((i - 1) as nat)));
+                    }
+                }
                 sbound_mem(sig, rest, l, ext(rho, gsteps(gen)[k].0), gsteps(gen)[k].1);
             }
             crate::dom_code::arrow_le_intro(gen, sortc(l0), sbound(rest, l));
@@ -882,7 +935,7 @@ pub proof fn apps_bot(ws: Seq<Cpt>)
 pub proof fn proj_chain_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>, l: LevelSpec, pre: Seq<Cpt>,
     f: Cpt, a: Cpt, ws0: Seq<Cpt>) -> (xs: Seq<Cpt>)
     requires
-        forall|q: int| 0 <= q < tds.len() ==> (#[trigger] tds[q]) is Sort,
+        forall|q: int| 0 <= q < tds.len() ==> crate::rec_canon::pdom_ok(#[trigger] tds[q]),
         ws0.len() == tds.len(),
         forall|q: int| 0 <= q < ws0.len() ==> wf(#[trigger] ws0[q]),
         typed(f, a),
@@ -910,7 +963,7 @@ pub proof fn proj_chain_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpe
     let rest = tds.drop_first();
     let trest = crate::rec_canon::binds(BinderKind::Pi, rest, ExprSpec::Sort(l));
     assert(t == ExprSpec::Bind(BinderKind::Pi, Box::new(tds[0]), Box::new(trest)));
-    assert forall|q: int| 0 <= q < rest.len() implies (#[trigger] rest[q]) is Sort by {
+    assert forall|q: int| 0 <= q < rest.len() implies crate::rec_canon::pdom_ok(#[trigger] rest[q]) by {
         assert(rest[q] == tds[q + 1]);
     }
     let bots = Seq::new(tds.len(), |_q: int| Cpt::Bot);
@@ -926,7 +979,7 @@ pub proof fn proj_chain_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpe
         return bots;
     }
     // one step: the projected argument, typed at the domain
-    let l0 = tds[0]->Sort_0;
+    let l0 = crate::rec_canon::pdom_lvl(tds[0]);
     let brest = sbound(rest, l);
     let ar = arrow(sortc(l0), brest);
     assert(sbound(tds, l) == ar);
@@ -988,7 +1041,7 @@ pub proof fn tf_spine_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>
         !sig.ienv.ctor_ind.contains_key(c),
         !sig.ienv.recs.contains_key(c),
         dty_at(sig, c, ls) == crate::rec_canon::binds(BinderKind::Pi, tds, ExprSpec::Sort(l)),
-        forall|q: int| 0 <= q < tds.len() ==> (#[trigger] tds[q]) is Sort,
+        forall|q: int| 0 <= q < tds.len() ==> crate::rec_canon::pdom_ok(#[trigger] tds[q]) && crate::dom_adeq_syn::pdom_alias(sig, tds[q]),
         args.len() == tds.len(),
         mem(sig, spine_app(ExprSpec::Const(c, ls), args), rho, u),
     ensures
@@ -1016,6 +1069,9 @@ pub proof fn tf_spine_t(sig: Sig, c: u64, ls: Seq<LevelSpec>, tds: Seq<ExprSpec>
     }
     let (a, v) = choose|a: Cpt, v: Cpt| #[trigger] crate::dom_sem::sem_mem(sig, c, ls, hw, a, v);
     typed_wf(v, a);
+    assert forall|j: nat| #[trigger] wf(bot_env()(j)) by {
+        typed_wf(Cpt::Bot, Cpt::U);
+    }
     sbound_mem(sig, tds, l, bot_env(), a);
     assert(Seq::<Cpt>::empty() + ws0 =~= ws0);
     let xs = proj_chain_t(sig, c, ls, tds, l, Seq::empty(), v, a, ws0);
@@ -1045,7 +1101,7 @@ pub proof fn ceval_mem(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
         crate::rec_canon::psimple(sig, ind, pdoms, np, k, e),
         aw(pe),
         pe.len() == np + k,
-        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] pe[q], Cpt::U),
+        forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) ==> typed(#[trigger] pe[q], Cpt::U),
         forall|i: nat| #[trigger] wf(env(i)),
         forall|q: int| 0 <= q < np ==> le(#[trigger] pe[q], env((k + np - 1 - q) as nat)),
     ensures
@@ -1082,7 +1138,7 @@ pub proof fn ceval_mem(sig: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat
             ceval_mem(sig, ind, pdoms, np, k, ls, pe, *a, env);
             aw_push(pe, Cpt::Bot);
             crate::dom_sound::typed_basic();
-            assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe2[q], Cpt::U) by {
+            assert forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) implies typed(#[trigger] pe2[q], Cpt::U) by {
                 assert(pe2[q] == pe[q]);
             }
             assert forall|i: nat| #[trigger] wf(env2(i)) by {
@@ -1197,7 +1253,7 @@ pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i:
         crate::rec_canon::psimple(sig, s, pdoms, np, i, f),
         xs.len() == np,
         aw(xs),
-        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] xs[q], Cpt::U),
+        forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) ==> typed(#[trigger] xs[q], Cpt::U),
         ps.len() == np,
         ys.len() == i,
         forall|q: int| 0 <= q < np ==> mem(sig, #[trigger] ps[q], rho, xs[q]),
@@ -1223,7 +1279,7 @@ pub proof fn field_entry_mem(sig: Sig, s: u64, pdoms: Seq<ExprSpec>, np: nat, i:
         assert(pe[q] == xs[q]);
         le_refl(xs[q]);
     }
-    assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
+    assert forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) implies typed(#[trigger] pe[q], Cpt::U) by {
         assert(pe[q] == xs[q]);
     }
     ceval_mem(sig, s, pdoms, np, i, us, pe, f, rho2);
@@ -1289,7 +1345,7 @@ pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pd
         crate::rec_canon::psimple(sig, outer, pdoms, np, k, e),
         aw(pe),
         pe.len() == np + k,
-        forall|q: int| 0 <= q < np && pdoms[q] is Sort ==> typed(#[trigger] pe[q], Cpt::U),
+        forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) ==> typed(#[trigger] pe[q], Cpt::U),
     ensures
         typed(ceval(sig, r, outer, ls, pe, e), Cpt::U),
     decreases r, 1int, esize(e),
@@ -1306,7 +1362,7 @@ pub proof fn ps_ceval_typed(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, pd
             let pe2 = pe.push(Cpt::Bot);
             ps_ceval_typed(sig, r, outer, ls, pdoms, np, k, pe, *a);
             aw_push(pe, Cpt::Bot);
-            assert forall|q: int| 0 <= q < np && pdoms[q] is Sort implies typed(#[trigger] pe2[q], Cpt::U) by {
+            assert forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(pdoms[q]) implies typed(#[trigger] pe2[q], Cpt::U) by {
                 assert(pe2[q] == pe[q]);
             }
             ps_ceval_typed(sig, r, outer, ls, pdoms, np, k + 1, pe2, *b);
@@ -1357,6 +1413,7 @@ proof fn canon_entry_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt
         let sh = canon_shape(sig, ind);
         let blocks = cblocks(sig, ind, ls, args, sh.nmin());
         assert(tabled(sig, ind, ls, args));
+        assert(crate::dom_code::pdoms_alias(sig, ind));
         assert(ts.last() == Cpt::Nd(NdKey::Tag(2), blocks));
         cblocks_at(sig, ind, ls, args, sh.nmin());
         centries_at(sig, ind, ls, args, j as nat, sh.fields[j].len());
@@ -1379,7 +1436,7 @@ proof fn canon_entry_typed(sig: Sig, ind: u64, ls: Seq<LevelSpec>, args: Seq<Cpt
             ceval_typed(sig, rk(sig, ind), ind, ls, pe, e);
         } else {
             // a type over the parameters: their codes are types
-            assert forall|q: int| 0 <= q < sh.np && sh.pdoms[q] is Sort implies typed(#[trigger] pe[q], Cpt::U) by {
+            assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies typed(#[trigger] pe[q], Cpt::U) by {
                 assert(pe[q] == args[q]);
             }
             ps_ceval_typed(sig, rk(sig, ind), ind, ls, sh.pdoms, sh.np, k as nat, pe, e);
