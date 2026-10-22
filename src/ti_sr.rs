@@ -752,6 +752,129 @@ pub proof fn delta_d(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, t: ExprSpec)
     conv_chain(sig, g, m, dval(sig, c, ls), tc, t);
 }
 
+/// A TYPED TYPE CONVERTS WITH ITS ABBREVIATIONS UNFOLDED
+/// (`rec_canon::dnorm`), at its type: Delta at an abbreviation, then Beta at
+/// an applied one; congruence elsewhere.
+pub proof fn dnorm_conv(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec)
+    requires
+        sig_wf(sig),
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        crate::rec_canon::lp_free(e),
+        derivable(sig, eq(g, e, e, t)),
+    ensures
+        derivable(sig, eq(g, e, crate::rec_canon::dnorm(sig, e), t)),
+    decreases e,
+{
+    use crate::rec_canon::dnorm;
+    let de = get(sig, eq(g, e, e, t));
+    gen(sig, de);
+    match e {
+        ExprSpec::Const(c, ls) => {
+            if ls.len() == 0 && crate::rec_canon::abbr0(sig, c) {
+                assert(is_def(sig, c, ls));
+                delta_d(sig, g, c, ls, t);
+                assert(sig.consts[c].lps =~= Seq::<u64>::empty());
+                crate::dom_canon::sl_none(sig.consts[c].val->Some_0, ls);
+                assert(dval(sig, c, ls) == sig.consts[c].val->Some_0);
+            }
+        },
+        ExprSpec::Bind(bk, a, b) => {
+            let (a2, b2) = (dnorm(sig, *a), dnorm(sig, *b));
+            if bk == BinderKind::Pi {
+                let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(*a, *b, l1, l2)
+                    && typ(sig, g, *a, l1) && typ(sig, g.push(*a), *b, l2) && tchain(sig, g, t, sort(imax(l1, l2)));
+                dnorm_conv(sig, g, *a, sort(l1));
+                dnorm_conv(sig, g.push(*a), *b, sort(l2));
+                ctx_conv(sig, g, *a, a2, l1, *b, b2, sort(l2));
+                let s = sort(imax(l1, l2));
+                let j = eq(g, e, pi(a2, b2), s);
+                let p0 = get(sig, eq(g, *a, a2, sort(l1)));
+                let p1 = get(sig, eq(g.push(*a), *b, b2, sort(l2)));
+                let p2 = get(sig, eq(g.push(a2), *b, b2, sort(l2)));
+                let ps = seq![p0, p1, p2];
+                assert(prems(ps, seq![eq(g, *a, a2, sort(l1)), eq(g.push(*a), *b, b2, sort(l2)), eq(g.push(a2), *b, b2, sort(l2))]));
+                valid_node(sig, Rule::PiCong(l1, l2), j, ps);
+                mk_d(sig, node(Rule::PiCong(l1, l2), j, ps));
+                tchain_sym(sig, g, t, s);
+                conv_chain(sig, g, e, pi(a2, b2), s, t);
+            } else {
+                let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, *b, l1, l2)
+                    && typ(sig, g, *a, l1) && derivable(sig, eq(g.push(*a), *b, *b, bt)) && typ(sig, g.push(*a), bt, l2)
+                    && tchain(sig, g, t, pi(*a, bt));
+                dnorm_conv(sig, g, *a, sort(l1));
+                dnorm_conv(sig, g.push(*a), *b, bt);
+                ctx_conv(sig, g, *a, a2, l1, *b, b2, bt);
+                let ty = pi(*a, bt);
+                let j = eq(g, e, lam(a2, b2), ty);
+                let p0 = get(sig, eq(g, *a, a2, sort(l1)));
+                let p1 = get(sig, eq(g.push(*a), bt, bt, sort(l2)));
+                let p2 = get(sig, eq(g.push(*a), *b, b2, bt));
+                let p3 = get(sig, eq(g.push(a2), *b, b2, bt));
+                let ps = seq![p0, p1, p2, p3];
+                assert(prems(ps, seq![eq(g, *a, a2, sort(l1)), eq(g.push(*a), bt, bt, sort(l2)),
+                    eq(g.push(*a), *b, b2, bt), eq(g.push(a2), *b, b2, bt)]));
+                valid_node(sig, Rule::LamCong(l1, l2), j, ps);
+                mk_d(sig, node(Rule::LamCong(l1, l2), j, ps));
+                tchain_sym(sig, g, t, ty);
+                conv_chain(sig, g, e, lam(a2, b2), ty, t);
+            }
+        },
+        ExprSpec::App(f, x) => {
+            let (ta, tb, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] gmark(a, b, l2, l2)
+                && derivable(sig, eq(g, *f, *f, pi(a, b))) && derivable(sig, eq(g, *x, *x, a)) && typ(sig, g.push(a), b, l2)
+                && tchain(sig, g, t, inst(0, *x, b));
+            let t1 = inst(0, *x, tb);
+            dnorm_conv(sig, g, *x, ta);
+            let dx = dnorm(sig, *x);
+            crate::ti_spine::pi_typed_of(sig, g, *f, ta, tb);
+            tchain_refl(sig, g, pi(ta, tb));
+            tchain_sym(sig, g, t, t1);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && crate::rec_canon::abbr1(sig, c) {
+                    // an applied abbreviation: Delta, then Beta
+                    let v = sig.consts[c].val->Some_0;
+                    let (a0, body) = (*v->Bind_1, *v->Bind_2);
+                    assert(is_def(sig, c, ls));
+                    delta_d(sig, g, c, ls, pi(ta, tb));
+                    assert(sig.consts[c].lps =~= Seq::<u64>::empty());
+                    crate::dom_canon::sl_none(v, ls);
+                    assert(dval(sig, c, ls) == v);
+                    crate::dom_sem_rel::app_pair(sig, g, *f, v, pi(ta, tb), ta, tb, *x, dx);
+                    let r = ExprSpec::App(Box::new(v), Box::new(dx));
+                    crate::dom_adeq_syn::dsym(sig, g, e, r, t1);
+                    let dr = get(sig, eq(g, r, r, t1));
+                    gen(sig, dr);
+                    let (ta2, tb2, l3) = choose|a: ExprSpec, b: ExprSpec, l3: LevelSpec| #[trigger] gmark(a, b, l3, l3)
+                        && derivable(sig, eq(g, v, v, pi(a, b))) && derivable(sig, eq(g, dx, dx, a)) && typ(sig, g.push(a), b, l3)
+                        && tchain(sig, g, t1, inst(0, dx, b));
+                    let dv = get(sig, eq(g, v, v, pi(ta2, tb2)));
+                    gen(sig, dv);
+                    let (bt, m1, m2) = choose|bt: ExprSpec, m1: LevelSpec, m2: LevelSpec| #[trigger] gmark(bt, body, m1, m2)
+                        && typ(sig, g, a0, m1) && derivable(sig, eq(g.push(a0), body, body, bt)) && typ(sig, g.push(a0), bt, m2)
+                        && tchain(sig, g, pi(ta2, tb2), pi(a0, bt));
+                    crate::dom_fund::pi_inj_chain(sig, g, ta2, tb2, a0, bt);
+                    conv_chain(sig, g, dx, dx, ta2, a0);
+                    crate::dom_adeq_syn::beta_d(sig, g, a0, body, bt, dx, m1, m2);
+                    let rr = inst(0, dx, body);
+                    let t2 = inst(0, dx, bt);
+                    assert(r == app(lam(a0, body), dx));
+                    crate::dom_adeq_syn::dsym(sig, g, r, rr, t2);
+                    uniq(sig, g, r, t2, t1);
+                    conv_chain(sig, g, r, rr, t2, t1);
+                    crate::dom_adeq_syn::dtrans(sig, g, e, r, rr, t1);
+                    conv_chain(sig, g, e, rr, t1, t);
+                    return;
+                }
+            }
+            dnorm_conv(sig, g, *f, pi(ta, tb));
+            crate::dom_sem_rel::app_pair(sig, g, *f, dnorm(sig, *f), pi(ta, tb), ta, tb, *x, dx);
+            conv_chain(sig, g, e, ExprSpec::App(Box::new(dnorm(sig, *f)), Box::new(dx)), t1, t);
+        },
+        _ => {},
+    }
+}
+
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its
 /// type.
 #[verifier::spinoff_prover]

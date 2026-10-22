@@ -394,6 +394,265 @@ impl IndShape {
     }
 }
 
+/// No `let` and no projection anywhere (the field types the fragment admits).
+pub open spec fn lp_free(e: ExprSpec) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => lp_free(*f) && lp_free(*a),
+        ExprSpec::Bind(_, t, b) => lp_free(*t) && lp_free(*b),
+        ExprSpec::Let(_, _, _) | ExprSpec::Proj(_, _) => false,
+        _ => true,
+    }
+}
+
+/// A definition's value mentions no definition (abbreviation bodies are
+/// unfolded once, so they must not need unfolding themselves).
+pub open spec fn def_free(sig: Sig, e: ExprSpec) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, _) => !(sig.consts.contains_key(c) && sig.consts[c].val is Some),
+        ExprSpec::App(f, a) => def_free(sig, *f) && def_free(sig, *a),
+        ExprSpec::Bind(_, t, b) => def_free(sig, *t) && def_free(sig, *b),
+        ExprSpec::Let(t, v, b) => def_free(sig, *t) && def_free(sig, *v) && def_free(sig, *b),
+        ExprSpec::Proj(_, x) => def_free(sig, *x),
+        _ => true,
+    }
+}
+
+/// A TYPE ABBREVIATION OF ARITY 0 (`Unit := PUnit.{1}`): a level-free
+/// definition whose closed value mentions no definition.
+pub open spec fn abbr0(sig: Sig, c: u64) -> bool {
+    &&& sig.consts.contains_key(c)
+    &&& sig.consts[c].lps.len() == 0
+    &&& sig.consts[c].val is Some
+    &&& !(sig.consts[c].val->Some_0 is Bind && sig.consts[c].val->Some_0->Bind_0 == BinderKind::Lam)
+    &&& crate::expr_model::nlbv(sig.consts[c].val->Some_0) == 0
+    &&& def_free(sig, sig.consts[c].val->Some_0)
+}
+
+/// ... OF ARITY 1 (`Not := fun a => a -> False`): a level-free definition
+/// whose closed value is one lambda over a body mentioning no definition.
+pub open spec fn abbr1(sig: Sig, c: u64) -> bool {
+    &&& sig.consts.contains_key(c)
+    &&& sig.consts[c].lps.len() == 0
+    &&& sig.consts[c].val is Some
+    &&& sig.consts[c].val->Some_0 is Bind && sig.consts[c].val->Some_0->Bind_0 == BinderKind::Lam
+    &&& !(*sig.consts[c].val->Some_0->Bind_2 is Bind && sig.consts[c].val->Some_0->Bind_2->Bind_0 == BinderKind::Lam)
+    &&& crate::expr_model::nlbv(sig.consts[c].val->Some_0) == 0
+    &&& def_free(sig, *sig.consts[c].val->Some_0->Bind_1)
+    &&& def_free(sig, *sig.consts[c].val->Some_0->Bind_2)
+    &&& no_head_var(*sig.consts[c].val->Some_0->Bind_2, 0)
+    &&& !(*sig.consts[c].val->Some_0->Bind_2 is Var)
+}
+
+/// The bound variable `k` is never applied (so instantiating it creates no
+/// application headed by what replaces it).
+pub open spec fn no_head_var(e: ExprSpec, k: nat) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => !(*f == ExprSpec::Var(k)) && no_head_var(*f, k) && no_head_var(*a, k),
+        ExprSpec::Bind(_, t, b) => no_head_var(*t, k) && no_head_var(*b, k + 1),
+        ExprSpec::Let(t, v, b) => no_head_var(*t, k) && no_head_var(*v, k) && no_head_var(*b, k + 1),
+        ExprSpec::Proj(_, x) => no_head_var(*x, k),
+        _ => true,
+    }
+}
+
+/// No abbreviation left to unfold.
+pub open spec fn abbr_free(sig: Sig, e: ExprSpec) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, ls) => !(ls.len() == 0 && abbr0(sig, c)),
+        ExprSpec::App(f, a) => !(*f matches ExprSpec::Const(c, ls) && ls.len() == 0 && abbr1(sig, c))
+            && abbr_free(sig, *f) && abbr_free(sig, *a),
+        ExprSpec::Bind(_, t, b) => abbr_free(sig, *t) && abbr_free(sig, *b),
+        ExprSpec::Let(t, v, b) => abbr_free(sig, *t) && abbr_free(sig, *v) && abbr_free(sig, *b),
+        ExprSpec::Proj(_, x) => abbr_free(sig, *x),
+        _ => true,
+    }
+}
+
+/// A term mentioning no definition is abbreviation-free.
+pub proof fn def_free_abbr_free(sig: Sig, e: ExprSpec)
+    requires
+        def_free(sig, e),
+    ensures
+        abbr_free(sig, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, a) => { def_free_abbr_free(sig, *f); def_free_abbr_free(sig, *a); },
+        ExprSpec::Bind(_, t, b) => { def_free_abbr_free(sig, *t); def_free_abbr_free(sig, *b); },
+        ExprSpec::Let(t, v, b) => { def_free_abbr_free(sig, *t); def_free_abbr_free(sig, *v); def_free_abbr_free(sig, *b); },
+        ExprSpec::Proj(_, x) => def_free_abbr_free(sig, *x),
+        _ => {},
+    }
+}
+
+/// Lifting keeps a term abbreviation-free.
+pub proof fn abbr_free_lift(sig: Sig, n: nat, c: nat, e: ExprSpec)
+    requires
+        abbr_free(sig, e),
+    ensures
+        abbr_free(sig, lift(n, c, e)),
+    decreases e,
+{
+    reveal_with_fuel(lift, 2);
+    match e {
+        ExprSpec::App(f, a) => { abbr_free_lift(sig, n, c, *f); abbr_free_lift(sig, n, c, *a); },
+        ExprSpec::Bind(_, t, b) => { abbr_free_lift(sig, n, c, *t); abbr_free_lift(sig, n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { abbr_free_lift(sig, n, c, *t); abbr_free_lift(sig, n, c, *v); abbr_free_lift(sig, n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => abbr_free_lift(sig, n, c, *x),
+        _ => {},
+    }
+}
+
+/// Instantiating a never-applied variable of a definition-free body with an
+/// abbreviation-free term leaves it abbreviation-free.
+pub proof fn abbr_free_inst(sig: Sig, k: nat, x: ExprSpec, e: ExprSpec)
+    requires
+        abbr_free(sig, x),
+        def_free(sig, e),
+        no_head_var(e, k),
+    ensures
+        abbr_free(sig, crate::subst_algebra::inst(k, x, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => {
+            if i == k {
+                abbr_free_lift(sig, k, 0, x);
+                assert(crate::subst_algebra::inst(k, x, e) == lift(k, 0, x));
+            } else {
+                assert(crate::subst_algebra::inst(k, x, e) is Var);
+            }
+            assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e)));
+        },
+        ExprSpec::App(f, a) => {
+            abbr_free_inst(sig, k, x, *f);
+            abbr_free_inst(sig, k, x, *a);
+            let f2 = crate::subst_algebra::inst(k, x, *f);
+            assert(crate::subst_algebra::inst(k, x, e) == ExprSpec::App(Box::new(f2), Box::new(crate::subst_algebra::inst(k, x, *a))));
+            assert(abbr_free(sig, f2));
+            match *f {
+                ExprSpec::Var(i) => {
+                    assert(i != k);
+                    assert(f2 is Var);
+                },
+                ExprSpec::Const(c, ls) => {
+                    assert(f2 == *f);
+                    assert(def_free(sig, *f));
+                    assert(def_free(sig, ExprSpec::Const(c, ls)));
+                    assert(!(sig.consts.contains_key(c) && sig.consts[c].val is Some));
+                },
+                ExprSpec::App(_, _) => { assert(f2 is App); },
+                ExprSpec::Bind(_, _, _) => { assert(f2 is Bind); },
+                ExprSpec::Let(_, _, _) => { assert(f2 is Let); },
+                ExprSpec::Proj(_, _) => { assert(f2 is Proj); },
+                _ => { assert(f2 == *f); },
+            }
+            assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e)));
+        },
+        ExprSpec::Const(c, ls) => {
+            assert(crate::subst_algebra::inst(k, x, e) == e);
+        },
+        ExprSpec::Bind(_, t, b) => { abbr_free_inst(sig, k, x, *t); abbr_free_inst(sig, k + 1, x, *b); assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e))); },
+        ExprSpec::Let(t, v, b) => { abbr_free_inst(sig, k, x, *t); abbr_free_inst(sig, k, x, *v); abbr_free_inst(sig, k + 1, x, *b); assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e))); },
+        ExprSpec::Proj(_, y) => { abbr_free_inst(sig, k, x, *y); assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e))); },
+        _ => {},
+    }
+}
+
+/// Unfolding produces an applicable arity-1 abbreviation only from itself.
+pub proof fn dnorm_head(sig: Sig, f: ExprSpec)
+    ensures
+        (dnorm(sig, f) matches ExprSpec::Const(c, ls) && ls.len() == 0 && abbr1(sig, c)) ==> dnorm(sig, f) == f,
+    decreases f,
+{
+    match f {
+        ExprSpec::Const(c, ls) => {},
+        ExprSpec::App(g, a) => {
+            if let ExprSpec::Const(c, ls) = *g {
+                if ls.len() == 0 && abbr1(sig, c) {
+                    let body = *sig.consts[c].val->Some_0->Bind_2;
+                    let r = crate::subst_algebra::inst(0, dnorm(sig, *a), body);
+                    if let ExprSpec::Const(c2, ls2) = body {
+                        assert(r == body);
+                    }
+                    assert(!(r is Const) || r == body);
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+/// Unfolding leaves nothing to unfold, and an abbreviation-free term is
+/// its own unfolding: `dnorm` is idempotent.
+pub proof fn dnorm_abbr_free(sig: Sig, e: ExprSpec)
+    ensures
+        abbr_free(sig, dnorm(sig, e)),
+        abbr_free(sig, e) ==> dnorm(sig, e) == e,
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, ls) => {
+            if ls.len() == 0 && abbr0(sig, c) {
+                def_free_abbr_free(sig, sig.consts[c].val->Some_0);
+            }
+        },
+        ExprSpec::App(f, a) => {
+            dnorm_abbr_free(sig, *f);
+            dnorm_abbr_free(sig, *a);
+            dnorm_head(sig, *f);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr0(sig, c) {
+                    let v = sig.consts[c].val->Some_0;
+                    if let ExprSpec::Const(c2, ls2) = v {
+                        assert(!(sig.consts.contains_key(c2) && sig.consts[c2].val is Some));
+                    }
+                }
+            }
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(sig, c) {
+                    abbr_free_inst(sig, 0, dnorm(sig, *a), *sig.consts[c].val->Some_0->Bind_2);
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_abbr_free(sig, *t); dnorm_abbr_free(sig, *b); },
+        ExprSpec::Let(t, v, b) => { dnorm_abbr_free(sig, *t); dnorm_abbr_free(sig, *v); dnorm_abbr_free(sig, *b); },
+        ExprSpec::Proj(_, x) => dnorm_abbr_free(sig, *x),
+        _ => {},
+    }
+}
+
+/// A TYPE WITH ITS ABBREVIATIONS UNFOLDED: arity-0 abbreviations by their
+/// values, arity-1 ones applied to one argument by their bodies at it
+/// (docs/TYPED_TARGET.md, "Slice: type abbreviations").
+pub open spec fn dnorm(sig: Sig, e: ExprSpec) -> ExprSpec
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, ls) => if ls.len() == 0 && abbr0(sig, c) { sig.consts[c].val->Some_0 } else { e },
+        ExprSpec::App(f, a) => match *f {
+            ExprSpec::Const(c, ls) => if ls.len() == 0 && abbr1(sig, c) {
+                crate::subst_algebra::inst(0, dnorm(sig, *a), *sig.consts[c].val->Some_0->Bind_2)
+            } else {
+                ExprSpec::App(Box::new(dnorm(sig, *f)), Box::new(dnorm(sig, *a)))
+            },
+            _ => ExprSpec::App(Box::new(dnorm(sig, *f)), Box::new(dnorm(sig, *a))),
+        },
+        ExprSpec::Bind(k, t, b) => ExprSpec::Bind(k, Box::new(dnorm(sig, *t)), Box::new(dnorm(sig, *b))),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(Box::new(dnorm(sig, *t)), Box::new(dnorm(sig, *v)), Box::new(dnorm(sig, *b))),
+        ExprSpec::Proj(i, x) => ExprSpec::Proj(i, Box::new(dnorm(sig, *x))),
+        _ => e,
+    }
+}
+
 /// The shape read off the signature for recursor data `rd` of inductive
 /// `ind`.
 pub open spec fn shape_of(sig: Sig, rd: RecDataSpec, ind: u64) -> IndShape {

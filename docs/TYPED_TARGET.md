@@ -2604,6 +2604,23 @@ head-reduce to its sort, so the logical relation sees a sort
 alike. The certified field typings get the alias facts from the
 certificate signature's well-formedness (`dom_field_ty::pdom_alias_down`).
 
+**Slice: type abbreviations (started 2026-10-22; foundation).** Field
+types written with a definition, almost all `Unit` (`Thunk.mk`,
+`AndThen.mk`, ...: `Unit -> a`) and `Not` (`Decidable.isFalse`): Core by
+dependency closure 804 -> 892 (`target/work/coverage/fieldgain3.py`).
+`rec_canon::dnorm` unfolds the abbreviations a field can be read through:
+level-free definitions of arity 0 (`abbr0`: `Unit := PUnit.{1}`) or 1
+(`abbr1`: `Not := fun a => a -> False`) whose values mention no definition
+(`def_free`) and, at arity 1, never apply their argument and are not just
+it (`no_head_var`), so unfolding is idempotent (`dnorm_abbr_free`). A typed
+type converts with its unfolding at its type (`ti_sr::dnorm_conv`: Delta,
+then Beta at an applied abbreviation; congruence and context conversion
+elsewhere), so by soundness the two denote alike. Route (user's choice,
+over normalizing where shapes are read): the canonical twin unfolds the
+field part of a constructor's declared type, the shapes read the unfolded
+fields, and the kernel's constructor-constant claim converts the declared
+type to the twin's.
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named
