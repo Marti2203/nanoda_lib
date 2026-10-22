@@ -1677,6 +1677,8 @@ pub(crate) fn parse_decimal_fast(s: &str) -> (r: Result<BigUint, String>)
         assert(b@ =~= b@.subrange(0, z as int) + t@);
         dec_concat(b@.subrange(0, z as int), t@);
         dec_zeros(b@.subrange(0, z as int));
+        assert(dec_val(b@.subrange(0, z as int)) * pow10(t@.len()) == 0);
+        assert(dec_val(b@) == dec_val(t@));
     }
     if t.len() == 0 {
         return Ok(<BigUint as num_traits::Zero>::zero());

@@ -1152,6 +1152,58 @@ pub proof fn ctx_bot(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSp
     rc
 }
 
+/// `side_conv`'s eta step: rule RecEta at the redex, from its premises.
+#[verifier::spinoff_prover]
+proof fn side_eta(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, n: ExprSpec, e: ExprSpec, la: LevelSpec)
+    requires
+        side_ok(sig, g, c, ls, xs, crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, c, ls), xs)),
+        n == crate::ti_hred::rec_eta_result(sig, spine_app(ExprSpec::Const(c, ls), xs)),
+        la == crate::ti_syntax::iota_lm(sig, spine_app(ExprSpec::Const(c, ls), xs)),
+        ({
+            let m = spine_app(ExprSpec::Const(c, ls), xs);
+            let x = xs[(rshape(sig, c).np + 2) as int];
+            let cx = crate::ti_eta::eta_cx(sig, c, ls, xs);
+            let ci = crate::ti_eta::eta_st(sig, c, ls, xs);
+            let m2 = crate::ti_hred::reta_exp(sig, m);
+            &&& derivable(sig, eq(g, m, m, e))
+            &&& derivable(sig, eq(g, n, n, e))
+            &&& derivable(sig, eq(g, e, e, sort(la)))
+            &&& derivable(sig, eq(g, x, cx, ci))
+            &&& derivable(sig, eq(g, m2, m2, e))
+        }),
+    ensures
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(c, ls), xs), n, e)),
+{
+    let sh = rshape(sig, c);
+    let pre = (sh.np + 2) as int;
+    let t0 = crate::ti_syntax::dty_at(sig, c, ls);
+    let m = spine_app(ExprSpec::Const(c, ls), xs);
+    let x = xs[pre];
+    let cx = crate::ti_eta::eta_cx(sig, c, ls, xs);
+    let ci = crate::ti_eta::eta_st(sig, c, ls, xs);
+    let m2 = crate::ti_hred::reta_exp(sig, m);
+    side_red(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs));
+    side_facts(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs));
+    crate::ti_eta::eta_facts(sig, c, ls, xs);
+    crate::dom_rec_minor::rec_tend(sig, c, ls, xs);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
+    // the eta step
+    assert(crate::ti_hred::rec_smashed(sig, m));
+    let q0 = crate::ti_sub::get(sig, eq(g, m, m, e));
+    let q1 = crate::ti_sub::get(sig, eq(g, n, n, e));
+    let q2 = crate::ti_sub::get(sig, eq(g, e, e, sort(la)));
+    let q3 = crate::ti_sub::get(sig, eq(g, x, cx, ci));
+    let q4 = crate::ti_sub::get(sig, eq(g, m2, m2, e));
+    let rj = eq(g, m, n, e);
+    let rp = seq![q0, q1, q2, q3, q4];
+    assert(crate::ti_syntax::prems(rp, seq![eq(g, m, m, e), eq(g, n, n, e), eq(g, e, e, sort(la)), eq(g, x, cx, ci), eq(g, m2, m2, e)]));
+    assert(crate::ti_syntax::step_ok(sig, crate::ti_syntax::Rule::RecEta(la), rj, rp)) by {
+        reveal(crate::ti_syntax::rec_eta_ok);
+    }
+    crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::RecEta(la), rj, rp);
+    crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::RecEta(la), rj, rp));
+}
+
 /// ONE SIDE'S REDEX CONVERTS with the minor at the major's projections, at
 /// the motive at the major: its eta step (rule RecEta, its premises from
 /// the relation's typing facts) and the rule's beta chain.
@@ -1263,21 +1315,8 @@ pub proof fn side_conv(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Exp
     assert(m2 == ExprSpec::App(Box::new(f), Box::new(cx)));
     crate::dom_psimple::der_diag(sig, g, m, m2, e);
     // the eta step
-    assert(crate::ti_hred::rec_smashed(sig, m));
     assert(la == crate::ti_syntax::iota_lm(sig, m)) by { reveal(crate::ti_syntax::iota_lm); }
-    let q0 = crate::ti_sub::get(sig, eq(g, m, m, e));
-    let q1 = crate::ti_sub::get(sig, eq(g, n, n, e));
-    let q2 = crate::ti_sub::get(sig, eq(g, e, e, sort(la)));
-    let q3 = crate::ti_sub::get(sig, eq(g, x, cx, ci));
-    let q4 = crate::ti_sub::get(sig, eq(g, m2, m2, e));
-    let rj = eq(g, m, n, e);
-    let rp = seq![q0, q1, q2, q3, q4];
-    assert(crate::ti_syntax::prems(rp, seq![eq(g, m, m, e), eq(g, n, n, e), eq(g, e, e, sort(la)), eq(g, x, cx, ci), eq(g, m2, m2, e)]));
-    assert(crate::ti_syntax::step_ok(sig, crate::ti_syntax::Rule::RecEta(la), rj, rp)) by {
-        reveal(crate::ti_syntax::rec_eta_ok);
-    }
-    crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::RecEta(la), rj, rp);
-    crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::RecEta(la), rj, rp));
+    side_eta(sig, g, c, ls, xs, n, e, la);
     crate::dom_adeq_syn::dtrans(sig, g, m, n, r, e);
 }
 

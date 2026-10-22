@@ -978,6 +978,70 @@ proof fn srg_inj(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, a0: Seq
 /// to the recursor's parameters, the rule's spine typed, its type
 /// converted.
 #[verifier::spinoff_prover]
+/// `srg_tail`'s argument chains: the reduct's motive arguments chain to the
+/// redex's, index by index and at the major.
+#[verifier::spinoff_prover]
+proof fn srg_args(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, a0: Seq<ExprSpec>, clv: Seq<LevelSpec>, cargs: Seq<ExprSpec>)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        srg_ok(sig, rid, lv, p),
+        a0.len() == rshape(sig, rid).np + rshape(sig, rid).nmin() + rshape(sig, rid).ni + 2,
+        a0.last() == spine_app(ExprSpec::Const(rshape(sig, rid).ctors[p], clv), cargs),
+        cargs.len() == rshape(sig, rid).np + rshape(sig, rid).fields[p].len(),
+        heads_typed(sig, g, rid, lv, a0),
+        derivable(sig, eq(g, spine_app(ExprSpec::Const(rid, lv), a0), spine_app(ExprSpec::Const(rid, lv), a0),
+            spine_app(a0[rshape(sig, rid).np as int], a0.subrange((rshape(sig, rid).np + rshape(sig, rid).nmin() + 1) as int, a0.len() as int)))),
+    ensures ({
+        let sh = rshape(sig, rid);
+        let (np, pre) = (sh.np as int, (sh.np + sh.nmin() + 1) as int);
+        let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+        let ps = a0.subrange(0, np);
+        let fs = cargs.subrange(np, cargs.len() as int);
+        let cc = ExprSpec::Const(sh.ctors[p], us);
+        let args1 = ctss(sig, rid, p, us, ps + fs).push(spine_app(cc, ps + fs));
+        let args0 = a0.subrange(pre, a0.len() as int);
+        forall|i: int| 0 <= i <= sh.ni ==> #[trigger] crate::ti_chain::mchain(sig, g, args1[i], args0[i])
+    }),
+{
+    let sh = rshape(sig, rid);
+    let (np, nmin, ni) = (sh.np, sh.nmin(), sh.ni);
+    let pre = (np + nmin + 1) as int;
+    let mi = pre + ni;
+    let c = sh.ctors[p];
+    crate::dom_rec_ty::rec_lps_distinct(sig, rid);
+    srg_inj(sig, g, rid, lv, p, a0, clv, cargs);
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    let ps = a0.subrange(0, np as int);
+    let idx = a0.subrange(pre, mi);
+    let tm = spine_app(ExprSpec::Const(sh.ind, us), ps + idx);
+    let major = a0[mi];
+    let cc = ExprSpec::Const(c, us);
+    let lb = srg_ctel(sig, rid, p, us);
+    srg_tpair(sig, g, rid, p, us, ps, cargs);
+    srg_move(sig, g, rid, p, us, ps, cargs, lb);
+    let fs = cargs.subrange(np as int, cargs.len() as int);
+    let args1 = ctss(sig, rid, p, us, ps + fs).push(spine_app(cc, ps + fs));
+    let args0 = a0.subrange(pre, a0.len() as int);
+    assert(args0 =~= idx.push(major));
+    assert forall|i: int| 0 <= i <= ni implies #[trigger] crate::ti_chain::mchain(sig, g, args1[i], args0[i]) by {
+        if i < ni {
+            let (x, y, z) = (ctss(sig, rid, p, us, ps + fs)[i], ctss(sig, rid, p, us, cargs)[i], idx[i]);
+            assert(args0[i] == z && args1[i] == x);
+            crate::ti_chain::mchain_sym(sig, g, z, y);
+            crate::ti_chain::mchain_sym(sig, g, y, x);
+            crate::ti_chain::mchain_trans(sig, g, x, y, z);
+        } else {
+            assert(args0[i] == major && args1[i] == spine_app(cc, ps + fs));
+            crate::ti_chain::mchain_one(sig, g, spine_app(cc, cargs), spine_app(cc, ps + fs),
+                vsub(crate::dom_iota::cbody(sig, rid, p, us), cargs));
+            crate::ti_chain::mchain_sym(sig, g, spine_app(cc, cargs), spine_app(cc, ps + fs));
+            reconv_spine(sig, g, cc, ExprSpec::Const(c, clv), dty_at(sig, c, us), cargs, tm);
+            crate::ti_chain::mchain_one(sig, g, spine_app(cc, cargs), major, tm);
+            crate::ti_chain::mchain_trans(sig, g, spine_app(cc, ps + fs), spine_app(cc, cargs), major);
+        }
+    }
+}
+
 proof fn srg_tail(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, a0: Seq<ExprSpec>, clv: Seq<LevelSpec>, cargs: Seq<ExprSpec>)
     requires
         crate::dom_rec_end::sig_sr(sig),
@@ -1041,22 +1105,9 @@ proof fn srg_tail(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, p: int, a0: Se
     let args1 = ctss(sig, rid, p, us, ps + fs).push(spine_app(cc, ps + fs));
     let args0 = a0.subrange(pre, a0.len() as int);
     assert(args0 =~= idx.push(major));
+    srg_args(sig, g, rid, lv, p, a0, clv, cargs);
     assert forall|i: int| 0 <= i < ds2.len() implies #[trigger] crate::ti_chain::mchain(sig, g, args1[i], args0[i]) by {
-        if i < ni {
-            let (x, y, z) = (ctss(sig, rid, p, us, ps + fs)[i], ctss(sig, rid, p, us, cargs)[i], idx[i]);
-            assert(args0[i] == z && args1[i] == x);
-            crate::ti_chain::mchain_sym(sig, g, z, y);
-            crate::ti_chain::mchain_sym(sig, g, y, x);
-            crate::ti_chain::mchain_trans(sig, g, x, y, z);
-        } else {
-            assert(args0[i] == major && args1[i] == spine_app(cc, ps + fs));
-            crate::ti_chain::mchain_one(sig, g, spine_app(cc, cargs), spine_app(cc, ps + fs),
-                vsub(crate::dom_iota::cbody(sig, rid, p, us), cargs));
-            crate::ti_chain::mchain_sym(sig, g, spine_app(cc, cargs), spine_app(cc, ps + fs));
-            reconv_spine(sig, g, cc, ExprSpec::Const(c, clv), dty_at(sig, c, us), cargs, tm);
-            crate::ti_chain::mchain_one(sig, g, spine_app(cc, cargs), major, tm);
-            crate::ti_chain::mchain_trans(sig, g, spine_app(cc, ps + fs), spine_app(cc, cargs), major);
-        }
+        assert(i <= ni);
     }
     let x1 = spine_app(ExprSpec::Const(rid, lv), a0);
     let e = spine_app(a0[np as int], args0);

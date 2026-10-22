@@ -2801,10 +2801,9 @@ pub proof fn ih_code(sig: Sig, rc: Rc, k: nat)
     crate::dom_model::mem_down_e(sig, crate::dom_rec_ty::rbody(sig, rc.c), env, app(rc.fs[rc.np(sig)], rc.fsm(sig)[kf]), d);
 }
 
-/// THE RECURSIVE CALL AT THE WALK'S `k`-th argument satisfies the
-/// induction's invariant at the end of the telescope, at a lower major.
+/// `ih_inv`'s induction invariant at the recursive call.
 #[verifier::spinoff_prover]
-pub proof fn ih_inv(sig: Sig, rc: Rc, k: nat)
+proof fn ih_inv_rf(sig: Sig, rc: Rc, k: nat)
     requires
         rc_core(sig, rc),
         rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
@@ -2814,15 +2813,9 @@ pub proof fn ih_inv(sig: Sig, rc: Rc, k: nat)
         let sh = crate::dom_rec_ty::rshape(sig, rc.c);
         let kf = sh.rposj(rc.j)[k - rc.nf(sig)] as int;
         let w = walk_of(sig, rc);
-        let (ys, ys2, fz) = (ih_xs(sig, rc, kf), ih_xs2(sig, rc, kf), ih_fs(sig, rc, kf));
         &&& 0 <= kf < rc.nf(sig)
         &&& crate::dom_rec_adeq::rf_inv(sig, rc.nn, (w.n(k) - 1) as nat, rc.g, rc.c, rc.sm, rc.ls, rc.ls2, 0,
-                ys, ys2, *w.a(k)->Pi_0, rc.ds, fz, w.wv(k))
-        &&& spine_app(ExprSpec::Const(rc.c, rc.ls), ys) == w.ys[k as int]
-        &&& spine_app(ExprSpec::Const(rc.c, rc.ls2), ys2) == w.ys2[k as int]
-        &&& trest(rc.t0(sig), ys) == *w.t(k)->Bind_1
-        &&& fz.last() == rc.fsm(sig)[kf]
-        &&& ht(fz.last()) < ht(rc.fs.last())
+                ih_xs(sig, rc, kf), ih_xs2(sig, rc, kf), *w.a(k)->Pi_0, rc.ds, ih_fs(sig, rc, kf), w.wv(k))
     }),
 {
     let w = walk_of(sig, rc);
@@ -2860,6 +2853,54 @@ pub proof fn ih_inv(sig: Sig, rc: Rc, k: nat)
     assert(crate::dom_rec_adeq::rf_sem(sig, rc.c, rc.sm, rc.xs.len(), 0, rc.a, rc.ds, rc.fs));
     assert(crate::dom_rec_ty::rtds(sig, rc.c, rc.sm.0).subrange((pre + 1) as int, (pre + 1) as int) =~= Seq::<ExprSpec>::empty());
     // the terms
+    assert(w.ys[k as int] == crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls, rc.j, rc.xs.subrange(0, pre), rc.args)[q]);
+    assert(w.ys2[k as int] == crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls2, rc.j, rc.xs2.subrange(0, pre), rc.args2)[q]);
+    assert(rc.fs.last() == rc.wx(sig));
+    parts_lower(rc.wx(sig));
+}
+
+
+/// THE RECURSIVE CALL AT THE WALK'S `k`-th argument satisfies the
+/// induction's invariant at the end of the telescope, at a lower major.
+#[verifier::spinoff_prover]
+pub proof fn ih_inv(sig: Sig, rc: Rc, k: nat)
+    requires
+        rc_core(sig, rc),
+        rc.nf(sig) <= k < walk_of(sig, rc).ys.len(),
+        crate::dom_rec_walk::walk_inv(sig, walk_of(sig, rc), k),
+        !(walk_of(sig, rc).u(k) is Bot),
+    ensures ({
+        let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+        let kf = sh.rposj(rc.j)[k - rc.nf(sig)] as int;
+        let w = walk_of(sig, rc);
+        let (ys, ys2, fz) = (ih_xs(sig, rc, kf), ih_xs2(sig, rc, kf), ih_fs(sig, rc, kf));
+        &&& 0 <= kf < rc.nf(sig)
+        &&& crate::dom_rec_adeq::rf_inv(sig, rc.nn, (w.n(k) - 1) as nat, rc.g, rc.c, rc.sm, rc.ls, rc.ls2, 0,
+                ys, ys2, *w.a(k)->Pi_0, rc.ds, fz, w.wv(k))
+        &&& spine_app(ExprSpec::Const(rc.c, rc.ls), ys) == w.ys[k as int]
+        &&& spine_app(ExprSpec::Const(rc.c, rc.ls2), ys2) == w.ys2[k as int]
+        &&& trest(rc.t0(sig), ys) == *w.t(k)->Bind_1
+        &&& fz.last() == rc.fsm(sig)[kf]
+        &&& ht(fz.last()) < ht(rc.fs.last())
+    }),
+{
+    let w = walk_of(sig, rc);
+    let sh = crate::dom_rec_ty::rshape(sig, rc.c);
+    let rd = sig.ienv.recs[rc.c];
+    let nf = rc.nf(sig);
+    let pre = rc.pre(sig);
+    let q = k - nf;
+    ih_inv_rf(sig, rc, k);
+    walk_facts(sig, rc);
+    crate::dom_rec_ty::rec_pos_facts(sh.fields[rc.j], sh.ind, sh.us(), sh.np, sh.ni, nf);
+    let kf = sh.rposj(rc.j)[q] as int;
+    let (ys, ys2, fz) = (ih_xs(sig, rc, kf), ih_xs2(sig, rc, kf), ih_fs(sig, rc, kf));
+    assert(crate::dom_iota::isrec(sig, rc.c, rc.j, kf));
+    ih_der(sig, rc, kf);
+    ih_field(sig, rc, kf);
+    walk_shape(sig, rc, k);
+    crate::dom_rec_walk::walk_at(sig, w, k);
+    assert(crate::dom_rec::ih_in(rd, rc.fs, rc.fsm(sig)[kf]) =~= fz);
     assert(w.ys[k as int] == crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls, rc.j, rc.xs.subrange(0, pre), rc.args)[q]);
     assert(w.ys2[k as int] == crate::dom_rec_red::ih_tms(sig, rc.c, rc.ls2, rc.j, rc.xs2.subrange(0, pre), rc.args2)[q]);
     assert(rc.fs.last() == rc.wx(sig));
