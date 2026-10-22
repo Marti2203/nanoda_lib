@@ -1,5 +1,5 @@
 //! Implementation of Lean expressions
-use crate::util::{BigUintPtr, ExprPtr, FxHashMap, LevelPtr, LevelsPtr, NamePtr, StringPtr, TcCtx};
+use crate::util::{BigUintPtr, ExprPtr, FxHashMap, LevelPtr, LevelsPtr, NamePtr, StringPtr, TcCtx, SortedPair};
 use num_bigint::BigUint;
 use num_traits::identities::Zero;
 use serde::Deserialize;
@@ -623,6 +623,455 @@ pub enum BinderStyle {
     #[serde(rename = "instImplicit")]
     InstanceImplicit,
 }
+
+::vstd::prelude::verus! {
+
+/// Two models equal but at locals: two `Free`s whose nodes carry the same
+/// serials count as one -- what `TcCtx::alpha_eq` sees when it compares
+/// free-variable ids. In scope those are one node (`tc::alpha_in_scope`).
+pub open spec fn eq_ser(aids: (nat, nat), e1: crate::expr_model::ExprSpec, e2: crate::expr_model::ExprSpec) -> bool
+    decreases e1,
+{
+    use crate::expr_model::ExprSpec as E;
+    match e1 {
+        E::Free(i) => match e2 {
+            E::Free(j) => i == j || (crate::expr_arena_bridge::dbj_serial(aids, i) == crate::expr_arena_bridge::dbj_serial(aids, j)
+                && crate::expr_arena_bridge::unique_serial(aids, i) == crate::expr_arena_bridge::unique_serial(aids, j)),
+            _ => false,
+        },
+        E::App(a, b) => match e2 {
+            E::App(c, d) => eq_ser(aids, *a, *c) && eq_ser(aids, *b, *d),
+            _ => false,
+        },
+        E::Bind(k, a, b) => match e2 {
+            E::Bind(k2, c, d) => k == k2 && eq_ser(aids, *a, *c) && eq_ser(aids, *b, *d),
+            _ => false,
+        },
+        E::Let(a, b, c) => match e2 {
+            E::Let(d, e, f) => eq_ser(aids, *a, *d) && eq_ser(aids, *b, *e) && eq_ser(aids, *c, *f),
+            _ => false,
+        },
+        E::Proj(i, a) => match e2 {
+            E::Proj(j, b) => i == j && eq_ser(aids, *a, *b),
+            _ => false,
+        },
+        _ => e1 == e2,
+    }
+}
+
+pub proof fn eq_ser_refl(aids: (nat, nat), e: crate::expr_model::ExprSpec)
+    ensures
+        eq_ser(aids, e, e),
+    decreases e,
+{
+    use crate::expr_model::ExprSpec as E;
+    match e {
+        E::App(a, b) => { eq_ser_refl(aids, *a); eq_ser_refl(aids, *b); },
+        E::Bind(_, a, b) => { eq_ser_refl(aids, *a); eq_ser_refl(aids, *b); },
+        E::Let(a, b, c) => { eq_ser_refl(aids, *a); eq_ser_refl(aids, *b); eq_ser_refl(aids, *c); },
+        E::Proj(_, a) => { eq_ser_refl(aids, *a); },
+        _ => {},
+    }
+}
+
+pub proof fn eq_ser_symm(aids: (nat, nat), e1: crate::expr_model::ExprSpec, e2: crate::expr_model::ExprSpec)
+    requires
+        eq_ser(aids, e1, e2),
+    ensures
+        eq_ser(aids, e2, e1),
+    decreases e1,
+{
+    use crate::expr_model::ExprSpec as E;
+    match e1 {
+        E::App(a, b) => if let E::App(c, d) = e2 { eq_ser_symm(aids, *a, *c); eq_ser_symm(aids, *b, *d); },
+        E::Bind(_, a, b) => if let E::Bind(_, c, d) = e2 { eq_ser_symm(aids, *a, *c); eq_ser_symm(aids, *b, *d); },
+        E::Let(a, b, c) => if let E::Let(d, e, f) = e2 { eq_ser_symm(aids, *a, *d); eq_ser_symm(aids, *b, *e); eq_ser_symm(aids, *c, *f); },
+        E::Proj(_, a) => if let E::Proj(_, b) = e2 { eq_ser_symm(aids, *a, *b); },
+        _ => {},
+    }
+}
+
+/// A pair of pointers whose models are `eq_ser`, and its size.
+pub open spec fn pm<'t>(aids: (nat, nat), a: ExprPtr<'t>, b: ExprPtr<'t>) -> bool {
+    eq_ser(aids, crate::expr_arena_bridge::to_model(a), crate::expr_arena_bridge::to_model(b))
+}
+
+pub open spec fn psz<'t>(a: ExprPtr<'t>, b: ExprPtr<'t>) -> nat {
+    crate::beta_model::size(crate::expr_arena_bridge::to_model(a)) + crate::beta_model::size(crate::expr_arena_bridge::to_model(b))
+}
+
+/// A pair `alpha_eq` still owes: equal, taken apart already (either
+/// order), or waiting on the stack.
+pub open spec fn covered<'t>(v: Set<SortedPair<'t>>, t: Seq<(ExprPtr<'t>, ExprPtr<'t>)>, k: (ExprPtr<'t>, ExprPtr<'t>)) -> bool {
+    k.0 == k.1 || v.contains(SortedPair(k.0, k.1)) || v.contains(SortedPair(k.1, k.0)) || t.contains(k) || t.contains((k.1, k.0))
+}
+
+/// What the stack and the set owe each other: every pair taken apart has
+/// smaller parts, each still owed.
+pub open spec fn alpha_inv<'t>(aids: (nat, nat), v: Set<SortedPair<'t>>, t: Seq<(ExprPtr<'t>, ExprPtr<'t>)>,
+    kids: Map<SortedPair<'t>, Seq<(ExprPtr<'t>, ExprPtr<'t>)>>) -> bool {
+    forall|sp: SortedPair<'t>| #[trigger] v.contains(sp) ==> kids.contains_key(sp) && reduces(aids, sp, kids[sp])
+        && forall|i: int| 0 <= i < kids[sp].len() ==> #[trigger] covered(v, t, kids[sp][i])
+}
+
+/// An owed pair stays owed once the popped pair `k0` is accounted for.
+pub proof fn cover_mono<'t>(v0: Set<SortedPair<'t>>, t0: Seq<(ExprPtr<'t>, ExprPtr<'t>)>, k0: (ExprPtr<'t>, ExprPtr<'t>),
+    v1: Set<SortedPair<'t>>, t1: Seq<(ExprPtr<'t>, ExprPtr<'t>)>, k: (ExprPtr<'t>, ExprPtr<'t>))
+    requires
+        covered(v0, t0.push(k0), k),
+        v0.subset_of(v1),
+        k0.0 == k0.1 || v1.contains(SortedPair(k0.0, k0.1)) || v1.contains(SortedPair(k0.1, k0.0)),
+        forall|i: int| 0 <= i < t0.len() ==> t1.contains(#[trigger] t0[i]),
+    ensures
+        covered(v1, t1, k),
+{
+    if !(k.0 == k.1 || v0.contains(SortedPair(k.0, k.1)) || v0.contains(SortedPair(k.1, k.0))) {
+        let kk = if t0.push(k0).contains(k) { k } else { (k.1, k.0) };
+        assert(t0.push(k0).contains(kk));
+        let i = choose|i: int| 0 <= i < t0.push(k0).len() && t0.push(k0)[i] == kk;
+        if i < t0.len() {
+            assert(t0[i] == kk);
+            assert(t1.contains(t0[i]));
+        } else {
+            assert(kk == k0);
+        }
+    }
+}
+
+/// Taking apart the popped pair `(a, b)` into `ks`, pushed on the stack.
+pub proof fn alpha_push<'t>(aids: (nat, nat), v0: Set<SortedPair<'t>>, t0: Seq<(ExprPtr<'t>, ExprPtr<'t>)>,
+    kids0: Map<SortedPair<'t>, Seq<(ExprPtr<'t>, ExprPtr<'t>)>>, a: ExprPtr<'t>, b: ExprPtr<'t>, p: SortedPair<'t>,
+    ks: Seq<(ExprPtr<'t>, ExprPtr<'t>)>, extra: Seq<(ExprPtr<'t>, ExprPtr<'t>)>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    -> (kids1: Map<SortedPair<'t>, Seq<(ExprPtr<'t>, ExprPtr<'t>)>>)
+    requires
+        alpha_inv(aids, v0, t0.push((a, b)), kids0),
+        covered(v0, t0.push((a, b)), (x, y)),
+        (p.0 == a && p.1 == b) || (p.0 == b && p.1 == a),
+        forall|i: int| 0 <= i < ks.len() ==> #[trigger] psz(ks[i].0, ks[i].1) < psz(a, b),
+        forall|i: int| 0 <= i < ks.len() ==> extra.contains(#[trigger] ks[i]),
+        (forall|i: int| 0 <= i < ks.len() ==> #[trigger] pm(aids, ks[i].0, ks[i].1)) ==> pm(aids, a, b),
+    ensures
+        alpha_inv(aids, v0.insert(p), t0 + extra, kids1),
+        covered(v0.insert(p), t0 + extra, (x, y)),
+{
+    let v1 = v0.insert(p);
+    let t1 = t0 + extra;
+    let kids1 = kids0.insert(p, ks);
+    assert forall|i: int| 0 <= i < t0.len() implies t1.contains(#[trigger] t0[i]) by {
+        assert(t1[i] == t0[i]);
+    }
+    assert(v1.contains(SortedPair(a, b)) || v1.contains(SortedPair(b, a)));
+    cover_mono(v0, t0, (a, b), v1, t1, (x, y));
+    if (forall|i: int| 0 <= i < ks.len() ==> #[trigger] pm(aids, ks[i].0, ks[i].1)) {
+        if p.0 == b {
+            eq_ser_symm(aids, crate::expr_arena_bridge::to_model(a), crate::expr_arena_bridge::to_model(b));
+        }
+    }
+    assert(psz(p.0, p.1) == psz(a, b));
+    assert(reduces(aids, p, ks));
+    assert forall|sp: SortedPair<'t>| #[trigger] v1.contains(sp) implies kids1.contains_key(sp) && reduces(aids, sp, kids1[sp])
+        && forall|i: int| 0 <= i < kids1[sp].len() ==> #[trigger] covered(v1, t1, kids1[sp][i]) by {
+        if sp == p {
+            assert forall|i: int| 0 <= i < ks.len() implies #[trigger] covered(v1, t1, ks[i]) by {
+                let k = choose|k: int| 0 <= k < extra.len() && extra[k] == ks[i];
+                assert(t1[t0.len() + k] == ks[i]);
+            }
+        } else {
+            assert(v0.contains(sp));
+            assert forall|i: int| 0 <= i < kids1[sp].len() implies #[trigger] covered(v1, t1, kids1[sp][i]) by {
+                cover_mono(v0, t0, (a, b), v1, t1, kids0[sp][i]);
+            }
+        }
+    }
+    kids1
+}
+
+/// The popped pair needs nothing more: equal, or taken apart before.
+pub proof fn alpha_skip<'t>(aids: (nat, nat), v0: Set<SortedPair<'t>>, t0: Seq<(ExprPtr<'t>, ExprPtr<'t>)>,
+    kids: Map<SortedPair<'t>, Seq<(ExprPtr<'t>, ExprPtr<'t>)>>, a: ExprPtr<'t>, b: ExprPtr<'t>, x: ExprPtr<'t>, y: ExprPtr<'t>)
+    requires
+        alpha_inv(aids, v0, t0.push((a, b)), kids),
+        covered(v0, t0.push((a, b)), (x, y)),
+        a == b || v0.contains(SortedPair(a, b)) || v0.contains(SortedPair(b, a)),
+    ensures
+        alpha_inv(aids, v0, t0, kids),
+        covered(v0, t0, (x, y)),
+{
+    assert forall|i: int| 0 <= i < t0.len() implies t0.contains(#[trigger] t0[i]) by {}
+    cover_mono(v0, t0, (a, b), v0, t0, (x, y));
+    assert forall|sp: SortedPair<'t>| #[trigger] v0.contains(sp) implies kids.contains_key(sp) && reduces(aids, sp, kids[sp])
+        && forall|i: int| 0 <= i < kids[sp].len() ==> #[trigger] covered(v0, t0, kids[sp][i]) by {
+        assert forall|i: int| 0 <= i < kids[sp].len() implies #[trigger] covered(v0, t0, kids[sp][i]) by {
+            cover_mono(v0, t0, (a, b), v0, t0, kids[sp][i]);
+        }
+    }
+}
+
+/// A pair taken apart into smaller pairs whose agreement gives its own.
+pub open spec fn reduces<'t>(aids: (nat, nat), sp: SortedPair<'t>, ks: Seq<(ExprPtr<'t>, ExprPtr<'t>)>) -> bool {
+    &&& forall|i: int| 0 <= i < ks.len() ==> #[trigger] psz(ks[i].0, ks[i].1) < psz(sp.0, sp.1)
+    &&& (forall|i: int| 0 <= i < ks.len() ==> #[trigger] pm(aids, ks[i].0, ks[i].1)) ==> pm(aids, sp.0, sp.1)
+}
+
+/// Once nothing waits, every pair taken apart agrees: by induction on size.
+pub proof fn alpha_close<'t>(aids: (nat, nat), v: Set<SortedPair<'t>>, kids: Map<SortedPair<'t>, Seq<(ExprPtr<'t>, ExprPtr<'t>)>>, n: nat)
+    requires
+        forall|sp: SortedPair<'t>| #[trigger] v.contains(sp) ==> kids.contains_key(sp) && reduces(aids, sp, kids[sp])
+            && forall|i: int| 0 <= i < kids[sp].len() ==> #[trigger] covered(v, Seq::empty(), kids[sp][i]),
+    ensures
+        forall|sp: SortedPair<'t>| #[trigger] v.contains(sp) && psz(sp.0, sp.1) <= n ==> pm(aids, sp.0, sp.1),
+    decreases n,
+{
+    if n > 0 {
+        alpha_close(aids, v, kids, (n - 1) as nat);
+    }
+    assert forall|sp: SortedPair<'t>| #[trigger] v.contains(sp) && psz(sp.0, sp.1) <= n implies pm(aids, sp.0, sp.1) by {
+        let ks = kids[sp];
+        assert forall|i: int| 0 <= i < ks.len() implies #[trigger] pm(aids, ks[i].0, ks[i].1) by {
+            let k = ks[i];
+            assert(covered(v, Seq::empty(), ks[i]));
+            assert(psz(k.0, k.1) < psz(sp.0, sp.1));
+            if k.0 == k.1 {
+                eq_ser_refl(aids, crate::expr_arena_bridge::to_model(k.0));
+            } else if v.contains(SortedPair(k.0, k.1)) {
+                assert(v.contains(SortedPair(k.0, k.1)) && psz(SortedPair(k.0, k.1).0, SortedPair(k.0, k.1).1) <= (n - 1) as nat);
+            } else {
+                assert(v.contains(SortedPair(k.1, k.0)) && psz(SortedPair(k.1, k.0).0, SortedPair(k.1, k.0).1) <= (n - 1) as nat);
+                eq_ser_symm(aids, crate::expr_arena_bridge::to_model(k.1), crate::expr_arena_bridge::to_model(k.0));
+            }
+        }
+    }
+}
+
+impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// Verified in place. `true` only when the two sides' models agree but
+    /// at locals with the same free-variable id (`eq_ser`).
+    ///
+    /// VERUS-REWRITE(while-let-exit): `while let Some((x, y)) = todo.pop()`
+    /// is the `loop`/`match` it stands for, so the exit fact (nothing is
+    /// waiting) reaches the proof; the popped pair is named `(a, b)`.
+    /// VERUS-REWRITE(fvar-eq): the locals' `i == j` is `fvar_id_eq(i, j)`;
+    /// `FVarId`'s derived `==` is an unspecified call.
+    #[verifier::exec_allows_no_decreases_clause]
+    pub(crate) fn alpha_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+        requires
+            crate::util_model::owns(*old(self), x),
+            crate::util_model::owns(*old(self), y),
+        ensures
+            result ==> pm(crate::util_model::arena_ids(*old(self)), x, y),
+            final(self).expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+            final(self).expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+            final(self).expr_cache.abstr_cache_levels == old(self).expr_cache.abstr_cache_levels,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            crate::util_model::ctx_ok(*old(self)) ==> crate::util_model::ctx_ok(*final(self)),
+    {
+        if self.expr_cache.alpha_eq_visited.capacity() > 1024 {
+            self.expr_cache.alpha_eq_visited = crate::util::new_fx_hash_set();
+        } else {
+            self.expr_cache.alpha_eq_visited.clear();
+        }
+        let ghost aids = crate::util_model::arena_ids(*self);
+        let mut todo: Vec<(ExprPtr<'t>, ExprPtr<'t>)> = vec![(x, y)];
+        proof {
+            assert(todo@[0] == (x, y));
+        }
+        let ghost mut kids: Map<SortedPair<'t>, Seq<(ExprPtr<'t>, ExprPtr<'t>)>> = Map::empty();
+        loop
+            invariant
+                aids == crate::util_model::arena_ids(*self),
+                crate::util_model::owns(*self, x),
+                crate::util_model::owns(*self, y),
+                self.expr_cache.inst_cache == old(self).expr_cache.inst_cache,
+                self.expr_cache.subst_cache == old(self).expr_cache.subst_cache,
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+                self.expr_cache.abstr_cache == old(self).expr_cache.abstr_cache,
+                self.expr_cache.abstr_cache_levels == old(self).expr_cache.abstr_cache_levels,
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
+                crate::util_model::ctx_ok(*old(self)) ==> crate::util_model::ctx_ok(*self),
+                forall|i: int| #![trigger todo@[i]] 0 <= i < todo@.len() ==> crate::util_model::owns(*self, todo@[i].0)
+                    && crate::util_model::owns(*self, todo@[i].1),
+                forall|sp: SortedPair<'t>| #[trigger] self.expr_cache.alpha_eq_visited@.contains(sp)
+                    ==> crate::util_model::owns(*self, sp.0) && crate::util_model::owns(*self, sp.1),
+                alpha_inv(aids, self.expr_cache.alpha_eq_visited@, todo@, kids),
+                covered(self.expr_cache.alpha_eq_visited@, todo@, (x, y)),
+        {
+            let ghost tpre = todo@;
+            match todo.pop() {
+                None => {
+                    proof {
+                        let v = self.expr_cache.alpha_eq_visited@;
+                        assert(todo@ =~= Seq::<(ExprPtr<'t>, ExprPtr<'t>)>::empty());
+                        assert(alpha_inv(aids, v, Seq::empty(), kids));
+                        let n = psz(x, y);
+                        alpha_close(aids, v, kids, n);
+                        if x == y {
+                            eq_ser_refl(aids, crate::expr_arena_bridge::to_model(x));
+                        } else if !v.contains(SortedPair(x, y)) {
+                            assert(v.contains(SortedPair(y, x)) && psz(SortedPair(y, x).0, SortedPair(y, x).1) <= n);
+                            eq_ser_symm(aids, crate::expr_arena_bridge::to_model(y), crate::expr_arena_bridge::to_model(x));
+                        } else {
+                            assert(psz(SortedPair(x, y).0, SortedPair(x, y).1) <= n);
+                        }
+                    }
+                    return true;
+                },
+                Some((a, b)) => {
+                    let ghost t0 = todo@;
+                    let ghost v0 = self.expr_cache.alpha_eq_visited@;
+                    proof {
+                        assert(tpre =~= t0.push((a, b)));
+                        assert(tpre[t0.len() as int] == (a, b));
+                    }
+                    if a == b {
+                        proof { alpha_skip(aids, v0, t0, kids, a, b, x, y); }
+                        proof {
+                            assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                && crate::util_model::owns(*self, todo@[q].1) by {
+                                assert(todo@[q] == tpre[q]);
+                            }
+                        }
+                        continue;
+                    }
+                    let p = SortedPair::new(a, b);
+                    proof {
+                        assert(p == SortedPair(a, b) || p == SortedPair(b, a));
+                        crate::util_model::sorted_pair_set_keys(*self, v0, p);
+                        crate::util_model::build_hasher_default_valid_fx();
+                    }
+                    if !self.expr_cache.alpha_eq_visited.insert(p) {
+                        proof {
+                            assert(self.expr_cache.alpha_eq_visited@ =~= v0);
+                            alpha_skip(aids, v0, t0, kids, a, b, x, y);
+                        }
+                        proof {
+                            assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                && crate::util_model::owns(*self, todo@[q].1) by {
+                                assert(todo@[q] == tpre[q]);
+                            }
+                        }
+                        continue;
+                    }
+                    proof {
+                        assert(self.expr_cache.alpha_eq_visited@ == v0.insert(p));
+                    }
+                    let pr = self.read_expr_pair(a, b);
+                    proof {
+                        assert(crate::expr_arena_bridge::expr_children_owned(*self, pr.0));
+                        assert(crate::expr_arena_bridge::expr_children_owned(*self, pr.1));
+                    }
+                    match pr {
+                        (Const { .. }, Const { .. }) => {
+                            return false
+                        },
+                        (App { fun: f, arg: aa, .. }, App { fun: g, arg: bb, .. }) => {
+                            todo.push((f, g));
+                            todo.push((aa, bb));
+                            proof {
+                                let ks = seq![(f, g), (aa, bb)];
+                                assert(todo@ =~= t0 + ks);
+                                assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                    && crate::util_model::owns(*self, todo@[q].1) by {
+                                    if q < t0.len() { assert(todo@[q] == tpre[q]); }
+                                }
+                                assert(pm(aids, ks[0].0, ks[0].1) && pm(aids, ks[1].0, ks[1].1) ==> pm(aids, a, b));
+                                kids = alpha_push(aids, v0, t0, kids, a, b, p, ks, ks, x, y);
+                            }
+                        },
+                        (Lambda { binder_type: ta, body: ba, .. }, Lambda { binder_type: tc, body: bd, .. })
+                        | (Pi { binder_type: ta, body: ba, .. }, Pi { binder_type: tc, body: bd, .. }) => {
+                            todo.push((ta, tc));
+                            todo.push((ba, bd));
+                            proof {
+                                let ks = seq![(ta, tc), (ba, bd)];
+                                assert(todo@ =~= t0 + ks);
+                                assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                    && crate::util_model::owns(*self, todo@[q].1) by {
+                                    if q < t0.len() { assert(todo@[q] == tpre[q]); }
+                                }
+                                assert(pm(aids, ks[0].0, ks[0].1) && pm(aids, ks[1].0, ks[1].1) ==> pm(aids, a, b));
+                                kids = alpha_push(aids, v0, t0, kids, a, b, p, ks, ks, x, y);
+                            }
+                        },
+                        (
+                            Let { binder_type: ta, val: va, body: ba, nondep: n1, .. },
+                            Let { binder_type: tc, val: vc, body: bd, nondep: n2, .. },
+                        ) => {
+                            if n1 == n2 {
+                                todo.push((ta, tc));
+                                todo.push((va, vc));
+                                todo.push((ba, bd));
+                                proof {
+                                    let ks = seq![(ta, tc), (va, vc), (ba, bd)];
+                                    assert(todo@ =~= t0 + ks);
+                                    assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                        && crate::util_model::owns(*self, todo@[q].1) by {
+                                        if q < t0.len() { assert(todo@[q] == tpre[q]); }
+                                    }
+                                    assert(pm(aids, ks[0].0, ks[0].1) && pm(aids, ks[1].0, ks[1].1) && pm(aids, ks[2].0, ks[2].1)
+                                        ==> pm(aids, a, b));
+                                    kids = alpha_push(aids, v0, t0, kids, a, b, p, ks, ks, x, y);
+                                }
+                            } else {
+                                return false
+                            }
+                        },
+                        (
+                            Proj { ty_name: na, idx: i, structure: sa, .. },
+                            Proj { ty_name: nb, idx: j, structure: sb, .. },
+                        ) => {
+                            if na == nb && i == j {
+                                todo.push((sa, sb));
+                                proof {
+                                    let ks = seq![(sa, sb)];
+                                    assert(todo@ =~= t0 + ks);
+                                    assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                        && crate::util_model::owns(*self, todo@[q].1) by {
+                                        if q < t0.len() { assert(todo@[q] == tpre[q]); }
+                                    }
+                                    assert(pm(aids, ks[0].0, ks[0].1) ==> pm(aids, a, b));
+                                    kids = alpha_push(aids, v0, t0, kids, a, b, p, ks, ks, x, y);
+                                }
+                            } else {
+                                return false
+                            }
+                        },
+                        // De Bruijn levels can be reused with different types in this
+                        // checker, so a matching free-variable ID alone is insufficient.
+                        (Local { id: i, binder_type: ta, .. }, Local { id: j, binder_type: tc, .. }) => {
+                            if crate::expr_arena_bridge::fvar_id_eq(i, j) {
+                                todo.push((ta, tc));
+                                proof {
+                                    let ks = Seq::<(ExprPtr<'t>, ExprPtr<'t>)>::empty();
+                                    assert(todo@ =~= t0 + seq![(ta, tc)]);
+                                    assert forall|q: int| 0 <= q < todo@.len() implies crate::util_model::owns(*self, #[trigger] todo@[q].0)
+                                        && crate::util_model::owns(*self, todo@[q].1) by {
+                                        if q < t0.len() { assert(todo@[q] == tpre[q]); }
+                                    }
+                                    let (ea, eb) = (crate::expr_arena_bridge::expr_id(a), crate::expr_arena_bridge::expr_id(b));
+                                    assert(crate::expr_arena_bridge::to_model(a) == crate::expr_model::ExprSpec::Free(ea));
+                                    assert(crate::expr_arena_bridge::to_model(b) == crate::expr_model::ExprSpec::Free(eb));
+                                    assert(crate::expr_arena_bridge::dbj_serial(aids, ea) == crate::expr_arena_bridge::dbj_serial(aids, eb));
+                                    assert(crate::expr_arena_bridge::unique_serial(aids, ea) == crate::expr_arena_bridge::unique_serial(aids, eb));
+                                    assert(pm(aids, a, b));
+                                    kids = alpha_push(aids, v0, t0, kids, a, b, p, ks, seq![(ta, tc)], x, y);
+                                }
+                            } else {
+                                return false
+                            }
+                        },
+                        _ => return false,
+                    }
+                },
+            }
+        }
+    }
+}
+
+} // verus!
 
 ::vstd::prelude::verus! {
 

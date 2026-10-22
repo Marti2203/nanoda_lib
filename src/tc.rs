@@ -1450,8 +1450,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         use NatBinOp::*;
         // `xw`/`yw`, not `x`/`y`: a local that shadows a parameter named in the
         // `ensures` silently redirects the postcondition to itself. Same values.
-        let (xw, yw) = (self.whnf(x), self.whnf(y));
-        let (arg1, arg2) = (self.ctx.get_bignum_from_expr(xw)?, self.ctx.get_bignum_from_expr(yw)?);
+        let xw = self.whnf(x);
+        let arg1 = self.ctx.get_bignum_from_expr(xw)?;
+        let yw = self.whnf(y);
+        let arg2 = self.ctx.get_bignum_from_expr(yw)?;
         let ghost a = crate::nat_lit_model::to_nat(arg1);
         let ghost b = crate::nat_lit_model::to_nat(arg2);
         // VERUS-REWRITE(wrapper-swap): each operation goes through its
@@ -1557,9 +1559,6 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             to_model_expr(e) is Bind ==> result is None,
     {
         if !self.ctx.export_file.config.nat_extension_on() {
-            return None
-        }
-        if self.ctx.has_fvars(e) {
             return None
         }
         let (f, args) = self.ctx.unfold_apps(e);
@@ -1753,13 +1752,59 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 None => true,
             },
     {
-        // `st`, not `structure`: a local that shadows a parameter named in the
-        // `ensures` makes the postcondition refer to the local. Same value.
-        let mut st = if cheap {
+        let st = if cheap {
             self.whnf_no_unfolding_cheap_proj(structure)
         } else {
             self.whnf(structure)
         };
+        proof {
+            scope_pres_in_scope(*self, structure, st);
+            whnf_claim_proj(*old(self).env, idx, to_model_expr(structure), to_model_expr(st));
+        }
+        let r = self.reduce_proj_core(idx, st);
+        proof {
+            if let Some(rr) = r {
+                whnf_claim_trans(*old(self).env, ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
+                    ExprSpec::Proj(idx, Box::new(to_model_expr(st))), to_model_expr(rr));
+            }
+        }
+        r
+    }
+
+    /// `reduce_proj` on a structure already reduced (upstream's split).
+    #[verifier::exec_allows_no_decreases_clause]
+    fn reduce_proj_core(&mut self, idx: usize, structure: ExprPtr<'t>) -> (result: Option<
+        ExprPtr<'t>,
+    >)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, structure),
+            tc_wf(*old(self)),
+            in_scope(*old(self), structure),
+        ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
+            result matches Some(r) ==> crate::util_model::owns(*(*final(self)).ctx, r),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).declar_info == (*old(self)).declar_info,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            // ONE PROJECTION-IOTA STEP on the structure as it is
+            match result {
+                Some(r) => whnf_claim(
+                    *old(self).env,
+                    ExprSpec::Proj(idx, Box::new(to_model_expr(structure))),
+                    to_model_expr(r),
+                ),
+                None => true,
+            },
+    {
+        // `st`, not `structure`: a local that shadows a parameter named in the
+        // `ensures` makes the postcondition refer to the local. Same value.
+        let mut st = structure;
+        proof {
+            whnf_claim_refl(*old(self).env, to_model_expr(structure));
+        }
         if let StringLit { ptr, .. } = self.ctx.read_expr(st) {
             if let Some(s) = self.str_lit_to_ctor_reducing(ptr) {
                 proof {
@@ -1789,7 +1834,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             Some(i) => i,
             None => return None,
         };
-        let a = args.get(i).copied().unwrap();
+        let a = args.get(i).copied()?;
         proof {
             let env = *old(self).env;
             let fm = crate::env_model::to_model_of_env(env);
@@ -1915,13 +1960,13 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     #[verifier::spinoff_prover]
     fn infer_proj(
         &mut self,
-        _ty_name: NamePtr<'t>,
+        ty_name: NamePtr<'t>,
         idx: usize,
         structure: ExprPtr<'t>,
         flag: InferFlag,
     ) -> (result: ExprPtr<'t>)
         requires
-            crate::util_model::owns(*(*old(self)).ctx, _ty_name),
+            crate::util_model::owns(*(*old(self)).ctx, ty_name),
             crate::util_model::owns(*(*old(self)).ctx, structure),
             tc_wf(*old(self)),
             in_scope(*old(self), structure),
@@ -1986,6 +2031,10 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
         let InductiveData { info: inductive_info, all_ctor_names, num_params, .. } =
             self.env.get_structure(&struct_ty_name, true).unwrap();
+        // VERUS-REWRITE(panic-message): upstream's `panic!("Invalid projection:
+        // {:?} != {:?}", ..)` prints both names through the unverified debug
+        // printer; the same check aborts with a fixed message.
+        assert!(inductive_info.name == ty_name, "infer_proj: the projection's type name is not its structure's");
 
         // VERUS-REWRITE(unchecked-index): `all_ctor_names[0]` was unguarded, as
         // in `def_eq_unit`. `infer_proj` returns an `ExprPtr` and has nothing
@@ -2071,7 +2120,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns_all(*self.ctx, struct_ty_args@),
                 crate::util_model::owns(*self.ctx, ctor_ty),
-                crate::util_model::owns(*(*old(self)).ctx, _ty_name),
+                crate::util_model::owns(*(*old(self)).ctx, ty_name),
                 crate::util_model::owns(*(*old(self)).ctx, structure),
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -2189,7 +2238,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 mut_ref_future(self.ctx) == mut_ref_future(old(self).ctx),
                 crate::util_model::owns(*self.ctx, inductive_info.name),
                 crate::util_model::owns(*self.ctx, ctor_ty),
-                crate::util_model::owns(*(*old(self)).ctx, _ty_name),
+                crate::util_model::owns(*(*old(self)).ctx, ty_name),
                 crate::util_model::owns(*(*old(self)).ctx, structure),
                 tc_wf(*self),
                 self.ctx.dbj_level_counter == old(self).ctx.dbj_level_counter,
@@ -4296,6 +4345,92 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         Some(r)
     }
 
+    /// `x.i =?= y.i` by their structures, as the reference kernel's
+    /// `lazy_delta_proj_reduction` (src/kernel/type_checker.cpp): lazy-delta
+    /// steps on the two structures; once neither unfolds any further, project
+    /// both and compare just the projected fields, and only if a side is not a
+    /// constructor application compare the structures themselves.  Comparing the
+    /// whole structures first would also compare (and evaluate) the fields the
+    /// projection discards.
+    ///
+    /// Verified: `true` means the two projections convert.
+    #[verifier::exec_allows_no_decreases_clause]
+    fn lazy_delta_proj_reduction(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>, idx: usize) -> (result: bool)
+        requires
+            crate::util_model::owns(*(*old(self)).ctx, x),
+            crate::util_model::owns(*(*old(self)).ctx, y),
+            tc_wf(*old(self)),
+            in_scope(*old(self), x),
+            in_scope(*old(self), y),
+        ensures
+            mut_ref_future((*final(self)).ctx) == mut_ref_future((*old(self)).ctx),
+            tc_wf(*final(self)),
+            (*final(self)).env == (*old(self)).env,
+            (*final(self)).declar_info == (*old(self)).declar_info,
+            (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
+            crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
+            (*final(self)).live == (*old(self)).live,
+            result ==> def_eq_claim(*old(self).env, ExprSpec::Proj(idx, Box::new(to_model_expr(x))),
+                ExprSpec::Proj(idx, Box::new(to_model_expr(y)))),
+    {
+        match self.lazy_delta_step(x, y) {
+            FoundEqResult(r) => {
+                proof {
+                    if r {
+                        dec_proj(*old(self).env, idx, to_model_expr(x), to_model_expr(y));
+                    }
+                }
+                r
+            },
+            Exhausted(a, b) => {
+                let ghost env = *old(self).env;
+                let ghost (px, py) = (ExprSpec::Proj(idx, Box::new(to_model_expr(x))), ExprSpec::Proj(idx, Box::new(to_model_expr(y))));
+                let ghost (pa, pb) = (ExprSpec::Proj(idx, Box::new(to_model_expr(a))), ExprSpec::Proj(idx, Box::new(to_model_expr(b))));
+                proof {
+                    whnf_claim_proj(env, idx, to_model_expr(x), to_model_expr(a));
+                    whnf_claim_proj(env, idx, to_model_expr(y), to_model_expr(b));
+                }
+                let xi = self.reduce_proj_core(idx, a);
+                let yi = match xi {
+                    Some(_) => self.reduce_proj_core(idx, b),
+                    None => None,
+                };
+                match (xi, yi) {
+                    (Some(xi), Some(yi)) => {
+                        proof {
+                            assert(in_scope(*self, a) && in_scope(*self, b));
+                            whnf_claim_trans(env, px, pa, to_model_expr(xi));
+                            whnf_claim_trans(env, py, pb, to_model_expr(yi));
+                            let aids = crate::env_model::env_arena_ids(*self.env);
+                            assert(crate::expr_model::dbj_deep_in(aids, pa, live_set(*self), self.ctx.dbj_level_counter));
+                            assert(crate::expr_model::dbj_deep_in(aids, pb, live_set(*self), self.ctx.dbj_level_counter));
+                            assert(crate::expr_model::nlbv(pa) <= 0 && crate::expr_model::nlbv(pb) <= 0);
+                            assert(in_scope(*self, xi));
+                            assert(in_scope(*self, yi));
+                        }
+                        let r = self.def_eq(xi, yi);
+                        proof {
+                            if r {
+                                def_eq_claim_via(env, px, to_model_expr(xi), py, to_model_expr(yi));
+                            }
+                        }
+                        r
+                    },
+                    _ => {
+                        let r = self.def_eq(a, b);
+                        proof {
+                            if r {
+                                dec_proj(env, idx, to_model_expr(a), to_model_expr(b));
+                                def_eq_claim_via(env, px, pa, py, pb);
+                            }
+                        }
+                        r
+                    },
+                }
+            },
+        }
+    }
+
     #[verifier::exec_allows_no_decreases_clause]
     fn def_eq_proj(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
         requires
@@ -4319,13 +4454,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 Proj { ty_name: ty_name_l, idx: idx_l, structure: structure_l, .. },
                 Proj { ty_name: ty_name_r, idx: idx_r, structure: structure_r, .. },
             ) => {
-                let r = ty_name_l == ty_name_r && idx_l == idx_r && self.def_eq(structure_l, structure_r);
-                proof {
-                    if r {
-                        dec_proj(*old(self).env, idx_l, to_model_expr(structure_l), to_model_expr(structure_r));
-                    }
-                }
-                r
+                ty_name_l == ty_name_r && idx_l == idx_r && self.lazy_delta_proj_reduction(structure_l, structure_r, idx_l)
             },
             _ => false,
         }
@@ -4582,8 +4711,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         }
         // Every `true` below is a claim about `(xo, yo)`, the whnf'd inputs.
         let ghost (xo, yo) = (x_n, y_n);
-        let result = if self.proof_irrel_eq(x_n, y_n) {
-            true
+        let result = if let Some(short) = self.proof_irrel_eq(x_n, y_n) {
+            short
         } else {
             match self.lazy_delta_step(x_n, y_n) {
                 FoundEqResult(short) => {
@@ -5313,6 +5442,17 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         if self.cached_eq(x, y) {
             return Some(true)
         }
+        if self.ctx.alpha_eq(x, y) {
+            proof {
+                alpha_in_scope(*old(self), to_model_expr(x), to_model_expr(y));
+                kconv_refl(*old(self).env, to_model_expr(x));
+            }
+            // VERUS-REWRITE(accessor-swap): was
+            // `self.tc_cache.eq_cache.insert(SortedPair::new(x, y))`;
+            // `cache_eq` is exactly that insert, carrying the cache's claim.
+            self.cache_eq(x, y);
+            return Some(true)
+        }
         if let Some(r) = self.def_eq_sort(x, y) {
             proof {
                 if r {
@@ -5818,7 +5958,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     #[verifier::exec_allows_no_decreases_clause]
-    fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: bool)
+    fn proof_irrel_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> (result: Option<bool>)
         requires
             crate::util_model::owns(*(*old(self)).ctx, x),
             crate::util_model::owns(*(*old(self)).ctx, y),
@@ -5833,35 +5973,33 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             (*final(self)).ctx.dbj_level_counter == (*old(self)).ctx.dbj_level_counter,
             crate::util_model::same_arenas(*(*old(self)).ctx, *(*final(self)).ctx),
             (*final(self)).live == (*old(self)).live,
-            result ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
+            result == Some(true) ==> def_eq_claim(*old(self).env, to_model_expr(x), to_model_expr(y)),
     {
         match self.is_proof(x) {
-            (false, _) => false,
-            (true, l_type) => match self.is_proof(y) {
-                (false, _) => false,
-                (true, r_type) => {
-                    let b = self.def_eq(l_type, r_type);
-                    proof {
-                        if b && crate::expr_model::nlbv(to_model_expr(x)) <= 0 && crate::expr_model::nlbv(to_model_expr(y)) <= 0 {
-                            irrel_claim(
-                                *old(self).env,
-                                to_model_expr(x),
-                                to_model_expr(y),
-                                to_model_expr(l_type),
-                                to_model_expr(r_type),
-                            );
-                        }
-                        if b {
-                            let env = *old(self).env;
-                            kcprop_of(env, to_model_expr(l_type));
-                            crate::kdual::cw_irrel(
-                                crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
-                                to_model_expr(x), to_model_expr(y), to_model_expr(l_type), to_model_expr(r_type),
-                            );
-                        }
+            (false, _) => None,
+            (true, l_type) => {
+                let r_type = self.infer(y, InferOnly);
+                let b = self.def_eq(l_type, r_type);
+                proof {
+                    if b && crate::expr_model::nlbv(to_model_expr(x)) <= 0 && crate::expr_model::nlbv(to_model_expr(y)) <= 0 {
+                        irrel_claim(
+                            *old(self).env,
+                            to_model_expr(x),
+                            to_model_expr(y),
+                            to_model_expr(l_type),
+                            to_model_expr(r_type),
+                        );
                     }
-                    b
-                },
+                    if b {
+                        let env = *old(self).env;
+                        kcprop_of(env, to_model_expr(l_type));
+                        crate::kdual::cw_irrel(
+                            crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)),
+                            to_model_expr(x), to_model_expr(y), to_model_expr(l_type), to_model_expr(r_type),
+                        );
+                    }
+                }
+                Some(b)
             },
         }
     }
@@ -8100,6 +8238,25 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
     crate::kdual::cwh_trans(kd, ke, kg, a, b, c);
 }
 
+/// Projection is a congruence for `whnf_claim`.
+pub proof fn whnf_claim_proj<'x, 't>(env: Env<'x, 't>, idx: usize, a: ExprSpec, b: ExprSpec)
+    requires
+        whnf_claim(env, a, b),
+    ensures
+        whnf_claim(env, ExprSpec::Proj(idx, Box::new(a)), ExprSpec::Proj(idx, Box::new(b))),
+{
+    let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
+    let aids = crate::env_model::env_arena_ids(env);
+    if crate::expr_model::nlbv(a) <= 0 {
+        kconv_proj_congr(env, idx, a, b);
+    }
+    crate::kdual::cwh_proj(kd, ke, kg, idx, a, b);
+    assert forall|SS: ISet<nat>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(aids, ExprSpec::Proj(idx, Box::new(a)), SS, c)
+        implies crate::expr_model::dbj_deep_in(aids, ExprSpec::Proj(idx, Box::new(b)), SS, c) by {
+        assert(crate::expr_model::dbj_deep_in(aids, a, SS, c));
+    }
+}
+
 /// THE KERNEL'S TYPING JUDGEMENT: the typed family in the kernel's mode
 /// (`io = true`, InferOnly -- arguments are not re-checked against their
 /// binders), over the environment's declarations and the arena's locals. The
@@ -10322,6 +10479,76 @@ pub proof fn live_local_unique<'x, 't, 'p>(
     assert(crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), tc.live@[j]) == Some(j as u16));
 }
 
+/// `live_local_unique` at two node ids: two in-scope locals with the same
+/// serials are one node.
+pub proof fn live_free_unique<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, a: nat, b: nat)
+    requires
+        live_ok(tc),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), ExprSpec::Free(a), live_set(tc), tc.ctx.dbj_level_counter),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), ExprSpec::Free(b), live_set(tc), tc.ctx.dbj_level_counter),
+        crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), a)
+            == crate::expr_arena_bridge::dbj_serial(crate::env_model::env_arena_ids(*tc.env), b),
+        crate::expr_arena_bridge::unique_serial(crate::env_model::env_arena_ids(*tc.env), a)
+            == crate::expr_arena_bridge::unique_serial(crate::env_model::env_arena_ids(*tc.env), b),
+    ensures
+        a == b,
+{
+    broadcast use vstd::iset::lemma_iset_new;
+
+    let aids = crate::env_model::env_arena_ids(*tc.env);
+    if crate::expr_arena_bridge::dbj_serial(aids, a) is None {
+        let n1 = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(a), n);
+        let n2 = choose|n: nat| #[trigger] crate::expr_model::unique_ty_deep(aids, ExprSpec::Free(b), n);
+        assert(crate::expr_arena_bridge::unique_canon(aids, a));
+        assert(crate::expr_arena_bridge::unique_canon(aids, b));
+        crate::expr_arena_bridge::unique_serial_injective(aids, a, b);
+        return;
+    }
+    assert(tc.live@.contains(a));
+    assert(tc.live@.contains(b));
+    let i = choose|i: int| 0 <= i < tc.live@.len() && tc.live@[i] == a;
+    let j = choose|j: int| 0 <= j < tc.live@.len() && tc.live@[j] == b;
+    assert(crate::expr_arena_bridge::dbj_serial(aids, tc.live@[i]) == Some(i as u16));
+    assert(crate::expr_arena_bridge::dbj_serial(aids, tc.live@[j]) == Some(j as u16));
+}
+
+/// `alpha_eq`'s answer in scope: equal but at same-serial locals is equal.
+pub proof fn alpha_in_scope<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, e1: ExprSpec, e2: ExprSpec)
+    requires
+        live_ok(tc),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), e1, live_set(tc), tc.ctx.dbj_level_counter),
+        crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*tc.env), e2, live_set(tc), tc.ctx.dbj_level_counter),
+        crate::expr::eq_ser(crate::env_model::env_arena_ids(*tc.env), e1, e2),
+    ensures
+        e1 == e2,
+    decreases e1,
+{
+    match e1 {
+        ExprSpec::Free(a) => if let ExprSpec::Free(b) = e2 {
+            if a != b {
+                live_free_unique(tc, a, b);
+            }
+        },
+        ExprSpec::App(f, x) => if let ExprSpec::App(g, y) = e2 {
+            alpha_in_scope(tc, *f, *g);
+            alpha_in_scope(tc, *x, *y);
+        },
+        ExprSpec::Bind(_, t, b) => if let ExprSpec::Bind(_, t2, b2) = e2 {
+            alpha_in_scope(tc, *t, *t2);
+            alpha_in_scope(tc, *b, *b2);
+        },
+        ExprSpec::Let(t, v, b) => if let ExprSpec::Let(t2, v2, b2) = e2 {
+            alpha_in_scope(tc, *t, *t2);
+            alpha_in_scope(tc, *v, *v2);
+            alpha_in_scope(tc, *b, *b2);
+        },
+        ExprSpec::Proj(_, s1) => if let ExprSpec::Proj(_, s2) = e2 {
+            alpha_in_scope(tc, *s1, *s2);
+        },
+        _ => {},
+    }
+}
+
 /// Live nodes are below the counter, at their own level.
 pub proof fn live_below<'x, 't, 'p>(tc: TypeChecker<'x, 't, 'p>, c: u16)
     requires
@@ -11741,9 +11968,9 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
     /// Same lookup, same fields. The wrapper is what carries a contract, and
     /// the closure is one Verus cannot take anyway.
     ///
-    /// VERUS-REWRITE(panic-message): the `else` branch's `panic!` drops its
-    /// `{:?}` argument, which goes through the unverified debug printer. Same
-    /// abort.
+    /// VERUS-REWRITE(panic-message): the `else` branch's two `panic!`s (with
+    /// and without a declaration being checked) drop their `{:?}` arguments,
+    /// which go through the unverified debug printer. Same abort.
     #[verifier::exec_allows_no_decreases_clause]
     fn infer_const(
         &mut self,
@@ -11861,7 +12088,10 @@ impl<'x, 't, 'p: 't> TypeChecker<'x, 't, 'p> {
                 }
                 r
             },
-            None => panic!("declaration not found in infer_const"),
+            None => match self.declar_info {
+                Some(_) => panic!("infer_const: the declaration being checked depends on a constant which was not found in the environment"),
+                None => panic!("infer_const: declaration was not found in the environment"),
+            },
         }
     }
 

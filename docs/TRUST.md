@@ -74,6 +74,14 @@ string facts the checker uses are stated by text.
 The parser's boundary with the libraries (reading a line, serde's
 decoding, the formatted messages, the axiom whitelist's name text) is
 claim-free helpers, so it promises nothing the proofs use.
+On 2026-10-22 (upstream 0.4.26 merged, `scripts/trust-surface.sh`: 58
+claiming items, 34 claim-free): `nat_shl` and `nat_shr` follow upstream's
+shifts, still verified against `x * 2^y` and `x / 2^y`, through five
+library specifications (`BigUint::bits`, `From<u64>`, `TryFrom<&BigUint>
+for u64`, `<<` and `>>` by a `u64`). Upstream's quick `alpha_eq` check
+and its lazy-delta comparison of projections are verified, not trusted.
+The vstd fork adds `HashSet::capacity` (no claim) and that a `Cow<str>`
+formats without a requirement, like `str` and `String`.
 
 ## P. The parser (`src/parser.rs`)
 

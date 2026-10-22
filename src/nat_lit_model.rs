@@ -51,6 +51,27 @@ pub(crate) fn biguint_sub(x: BigUint, y: BigUint) -> BigUint {
 }
 
 #[allow(dead_code)]
+/// `util::nat_shl`/`nat_shr`'s pieces (upstream's shift implementation).
+pub(crate) fn biguint_bits(x: &BigUint) -> u64 {
+    x.bits()
+}
+
+pub(crate) fn biguint_from_u64(n: u64) -> BigUint {
+    BigUint::from(n)
+}
+
+pub(crate) fn biguint_to_u64(y: &BigUint) -> Option<u64> {
+    u64::try_from(y).ok()
+}
+
+pub(crate) fn biguint_shl_u64(x: BigUint, n: u64) -> BigUint {
+    x << n
+}
+
+pub(crate) fn biguint_shr_u64(x: BigUint, n: u64) -> BigUint {
+    x >> n
+}
+
 pub(crate) fn biguint_div(x: BigUint, y: BigUint) -> BigUint {
     x / y
 }
@@ -245,6 +266,36 @@ pub assume_specification[ <BigUint as core::convert::From<u32>>::from ](x: u32) 
 pub assume_specification[ <BigUint as num_traits::One>::one ]() -> (result: BigUint)
     ensures
         to_nat(result) == 1,
+;
+
+/// `num_bigint`'s `bits`, `From<u64>`, `TryFrom<&BigUint> for u64`
+/// and shifts by a `u64`: ordinary natural-number semantics.
+pub assume_specification[ biguint_bits ](x: &BigUint) -> (result: u64)
+    ensures
+        to_nat(*x) < crate::tc_model::nat_pow(2, result as nat),
+;
+
+pub assume_specification[ biguint_from_u64 ](n: u64) -> (result: BigUint)
+    ensures
+        to_nat(result) == n as nat,
+;
+
+pub assume_specification[ biguint_to_u64 ](y: &BigUint) -> (result: Option<u64>)
+    ensures
+        match result {
+            Some(n) => n as nat == to_nat(*y),
+            None => to_nat(*y) > u64::MAX as nat,
+        },
+;
+
+pub assume_specification[ biguint_shl_u64 ](x: BigUint, n: u64) -> (result: BigUint)
+    ensures
+        to_nat(result) == to_nat(x) * crate::tc_model::nat_pow(2, n as nat),
+;
+
+pub assume_specification[ biguint_shr_u64 ](x: BigUint, n: u64) -> (result: BigUint)
+    ensures
+        to_nat(result) == to_nat(x) / crate::tc_model::nat_pow(2, n as nat),
 ;
 
 pub assume_specification[ biguint_eq ](x: &BigUint, y: &BigUint) -> (result: bool)

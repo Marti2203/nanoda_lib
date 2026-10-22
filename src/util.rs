@@ -785,25 +785,59 @@ fn two() -> (result: BigUint)
     crate::nat_lit_model::biguint_add(<BigUint as num_traits::One>::one(), <BigUint as num_traits::One>::one())
 }
 
-/// VERUS-REWRITE(bignum-wrappers): `x * 2^y` with `2` as `1 + 1` and the
-/// product through `biguint_mul`.
+/// Powers of two grow with the exponent.
+proof fn pow2_mono(a: nat, b: nat)
+    requires
+        a <= b,
+    ensures
+        crate::tc_model::nat_pow(2, a) <= crate::tc_model::nat_pow(2, b),
+    decreases b,
+{
+    if a < b {
+        pow2_mono(a, (b - 1) as nat);
+        pow2_pos((b - 1) as nat);
+    }
+}
+
+/// VERUS-REWRITE(bignum-wrappers): upstream's shift, with `is_zero`, the
+/// `u64` conversion and `<<` through their `nat_lit_model` wrappers; the
+/// `expect`'s panic is the `None` arm's.
 pub(crate) fn nat_shl(x: BigUint, y: BigUint) -> (result: BigUint)
     ensures
         crate::nat_lit_model::to_nat(result) == crate::nat_lit_model::to_nat(x) * crate::tc_model::nat_pow(2, crate::nat_lit_model::to_nat(y)),
 {
-    crate::nat_lit_model::biguint_mul(x, two().pow(y))
+    if crate::nat_lit_model::biguint_is_zero(&x) {
+        return x;
+    }
+    match crate::nat_lit_model::biguint_to_u64(&y) {
+        Some(n) => crate::nat_lit_model::biguint_shl_u64(x, n),
+        None => panic!("nat_shl: shift count exceeds u64::MAX"),
+    }
 }
 
-/// VERUS-REWRITE(bignum-wrappers): `x / 2^y` with `2` as `1 + 1` and the
-/// quotient through `biguint_div`.
+/// VERUS-REWRITE(bignum-wrappers): upstream's shift, with `bits`, `From<u64>`,
+/// the comparison, the `u64` conversion and `>>` through their wrappers; the
+/// `unwrap`'s panic is the `None` arm's (unreachable: the count is below the
+/// bit length).
 pub(crate) fn nat_shr(x: BigUint, y: BigUint) -> (result: BigUint)
     ensures
         crate::nat_lit_model::to_nat(result) == crate::nat_lit_model::to_nat(x) / crate::tc_model::nat_pow(2, crate::nat_lit_model::to_nat(y)),
 {
-    proof {
-        pow2_pos(crate::nat_lit_model::to_nat(y));
+    let bits = crate::nat_lit_model::biguint_bits(&x);
+    if crate::nat_lit_model::biguint_le(&crate::nat_lit_model::biguint_from_u64(bits), &y) {
+        proof {
+            let (xv, yv) = (crate::nat_lit_model::to_nat(x), crate::nat_lit_model::to_nat(y));
+            pow2_mono(bits as nat, yv);
+            pow2_pos(yv);
+            assert(xv < crate::tc_model::nat_pow(2, yv));
+            vstd::arithmetic::div_mod::lemma_basic_div(xv as int, crate::tc_model::nat_pow(2, yv) as int);
+        }
+        return <BigUint as num_traits::Zero>::zero();
     }
-    crate::nat_lit_model::biguint_div(x, two().pow(y))
+    match crate::nat_lit_model::biguint_to_u64(&y) {
+        Some(n) => crate::nat_lit_model::biguint_shr_u64(x, n),
+        None => panic!("nat_shr: shift count exceeds u64::MAX"),
+    }
 }
 
 } // verus!
@@ -837,6 +871,8 @@ pub struct ExprCache<'t> {
     pub abstr_cache: FxHashMap<(ExprPtr<'t>, u16), ExprPtr<'t>>,
     /// A cache for (expr, starting deBruijn level, current deBruijn level)
     pub abstr_cache_levels: FxHashMap<(ExprPtr<'t>, u16, u16), ExprPtr<'t>>,
+    /// The pairs `alpha_eq` has already taken apart in its current run.
+    pub alpha_eq_visited: FxHashSet<SortedPair<'t>>,
 }
 
 ::vstd::prelude::verus! {
@@ -853,6 +889,7 @@ impl<'t> ExprCache<'t> {
             subst_cache: new_fx_hash_map(),
             dsubst_cache: new_fx_hash_map(),
             abstr_cache_levels: new_fx_hash_map(),
+            alpha_eq_visited: new_fx_hash_set(),
         }
     }
 }
@@ -4414,7 +4451,7 @@ impl TryFrom<&Path> for Config {
         match OpenOptions::new().read(true).truncate(false).open(p) {
             Err(e) => Err(Box::from(format!("failed to open configuration file: {:?}", e))),
             Ok(config_file) => {
-                let config = serde_json::from_reader::<_, Config>(BufReader::new(config_file)).unwrap();
+                let config = serde_json::from_reader::<_, Config>(BufReader::new(config_file))?;
                 if config.export_file_path.is_none() && !config.use_stdin {
                     return Err(Box::from(format!(
                         "incompatible config options: must specify a path to an export file OR set `use_stdin: true`"

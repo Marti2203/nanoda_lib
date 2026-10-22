@@ -296,11 +296,13 @@ scope: `assert_nonnested_rec_rule_def_eq`'s parameter (`old_uparams`) and
 | `assert_nonnested_rec_rule_def_eq` | `src/inductive.rs` |
 | `assert_nonnested_recursors_def_eq` | `src/inductive.rs` |
 
-### An exit proof inside a `while let` — 2 rewrites
+### An exit proof inside a `while let` — 3 rewrites
 
 `unfold_apps` and `unfold_apps_stack` (`src/expr.rs`) are `loop` + `match`;
 so is `abstr_pis` (`src/expr.rs`), whose `while let Some(b) = binders.next_back()`
-needs the iterator's emptiness at exit.
+needs the iterator's emptiness at exit; and `alpha_eq` (`src/expr.rs`), whose
+`while let Some((x, y)) = todo.pop()` needs the empty work stack at exit (its
+locals' `i == j` is also `fvar_id_eq`, as in `def_eq_local`).
 
 `while let` itself is fine — Verus desugars it to exactly that and it accepts
 `invariant`/`ensures`. The problem is narrower: these two put a `proof` block
@@ -357,7 +359,7 @@ needed a different shape.
 | `get_declar`, `get_temp_declar` | `src/env.rs` | `self.temp_declars.as_ref().and_then(|ext| ext.get(n)).or_else(|| self.get_old_declar(n))` → the `match` it stands for (`get_temp_declar` first, then `get_old_declar`); same lookups, same order |
 | `lazy_delta_step` | `src/tc.rs` | parameters `mut x, mut y` → `x_in, y_in` with `let mut x = x_in` — the claim is about the entry values, which a mutated parameter cannot name inside the loop |
 | `do_nat_bin` | `src/tc.rs` | each operation through its `biguint_*` wrapper, which calls the same `util::nat_*` function (or `Pow::pow`, `==`, `<=`) and carries the value contract |
-| `reduce_proj` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
+| `reduce_proj_core` | `src/tc.rs` | `get_constructor(&name)?.num_params` read through `get_constructor_num_params`, defined as exactly that and carrying the environment's claim |
 | `reduce_quot` | `src/tc.rs` | the major premise's index is chosen first, then one `get` and one `whnf` -- the same work as the original's two branches |
 | `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
 | `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
@@ -389,7 +391,7 @@ still a rejection — but each is an improvement.
 | function | file | was |
 |---|---|---|
 | `mk_nullary_ctor` | `src/tc.rs` | `all_ctor_names[0]` unguarded (unreachable from its one call site, but nothing says so). Also three consistency checks that never fail on a well-formed environment and a well-typed major premise (tested-env): the constructor belongs to the inductive (`get_constructor_inductive_is`), takes `num_params` parameters (`get_constructor_num_params`), and the type supplies them -- the K-like step's claim is stated with the constructor's records |
-| `reduce_proj` | `src/tc.rs` | `num_params + idx` is guarded (`checked_add`, decline) -- nothing bounds either side and there is nothing wider to widen to |
+| `reduce_proj_core` | `src/tc.rs` | `num_params + idx` is guarded (`checked_add`, decline) -- nothing bounds either side and there is nothing wider to widen to |
 | `whnf_same`, `handle_rec_args_aux` | `src/inductive.rs` | the induction hypothesis's telescope is walked through `whnf_same`: each `whnf` is tested to denote its input (`model_eq`; a rejection otherwise), so the walk reads the recursive field's declared type itself (S6.6b). Not used where a field's type may legitimately unfold (`is_rec_argument` keeps plain `whnf`: `optParam`, `outParam` fields). Never fails on a type Lean exports |
 | `handle_rec_args_minor` | `src/inductive.rs` | a recursive argument's inferred type (`infer_then_whnf`) is tested to be its declared binder type (`model_eq`; a rejection otherwise), so the induction hypothesis is built from the constructor's field (S6.6b). Never fails on a constructor Lean exports |
 | `handle_rec_ctor_args_rec_rule` | `src/inductive.rs` | a recursive argument's inferred type (`infer_then_whnf`) is tested to be its declared binder type (`model_eq`; a rejection otherwise), so the rule's induction hypothesis is built from the constructor's field (S6.6b). Never fails on a constructor Lean exports |
