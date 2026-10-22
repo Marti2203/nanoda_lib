@@ -22,6 +22,8 @@ pub open spec fn zsz(e: ExprSpec, r: Seq<nat>) -> nat
         ExprSpec::Bind(_, t, b) => 1 + zsz(*t, r) + zsz(*b, r.push(1)),
         ExprSpec::Let(t, v, b) => 1 + zsz(*t, r) + zsz(*v, r) + zsz(*b, r.push(zsz(*v, r))),
         ExprSpec::Proj(_, x) => 1 + zsz(*x, r),
+        // a literal weighs more than its unfolding
+        ExprSpec::NatLit(v) => 3 * v.0@ + 2,
         _ => 1,
     }
 }

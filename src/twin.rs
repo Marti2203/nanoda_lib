@@ -1961,6 +1961,323 @@ pub proof fn ctor_norm_arity(cs: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprS
     crate::dom_iota::tbody_binds(fs, r);
 }
 
+// The same, for Nat literals (`rec_canon::has_lit`): the twin's types are
+// literal-free when the declarations are.
+
+/// Lifting keeps a term literal-free.
+pub proof fn lift_nolit(n: nat, c: nat, e: ExprSpec)
+    ensures
+        crate::rec_canon::has_lit(crate::subst_algebra::lift(n, c, e)) == crate::rec_canon::has_lit(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { lift_nolit(n, c, *f); lift_nolit(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { lift_nolit(n, c, *t); lift_nolit(n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { lift_nolit(n, c, *t); lift_nolit(n, c, *v); lift_nolit(n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => { lift_nolit(n, c, *x); },
+        _ => {},
+    }
+}
+
+/// A closed telescope from literal-free parts.
+pub proof fn binds_nolit(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> !crate::rec_canon::has_lit(#[trigger] ds[i]),
+        !crate::rec_canon::has_lit(b),
+    ensures
+        !crate::rec_canon::has_lit(binds(bk, ds, b)),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        assert forall|i: int| 0 <= i < ds.drop_first().len() implies !crate::rec_canon::has_lit(#[trigger] ds.drop_first()[i]) by {
+            assert(ds.drop_first()[i] == ds[i + 1]);
+        }
+        binds_nolit(bk, ds.drop_first(), b);
+    }
+}
+
+/// A closed telescope's domains and body are literal-free.
+pub proof fn binds_parts_nolit(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec)
+    requires
+        !crate::rec_canon::has_lit(binds(bk, ds, b)),
+    ensures
+        forall|i: int| 0 <= i < ds.len() ==> !crate::rec_canon::has_lit(#[trigger] ds[i]),
+        !crate::rec_canon::has_lit(b),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        binds_parts_nolit(bk, ds.drop_first(), b);
+        assert forall|i: int| 0 <= i < ds.len() implies !crate::rec_canon::has_lit(#[trigger] ds[i]) by {
+            if i > 0 {
+                assert(ds[i] == ds.drop_first()[i - 1]);
+            }
+        }
+    }
+}
+
+/// A closed spine from a literal-free head and arguments.
+pub proof fn spine_nolit(h: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        !crate::rec_canon::has_lit(h),
+        forall|i: int| 0 <= i < args.len() ==> !crate::rec_canon::has_lit(#[trigger] args[i]),
+    ensures
+        !crate::rec_canon::has_lit(spine_app(h, args)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let n = args.len() - 1;
+        let pre = args.subrange(0, n);
+        assert forall|i: int| 0 <= i < pre.len() implies !crate::rec_canon::has_lit(#[trigger] pre[i]) by {
+            assert(pre[i] == args[i]);
+        }
+        spine_nolit(h, pre);
+        assert(spine_app(h, args) == ExprSpec::App(Box::new(spine_app(h, pre)), Box::new(args[n])));
+    }
+}
+
+/// A closed spine's arguments are literal-free.
+pub proof fn spine_args_nolit(e: ExprSpec)
+    requires
+        !crate::rec_canon::has_lit(e),
+    ensures
+        forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() ==> !crate::rec_canon::has_lit(#[trigger] crate::beta_model::spine_args(e)[i]),
+    decreases e,
+{
+    if let ExprSpec::App(f, x) = e {
+        spine_args_nolit(*f);
+        assert forall|i: int| 0 <= i < crate::beta_model::spine_args(e).len() implies !crate::rec_canon::has_lit(#[trigger] crate::beta_model::spine_args(e)[i]) by {
+            if i < crate::beta_model::spine_args(*f).len() {
+                assert(crate::beta_model::spine_args(e)[i] == crate::beta_model::spine_args(*f)[i]);
+            }
+        }
+    }
+}
+
+/// The shape's pieces are literal-free.
+pub open spec fn shape_nolit(sh: IndShape) -> bool {
+    &&& forall|q: int| 0 <= q < sh.pdoms.len() ==> !crate::rec_canon::has_lit(#[trigger] sh.pdoms[q])
+    &&& forall|q: int| 0 <= q < sh.idoms.len() ==> !crate::rec_canon::has_lit(#[trigger] sh.idoms[q])
+    &&& forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() ==> !crate::rec_canon::has_lit(#[trigger] sh.fields[j][k])
+    &&& forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() ==> !crate::rec_canon::has_lit(#[trigger] sh.tss[j][q])
+}
+
+/// A recursive field's index arguments are literal-free.
+pub proof fn occ_nolit(sh: IndShape, j: int, r: int)
+    requires
+        shape_nolit(sh),
+        0 <= j < sh.nmin(),
+        0 <= r < sh.rposj(j).len(),
+    ensures
+        sh.rposj(j)[r] < sh.fields[j].len(),
+        forall|q: int| 0 <= q < sh.ni ==> !crate::rec_canon::has_lit(#[trigger] occ_idx(sh.fields[j][sh.rposj(j)[r] as int], sh.np, sh.ni)[q]),
+{
+    let fs = sh.fields[j];
+    crate::dom_rec_ty::rec_pos_facts(fs, sh.ind, sh.us(), sh.np, sh.ni, fs.len());
+    let k = sh.rposj(j)[r];
+    spine_args_nolit(fs[k as int]);
+    assert forall|q: int| 0 <= q < sh.ni implies !crate::rec_canon::has_lit(#[trigger] occ_idx(fs[k as int], sh.np, sh.ni)[q]) by {
+        assert(occ_idx(fs[k as int], sh.np, sh.ni)[q] == crate::beta_model::spine_args(fs[k as int])[sh.np + q]);
+    }
+}
+
+/// A minor premise's type is literal-free.
+#[verifier::spinoff_prover]
+pub proof fn minor_nolit(sh: IndShape, j: int)
+    requires
+        shape_nolit(sh),
+        0 <= j < sh.nmin(),
+        sh.tss[j].len() == sh.ni,
+    ensures
+        !crate::rec_canon::has_lit(sh.minor_ty(j)),
+{
+    let nf = sh.fields[j].len();
+    let nr = sh.rposj(j).len();
+    let s = (1 + j) as nat;
+    let fds = Seq::new(nf, |i: int| sh.field_at(j, i, s));
+    let ihs = Seq::new(nr, |r: int| sh.ih_ty(j, r));
+    let ts = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q])));
+    let value = spine_app(ExprSpec::Const(sh.ctors[j], sh.us()), vars(s + nf + nr, sh.np) + vars(nr, nf));
+    assert forall|i: int| 0 <= i < fds.len() implies !crate::rec_canon::has_lit(#[trigger] fds[i]) by {
+        lift_nolit(s, i as nat, sh.fields[j][i]);
+    }
+    assert forall|r: int| 0 <= r < ihs.len() implies !crate::rec_canon::has_lit(#[trigger] ihs[r]) by {
+        occ_nolit(sh, j, r);
+        let k = sh.rposj(j)[r];
+        let idx = occ_idx(sh.fields[j][k as int], sh.np, sh.ni);
+        let idx2 = Seq::new(sh.ni, |q: int| crate::subst_algebra::lift((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q])));
+        let args = idx2.push(ExprSpec::Var((nf - 1 - k + r) as nat));
+        assert forall|q: int| 0 <= q < args.len() implies !crate::rec_canon::has_lit(#[trigger] args[q]) by {
+            if q < sh.ni {
+                lift_nolit(s, k, idx[q]);
+                lift_nolit((nf - k + r) as nat, 0, crate::subst_algebra::lift(s, k, idx[q]));
+            }
+        }
+        spine_nolit(ExprSpec::Var((j + nf + r) as nat), args);
+    }
+    assert forall|q: int| 0 <= q < ts.len() implies !crate::rec_canon::has_lit(#[trigger] ts[q]) by {
+        lift_nolit(s, nf, sh.tss[j][q]);
+        lift_nolit(nr, 0, crate::subst_algebra::lift(s, nf, sh.tss[j][q]));
+    }
+    let vs = vars(s + nf + nr, sh.np) + vars(nr, nf);
+    assert forall|i: int| 0 <= i < vs.len() implies !crate::rec_canon::has_lit(#[trigger] vs[i]) by {
+        if i < sh.np { assert(vs[i] == vars(s + nf + nr, sh.np)[i]); } else { assert(vs[i] == vars(nr, nf)[i - sh.np]); }
+    }
+    spine_nolit(ExprSpec::Const(sh.ctors[j], sh.us()), vs);
+    let args = ts.push(value);
+    assert forall|q: int| 0 <= q < args.len() implies !crate::rec_canon::has_lit(#[trigger] args[q]) by {
+        if q < ts.len() { assert(args[q] == ts[q]); }
+    }
+    spine_nolit(ExprSpec::Var((j + nf + nr) as nat), args);
+    binds_nolit(BinderKind::Pi, ihs, spine_app(ExprSpec::Var((j + nf + nr) as nat), args));
+    binds_nolit(BinderKind::Pi, fds, binds(BinderKind::Pi, ihs, spine_app(ExprSpec::Var((j + nf + nr) as nat), args)));
+}
+
+/// The binders the type and the rules share are literal-free.
+#[verifier::spinoff_prover]
+pub proof fn head_nolit(sh: IndShape, lm: LevelSpec)
+    requires
+        shape_nolit(sh),
+        forall|j: int| 0 <= j < sh.nmin() ==> (#[trigger] sh.tss[j]).len() == sh.ni,
+    ensures
+        forall|i: int| 0 <= i < sh.head_doms(lm).len() ==> !crate::rec_canon::has_lit(#[trigger] sh.head_doms(lm)[i]),
+{
+    let vs = vars(sh.ni, sh.np) + vars(0, sh.ni);
+    assert forall|i: int| 0 <= i < vs.len() implies !crate::rec_canon::has_lit(#[trigger] vs[i]) by {
+        if i < sh.np { assert(vs[i] == vars(sh.ni, sh.np)[i]); } else { assert(vs[i] == vars(0, sh.ni)[i - sh.np]); }
+    }
+    spine_nolit(ExprSpec::Const(sh.ind, sh.us()), vs);
+    assert(!crate::rec_canon::has_lit(ind_app(sh.ind, sh.us(), vs)));
+    assert(!crate::rec_canon::has_lit(ExprSpec::Sort(lm)));
+    assert(!crate::rec_canon::has_lit(ExprSpec::Bind(BinderKind::Pi, Box::new(ind_app(sh.ind, sh.us(), vs)), Box::new(ExprSpec::Sort(lm)))));
+    binds_nolit(BinderKind::Pi, sh.idoms, ExprSpec::Bind(BinderKind::Pi, Box::new(ind_app(sh.ind, sh.us(), vs)), Box::new(ExprSpec::Sort(lm))));
+    let hd = sh.head_doms(lm);
+    let mins = Seq::new(sh.nmin(), |j: int| sh.minor_ty(j));
+    assert forall|i: int| 0 <= i < hd.len() implies !crate::rec_canon::has_lit(#[trigger] hd[i]) by {
+        if i < sh.pdoms.len() {
+            assert(hd[i] == sh.pdoms[i]);
+        } else if i == sh.pdoms.len() {
+            assert(hd[i] == sh.motive_ty(lm));
+        } else {
+            let j = i - sh.pdoms.len() - 1;
+            assert(hd[i] == mins[j]);
+            minor_nolit(sh, j);
+        }
+    }
+}
+
+/// THE CANONICAL SHAPE'S PIECES are literal-free when the inductive's and the
+/// constructors' types are.
+#[verifier::spinoff_prover]
+pub proof fn canon_parts_lit(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> !crate::rec_canon::has_lit(sig.consts[k].ty),
+    ensures
+        shape_nolit(shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid))),
+{
+    reveal(rec_core);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let ti = sig.consts[ind].ty;
+    assert(sig.consts.contains_key(ind));
+    binds_parts_nolit(BinderKind::Pi, sh.pdoms + sh.idoms, tbody(ti, sh.np + sh.ni));
+    assert forall|q: int| 0 <= q < sh.pdoms.len() implies !crate::rec_canon::has_lit(#[trigger] sh.pdoms[q]) by {
+        assert((sh.pdoms + sh.idoms)[q] == sh.pdoms[q]);
+    }
+    assert forall|q: int| 0 <= q < sh.idoms.len() implies !crate::rec_canon::has_lit(#[trigger] sh.idoms[q]) by {
+        assert((sh.pdoms + sh.idoms)[sh.pdoms.len() + q] == sh.idoms[q]);
+    }
+    assert forall|j: int, k: int| 0 <= j < sh.nmin() && 0 <= k < sh.fields[j].len() implies !crate::rec_canon::has_lit(#[trigger] sh.fields[j][k]) by {
+        let c = sh.ctors[j];
+        assert(sig.consts.contains_key(c));
+        let t = sig.consts[c].ty;
+        let nf = rd.rules[j].nfields;
+        let rawf = tdoms(tbody(t, sh.np), nf);
+        binds_parts_nolit(BinderKind::Pi, sh.pdoms + rawf, tbody(t, sh.np + nf));
+        assert((sh.pdoms + rawf)[sh.pdoms.len() + k] == rawf[k]);
+        crate::rec_canon::dnorm_nolit(sig.consts, rawf[k]);
+        assert(sh.fields[j][k] == crate::rec_canon::fnorm(sig.consts, rawf[k]));
+    }
+    assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies !crate::rec_canon::has_lit(#[trigger] sh.tss[j][q]) by {
+        let c = sh.ctors[j];
+        assert(sig.consts.contains_key(c));
+        let t = sig.consts[c].ty;
+        let nf = rd.rules[j].nfields;
+        binds_parts_nolit(BinderKind::Pi, sh.pdoms + tdoms(tbody(t, sh.np), nf), tbody(t, sh.np + nf));
+        let args = vars(nf, sh.np) + sh.tss[j];
+        crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, sh.us()), args);
+        spine_args_nolit(tbody(t, sh.np + nf));
+        assert(args[sh.np + q] == sh.tss[j][q]);
+    }
+}
+
+/// THE CANONICAL TYPE IS CLOSED when every constant's type is.
+#[verifier::spinoff_prover]
+pub proof fn canon_nolit(sig: Sig, rid: u64)
+    requires
+        rec_core(sig, rid),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> !crate::rec_canon::has_lit(sig.consts[k].ty),
+    ensures
+        !crate::rec_canon::has_lit(canon_ty(sig, rid)),
+{
+    canon_parts_lit(sig, rid);
+    canon_tss_len(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let ind = rec_ind(sig, rid);
+    let sh = shape_of(sig, rd, ind);
+    let lm = elim_level(sig, rid, ind);
+    let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
+    head_nolit(sh, lm);
+    let idx = Seq::new(ni, |k: int| crate::subst_algebra::lift(1 + nmin, k as nat, sh.idoms[k]));
+    assert forall|k: int| 0 <= k < idx.len() implies !crate::rec_canon::has_lit(#[trigger] idx[k]) by {
+        lift_nolit(1 + nmin, k as nat, sh.idoms[k]);
+    }
+    let mvs = vars(1 + nmin + ni, np) + vars(0, ni);
+    assert forall|i: int| 0 <= i < mvs.len() implies !crate::rec_canon::has_lit(#[trigger] mvs[i]) by {
+        if i < np { assert(mvs[i] == vars(1 + nmin + ni, np)[i]); } else { assert(mvs[i] == vars(0, ni)[i - np]); }
+    }
+    spine_nolit(ExprSpec::Const(sh.ind, sh.us()), mvs);
+    let major = ind_app(sh.ind, sh.us(), mvs);
+    let body = spine_app(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)));
+    spine_nolit(ExprSpec::Var(nmin + ni + 1), vars(1, ni).push(ExprSpec::Var(0)));
+    let ds = sh.head_doms(lm) + idx + seq![major];
+    assert forall|i: int| 0 <= i < ds.len() implies !crate::rec_canon::has_lit(#[trigger] ds[i]) by {
+        if i < sh.head_doms(lm).len() {
+            assert(ds[i] == sh.head_doms(lm)[i]);
+        } else if i < sh.head_doms(lm).len() + ni {
+            assert(ds[i] == idx[i - sh.head_doms(lm).len()]);
+        }
+    }
+    binds_nolit(BinderKind::Pi, ds, body);
+}
+
+/// The twin's types mention no local, as the signature's do.
+pub proof fn twin_ty_nolit(sig: Sig, k: u64)
+    requires
+        sig.consts.contains_key(k),
+        forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> !crate::rec_canon::has_lit(sig.consts[c].ty),
+    ensures
+        !crate::rec_canon::has_lit(twin(sig).consts[k].ty),
+{
+    twin_keeps(sig, k);
+    if sig.ienv.recs.contains_key(k) && rec_core(sig, k) {
+        canon_nolit(sig, k);
+    } else if sig.ienv.ctor_ind.contains_key(k) && sig.ienv.ctor_np.contains_key(k) && !sig.ienv.recs.contains_key(k) {
+        twin_ctor_tel(sig, k);
+        let t = sig.consts[k].ty;
+        let n = tarity(t);
+        let ds = tdoms(t, n);
+        let fs = crate::rec_canon::tel_fnorm(sig.consts, ds, sig.ienv.ctor_np[k] as nat);
+        binds_parts_nolit(BinderKind::Pi, ds, tbody(t, n));
+        assert forall|i: int| 0 <= i < fs.len() implies !crate::rec_canon::has_lit(#[trigger] fs[i]) by {
+            assert(!crate::rec_canon::has_lit(ds[i]));
+            crate::rec_canon::dnorm_nolit(sig.consts, ds[i]);
+        }
+        binds_nolit(BinderKind::Pi, fs, tbody(t, n));
+    }
+}
+
 /// A simple application is headed by another type former.
 pub proof fn simple_app_head(sig: Sig, ind: u64, e: ExprSpec)
     requires

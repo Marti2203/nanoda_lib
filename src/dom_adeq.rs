@@ -210,6 +210,7 @@ pub proof fn adeq(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat
         Rule::Eta(_, _) => adeq_eta(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstAx(_) | Rule::Local(_) => adeq_leaf(sig, d, rho, dl, s, s2, n, u, a),
         Rule::ConstDef(_) | Rule::Delta(_) => adeq_def(sig, d, rho, dl, s, s2, n, u, a),
+        Rule::LitUnf(_) => adeq_lit(sig, d, rho, dl, s, s2, n, u, a),
         Rule::Iota(_) => if crate::ti_syntax::iota_prop(sig, concl(d)->Eq_1) {
             adeq_irr(sig, d, rho, dl, s, s2, n, u, a)
         } else {
@@ -1718,6 +1719,39 @@ proof fn adeq_zeta(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: na
     expand_tm(sig, n, dl, psub(m2, s), psub(m2, s2), psub(m, s), psub(m2, s2), psub(t, s), u, a);
 }
 
+
+/// A LITERAL: it head-reduces to its unfolding, which the premise relates.
+#[verifier::spinoff_prover]
+proof fn adeq_lit(sig: Sig, d: Deriv, rho: Env, dl: Ctx, s: Sub, s2: Sub, n: nat, u: Cpt, a: Cpt)
+    requires
+        crate::dom_rec_end::sig_sr(sig),
+        adeq_req(sig, d, rho, dl, s, s2, n, u, a),
+        d->Node_0 is LitUnf,
+    ensures
+        adeq_ens(sig, d, dl, s, s2, n, u, a),
+    decreases d, 18int,
+{
+    use crate::ti_subst::psub_closed;
+    valid_prems(sig, d);
+    let Deriv::Node(rule, j, ps) = d;
+    let (g, m, m2, t) = (j->Eq_0, j->Eq_1, j->Eq_2, j->Eq_3);
+    crate::full_red::lit_unf_rule_closed(sig.ienv.export, m->NatLit_0);
+    psub_closed(m, s);
+    psub_closed(m2, s);
+    psub_closed(m2, s2);
+    psub_closed(t, s);
+    psub_closed(t, s2);
+    assert(concl(ps[2]) == eq(g, m2, m2, t));
+    crate::dom_model::mem_lit(sig, m->NatLit_0, rho);
+    adeq(sig, ps[2], rho, dl, s, s2, n, u, a);
+    hred_step(sig, m);
+    hred_refl(sig, m2);
+    related_left(sig, g, rho, dl, s, s2);
+    d_sub(sig, d, dl, s, s);
+    d_sub(sig, ps[2], dl, s, s2);
+    dsym(sig, dl, m2, m2, t);
+    expand_tm(sig, n, dl, m2, m2, m, m2, t, u, a);
+}
 
 /// A CONSTRUCTOR: the recursion relates its type at the joined type element
 /// and at adequacy's; the rest is `ctor_adeq_core`.

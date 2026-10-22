@@ -125,6 +125,26 @@ pub proof fn lit_unfold_closed(export: nat, n: NatLitPayload)
     reveal_with_fuel(crate::level_inst::elp_in, 3);
 }
 
+/// Rule `LitUnf`'s terms (the literal, its unfolding, `Nat`) are closed and
+/// level free.
+pub proof fn lit_unf_rule_closed(export: nat, n: NatLitPayload)
+    ensures
+        nlbv(ExprSpec::NatLit(n)) == 0,
+        !has_fv(ExprSpec::NatLit(n)),
+        crate::level_inst::elp_in(ExprSpec::NatLit(n), Seq::empty()),
+        nlbv(lit_unfold(export, n)) == 0,
+        !has_fv(lit_unfold(export, n)),
+        crate::level_inst::elp_in(lit_unfold(export, n), Seq::empty()),
+        nlbv(crate::ti_syntax::nat_ty(export)) == 0,
+        !has_fv(crate::ti_syntax::nat_ty(export)),
+        crate::level_inst::elp_in(crate::ti_syntax::nat_ty(export), Seq::empty()),
+{
+    lit_unfold_closed(export, n);
+    reveal_with_fuel(crate::level_inst::elp_in, 2);
+    reveal_with_fuel(nlbv, 2);
+    reveal_with_fuel(has_fv, 2);
+}
+
 /// A literal's reduct is closed and level free.
 proof fn lit_closed(sig: Sig, m: ExprSpec, n: ExprSpec)
     requires

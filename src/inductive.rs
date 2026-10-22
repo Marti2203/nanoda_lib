@@ -3045,6 +3045,41 @@ pub(crate) proof fn walk_k_frame<'x, 't>(env: crate::env::Env<'x, 't>, a: Induct
 /// One more inductive's header checked: the walks and telescopes so far
 /// keep their facts.
 #[verifier::spinoff_prover]
+/// One iteration of `check_inductive_specs`' loop, after its check: the
+/// walks and telescopes extend, and the first locals' serials widen.
+pub(crate) proof fn specs_iter<'x, 't>(env: crate::env::Env<'x, 't>, st0: InductiveCheckState<'t>, st: InductiveCheckState<'t>, i: int,
+    aids: (nat, nat), cnt0: nat, c_old: nat, c: nat)
+    requires
+        0 <= i,
+        st0.tele@.len() == i,
+        st.tele@.len() == i + 1,
+        st0.local_indices@.len() == i,
+        st.local_indices@.len() == i + 1,
+        walks_ok(env, st0, i),
+        teles_syn(st0.tele@, i),
+        forall|k: int| 0 <= k < i ==> #[trigger] st.tele@[k] == st0.tele@[k],
+        forall|k: int| 0 <= k < i ==> #[trigger] st.local_indices@[k] == st0.local_indices@[k],
+        st.all_inductives_incl_specialized@ == st0.all_inductives_incl_specialized@,
+        st.local_params@ == st0.local_params@,
+        i > 0 ==> st.block_codom == st0.block_codom,
+        walk_k_ok(env, st, i),
+        tele_syn(st.tele@[i]),
+        c_old <= cnt0 <= c,
+        i == 0 ==> crate::kgen::serials_in(aids, st.local_indices@[0]@, cnt0, c),
+        i > 0 ==> crate::kgen::serials_in(aids, st.local_indices@[0]@, c_old, cnt0),
+    ensures
+        walks_ok(env, st, i + 1),
+        teles_syn(st.tele@, i + 1),
+        crate::kgen::serials_in(aids, st.local_indices@[0]@, c_old, c),
+{
+    specs_step(env, st0, st, i);
+    if i == 0 {
+        crate::kgen::serials_lower(aids, st.local_indices@[0]@, cnt0, c_old, c);
+    } else {
+        crate::kgen::serials_widen(aids, st.local_indices@[0]@, c_old, cnt0, c);
+    }
+}
+
 pub(crate) proof fn specs_step<'x, 't>(env: crate::env::Env<'x, 't>, st0: InductiveCheckState<'t>, st: InductiveCheckState<'t>, i: int)
     requires
         0 <= i,
@@ -11829,21 +11864,15 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 assert(st.local_indices@.last() == st.local_indices@[i as int]);
                 assert(walk_k_ok(*old(self).env, *st, i as int)) by { reveal(walk_k_ok); }
                 assert(tele_syn(st.tele@[i as int]));
-                specs_step(*old(self).env, st0, *st, i as int);
                 let aids = crate::util_model::arena_ids(*old(self).ctx);
                 let c_old = crate::util::unique_count(*old(self).ctx) as nat;
                 let c = crate::util::unique_count(*self.ctx) as nat;
                 if i == 0 {
                     assert(st.local_indices@.last() == st.local_indices@[0]);
-                    crate::kgen::serials_lower(aids, st.local_indices@[0]@, cnt0, c_old, c);
                 } else {
                     assert(st.local_indices@[0] == st0.local_indices@[0]);
-                    crate::kgen::serials_widen(aids, st.local_indices@[0]@, c_old, cnt0, c);
                 }
-                assert(old(st).ind_consts@.len() == 0 ==> forall|k: int| 0 <= k < (i+1) ==> #[trigger] ind_const_at(*st, k));
-                assert(walks_ok(*old(self).env, *st, (i+1) as int));
-                assert(teles_syn(st.tele@, (i+1) as int));
-                assert(crate::kgen::serials_in(crate::util_model::arena_ids(*old(self).ctx), st.local_indices@[0]@, crate::util::unique_count(*old(self).ctx) as nat, crate::util::unique_count(*self.ctx) as nat));
+                specs_iter(*old(self).env, st0, *st, i as int, aids, cnt0, c_old, c);
             }
         }
         assert_eq!(st.all_inductives_incl_specialized.len(), nbefore);

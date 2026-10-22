@@ -2184,6 +2184,14 @@ pub proof fn sound(sig: Sig, d: Deriv, rho: Env)
         Rule::Eta(..) => sound_eta_d(sig, d, rho),
         Rule::ConstAx(_) | Rule::Local(_) => sound_leaf_d(sig, d, rho),
         Rule::ConstDef(_) | Rule::Delta(_) => sound_def_d(sig, d, rho),
+        Rule::LitUnf(_) => {
+            // a literal denotes what it unfolds to
+            sound(sig, ps[2], rho);
+            crate::dom_model::mem_lit(sig, m->NatLit_0, rho);
+            assert(sem_eq(sig, n, m, rho));
+            assert(sem_eq(sig, a, a, rho));
+            sound_transfer(sig, n, m, a, a, rho);
+        },
         Rule::ProjCong(_) => {
             reveal(crate::ti_syntax::proj_cong_ok);
             sound(sig, ps[0], rho);

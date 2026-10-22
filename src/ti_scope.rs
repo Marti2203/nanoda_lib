@@ -230,6 +230,10 @@ pub proof fn d_scope(sig: Sig, d: Deriv)
             crate::full_red::lit_ty_closed(sig, j->Eq_1);
             assert(scoped(j));
         },
+        Rule::LitUnf(_) => {
+            crate::full_red::lit_unf_rule_closed(sig.ienv.export, j->Eq_1->NatLit_0);
+            assert(scoped(j));
+        },
         Rule::Iota(_) | Rule::RedG(_) | Rule::ProjG(_) | Rule::ProjCong(_) | Rule::ProjIota(_) | Rule::StructEta(_) | Rule::RecEta(_) => d_scope_red(sig, d),
     }
 }

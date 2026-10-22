@@ -218,7 +218,21 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
             assert(dval(sig, id, ls) == m2);
             crate::ti_sr::delta_d(sig, g, id, ls, t);
         },
-        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => {
+        ExprSpec::NatLit(v) => {
+            if denv.full {
+                assert(sig.ienv == denv);
+                assert(crate::full_red::full_red(sig, m, m2));
+                redg_d(sig, g, m, m2, t);
+            } else {
+                // in the fragment a literal unfolds by Rule LitUnf
+                assert(frag_ok(dty, denv, lctx));
+                assert(crate::kclaims::ind_ok(sig));
+                assert(sig.ienv.export == denv.export && !sig.ienv.full);
+                assert(m2 == crate::full_red::lit_unfold(denv.export, v));
+                crate::ti_sr::sr(sig, g, m, t);
+            }
+        },
+        ExprSpec::StringLit(_) => {
             // typed only in the full judgment, where a literal unfolds
             assert(denv.full);
             assert(sig.ienv == denv);
@@ -1397,137 +1411,6 @@ pub proof fn typed_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
         assert(dty_at(sig, c, ls) == decl);
         assert(crate::metatheory::typed(dty, denv, d, decl, ExprSpec::Sort(lt)));
         assert(derivable(sig, eq(g0, decl, dty_at(sig, c, ls), sort(lt))));
-    }
-}
-
-/// What a literal reduces to: a literal, `Nat.zero`, or `Nat.succ` of one.
-pub open spec fn natish(export: nat, e: ExprSpec) -> bool
-    decreases e,
-{
-    match e {
-        ExprSpec::NatLit(_) => true,
-        ExprSpec::Const(id, ls) => id == crate::expr_arena_bridge::nat_zero_id(export) && ls.len() == 0,
-        ExprSpec::App(f, x) => *f == crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(export)) && natish(export, *x),
-        _ => false,
-    }
-}
-
-proof fn natish_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, e: ExprSpec, e2: ExprSpec)
-    requires
-        crate::kclaims::frag_env(dty, denv),
-        defs_in(dty, denv),
-        crate::conv_frag::cr_env(denv),
-        natish(denv.export, e),
-        pstep(denv, e, e2),
-    ensures
-        natish(denv.export, e2),
-    decreases e,
-{
-    let zid = crate::expr_arena_bridge::nat_zero_id(denv.export);
-    let sid = crate::expr_arena_bridge::nat_succ_id(denv.export);
-    let sc = crate::beta_model::const_expr_no_levels(sid);
-    if e == e2 {
-        return;
-    }
-    match e {
-        ExprSpec::NatLit(_) => {
-            reveal_with_fuel(natish, 2);
-        },
-        ExprSpec::Const(id, _) => {
-            assert(!denv.defs.contains_key(zid));
-        },
-        ExprSpec::App(f, x) => {
-            assert(!denv.defs.contains_key(sid));
-            assert(*f == sc);
-            if denv.recs.contains_key(sid) {
-                crate::kclaims::recs_declared(dty, denv, sid);
-            }
-            assert(spine_head(sapp(sc, *x)) == sc) by {
-                reveal_with_fuel(spine_head, 2);
-            }
-            assert(!crate::beta_model::rec_ready(denv, sapp(sc, *x)));
-            if exists|f2: ExprSpec, a2: ExprSpec| pstep(denv, *f, f2) && pstep(denv, *x, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2)) {
-                let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| pstep(denv, *f, f2) && pstep(denv, *x, a2) && e2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-                natish_pstep(dty, denv, *x, x2);
-            } else {
-                assert forall|f2: ExprSpec| #[trigger] pstep(denv, *f, f2) implies f2 == sc by {}
-                assert forall|f2: ExprSpec, a2: ExprSpec| #[trigger] crate::beta_model::rec_reduct(f2, a2) && pstep(denv, *f, f2)
-                    implies !crate::beta_model::rec_ready(denv, sapp(f2, a2)) by {
-                    assert(spine_head(sapp(f2, a2)) == sc) by {
-                        reveal_with_fuel(spine_head, 2);
-                    }
-                }
-                assert forall|f2: ExprSpec, a2: ExprSpec| #[trigger] crate::beta_model::fold_reduct(f2, a2) && pstep(denv, *f, f2)
-                    implies !crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2)) by {
-                    assert(spine_head(sapp(f2, a2)) == sc) by {
-                        reveal_with_fuel(spine_head, 2);
-                    }
-                }
-                assert forall|f2: ExprSpec, a2: ExprSpec| #[trigger] crate::beta_model::quot_reduct(f2, a2) && pstep(denv, *f, f2)
-                    implies !crate::tc_model::quot_ready(denv.export, sapp(f2, a2)) by {
-                    assert(spine_head(sapp(f2, a2)) == sc) by {
-                        reveal_with_fuel(spine_head, 2);
-                    }
-                }
-            }
-        },
-        _ => {},
-    }
-}
-
-proof fn natish_chain(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ch: Seq<ExprSpec>, k: int)
-    requires
-        crate::kclaims::frag_env(dty, denv),
-        defs_in(dty, denv),
-        crate::conv_frag::cr_env(denv),
-        ch.len() >= 1,
-        0 <= k < ch.len(),
-        crate::beta_model::pstep_chain_valid(denv, ch),
-        natish(denv.export, ch[0]),
-    ensures
-        natish(denv.export, ch[k]),
-    decreases k,
-{
-    if k > 0 {
-        natish_chain(dty, denv, ch, k - 1);
-        assert(pstep(denv, ch[k - 1], ch[k - 1 + 1]));
-        natish_pstep(dty, denv, ch[k - 1], ch[k]);
-    }
-}
-
-/// WHAT A LITERAL REDUCES TO IS TYPED NOWHERE in the fragment.
-pub proof fn lit_reduct_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, n: crate::expr_model::NatLitPayload, e: ExprSpec, t: ExprSpec)
-    requires
-        crate::kclaims::kh_frag(dty, denv),
-        crate::beta_model::pstep_star(denv, ExprSpec::NatLit(n), e),
-        derivable(jsig(dty, denv, lctx), eq(Seq::empty(), e, e, t)),
-    ensures
-        false,
-{
-    kh_at(dty, denv, lctx);
-    let ch = choose|chain: Seq<ExprSpec>|
-        chain.len() >= 1 && chain[0] == ExprSpec::NatLit(n) && chain[chain.len() - 1] == e && crate::beta_model::pstep_chain_valid(denv, chain);
-    natish_chain(dty, denv, ch, ch.len() - 1);
-    natish_untyped(dty, denv, lctx, e, t);
-}
-
-pub proof fn natish_untyped(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, e: ExprSpec, t: ExprSpec)
-    requires
-        crate::kclaims::frag_env(dty, denv),
-        natish(denv.export, e),
-        derivable(jsig(dty, denv, lctx), eq(Seq::empty(), e, e, t)),
-    ensures
-        false,
-{
-    let sig = jsig(dty, denv, lctx);
-    let de = get(sig, eq(Seq::empty(), e, e, t));
-    gen(sig, de);
-    if let ExprSpec::App(f, x) = e {
-        let (a1, b1, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] gmark(a, b, l2, l2)
-            && derivable(sig, eq(Seq::empty(), *f, *f, pi(a, b))) && derivable(sig, eq(Seq::empty(), *x, *x, a))
-            && typ(sig, Seq::<ExprSpec>::empty().push(a), b, l2) && tchain(sig, Seq::empty(), t, inst(0, *x, b));
-        let df = get(sig, eq(Seq::empty(), *f, *f, pi(a1, b1)));
-        gen(sig, df);
     }
 }
 

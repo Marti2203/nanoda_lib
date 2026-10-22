@@ -66,6 +66,7 @@ pub open spec fn rls(r: Rule, ks: Seq<u64>, vs: Seq<LevelSpec>) -> Rule {
         Rule::ConstDef(l) => Rule::ConstDef(ll_(l, ks, vs)),
         Rule::Local(l) => Rule::Local(ll_(l, ks, vs)),
         Rule::LitTy(l) => Rule::LitTy(ll_(l, ks, vs)),
+        Rule::LitUnf(l) => Rule::LitUnf(ll_(l, ks, vs)),
         Rule::Delta(l) => Rule::Delta(ll_(l, ks, vs)),
         Rule::Zeta(l) => Rule::Zeta(ll_(l, ks, vs)),
         _ => r,
@@ -378,7 +379,7 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
         sig_lp_ok(sig, ks, vs),
         step_ok(sig, r, j, ps),
         pls_ok(sig, ps, ks, vs),
-        r is ConstAx || r is ConstDef || r is Delta || r is Local || r is LitTy,
+        r is ConstAx || r is ConstDef || r is Delta || r is Local || r is LitTy || r is LitUnf,
     ensures
         step_ok(sig, rls(r, ks, vs), jls(j, ks, vs), pls(sig, ps, ks, vs)),
 {
@@ -427,6 +428,15 @@ proof fn step_ls_cst(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, ks: Seq<u64>, vs:
             crate::level_inst::expr_closed(j->Eq_3, ks, vs);
             assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
             assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+        },
+        Rule::LitUnf(_) => {
+            crate::full_red::lit_unf_rule_closed(sig.ienv.export, j->Eq_1->NatLit_0);
+            crate::level_inst::expr_closed(j->Eq_1, ks, vs);
+            crate::level_inst::expr_closed(j->Eq_2, ks, vs);
+            crate::level_inst::expr_closed(j->Eq_3, ks, vs);
+            assert(concl(qs[0]) == jls(concl(ps[0]), ks, vs));
+            assert(concl(qs[1]) == jls(concl(ps[1]), ks, vs));
+            assert(concl(qs[2]) == jls(concl(ps[2]), ks, vs));
         },
         _ => {},
     }
@@ -861,7 +871,7 @@ pub proof fn d_consts(sig: Sig, d: Deriv)
             assert(sig.consts.dom().contains(j->Eq_1->Const_0));
             assert(consts_ok(sig, j));
         },
-        Rule::Local(_) | Rule::LitTy(_) | Rule::Var(_) | Rule::Univ(..) | Rule::CtxNil | Rule::CtxCons(_) => {
+        Rule::Local(_) | Rule::LitTy(_) | Rule::LitUnf(_) | Rule::Var(_) | Rule::Univ(..) | Rule::CtxNil | Rule::CtxCons(_) => {
             assert(consts_ok(sig, j));
         },
         Rule::RecEta(_) => {
@@ -879,6 +889,7 @@ pub proof fn crank_bound(sig: Sig, e: ExprSpec, ids: Set<u64>, n: nat)
     requires
         all_consts(e, ids),
         forall|c: u64| #[trigger] ids.contains(c) ==> sig.rank.contains_key(c) && sig.rank[c] < n,
+        sig.ienv.full || !crate::rec_canon::has_lit(e),
     ensures
         crank(sig, e) <= n,
     decreases e,

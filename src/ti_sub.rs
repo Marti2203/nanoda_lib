@@ -377,7 +377,7 @@ pub proof fn d_sub(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         Rule::RecEta(_) => d_sub_reta(sig, d, dl, s, s2),
         Rule::Eta(..) => d_sub_eta(sig, d, dl, s, s2),
         Rule::Irr(_) => d_sub_irr(sig, d, dl, s, s2),
-        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) | Rule::LitTy(_) => d_sub_sig(sig, d, dl, s, s2),
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) | Rule::LitTy(_) | Rule::LitUnf(_) => d_sub_sig(sig, d, dl, s, s2),
         _ => {},
     }
 }
@@ -939,7 +939,7 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
         valid(sig, d),
         concl(d) is Eq,
         spair(sig, concl(d)->Eq_0, dl, s, s2),
-        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta || d->Node_0 is LitTy,
+        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta || d->Node_0 is LitTy || d->Node_0 is LitUnf,
     ensures
         derivable(sig, eq(dl, psub(concl(d)->Eq_1, s), psub(concl(d)->Eq_2, s2), psub(concl(d)->Eq_3, s))),
         tconvd(sig, dl, psub(concl(d)->Eq_3, s), psub(concl(d)->Eq_3, s2)),
@@ -954,6 +954,9 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
     let a = j->Eq_3;
     if rule is LitTy {
         crate::full_red::lit_ty_closed(sig, m);
+    }
+    if rule is LitUnf {
+        crate::full_red::lit_unf_rule_closed(sig.ienv.export, m->NatLit_0);
     }
     spair_left(sig, g, dl, s, s2);
     psub_closed(a, s);
@@ -995,7 +998,7 @@ proof fn d_sub_sig(sig: Sig, d: Deriv, dl: Ctx, s: Sub, s2: Sub)
             valid_node(sig, rule, j2, ip);
             mk_d(sig, node(rule, j2, ip));
         },
-        Rule::Delta(l) => {
+        Rule::Delta(l) | Rule::LitUnf(l) => {
             psub_closed(n, s);
             psub_closed(n, s2);
             d_sub(sig, ps[2], dl, s, s);
@@ -1018,6 +1021,7 @@ pub open spec fn rule_level(r: Rule) -> LevelSpec {
         Rule::Local(l) => l,
         Rule::Delta(l) => l,
         Rule::LitTy(l) => l,
+        Rule::LitUnf(l) => l,
         _ => LevelSpec::Zero,
     }
 }

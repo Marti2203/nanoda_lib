@@ -432,6 +432,7 @@ pub open spec fn abbr0(cs: Map<u64, crate::ti_syntax::ConstDecl>, c: u64) -> boo
     &&& def_free(cs, cs[c].val->Some_0)
     &&& crate::ti_level::all_consts(cs[c].val->Some_0, cs.dom())    &&& crate::level_inst::elp_in(cs[c].val->Some_0, Seq::empty())
     &&& !crate::expr_model::has_fv(cs[c].val->Some_0)    &&& lp_free(cs[c].val->Some_0)
+    &&& !has_lit(cs[c].val->Some_0)
 }
 
 /// ... OF ARITY 1 (`Not := fun a => a -> False`): a level-free definition
@@ -449,6 +450,7 @@ pub open spec fn abbr1(cs: Map<u64, crate::ti_syntax::ConstDecl>, c: u64) -> boo
     &&& !(*cs[c].val->Some_0->Bind_2 is Var)
     &&& crate::ti_level::all_consts(cs[c].val->Some_0, cs.dom())    &&& crate::level_inst::elp_in(cs[c].val->Some_0, Seq::empty())
     &&& !crate::expr_model::has_fv(cs[c].val->Some_0)    &&& lp_free(cs[c].val->Some_0)
+    &&& !has_lit(cs[c].val->Some_0)
 }
 
 /// The bound variable `k` is never applied (so instantiating it creates no
@@ -987,6 +989,95 @@ pub proof fn nofv_inst(k: nat, a: ExprSpec, e: ExprSpec)
         ExprSpec::Bind(_, t, b) => { nofv_inst(k, a, *t); nofv_inst(k + 1, a, *b); },
         ExprSpec::Let(t, v, b) => { nofv_inst(k, a, *t); nofv_inst(k, a, *v); nofv_inst(k + 1, a, *b); },
         ExprSpec::Proj(_, x) => nofv_inst(k, a, *x),
+        _ => {},
+    }
+}
+
+/// A Nat literal occurs in the term.
+pub open spec fn has_lit(e: ExprSpec) -> bool
+    decreases e,
+{
+    match e {
+        ExprSpec::NatLit(_) => true,
+        ExprSpec::App(f, a) => has_lit(*f) || has_lit(*a),
+        ExprSpec::Bind(_, t, b) => has_lit(*t) || has_lit(*b),
+        ExprSpec::Let(t, v, b) => has_lit(*t) || has_lit(*v) || has_lit(*b),
+        ExprSpec::Proj(_, x) => has_lit(*x),
+        _ => false,
+    }
+}
+
+pub proof fn nolit_lift(n: nat, c: nat, e: ExprSpec)
+    requires
+        !has_lit(e),
+    ensures
+        !has_lit(lift(n, c, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { nolit_lift(n, c, *f); nolit_lift(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { nolit_lift(n, c, *t); nolit_lift(n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { nolit_lift(n, c, *t); nolit_lift(n, c, *v); nolit_lift(n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => nolit_lift(n, c, *x),
+        _ => {},
+    }
+}
+
+pub proof fn nolit_inst(k: nat, a: ExprSpec, e: ExprSpec)
+    requires
+        !has_lit(a),
+        !has_lit(e),
+    ensures
+        !has_lit(crate::subst_algebra::inst(k, a, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { nolit_lift(k, 0, a); },
+        ExprSpec::App(f, x) => { nolit_inst(k, a, *f); nolit_inst(k, a, *x); },
+        ExprSpec::Bind(_, t, b) => { nolit_inst(k, a, *t); nolit_inst(k + 1, a, *b); },
+        ExprSpec::Let(t, v, b) => { nolit_inst(k, a, *t); nolit_inst(k, a, *v); nolit_inst(k + 1, a, *b); },
+        ExprSpec::Proj(_, x) => nolit_inst(k, a, *x),
+        _ => {},
+    }
+}
+
+/// Level substitution keeps a term's literals.
+pub proof fn has_lit_sl(e: ExprSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    ensures
+        has_lit(crate::expr_model::subst_expr_levels(e, ks, vs)) == has_lit(e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { has_lit_sl(*f, ks, vs); has_lit_sl(*x, ks, vs); },
+        ExprSpec::Bind(_, t, b) => { has_lit_sl(*t, ks, vs); has_lit_sl(*b, ks, vs); },
+        ExprSpec::Let(t, v, b) => { has_lit_sl(*t, ks, vs); has_lit_sl(*v, ks, vs); has_lit_sl(*b, ks, vs); },
+        ExprSpec::Proj(_, x) => has_lit_sl(*x, ks, vs),
+        _ => {},
+    }
+}
+
+/// Unfolding a literal-free term (and its field form) gives one.
+pub proof fn dnorm_nolit(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    ensures
+        !has_lit(e) ==> !has_lit(dnorm(cs, e)),
+        !has_lit(e) ==> !has_lit(fnorm(cs, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            dnorm_nolit(cs, *f);
+            dnorm_nolit(cs, *x);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(cs, c) && !has_lit(e) {
+                    let v = cs[c].val->Some_0;
+                    assert(!has_lit(*v->Bind_2));
+                    nolit_inst(0, dnorm(cs, *x), *v->Bind_2);
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_nolit(cs, *t); dnorm_nolit(cs, *b); },
+        ExprSpec::Let(t, v, b) => { dnorm_nolit(cs, *t); dnorm_nolit(cs, *v); dnorm_nolit(cs, *b); },
+        ExprSpec::Proj(_, x) => dnorm_nolit(cs, *x),
         _ => {},
     }
 }

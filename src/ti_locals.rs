@@ -135,10 +135,12 @@ proof fn sswap_drop_last(g: Ctx, x: nat, y: nat)
     assert(sswap(g.drop_last(), x, y) =~= sswap(g, x, y).drop_last());
 }
 
-/// Ranks depend only on the rank table.
+/// Ranks depend only on the rank table (and the export's numeral names).
 pub proof fn crank_same(s0: Sig, s1: Sig, e: ExprSpec)
     requires
         s0.rank == s1.rank,
+        s0.ienv.export == s1.ienv.export,
+        s0.ienv.full == s1.ienv.full,
     ensures
         crank(s0, e) == crank(s1, e),
     decreases e,
@@ -781,6 +783,16 @@ proof fn step_swap(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>, x: nat, y: nat)
             assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
             assert(step_ok(s2, r, jswap(j, x, y), qs));
         },
+        Rule::LitUnf(_) => {
+            crate::full_red::lit_unf_rule_closed(sig.ienv.export, j->Eq_1->NatLit_0);
+            crate::swap_model::fswap_closed(j->Eq_1, x, y);
+            crate::swap_model::fswap_closed(j->Eq_2, x, y);
+            crate::swap_model::fswap_closed(j->Eq_3, x, y);
+            assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
+            assert(concl(qs[1]) == jswap(concl(ps[1]), x, y));
+            assert(concl(qs[2]) == jswap(concl(ps[2]), x, y));
+            assert(step_ok(s2, r, jswap(j, x, y), qs));
+        },
         Rule::RedG(_) => {
             crate::full_red::full_conv_fswap(sig, j->Eq_1, j->Eq_2, j->Eq_3, x, y);
             assert(concl(qs[0]) == jswap(concl(ps[0]), x, y));
@@ -989,6 +1001,16 @@ proof fn step_close(sig: Sig, k: nat, a: ExprSpec, r: Rule, j: Jd, ps: Seq<Deriv
         crate::fclose::fclose_closed(k, j->Eq_0.len(), j->Eq_3);
         assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
         assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+    } else if r is LitUnf {
+        let qs = pclose(sig, k, a, ps);
+        assert(qs.len() == ps.len());
+        crate::full_red::lit_unf_rule_closed(sig.ienv.export, j->Eq_1->NatLit_0);
+        crate::fclose::fclose_closed(k, j->Eq_0.len(), j->Eq_1);
+        crate::fclose::fclose_closed(k, j->Eq_0.len(), j->Eq_2);
+        crate::fclose::fclose_closed(k, j->Eq_0.len(), j->Eq_3);
+        assert(concl(qs[0]) == jclose(k, a, concl(ps[0])));
+        assert(concl(qs[1]) == jclose(k, a, concl(ps[1])));
+        assert(concl(qs[2]) == jclose(k, a, concl(ps[2])));
     } else if r is RedG {
         let qs = pclose(sig, k, a, ps);
         assert(qs.len() == ps.len());

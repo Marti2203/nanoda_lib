@@ -166,7 +166,7 @@ pub proof fn d_wf(sig: Sig, d: Deriv) -> (r: Deriv)
         },
         Rule::Eta(..) => d_wf(sig, ps[0]),
         Rule::Irr(_) => d_wf(sig, ps[0]),
-        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) | Rule::LitTy(_) => ps[0],
+        Rule::ConstAx(_) | Rule::ConstDef(_) | Rule::Local(_) | Rule::Delta(_) | Rule::LitTy(_) | Rule::LitUnf(_) => ps[0],
         _ => {
             assert(false);
             d
@@ -335,7 +335,7 @@ pub proof fn d_ren(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
         Rule::RecEta(_) => d_ren_reta(sig, d, w, dl, r),
         Rule::Eta(..) => d_ren_eta(sig, d, w, dl, r),
         Rule::Irr(..) => d_ren_irr(sig, d, w, dl, r),
-        Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) | Rule::LitTy(..) => d_ren_sig(sig, d, w, dl, r),
+        Rule::ConstAx(..) | Rule::ConstDef(..) | Rule::Local(..) | Rule::Delta(..) | Rule::LitTy(..) | Rule::LitUnf(..) => d_ren_sig(sig, d, w, dl, r),
         _ => {
             assert(false);
             d
@@ -808,7 +808,7 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
     requires
         valid(sig, d),
         concl(d) is Eq,
-        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta || d->Node_0 is LitTy,
+        d->Node_0 is ConstAx || d->Node_0 is ConstDef || d->Node_0 is Local || d->Node_0 is Delta || d->Node_0 is LitTy || d->Node_0 is LitUnf,
         valid(sig, w),
         concl(w) == Jd::Wf(dl),
         ren_ok(concl(d)->Eq_0, dl, r),
@@ -827,6 +827,9 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
     let q = rn(r);
     if rule is LitTy {
         crate::full_red::lit_ty_closed(sig, m);
+    }
+    if rule is LitUnf {
+        crate::full_red::lit_unf_rule_closed(sig.ienv.export, m->NatLit_0);
     }
     psub_closed(a, q);
     psub_closed(m, q);
@@ -861,7 +864,7 @@ proof fn d_ren_sig(sig: Sig, d: Deriv, w: Deriv, dl: Ctx, r: spec_fn(nat) -> nat
             valid_node(sig, rule, j2, ps2);
             node(rule, j2, ps2)
         },
-        Rule::Delta(l) => {
+        Rule::Delta(l) | Rule::LitUnf(l) => {
             psub_closed(n, q);
             let d2 = d_ren(sig, ps[2], w, dl, r);
             let ps2 = seq![w, d1, d2];

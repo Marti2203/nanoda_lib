@@ -279,6 +279,8 @@ pub open spec fn mem_w(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) -> bool
                 && (i as int) < v->Nd_1.len() && le(u, v->Nd_1[i as int]),
             _ => false,
         },
+        // in the fragment a literal denotes what it unfolds to
+        ExprSpec::NatLit(v) => if sig.ienv.full { u is Bot } else { mem_w(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho, u, w) },
         _ => u is Bot,
     }
 }
@@ -289,6 +291,30 @@ proof fn mem_w_decreases(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit) {
         let_measure(sig, *t, *v, *b);
     } else if let ExprSpec::Bind(bk, t, b) = m {
         crate::ti_zsize::zsize_bind(bk, *t, *b);
+    } else if let ExprSpec::NatLit(v) = m {
+        if !sig.ienv.full {
+            lit_unf_measure(sig, v);
+        }
+    }
+}
+
+/// A literal weighs more than its unfolding, at no higher rank.
+pub proof fn lit_unf_measure(sig: Sig, v: crate::expr_model::NatLitPayload)
+    requires
+        !sig.ienv.full,
+    ensures
+        crank(sig, crate::full_red::lit_unfold(sig.ienv.export, v)) <= crank(sig, ExprSpec::NatLit(v)),
+        crate::ti_zsize::zsize(crate::full_red::lit_unfold(sig.ienv.export, v)) < crate::ti_zsize::zsize(ExprSpec::NatLit(v)),
+{
+    reveal_with_fuel(crate::ti_zsize::zsz, 3);
+    let z = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_zero_id(sig.ienv.export));
+    let sc = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(sig.ienv.export));
+    let k = vstd::math::max(crank(sig, z) as int, crank(sig, sc) as int) as nat;
+    assert(crank(sig, ExprSpec::NatLit(v)) == k);
+    if v.0@ > 0 {
+        let p = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((v.0@ - 1) as nat)));
+        assert(crank(sig, p) == k);
+        assert(crank(sig, ExprSpec::App(Box::new(sc), Box::new(p))) == vstd::math::max(crank(sig, sc) as int, crank(sig, p) as int) as nat);
     }
 }
 
@@ -330,6 +356,11 @@ pub open spec fn bot_w(m: ExprSpec) -> Wit
             let r = crate::subst_algebra::inst(0, *v, *b);
             if crate::ti_zsize::zsize(r) < crate::ti_zsize::zsize(m) { bot_w(r) } else { Wit::Nil }
         },
+        // as its unfolding's
+        ExprSpec::NatLit(v) => if v.0@ == 0 { Wit::Nil } else {
+            Wit::Ap(Cpt::Bot, Cpt::Bot, Box::new(Wit::Nil),
+                Box::new(bot_w(ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((v.0@ - 1) as nat))))))
+        },
         _ => Wit::Nil,
     }
 }
@@ -349,6 +380,16 @@ pub proof fn mem_bot(sig: Sig, m: ExprSpec, rho: Env)
     } else if let ExprSpec::Let(t, v, b) = m {
         let_measure(sig, *t, *v, *b);
         mem_bot(sig, crate::subst_algebra::inst(0, *v, *b), rho);
+    } else if let ExprSpec::NatLit(v) = m {
+        if !sig.ienv.full {
+        lit_unf_measure(sig, v);
+        mem_bot(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho);
+        if v.0@ > 0 {
+            let p = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((v.0@ - 1) as nat)));
+            let sc = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(sig.ienv.export));
+            assert(bot_w(ExprSpec::App(Box::new(sc), Box::new(p))) == bot_w(m)) by { reveal_with_fuel(bot_w, 2); }
+        }
+        }
     }
 }
 
@@ -392,6 +433,14 @@ pub proof fn mem_down(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, u2: Cpt, w: Wit)
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
             mem_down(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, u2, w);
+        },
+        ExprSpec::NatLit(v) => {
+            if !sig.ienv.full {
+                lit_unf_measure(sig, v);
+                mem_down(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho, u, u2, w);
+            } else if !(u2 is Bot) {
+                head_le(u2, u);
+            }
         },
         ExprSpec::Const(c, ls) => {
             if !(u2 is Bot) {
@@ -471,6 +520,12 @@ pub proof fn mem_env_mono(sig: Sig, m: ExprSpec, rho: Env, rho2: Env, u: Cpt, w:
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
             mem_env_mono(sig, crate::subst_algebra::inst(0, *v, *b), rho, rho2, u, w);
+        },
+        ExprSpec::NatLit(v) => {
+            if !sig.ienv.full {
+                lit_unf_measure(sig, v);
+                mem_env_mono(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho, rho2, u, w);
+            }
         },
         ExprSpec::Proj(i, x) => {
             if !(u is Bot) {
@@ -552,6 +607,14 @@ pub proof fn mem_rn(sig: Sig, m: ExprSpec, r: spec_fn(nat) -> nat, rho: Env, u: 
             let_measure(sig, *t, *v, *b);
             mem_rn(sig, crate::subst_algebra::inst(0, *v, *b), r, rho, u, w);
         },
+        ExprSpec::NatLit(v) => {
+            if !sig.ienv.full {
+                lit_unf_measure(sig, v);
+                crate::full_red::lit_unf_rule_closed(sig.ienv.export, v);
+                crate::ti_subst::psub_closed(crate::full_red::lit_unfold(sig.ienv.export, v), rn(r));
+                mem_rn(sig, crate::full_red::lit_unfold(sig.ienv.export, v), r, rho, u, w);
+            }
+        },
         ExprSpec::Proj(i, x) => {
             if let Wit::Pj(v, wx) = w {
                 mem_rn(sig, *x, r, rho, v, *wx);
@@ -591,6 +654,11 @@ pub proof fn mem_wf(sig: Sig, m: ExprSpec, rho: Env, u: Cpt, w: Wit)
     if let ExprSpec::Let(t, v, b) = m {
         let_measure(sig, *t, *v, *b);
         mem_wf(sig, crate::subst_algebra::inst(0, *v, *b), rho, u, w);
+    } else if let ExprSpec::NatLit(v) = m {
+        if !sig.ienv.full {
+            lit_unf_measure(sig, v);
+            mem_wf(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho, u, w);
+        }
     }
 }
 
@@ -689,6 +757,11 @@ pub proof fn mem_psub_back(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: 
         },
         ExprSpec::Const(..) => {
             assert(mem_w(sig, psub(m, s), rho, u, w));
+        },
+        ExprSpec::NatLit(v) => {
+            crate::full_red::lit_unf_rule_closed(sig.ienv.export, v);
+            assert(psub(m, s) == m);
+            mem_closed(sig, m, rho, rho2, 0, u, w);
         },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
@@ -1165,6 +1238,13 @@ pub proof fn mem_psub_fwd(sig: Sig, m: ExprSpec, s: crate::ti_subst::Sub, rho: E
             assert(mem_w(sig, m, bot_env(), u, w));
             bot_env()
         },
+        ExprSpec::NatLit(v) => {
+            covers_bot(sig, s, rho);
+            crate::full_red::lit_unf_rule_closed(sig.ienv.export, v);
+            assert(psub(m, s) == m);
+            mem_closed(sig, m, rho, bot_env(), 0, u, w);
+            bot_env()
+        },
         ExprSpec::Proj(i, x) => {
             if u is Bot {
                 covers_bot(sig, s, rho);
@@ -1273,6 +1353,13 @@ pub proof fn mem_closed(sig: Sig, e: ExprSpec, rho: Env, rho2: Env, k: nat, u: C
                 mem_closed(sig, *x, rho, rho2, k, v, *wx);
             }
         },
+        ExprSpec::NatLit(v) => {
+            if !sig.ienv.full {
+                lit_unf_measure(sig, v);
+                crate::full_red::lit_unf_rule_closed(sig.ienv.export, v);
+                mem_closed(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho, rho2, k, u, w);
+            }
+        },
         ExprSpec::Let(t, v, b) => {
             let_measure(sig, *t, *v, *b);
             mem_closed(sig, crate::subst_algebra::inst(0, *v, *b), rho, rho2, k, u, w);
@@ -1331,6 +1418,28 @@ pub proof fn mem_let(sig: Sig, t: ExprSpec, v: ExprSpec, b: ExprSpec, rho: Env)
     reveal(mem);
     let m = ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b));
     let r = crate::subst_algebra::inst(0, v, b);
+    assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, r, rho, u) by {
+        if mem(sig, m, rho, u) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);
+            assert(mem_w(sig, r, rho, u, w));
+        }
+        if mem(sig, r, rho, u) {
+            let w = choose|w: Wit| #[trigger] mem_w(sig, r, rho, u, w);
+            assert(mem_w(sig, m, rho, u, w));
+        }
+    }
+}
+
+/// A literal denotes what it unfolds to.
+pub proof fn mem_lit(sig: Sig, v: crate::expr_model::NatLitPayload, rho: Env)
+    requires
+        !sig.ienv.full,
+    ensures
+        forall|u: Cpt| #[trigger] mem(sig, ExprSpec::NatLit(v), rho, u) == mem(sig, crate::full_red::lit_unfold(sig.ienv.export, v), rho, u),
+{
+    reveal(mem);
+    let m = ExprSpec::NatLit(v);
+    let r = crate::full_red::lit_unfold(sig.ienv.export, v);
     assert forall|u: Cpt| #[trigger] mem(sig, m, rho, u) == mem(sig, r, rho, u) by {
         if mem(sig, m, rho, u) {
             let w = choose|w: Wit| #[trigger] mem_w(sig, m, rho, u, w);

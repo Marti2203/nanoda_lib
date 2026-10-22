@@ -95,7 +95,10 @@ pub open spec fn gen_ok(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec) -> bool {
         ExprSpec::App(f, x) => gen_app(sig, g, *f, *x, t),
         ExprSpec::Let(a, v, b) => gen_let(sig, g, *a, *v, *b, t),
         ExprSpec::Proj(i, x) => (!sig.ienv.full && gen_proj(sig, g, i as nat, *x, t)) || (sig.ienv.full && gen_gproj(sig, g, i as nat, *x, t)),
-        ExprSpec::NatLit(_) | ExprSpec::StringLit(_) => sig.ienv.full && crate::full_red::lit_ty(sig, m) is Some
+        ExprSpec::NatLit(v) => crate::full_red::lit_ty(sig, m) is Some && tchain(sig, g, t, crate::full_red::lit_ty(sig, m)->Some_0)
+            && (sig.ienv.full || derivable(sig, eq(g, crate::full_red::lit_unfold(sig.ienv.export, v),
+                crate::full_red::lit_unfold(sig.ienv.export, v), crate::ti_syntax::nat_ty(sig.ienv.export)))),
+        ExprSpec::StringLit(_) => sig.ienv.full && crate::full_red::lit_ty(sig, m) is Some
             && tchain(sig, g, t, crate::full_red::lit_ty(sig, m)->Some_0),
         _ => false,
     }
@@ -249,6 +252,11 @@ pub proof fn gen(sig: Sig, d: Deriv)
         Rule::Delta(l) => {
             tchain_refl(sig, g, t);
             gen(sig, ps[2]);
+        },
+        Rule::LitUnf(l) => {
+            tchain_refl(sig, g, t);
+            gen(sig, ps[2]);
+            mk_d(sig, ps[2]);
         },
         Rule::PiCong(l1, l2) => {
             tchain_refl(sig, g, t);

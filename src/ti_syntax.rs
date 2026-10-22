@@ -99,16 +99,33 @@ pub ghost struct Sig {
     pub ienv: crate::expr_arena_bridge::EnvSpec,
 }
 
+/// `Nat`, level-free.
+pub open spec fn nat_ty(export: nat) -> ExprSpec {
+    ExprSpec::Const(crate::expr_arena_bridge::nat_type_id(export), Seq::empty())
+}
+
+/// A constant's rank in terms: one above its own, zero when unranked.
+pub open spec fn const_rank(sig: Sig, c: u64) -> nat {
+    if sig.rank.contains_key(c) { sig.rank[c] + 1 } else { 0 }
+}
+
 /// The highest rank of a constant `e` mentions, plus one (0 for none).
 pub open spec fn crank(sig: Sig, e: ExprSpec) -> nat
     decreases e,
 {
     match e {
-        ExprSpec::Const(c, _) => if sig.rank.contains_key(c) { sig.rank[c] + 1 } else { 0 },
+        ExprSpec::Const(c, _) => const_rank(sig, c),
         ExprSpec::App(f, x) => vstd::math::max(crank(sig, *f) as int, crank(sig, *x) as int) as nat,
         ExprSpec::Bind(_, t, b) => vstd::math::max(crank(sig, *t) as int, crank(sig, *b) as int) as nat,
         ExprSpec::Let(t, v, b) => vstd::math::max(crank(sig, *t) as int, vstd::math::max(crank(sig, *v) as int, crank(sig, *b) as int)) as nat,
         ExprSpec::Proj(_, x) => crank(sig, *x),
+        // in the fragment a literal ranks with the numeral constructors it
+        // unfolds to
+        ExprSpec::NatLit(_) => if sig.ienv.full { 0 } else {
+            vstd::math::max(
+                const_rank(sig, crate::expr_arena_bridge::nat_zero_id(sig.ienv.export)) as int,
+                const_rank(sig, crate::expr_arena_bridge::nat_succ_id(sig.ienv.export)) as int) as nat
+        },
         _ => 0,
     }
 }
@@ -207,6 +224,10 @@ pub enum Rule {
     RedG(LevelSpec),
     /// A literal at its type (`Nat`, `String`), in the full judgment.
     LitTy(LevelSpec),
+    /// A Nat literal unfolds to `Nat.zero` or `Nat.succ` of its
+    /// predecessor (the kernel's literal unfolding), at `Nat`, in the
+    /// fragment.
+    LitUnf(LevelSpec),
     /// A projection of any structure (`full_red::gproj_ty`), in the full
     /// judgment.
     ProjG(LevelSpec),
@@ -419,6 +440,14 @@ pub open spec fn step_ok(sig: Sig, r: Rule, j: Jd, ps: Seq<Deriv>) -> bool {
         Rule::LitTy(l) => match j {
             Jd::Eq(g, m, n, a) => sig.ienv.full && n == m && crate::full_red::lit_ty(sig, m) == Some(a)
                 && prems(ps, seq![Jd::Wf(g), eq(g, a, a, sort(l))]),
+            _ => false,
+        },
+        Rule::LitUnf(l) => match j {
+            Jd::Eq(g, m, n, t) => match m {
+                ExprSpec::NatLit(v) => !sig.ienv.full && n == crate::full_red::lit_unfold(sig.ienv.export, v) && t == nat_ty(sig.ienv.export)
+                    && prems(ps, seq![Jd::Wf(g), eq(g, t, t, sort(l)), eq(g, n, n, t)]),
+                _ => false,
+            },
             _ => false,
         },
         Rule::ProjCong(l) => proj_cong_ok(sig, l, j, ps),

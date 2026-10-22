@@ -2645,6 +2645,42 @@ side:
   tables' "no constructor is a recursor" (so the twin's constructor
   branch never meets a canonical recursor).
 
+**Slice: Nat constructors and literals (2026-10-22).** The fragment used
+to require `Nat.zero`/`Nat.succ` undeclared (`frag_hyp`), which kept the
+whole `Nat` block and everything over it out: declaring them takes Core by
+dependency closure 892 -> 960 (`target/work/coverage/abl_nat.py`); the
+binary operations would add only 6 more (`nat_split.py`). Declaring them
+brings literals in even for literal-free input: nanoda whnf's
+`Nat.succ Nat.zero` to `NatLit 1` (`try_reduce_nat`), and unfolds a
+literal major back to `Nat.succ` for iota. No new trust:
+- the hypothesis: `kclaims::nat_ctors_ok` (in `frag_hyp`, about the
+  export's declarations): `Nat.zero` and `Nat.succ` are declared
+  together, as `Nat`'s constructors at their usual types, `Nat : Type`
+  level-free. Core's `Nat` block is exactly this.
+- the judgment: Rule `LitUnf` (fragment only) converts a Nat literal with
+  its unfolding (`full_red::lit_unfold`: `Nat.zero`, or `Nat.succ` of the
+  predecessor) at `Nat`, the unfolding typed as a premise; generation
+  records that premise. Every derivation lemma has its case (closed,
+  level-free terms).
+- the model: a literal denotes its unfolding (`mem_w`, `dom_model::mem_lit`);
+  in the fragment it ranks with `Nat.zero`/`Nat.succ` and weighs `3n+2`
+  (`crank`, `zsz`), above its unfolding, so the recursion still descends.
+  Literals head-reduce to their unfolding (`ti_hred::hstep`); soundness is
+  `sem_eq` by definition, adequacy is backward closure (`adeq_lit`).
+- ranks: since a literal ranks with the numeral constructors,
+  `crank_bound` asks fragment terms to be literal-free
+  (`rec_canon::has_lit`). Declarations are (`frag_term`); the twin's types
+  are too (`twin::canon_nolit`, `twin_ty_nolit`: the closedness lemmas
+  copied for literals; abbreviation values literal-free).
+- the claims: subject reduction for the literal step (`ti_sr::sr`,
+  `jkernel::sr_pstep`), uniqueness at a literal, `cwh_to_lit` (a numeral
+  folded to its literal: `kclaims::to_lit_frag`, with
+  `lit_typed_frag` typing every literal at `Nat` by induction) and
+  `ci_lit`, where the literal-is-untypable arguments used to stand.
+The binary operations stay undeclared in the fragment: their GMP fast
+path is sound only if the exported definitions compute arithmetic, a fact
+about the export's content (the full mode's `h_nat_ext`).
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

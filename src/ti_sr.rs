@@ -297,6 +297,11 @@ pub proof fn uniq(sig: Sig, g: Ctx, m: ExprSpec, ta: ExprSpec, tb: ExprSpec)
             tchain_trans(sig, g, ta, t1, t2);
             tchain_meet(sig, g, ta, tb, t2);
         },
+        ExprSpec::NatLit(_) => {
+            // both chain to `Nat`
+            let nt = crate::full_red::lit_ty(sig, m)->Some_0;
+            tchain_meet(sig, g, ta, tb, nt);
+        },
         _ => {},
     }
 }
@@ -962,6 +967,21 @@ pub proof fn sr(sig: Sig, g: Ctx, m: ExprSpec, t: ExprSpec)
     let w = d_wf(sig, dm);
     mk_d(sig, w);
     match m {
+        ExprSpec::NatLit(v) => {
+            // a literal unfolds: Rule LitUnf, at `Nat`
+            let nt = crate::ti_syntax::nat_ty(sig.ienv.export);
+            let u = crate::full_red::lit_unfold(sig.ienv.export, v);
+            let du = get(sig, eq(g, u, u, nt));
+            crate::ti_valid::d_ty(sig, du);
+            let (l, dt) = get_t(sig, g, nt, nt);
+            let j = eq(g, m, u, nt);
+            let ps = seq![w, dt, du];
+            assert(prems(ps, seq![Jd::Wf(g), eq(g, nt, nt, sort(l)), eq(g, u, u, nt)]));
+            valid_node(sig, Rule::LitUnf(l), j, ps);
+            mk_d(sig, node(Rule::LitUnf(l), j, ps));
+            tchain_sym(sig, g, t, nt);
+            conv_chain(sig, g, m, u, nt, t);
+        },
         ExprSpec::Proj(i, x) => {
             let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] gmark(st, *x, l, l)
                 && derivable(sig, eq(g, *x, *x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, *x) is Some

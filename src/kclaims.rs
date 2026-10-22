@@ -101,10 +101,25 @@ pub open spec fn frag_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
     &&& !denv.full
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
-    &&& !dty.contains_key(crate::expr_arena_bridge::nat_zero_id(denv.export))
-    &&& !dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export))
+    &&& nat_ctors_ok(dty, denv)
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok_hyp(jsig(dty, denv, d))
     &&& twin_ok(dty, denv)
+}
+
+/// `Nat.zero` and `Nat.succ`, when declared, are `Nat`'s constructors at
+/// their usual types, and `Nat` a level-free type (what nanoda's numeral
+/// folding assumes of the names; checkable on the declarations).
+pub open spec fn nat_ctors_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    let (z, s, n) = (crate::expr_arena_bridge::nat_zero_id(denv.export), crate::expr_arena_bridge::nat_succ_id(denv.export),
+        crate::expr_arena_bridge::nat_type_id(denv.export));
+    let nt = ExprSpec::Const(n, Seq::empty());
+    &&& dty.contains_key(z) ==> denv.ctor_np.contains_key(z) && denv.ctor_ind.contains_key(z) && denv.ctor_ind[z] == n
+        && dty[z] == (Seq::<u64>::empty(), nt)
+    &&& dty.contains_key(s) ==> denv.ctor_np.contains_key(s) && denv.ctor_ind.contains_key(s) && denv.ctor_ind[s] == n
+        && dty[s] == (Seq::<u64>::empty(), crate::ti_syntax::pi(nt, nt))
+    &&& dty.contains_key(z) == dty.contains_key(s)
+    &&& (dty.contains_key(z) || dty.contains_key(s)) ==> dty.contains_key(n)
+        && dty[n] == (Seq::<u64>::empty(), ExprSpec::Sort(crate::level_model::LevelSpec::Succ(Box::new(crate::level_model::LevelSpec::Zero))))
 }
 
 /// THE CONSTRUCTOR TABLES: a constructor is a declared constant, no
@@ -2984,7 +2999,7 @@ pub proof fn cwh_to_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: M
             if denv.full {
                 to_lit_full(dty, denv, d, e, n, t);
             } else {
-                crate::jkernel::lit_reduct_untyped(dty, denv, d, n, e, t);
+                to_lit_frag(dty, denv, d, e, n, t);
             }
         }
     }
@@ -3029,6 +3044,113 @@ pub proof fn to_lit_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
     crate::dom_adeq_syn::dsym(sig, z, r, e, nt);
     crate::meta_hyp::uniq_m(sig, z, e, nt, t);
     assert(typed(dty, denv, d, r, nt) && tconv(dty, denv, d, nt, t));
+}
+
+/// The fragment case of `cwh_to_lit`, at one context: the literal is typed
+/// at `Nat` (its head `Nat.succ` is declared, so `Nat` and `Nat.zero` are,
+/// `nat_ctors_ok`), subject reduction types the numeral there, and
+/// uniqueness chains its other types.
+pub proof fn to_lit_frag(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, e: ExprSpec, n: crate::expr_model::NatLitPayload, t: ExprSpec)
+    requires
+        kh(dty, denv),
+        !denv.full,
+        lctx_wf(dty, denv, d),
+        e is App,
+        crate::beta_model::nat_value(denv.export, e) is Some,
+        pstep_star(denv, ExprSpec::NatLit(n), e),
+        typed(dty, denv, d, e, t),
+    ensures
+        exists|t2: ExprSpec| #[trigger] typed(dty, denv, d, ExprSpec::NatLit(n), t2) && tconv(dty, denv, d, t2, t),
+{
+    let r = ExprSpec::NatLit(n);
+    let sig = jsig(dty, denv, d);
+    let z = Seq::<ExprSpec>::empty();
+    crate::jkernel::kh_at(dty, denv, d);
+    // the head is `Nat.succ`, declared since it is typed
+    let f = *(e->App_0);
+    let succ = crate::expr_arena_bridge::nat_succ_id(denv.export);
+    assert(f is Const && f->Const_0 == succ);
+    let de = crate::ti_sub::get(sig, eq(z, e, e, t));
+    crate::ti_gen::gen(sig, de);
+    let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, b, l2, l2)
+        && derivable(sig, eq(z, f, f, crate::metatheory::pi(a, b)));
+    let df = crate::ti_sub::get(sig, eq(z, f, f, crate::metatheory::pi(a, b)));
+    crate::ti_gen::gen(sig, df);
+    assert(sig.consts.contains_key(succ));
+    assert(dty.contains_key(succ));
+    let nt = crate::ti_syntax::nat_ty(denv.export);
+    lit_typed_frag(dty, denv, d, n.0@);
+    assert(crate::expr_model::NatLitPayload(Ghost(n.0@)) == n);
+    crate::jkernel::sr_star(dty, denv, d, z, r, e, nt);
+    crate::dom_adeq_syn::dsym(sig, z, r, e, nt);
+    crate::jkernel::sr_meta(dty, denv, d);
+    crate::meta_hyp::uniq_m(sig, z, e, nt, t);
+    assert(typed(dty, denv, d, r, nt) && tconv(dty, denv, d, nt, t));
+}
+
+/// A NAT LITERAL IS TYPED AT `Nat` in the fragment, where `Nat.succ` (so
+/// `Nat.zero` and `Nat`) is declared: its unfolding is, by induction, and
+/// Rule `LitUnf` converts the two.
+pub proof fn lit_typed_frag(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, v: nat)
+    requires
+        kh(dty, denv),
+        !denv.full,
+        lctx_wf(dty, denv, d),
+        dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export)),
+    ensures
+        typed(dty, denv, d, ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(v))), crate::ti_syntax::nat_ty(denv.export)),
+    decreases v,
+{
+    let sig = jsig(dty, denv, d);
+    let z = Seq::<ExprSpec>::empty();
+    let ex = denv.export;
+    let (zid, sid) = (crate::expr_arena_bridge::nat_zero_id(ex), crate::expr_arena_bridge::nat_succ_id(ex));
+    let nt = crate::ti_syntax::nat_ty(ex);
+    let m = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(v)));
+    assert(kh_frag(dty, denv));
+    assert(nat_ctors_ok(dty, denv));
+    crate::jkernel::kh_at(dty, denv, d);
+    crate::jkernel::wf_nil(sig);
+    let w = crate::ti_sub::get(sig, crate::ti_syntax::Jd::Wf(z));
+    // `Nat.succ : Nat -> Nat`, its domain and codomain types
+    let st = crate::ti_syntax::pi(nt, nt);
+    crate::jkernel::typed_const(dty, denv, d, sid, Seq::empty());
+    assert(dty[sid].0 =~= Seq::<u64>::empty());
+    crate::level_inst::expr_closed(dty[sid].1, dty[sid].0, Seq::<LevelSpec>::empty());
+    assert(crate::level_inst::elp_in(dty[sid].1, dty[sid].0)) by {
+        assert(crate::level_typed::dty_lp_ok(dty));
+    }
+    assert(crate::expr_model::subst_expr_levels(dty[sid].1, dty[sid].0, Seq::<LevelSpec>::empty()) == st);
+    let ls = choose|l: LevelSpec| #[trigger] typed(dty, denv, d, st, ExprSpec::Sort(l));
+    let dst = crate::ti_sub::get(sig, eq(z, st, st, crate::ti_syntax::sort(ls)));
+    crate::ti_gen::gen(sig, dst);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(nt, nt, l1, l2)
+        && crate::ti_gen::typ(sig, z, nt, l1) && crate::ti_gen::typ(sig, z.push(nt), nt, l2);
+    let u = crate::full_red::lit_unfold(ex, crate::expr_model::NatLitPayload(Ghost(v)));
+    if v == 0 {
+        crate::jkernel::typed_const(dty, denv, d, zid, Seq::empty());
+        assert(dty[zid].0 =~= Seq::<u64>::empty());
+        crate::level_inst::expr_closed(dty[zid].1, dty[zid].0, Seq::<LevelSpec>::empty());
+        assert(crate::level_inst::elp_in(dty[zid].1, dty[zid].0)) by {
+            assert(crate::level_typed::dty_lp_ok(dty));
+        }
+        assert(u == ExprSpec::Const(zid, Seq::<LevelSpec>::empty()));
+    } else {
+        let p = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((v - 1) as nat)));
+        lit_typed_frag(dty, denv, d, (v - 1) as nat);
+        let sc = ExprSpec::Const(sid, Seq::<LevelSpec>::empty());
+        crate::jkernel::app_cong_d(sig, z, sc, sc, p, p, nt, nt, l1, l2);
+        assert(crate::subst_algebra::inst(0, p, nt) == nt);
+        assert(u == crate::dom_rel::sapp(sc, p));
+    }
+    let du = crate::ti_sub::get(sig, eq(z, u, u, nt));
+    let dt = crate::ti_sub::get(sig, eq(z, nt, nt, crate::ti_syntax::sort(l1)));
+    let j = eq(z, m, u, nt);
+    let ps = seq![w, dt, du];
+    assert(crate::ti_syntax::prems(ps, seq![crate::ti_syntax::Jd::Wf(z), eq(z, nt, nt, crate::ti_syntax::sort(l1)), eq(z, u, u, nt)]));
+    crate::ti_meta::valid_node(sig, crate::ti_syntax::Rule::LitUnf(l1), j, ps);
+    crate::ti_meta::mk_d(sig, crate::ti_meta::node(crate::ti_syntax::Rule::LitUnf(l1), j, ps));
+    crate::dom_adeq_syn::dsym(sig, z, m, u, nt);
 }
 
 /// A literal is typed at its type in the full judgment, when that type is
@@ -3174,9 +3296,38 @@ pub proof fn ci_lit(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map<n
                 // literal is typed at it
                 lit_typed_full(dty, denv, d, e, cid);
             } else {
+                // a typed Nat literal: its unfolding is typed, so a numeral
+                // constructor is declared, so both are (`nat_ctors_ok`) and
+                // the literal is typed at `Nat`, a type
+                let z = Seq::<ExprSpec>::empty();
                 let t0 = choose|t0: ExprSpec| #[trigger] typed(dty, denv, d, e, t0);
-                let de = crate::ti_sub::get(sig, eq(Seq::empty(), e, e, t0));
+                let de = crate::ti_sub::get(sig, eq(z, e, e, t0));
                 crate::ti_gen::gen(sig, de);
+                crate::jkernel::kh_at(dty, denv, d);
+                assert(nat_ctors_ok(dty, denv));
+                let v = e->NatLit_0;
+                let u = crate::full_red::lit_unfold(denv.export, v);
+                let nt = crate::ti_syntax::nat_ty(denv.export);
+                let du = crate::ti_sub::get(sig, eq(z, u, u, nt));
+                crate::ti_gen::gen(sig, du);
+                if v.0@ > 0 {
+                    let f = *u->App_0;
+                    let (a, b, l2) = choose|a: ExprSpec, b: ExprSpec, l2: LevelSpec| #[trigger] crate::ti_gen::gmark(a, b, l2, l2)
+                        && derivable(sig, eq(z, f, f, crate::metatheory::pi(a, b)));
+                    let df = crate::ti_sub::get(sig, eq(z, f, f, crate::metatheory::pi(a, b)));
+                    crate::ti_gen::gen(sig, df);
+                }
+                assert(dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export)));
+                lit_typed_frag(dty, denv, d, v.0@);
+                assert(crate::expr_model::NatLitPayload(Ghost(v.0@)) == v);
+                crate::jkernel::typed_const(dty, denv, d, cid, Seq::empty());
+                assert(dty[cid].0 =~= Seq::<u64>::empty());
+                let s0 = dty[cid].1->Sort_0;
+                assert(crate::expr_model::subst_expr_levels(dty[cid].1, dty[cid].0, Seq::<LevelSpec>::empty()) == ExprSpec::Sort(s0)) by {
+                    assert(crate::level_inst::elp_in(dty[cid].1, dty[cid].0));
+                    crate::level_inst::expr_closed(dty[cid].1, dty[cid].0, Seq::<LevelSpec>::empty());
+                }
+                is_type_of_sort(dty, denv, d, t, s0);
             }
         }
     }
@@ -3643,6 +3794,7 @@ pub proof fn frag_term_sf(e: ExprSpec)
         frag_term(e),
     ensures
         crate::beta_model::string_free(e),
+        !crate::rec_canon::has_lit(e),
     decreases e,
 {
     match e {

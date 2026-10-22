@@ -57,7 +57,7 @@ pub proof fn d_ty(sig: Sig, d: Deriv)
         Rule::Irr(l) => {
             mk_t(sig, ps[0], l);
         },
-        Rule::ConstAx(l) | Rule::ConstDef(l) | Rule::Local(l) | Rule::Delta(l) | Rule::LitTy(l) => {
+        Rule::ConstAx(l) | Rule::ConstDef(l) | Rule::Local(l) | Rule::Delta(l) | Rule::LitTy(l) | Rule::LitUnf(l) => {
             let r = d_left(sig, ps[1]);
             mk_t(sig, r, l);
         },

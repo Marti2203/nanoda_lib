@@ -1619,6 +1619,53 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     assert(rc.ind(sig) == ci && rc.ind2(sig) == ci2);
     // the constructors' own instances are the recursors', up to
     // equivalence (the relation's constructor clause and its type clause)
+    assert(crate::dom_rel::cpar(sig, g, sh.ind, cx, ci) && crate::dom_rel::cpar(sig, g, sh.ind, cx2, ci));
+    assert(crate::dom_rel::pconv(sig, g, sh.ind, ci, ci2));
+    intro_lv(sig, rc);
+    // the constructor's parameters are the recursor's
+    intro_pars(sig, rc);
+    let es = cblock(wx, dm);
+    assert(has_type(nn, dm, Cpt::U));
+    // the major's code below the canonical table, and so each field's
+    let tds = crate::dom_rec_ty::rtds(sig, c, sm.0);
+    assert(crate::dom_rec_adeq::rf_sem(sig, c, sm, xs.len(), 0, a, ds, fs));
+    assert(tds.subrange(0, xs.len() as int) =~= tds);
+    crate::dom_iota::major_bnd(sig, c, sm.0, ds, fs);
+    rec_canon_ok(sig, c);
+    tbl_wf(dm);
+    intro_fields(sig, rc, dm, es);
+    rc
+}
+
+/// The end's constructor instances are the recursors', up to equivalence
+/// (the relation's constructor clause and its type clause).
+#[verifier::spinoff_prover]
+proof fn intro_lv(sig: Sig, rc: Rc)
+    requires
+        rec_hyps(sig, rc.c),
+        rc.xs.len() == rc.pre(sig) + 1,
+        rc.xs2.len() == rc.pre(sig) + 1,
+        rc.cl.len() == sig.consts[crate::dom_rec_ty::rshape(sig, rc.c).ind].lps.len(),
+        rc.cl2.len() == sig.consts[crate::dom_rec_ty::rshape(sig, rc.c).ind].lps.len(),
+        rc.ri(sig).len() == sig.consts[crate::dom_rec_ty::rshape(sig, rc.c).ind].lps.len(),
+        rc.ri2(sig).len() == sig.consts[crate::dom_rec_ty::rshape(sig, rc.c).ind].lps.len(),
+        crate::dom_rel::cpar(sig, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.cx(sig), rc.ind(sig)),
+        crate::dom_rel::cpar(sig, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.cx2(sig), rc.ind(sig)),
+        crate::dom_rel::pconv(sig, rc.g, crate::dom_rec_ty::rshape(sig, rc.c).ind, rc.ind(sig), rc.ind2(sig)),
+    ensures
+        rc_lv(sig, rc),
+{
+    let c = rc.c;
+    let sh = crate::dom_rec_ty::rshape(sig, c);
+    let np = sh.np;
+    let g = rc.g;
+    let (ri, ri2) = (rc.ri(sig), rc.ri2(sig));
+    let (ps, ps2) = (rc.xs.subrange(0, np as int), rc.xs2.subrange(0, np as int));
+    let (ci, ci2) = (rc.ind(sig), rc.ind2(sig));
+    let (cx, cx2) = (rc.cx(sig), rc.cx2(sig));
+    let (cl, cl2) = (rc.cl, rc.cl2);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(rc.cid(sig), cl), rc.pargs + rc.args);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(rc.cid(sig), cl2), rc.pargs2 + rc.args2);
     crate::dom_rec_ty::rec_lps_sub(sig, c);
     crate::dom_rec_ty::scope_ctor_ind(sig, c);
     let nl = sig.consts[sh.ind].lps.len();
@@ -1638,19 +1685,6 @@ pub proof fn rec_ctx_intro(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<L
     crate::ti_ls2::levs_eq_sym(ri, ri2);
     crate::ti_ls2::levs_eq_trans(ri2, ri, cl2);
     assert(rc_lv(sig, rc));
-    // the constructor's parameters are the recursor's
-    intro_pars(sig, rc);
-    let es = cblock(wx, dm);
-    assert(has_type(nn, dm, Cpt::U));
-    // the major's code below the canonical table, and so each field's
-    let tds = crate::dom_rec_ty::rtds(sig, c, sm.0);
-    assert(crate::dom_rec_adeq::rf_sem(sig, c, sm, xs.len(), 0, a, ds, fs));
-    assert(tds.subrange(0, xs.len() as int) =~= tds);
-    crate::dom_iota::major_bnd(sig, c, sm.0, ds, fs);
-    rec_canon_ok(sig, c);
-    tbl_wf(dm);
-    intro_fields(sig, rc, dm, es);
-    rc
 }
 
 /// The end's constructor parameters are the recursor's.

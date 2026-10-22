@@ -245,6 +245,8 @@ pub open spec fn hstep(sig: Sig, t: ExprSpec) -> Option<ExprSpec>
                 None => None,
             }
         },
+        // a Nat literal unfolds (in the fragment, where `LitUnf` types it)
+        ExprSpec::NatLit(v) => if !sig.ienv.full { Some(crate::full_red::lit_unfold(sig.ienv.export, v)) } else { None },
         _ => None,
     }
 }

@@ -337,7 +337,7 @@ pub proof fn d_ls2(sig: Sig, d: Deriv, dl: Ctx, ks: Seq<u64>, vs: Seq<LevelSpec>
         },
         Rule::Eta(..) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::Irr(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
-        Rule::Delta(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
+        Rule::Delta(_) | Rule::LitUnf(_) => d_ls2_via(sig, d, dl, ks, vs, vs2, 2),
         Rule::ConstAx(_) | Rule::ConstDef(_) => d_ls2_cst(sig, d, dl, ks, vs, vs2),
         Rule::Local(_) | Rule::LitTy(_) => d_ls2_local(sig, d, dl, ks, vs, vs2),
         _ => {},

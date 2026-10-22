@@ -160,6 +160,8 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     }
     assert forall|id: u64| #[trigger] denv.defs.contains_key(id) implies !crate::confluence::redex_head(denv, id) by {
         assert(dty.contains_key(id));
+        assert(crate::kclaims::nat_ctors_ok(dty, denv));
+        assert(crate::kclaims::tables_ok(dty, denv));
     }
 }
 
@@ -263,6 +265,7 @@ proof fn type_crank<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: i
         forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> 0 <= pos_of(ef, id) < c,
         crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), ty),
         forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> sig.rank.contains_key(id) && sig.rank[id] == pos_of(ef, id) as nat,
+        sig.ienv.full || !crate::rec_canon::has_lit(ty),
     ensures
         crate::ti_syntax::crank(sig, ty) <= pos_of(ef, cid),
 {
@@ -1070,6 +1073,13 @@ proof fn types_ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             assert(dty.contains_key(id));
         }
         crate::twin::twin_keeps(raw0, cid);
+        // the declarations are literal-free (`kh_hyp`), so are the twin's types
+        assert(kh_hyp(dty, denv));
+        assert forall|k: u64| #[trigger] raw0.consts.contains_key(k) implies !crate::rec_canon::has_lit(raw0.consts[k].ty) by {
+            assert(dty.contains_key(k));
+            crate::kclaims::frag_term_sf(dty[k].1);
+        }
+        crate::twin::twin_ty_nolit(raw0, cid);
         if denv.recs.contains_key(cid) && crate::twin::rec_core(raw0, cid) {
             assert(crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), crate::twin::canon_ty(raw0, cid)));
             type_crank(ef, cc, cid, c, crate::twin::canon_ty(raw0, cid), tw);
@@ -1373,6 +1383,9 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         assert forall|id: u64| #[trigger] dc.dom().contains(id) implies sr.rank.contains_key(id) && sr.rank[id] < pos_of(ef, cid) by {
             assert(dc.contains_key(id));
         }
+        assert(kh_hyp(dty, denv));
+        crate::kclaims::frag_term_sf(val);
+        crate::rec_canon::has_lit_sl(val, lps, ls);
         crate::ti_level::crank_bound(sr, crate::ti_syntax::dval(sr, cid, ls), dc.dom(), pos_of(ef, cid) as nat);
     }
     assert(crate::metatheory::rank_ok(dty, denv, r));
