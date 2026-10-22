@@ -2672,6 +2672,31 @@ proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, c
             typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, crate::dom_rec_ty::rshape(sig, rid).ind, clv, pv))
     }),
 {
+    r2l_fields_pv(ss, sig, rid, lv, p, clv, ds, xs);
+    r2l_fields_rec(ss, sig, rid, lv, p, clv, ds, xs);
+}
+
+/// `r2l_fields_b`'s parameter-typed fields.
+#[verifier::spinoff_prover]
+proof fn r2l_fields_pv(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        crate::dom_sound::sound_oracle(ss, sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
+        crate::dom_rec_end::rec_hyps(sig, rid),
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+    ensures ({
+        let np = crate::dom_rec_ty::rshape(sig, rid).np as int;
+        let pre = (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int;
+        let pv = xs.subrange(0, np);
+        let xf = xs.subrange(pre, xs.len() as int);
+        let ak = ds.subrange(pre, ds.len() as int);
+        &&& forall|k: int| 0 <= k < xf.len() && ispvar(sig, rid, p, k) ==>
+            wf(#[trigger] ak[k]) && le(ak[k], pv[pvq(sig, rid, p, k)]) && typed(ak[k], Cpt::U) && typed(xf[k], ak[k])
+    }),
+{
     let sh = crate::dom_rec_ty::rshape(sig, rid);
     let rd = sig.ienv.recs[rid];
     let (np, nmin) = (sh.np, sh.nmin());
@@ -2692,6 +2717,42 @@ proof fn r2l_fields_b(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, c
         crate::dom_canon::canon_fields(sig, sh.ind, p, k);
         assert(pv[pvq(sig, rid, p, k)] == xs[pvq(sig, rid, p, k)]);
     }
+}
+
+/// `r2l_fields_b`'s recursive fields.
+#[verifier::spinoff_prover]
+proof fn r2l_fields_rec(ss: Sig, sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq<LevelSpec>, ds: Seq<Cpt>, xs: Seq<Cpt>)
+    requires
+        crate::dom_sound::sound_oracle(ss, sig),
+        ss == crate::ti_strip::strip_below(sig, crate::dom_code::rk(sig, rid)),
+        crate::dom_rec_end::rec_hyps(sig, rid),
+        r2l_ok(sig, rid, lv, p, clv),
+        crate::dom_tele::chain_ok(sig, crate::dom_rec_ty::rtds(sig, rid, lv).subrange(0,
+            (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int) + ftds(sig, rid, lv, p),
+            bot_env(), ds, xs),
+    ensures ({
+        let np = crate::dom_rec_ty::rshape(sig, rid).np as int;
+        let pre = (crate::dom_rec_ty::rshape(sig, rid).np + 1 + crate::dom_rec_ty::rshape(sig, rid).nmin()) as int;
+        let pv = xs.subrange(0, np);
+        let xf = xs.subrange(pre, xs.len() as int);
+        let ak = ds.subrange(pre, ds.len() as int);
+        &&& forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) ==>
+            typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, crate::dom_rec_ty::rshape(sig, rid).ind, clv, pv))
+    }),
+{
+    let sh = crate::dom_rec_ty::rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let (np, nmin) = (sh.np, sh.nmin());
+    let pre = (np + 1 + nmin) as int;
+    crate::dom_rec_ty::scope_ctor(sig, rid, p);
+    assert(sh.fields[p].len() == rd.rules[p].nfields);
+    r2l_pv(sig, rid, lv, p, clv, ds, xs);
+    let xf = xs.subrange(pre, xs.len() as int);
+    let ak = ds.subrange(pre, ds.len() as int);
+    let pv = xs.subrange(0, np as int);
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    crate::dom_rec_ty::rec_lps_sub(sig, rid);
+    crate::dom_rec_end::rec_canon_ok(sig, rid);
     assert forall|k: int| 0 <= k < xf.len() && isrec(sig, rid, p, k) implies
         typed(#[trigger] xf[k], crate::dom_code::canon_code(sig, sh.ind, clv, pv)) by {
         r2l_rec_field(sig, rid, lv, p, clv, ds, xs, k);

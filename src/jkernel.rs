@@ -1305,7 +1305,37 @@ pub proof fn typed_local(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
     mk_d(sig, node(Rule::Local(l), j, ps));
 }
 
-/// A declared constant's instance is typed at the instantiated type.
+/// A CONSTRUCTOR'S DECLARED TYPE CONVERTS TO ITS TWIN'S, the fields'
+/// abbreviations unfolded (`ti_sr::tel_fnorm_conv`).
+pub proof fn ctor_twin_conv(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, c: u64) -> (l: LevelSpec)
+    requires
+        crate::kclaims::kh(dty, denv),
+        !denv.full,
+        dty.contains_key(c),
+        denv.ctor_ind.contains_key(c),
+        denv.ctor_np.contains_key(c),
+        !denv.recs.contains_key(c),
+    ensures
+        derivable(jsig(dty, denv, Map::empty()), eq(Seq::empty(), dty[c].1, jsig(dty, denv, Map::empty()).consts[c].ty, sort(l))),
+{
+    let s0 = jsig(dty, denv, Map::empty());
+    let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let g0 = Seq::<ExprSpec>::empty();
+    kh_at(dty, denv, Map::empty());
+    let t = dty[c].1;
+    let np = denv.ctor_np[c] as nat;
+    crate::twin::twin_keeps(raw, c);
+    crate::twin::twin_same_vals(raw);
+    crate::rec_canon::dnorm_same_vals_ctor(raw.consts, s0.consts, t, np);
+    assert(crate::metatheory::is_type(dty, denv, Map::empty(), t));
+    let l0 = is_type_sort(dty, denv, Map::empty(), t);
+    assert(crate::kclaims::ind_ok(s0));
+    crate::ti_sr::ctor_norm_conv(s0, g0, t, np, l0);
+    l0
+}
+
+/// A declared constant's instance is typed at the instantiated type, which
+/// is a type.
 pub proof fn typed_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, c: u64, ls: Seq<LevelSpec>)
     requires
         crate::kclaims::kh(dty, denv),
@@ -1313,29 +1343,60 @@ pub proof fn typed_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: 
         ls.len() == dty[c].0.len(),
     ensures
         crate::metatheory::typed(dty, denv, d, ExprSpec::Const(c, ls), crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls)),
-        denv.full || !(denv.recs.contains_key(c) && crate::twin::rec_core(crate::metatheory::jsig_raw(dty, denv, Map::empty()), c))
-            ==> dty_at(jsig(dty, denv, d), c, ls) == crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls),
+        exists|l: LevelSpec| #[trigger] crate::metatheory::typed(dty, denv, d, crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls), ExprSpec::Sort(l)),
+        exists|l: LevelSpec| #[trigger] derivable(jsig(dty, denv, d), eq(Seq::empty(), crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls),
+            dty_at(jsig(dty, denv, d), c, ls), sort(l))),
 {
     let sig = jsig(dty, denv, d);
     let s0 = jsig(dty, denv, Map::empty());
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    let decl = crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls);
+    let g0 = Seq::<ExprSpec>::empty();
     kh_at(dty, denv, d);
+    kh_at(dty, denv, Map::empty());
     jsig_locals(dty, denv, d);
+    jsig_ext(dty, denv, d);
     wf_nil(sig);
     assert(crate::conv_cr::levs_eq(ls, ls));
-    const_d(sig, Seq::empty(), c, ls, ls);
+    const_d(sig, g0, c, ls, ls);
+    assert(lev_inst_ok(sig, c, ls, ls));
+    let lt = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g0, dty_at(sig, c, ls), dty_at(sig, c, ls), sort(l)));
     if !denv.full && denv.recs.contains_key(c) && crate::twin::rec_core(raw, c) {
         // the twin types the recursor at its canonical type, which its
         // declared one converts to (`twin_ok`, nanoda's def_eq)
-        let decl = crate::expr_model::subst_expr_levels(dty[c].1, dty[c].0, ls);
         let can = crate::expr_model::subst_expr_levels(crate::twin::canon_ty(raw, c), dty[c].0, ls);
         assert(crate::kclaims::twin_ok(dty, denv));
-        let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, eq(Seq::empty(), decl, can, sort(l)));
-        jsig_ext(dty, denv, d);
-        crate::ti_valid::derivable_ext(s0, sig, eq(Seq::empty(), decl, can, sort(l)));
-        crate::dom_adeq_syn::dsym(sig, Seq::empty(), decl, can, sort(l));
+        let l = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(s0, eq(g0, decl, can, sort(l)));
+        crate::ti_valid::derivable_ext(s0, sig, eq(g0, decl, can, sort(l)));
+        crate::dom_adeq_syn::dsym(sig, g0, decl, can, sort(l));
         assert(dty_at(sig, c, ls) == can);
-        crate::dom_adeq_syn::dconv(sig, Seq::empty(), ExprSpec::Const(c, ls), ExprSpec::Const(c, ls), can, decl, l);
+        crate::dom_adeq_syn::dconv(sig, g0, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls), can, decl, l);
+        assert(crate::metatheory::typed(dty, denv, d, decl, ExprSpec::Sort(l)));
+        assert(derivable(sig, eq(g0, decl, dty_at(sig, c, ls), sort(l))));
+    } else if !denv.full && raw.ienv.ctor_ind.contains_key(c) && raw.ienv.ctor_np.contains_key(c) && !raw.ienv.recs.contains_key(c) {
+        // the twin types a constructor at its declared type with the fields'
+        // abbreviations unfolded, which the declared one converts to
+        let t = dty[c].1;
+        let ks = dty[c].0;
+        let tw = s0.consts[c].ty;
+        let l0 = ctor_twin_conv(dty, denv, c);
+        crate::twin::twin_keeps(raw, c);
+        crate::kclaims::kh_frag_lp(dty, denv, ks, ls);
+        crate::ti_level::derivable_ls(s0, eq(g0, t, tw, sort(l0)), ks, ls);
+        let l1 = crate::level_model::subst_level_spec(l0, ks, ls);
+        assert(crate::ti_level::gls(g0, ks, ls) =~= g0);
+        assert(crate::ti_level::jls(eq(g0, t, tw, sort(l0)), ks, ls) == eq(g0, decl, dty_at(s0, c, ls), sort(l1)));
+        crate::ti_valid::derivable_ext(s0, sig, eq(g0, decl, dty_at(s0, c, ls), sort(l1)));
+        assert(dty_at(sig, c, ls) == dty_at(s0, c, ls));
+        crate::dom_adeq_syn::dsym(sig, g0, decl, dty_at(sig, c, ls), sort(l1));
+        crate::dom_adeq_syn::dconv(sig, g0, ExprSpec::Const(c, ls), ExprSpec::Const(c, ls), dty_at(sig, c, ls), decl, l1);
+        assert(crate::metatheory::typed(dty, denv, d, decl, ExprSpec::Sort(l1)));
+        assert(derivable(sig, eq(g0, decl, dty_at(sig, c, ls), sort(l1))));
+    } else {
+        crate::twin::twin_keeps(raw, c);
+        assert(dty_at(sig, c, ls) == decl);
+        assert(crate::metatheory::typed(dty, denv, d, decl, ExprSpec::Sort(lt)));
+        assert(derivable(sig, eq(g0, decl, dty_at(sig, c, ls), sort(lt))));
     }
 }
 

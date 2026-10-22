@@ -1659,6 +1659,44 @@ pub proof fn kh_full_lp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ks: 
     }
 }
 
+/// In the fragment, the twin's constants and rules mention only their own
+/// level parameters, as the declarations do.
+pub proof fn kh_frag_lp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ks: Seq<u64>, vs: Seq<LevelSpec>)
+    requires
+        kh_frag(dty, denv),
+        ks.len() == vs.len(),
+    ensures
+        crate::ti_level::sig_lp_ok(jsig(dty, denv, Map::empty()), ks, vs),
+{
+    let s0 = jsig(dty, denv, Map::empty());
+    let raw0 = crate::metatheory::jsig_raw(dty, denv, Map::empty());
+    assert(s0 == crate::twin::twin(raw0));
+    assert forall|k: u64| #[trigger] raw0.consts.contains_key(k) implies crate::level_inst::elp_in(raw0.consts[k].ty, raw0.consts[k].lps) by {
+        assert(dty.contains_key(k));
+    }
+    assert forall|k: u64| #[trigger] s0.consts.contains_key(k) implies crate::level_inst::elp_in(s0.consts[k].ty, s0.consts[k].lps)
+        && (s0.consts[k].val is Some ==> crate::level_inst::elp_in(s0.consts[k].val->Some_0, s0.consts[k].lps)) by {
+        crate::twin::twin_keeps(raw0, k);
+        crate::twin::twin_ty_elp(raw0, k);
+        if denv.defs.contains_key(k) {
+            assert(crate::level_inst::env_lp_ok(denv));
+            assert(crate::metatheory::env_wf(dty, denv));
+        }
+    }
+    assert forall|id: u64, j: int| #![trigger s0.ienv.recs[id].rules[j]] s0.ienv.recs.contains_key(id) && 0 <= j < s0.ienv.recs[id].rules.len()
+        implies crate::level_inst::elp_in(s0.ienv.recs[id].rules[j].rhs, s0.ienv.recs[id].uparams) by {
+        crate::twin::twin_keeps(raw0, id);
+        assert(denv.recs.contains_key(id));
+        if crate::twin::rec_core(raw0, id) {
+            crate::twin::canon_elp_sig(raw0, id);
+            assert(s0.ienv.recs[id].rules[j] == crate::twin::canon_rules(raw0, id)[j]);
+        } else {
+            assert(s0.ienv.recs[id] == denv.recs[id]);
+        }
+    }
+    assert(s0.ienv.defs == denv.defs);
+}
+
 /// A typed application of a constant is at the constant's arity of levels.
 pub proof fn head_levels(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, d: Map<nat, ExprSpec>, h: u64, ls: Seq<LevelSpec>, args: Seq<ExprSpec>, t: ExprSpec)
     requires
@@ -3104,26 +3142,9 @@ pub proof fn ci_const(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Map
         }
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, e), d) && rtyped(dty, denv, d, e)
             implies #[trigger] ci_at(dty, denv, d, e, t) by {
-            let sig = jsig(dty, denv, d);
             crate::jkernel::typed_const(dty, denv, d, cid, ls);
-            crate::jkernel::kh_at(dty, denv, d);
-            assert(crate::conv_cr::levs_eq(ls, ls));
-            assert(crate::jkernel::lev_inst_ok(sig, cid, ls, ls));
-            let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
-            if !denv.full && denv.recs.contains_key(cid) && crate::twin::rec_core(raw, cid) {
-                // a twinned recursor: its declared type converts to the
-                // canonical one at a sort (`twin_ok`), so it is a type
-                let can = crate::expr_model::subst_expr_levels(crate::twin::canon_ty(raw, cid), dty[cid].0, ls);
-                assert(twin_ok(dty, denv));
-                let l = choose|l: LevelSpec| #[trigger] derivable(sig0, eq(Seq::empty(), t, can, crate::ti_syntax::sort(l)));
-                crate::jkernel::jsig_ext(dty, denv, d);
-                crate::ti_valid::derivable_ext(sig0, sig, eq(Seq::empty(), t, can, crate::ti_syntax::sort(l)));
-                crate::dom_adeq_syn::dsym(sig, Seq::empty(), t, can, crate::ti_syntax::sort(l));
-                is_type_of_sort(dty, denv, d, t, l);
-            } else {
-                let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(Seq::empty(), crate::ti_syntax::dty_at(sig, cid, ls), crate::ti_syntax::dty_at(sig, cid, ls), crate::ti_syntax::sort(l)));
-                is_type_of_sort(dty, denv, d, t, l);
-            }
+            let l = choose|l: LevelSpec| #[trigger] typed(dty, denv, d, t, ExprSpec::Sort(l));
+            is_type_of_sort(dty, denv, d, t, l);
         }
     }
 }

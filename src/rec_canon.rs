@@ -408,43 +408,47 @@ pub open spec fn lp_free(e: ExprSpec) -> bool
 
 /// A definition's value mentions no definition (abbreviation bodies are
 /// unfolded once, so they must not need unfolding themselves).
-pub open spec fn def_free(sig: Sig, e: ExprSpec) -> bool
+pub open spec fn def_free(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec) -> bool
     decreases e,
 {
     match e {
-        ExprSpec::Const(c, _) => !(sig.consts.contains_key(c) && sig.consts[c].val is Some),
-        ExprSpec::App(f, a) => def_free(sig, *f) && def_free(sig, *a),
-        ExprSpec::Bind(_, t, b) => def_free(sig, *t) && def_free(sig, *b),
-        ExprSpec::Let(t, v, b) => def_free(sig, *t) && def_free(sig, *v) && def_free(sig, *b),
-        ExprSpec::Proj(_, x) => def_free(sig, *x),
+        ExprSpec::Const(c, _) => !(cs.contains_key(c) && cs[c].val is Some),
+        ExprSpec::App(f, a) => def_free(cs, *f) && def_free(cs, *a),
+        ExprSpec::Bind(_, t, b) => def_free(cs, *t) && def_free(cs, *b),
+        ExprSpec::Let(t, v, b) => def_free(cs, *t) && def_free(cs, *v) && def_free(cs, *b),
+        ExprSpec::Proj(_, x) => def_free(cs, *x),
         _ => true,
     }
 }
 
 /// A TYPE ABBREVIATION OF ARITY 0 (`Unit := PUnit.{1}`): a level-free
 /// definition whose closed value mentions no definition.
-pub open spec fn abbr0(sig: Sig, c: u64) -> bool {
-    &&& sig.consts.contains_key(c)
-    &&& sig.consts[c].lps.len() == 0
-    &&& sig.consts[c].val is Some
-    &&& !(sig.consts[c].val->Some_0 is Bind && sig.consts[c].val->Some_0->Bind_0 == BinderKind::Lam)
-    &&& crate::expr_model::nlbv(sig.consts[c].val->Some_0) == 0
-    &&& def_free(sig, sig.consts[c].val->Some_0)
+pub open spec fn abbr0(cs: Map<u64, crate::ti_syntax::ConstDecl>, c: u64) -> bool {
+    &&& cs.contains_key(c)
+    &&& cs[c].lps.len() == 0
+    &&& cs[c].val is Some
+    &&& !(cs[c].val->Some_0 is Bind && cs[c].val->Some_0->Bind_0 == BinderKind::Lam)
+    &&& crate::expr_model::nlbv(cs[c].val->Some_0) == 0
+    &&& def_free(cs, cs[c].val->Some_0)
+    &&& crate::ti_level::all_consts(cs[c].val->Some_0, cs.dom())    &&& crate::level_inst::elp_in(cs[c].val->Some_0, Seq::empty())
+    &&& !crate::expr_model::has_fv(cs[c].val->Some_0)    &&& lp_free(cs[c].val->Some_0)
 }
 
 /// ... OF ARITY 1 (`Not := fun a => a -> False`): a level-free definition
 /// whose closed value is one lambda over a body mentioning no definition.
-pub open spec fn abbr1(sig: Sig, c: u64) -> bool {
-    &&& sig.consts.contains_key(c)
-    &&& sig.consts[c].lps.len() == 0
-    &&& sig.consts[c].val is Some
-    &&& sig.consts[c].val->Some_0 is Bind && sig.consts[c].val->Some_0->Bind_0 == BinderKind::Lam
-    &&& !(*sig.consts[c].val->Some_0->Bind_2 is Bind && sig.consts[c].val->Some_0->Bind_2->Bind_0 == BinderKind::Lam)
-    &&& crate::expr_model::nlbv(sig.consts[c].val->Some_0) == 0
-    &&& def_free(sig, *sig.consts[c].val->Some_0->Bind_1)
-    &&& def_free(sig, *sig.consts[c].val->Some_0->Bind_2)
-    &&& no_head_var(*sig.consts[c].val->Some_0->Bind_2, 0)
-    &&& !(*sig.consts[c].val->Some_0->Bind_2 is Var)
+pub open spec fn abbr1(cs: Map<u64, crate::ti_syntax::ConstDecl>, c: u64) -> bool {
+    &&& cs.contains_key(c)
+    &&& cs[c].lps.len() == 0
+    &&& cs[c].val is Some
+    &&& cs[c].val->Some_0 is Bind && cs[c].val->Some_0->Bind_0 == BinderKind::Lam
+    &&& !(*cs[c].val->Some_0->Bind_2 is Bind && cs[c].val->Some_0->Bind_2->Bind_0 == BinderKind::Lam)
+    &&& crate::expr_model::nlbv(cs[c].val->Some_0) == 0
+    &&& def_free(cs, *cs[c].val->Some_0->Bind_1)
+    &&& def_free(cs, *cs[c].val->Some_0->Bind_2)
+    &&& no_head_var(*cs[c].val->Some_0->Bind_2, 0)
+    &&& !(*cs[c].val->Some_0->Bind_2 is Var)
+    &&& crate::ti_level::all_consts(cs[c].val->Some_0, cs.dom())    &&& crate::level_inst::elp_in(cs[c].val->Some_0, Seq::empty())
+    &&& !crate::expr_model::has_fv(cs[c].val->Some_0)    &&& lp_free(cs[c].val->Some_0)
 }
 
 /// The bound variable `k` is never applied (so instantiating it creates no
@@ -462,82 +466,94 @@ pub open spec fn no_head_var(e: ExprSpec, k: nat) -> bool
 }
 
 /// No abbreviation left to unfold.
-pub open spec fn abbr_free(sig: Sig, e: ExprSpec) -> bool
+pub open spec fn abbr_free(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec) -> bool
     decreases e,
 {
     match e {
-        ExprSpec::Const(c, ls) => !(ls.len() == 0 && abbr0(sig, c)),
-        ExprSpec::App(f, a) => !(*f matches ExprSpec::Const(c, ls) && ls.len() == 0 && abbr1(sig, c))
-            && abbr_free(sig, *f) && abbr_free(sig, *a),
-        ExprSpec::Bind(_, t, b) => abbr_free(sig, *t) && abbr_free(sig, *b),
-        ExprSpec::Let(t, v, b) => abbr_free(sig, *t) && abbr_free(sig, *v) && abbr_free(sig, *b),
-        ExprSpec::Proj(_, x) => abbr_free(sig, *x),
+        ExprSpec::Const(c, ls) => !(ls.len() == 0 && abbr0(cs, c)),
+        ExprSpec::App(f, a) => !(*f matches ExprSpec::Const(c, ls) && ls.len() == 0 && abbr1(cs, c))
+            && abbr_free(cs, *f) && abbr_free(cs, *a),
+        ExprSpec::Bind(_, t, b) => abbr_free(cs, *t) && abbr_free(cs, *b),
+        ExprSpec::Let(t, v, b) => abbr_free(cs, *t) && abbr_free(cs, *v) && abbr_free(cs, *b),
+        ExprSpec::Proj(_, x) => abbr_free(cs, *x),
         _ => true,
     }
 }
 
 /// A term mentioning no definition is abbreviation-free.
-pub proof fn def_free_abbr_free(sig: Sig, e: ExprSpec)
+pub proof fn def_free_abbr_free(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
     requires
-        def_free(sig, e),
+        def_free(cs, e),
     ensures
-        abbr_free(sig, e),
+        abbr_free(cs, e),
     decreases e,
 {
     match e {
-        ExprSpec::App(f, a) => { def_free_abbr_free(sig, *f); def_free_abbr_free(sig, *a); },
-        ExprSpec::Bind(_, t, b) => { def_free_abbr_free(sig, *t); def_free_abbr_free(sig, *b); },
-        ExprSpec::Let(t, v, b) => { def_free_abbr_free(sig, *t); def_free_abbr_free(sig, *v); def_free_abbr_free(sig, *b); },
-        ExprSpec::Proj(_, x) => def_free_abbr_free(sig, *x),
+        ExprSpec::App(f, a) => {
+            def_free_abbr_free(cs, *f);
+            def_free_abbr_free(cs, *a);
+            if let ExprSpec::Const(c, _) = *f {
+                assert(def_free(cs, *f));
+                assert(!(cs.contains_key(c) && cs[c].val is Some));
+                assert(!abbr1(cs, c));
+            }
+        },
+        ExprSpec::Const(c, _) => {
+            assert(!(cs.contains_key(c) && cs[c].val is Some));
+            assert(!abbr0(cs, c));
+        },
+        ExprSpec::Bind(_, t, b) => { def_free_abbr_free(cs, *t); def_free_abbr_free(cs, *b); },
+        ExprSpec::Let(t, v, b) => { def_free_abbr_free(cs, *t); def_free_abbr_free(cs, *v); def_free_abbr_free(cs, *b); },
+        ExprSpec::Proj(_, x) => def_free_abbr_free(cs, *x),
         _ => {},
     }
 }
 
 /// Lifting keeps a term abbreviation-free.
-pub proof fn abbr_free_lift(sig: Sig, n: nat, c: nat, e: ExprSpec)
+pub proof fn abbr_free_lift(cs: Map<u64, crate::ti_syntax::ConstDecl>, n: nat, c: nat, e: ExprSpec)
     requires
-        abbr_free(sig, e),
+        abbr_free(cs, e),
     ensures
-        abbr_free(sig, lift(n, c, e)),
+        abbr_free(cs, lift(n, c, e)),
     decreases e,
 {
     reveal_with_fuel(lift, 2);
     match e {
-        ExprSpec::App(f, a) => { abbr_free_lift(sig, n, c, *f); abbr_free_lift(sig, n, c, *a); },
-        ExprSpec::Bind(_, t, b) => { abbr_free_lift(sig, n, c, *t); abbr_free_lift(sig, n, c + 1, *b); },
-        ExprSpec::Let(t, v, b) => { abbr_free_lift(sig, n, c, *t); abbr_free_lift(sig, n, c, *v); abbr_free_lift(sig, n, c + 1, *b); },
-        ExprSpec::Proj(_, x) => abbr_free_lift(sig, n, c, *x),
+        ExprSpec::App(f, a) => { abbr_free_lift(cs, n, c, *f); abbr_free_lift(cs, n, c, *a); },
+        ExprSpec::Bind(_, t, b) => { abbr_free_lift(cs, n, c, *t); abbr_free_lift(cs, n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { abbr_free_lift(cs, n, c, *t); abbr_free_lift(cs, n, c, *v); abbr_free_lift(cs, n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => abbr_free_lift(cs, n, c, *x),
         _ => {},
     }
 }
 
 /// Instantiating a never-applied variable of a definition-free body with an
 /// abbreviation-free term leaves it abbreviation-free.
-pub proof fn abbr_free_inst(sig: Sig, k: nat, x: ExprSpec, e: ExprSpec)
+pub proof fn abbr_free_inst(cs: Map<u64, crate::ti_syntax::ConstDecl>, k: nat, x: ExprSpec, e: ExprSpec)
     requires
-        abbr_free(sig, x),
-        def_free(sig, e),
+        abbr_free(cs, x),
+        def_free(cs, e),
         no_head_var(e, k),
     ensures
-        abbr_free(sig, crate::subst_algebra::inst(k, x, e)),
+        abbr_free(cs, crate::subst_algebra::inst(k, x, e)),
     decreases e,
 {
     match e {
         ExprSpec::Var(i) => {
             if i == k {
-                abbr_free_lift(sig, k, 0, x);
+                abbr_free_lift(cs, k, 0, x);
                 assert(crate::subst_algebra::inst(k, x, e) == lift(k, 0, x));
             } else {
                 assert(crate::subst_algebra::inst(k, x, e) is Var);
             }
-            assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e)));
+            assert(abbr_free(cs, crate::subst_algebra::inst(k, x, e)));
         },
         ExprSpec::App(f, a) => {
-            abbr_free_inst(sig, k, x, *f);
-            abbr_free_inst(sig, k, x, *a);
+            abbr_free_inst(cs, k, x, *f);
+            abbr_free_inst(cs, k, x, *a);
             let f2 = crate::subst_algebra::inst(k, x, *f);
             assert(crate::subst_algebra::inst(k, x, e) == ExprSpec::App(Box::new(f2), Box::new(crate::subst_algebra::inst(k, x, *a))));
-            assert(abbr_free(sig, f2));
+            assert(abbr_free(cs, f2));
             match *f {
                 ExprSpec::Var(i) => {
                     assert(i != k);
@@ -545,9 +561,9 @@ pub proof fn abbr_free_inst(sig: Sig, k: nat, x: ExprSpec, e: ExprSpec)
                 },
                 ExprSpec::Const(c, ls) => {
                     assert(f2 == *f);
-                    assert(def_free(sig, *f));
-                    assert(def_free(sig, ExprSpec::Const(c, ls)));
-                    assert(!(sig.consts.contains_key(c) && sig.consts[c].val is Some));
+                    assert(def_free(cs, *f));
+                    assert(def_free(cs, ExprSpec::Const(c, ls)));
+                    assert(!(cs.contains_key(c) && cs[c].val is Some));
                 },
                 ExprSpec::App(_, _) => { assert(f2 is App); },
                 ExprSpec::Bind(_, _, _) => { assert(f2 is Bind); },
@@ -555,31 +571,31 @@ pub proof fn abbr_free_inst(sig: Sig, k: nat, x: ExprSpec, e: ExprSpec)
                 ExprSpec::Proj(_, _) => { assert(f2 is Proj); },
                 _ => { assert(f2 == *f); },
             }
-            assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e)));
+            assert(abbr_free(cs, crate::subst_algebra::inst(k, x, e)));
         },
         ExprSpec::Const(c, ls) => {
             assert(crate::subst_algebra::inst(k, x, e) == e);
         },
-        ExprSpec::Bind(_, t, b) => { abbr_free_inst(sig, k, x, *t); abbr_free_inst(sig, k + 1, x, *b); assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e))); },
-        ExprSpec::Let(t, v, b) => { abbr_free_inst(sig, k, x, *t); abbr_free_inst(sig, k, x, *v); abbr_free_inst(sig, k + 1, x, *b); assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e))); },
-        ExprSpec::Proj(_, y) => { abbr_free_inst(sig, k, x, *y); assert(abbr_free(sig, crate::subst_algebra::inst(k, x, e))); },
+        ExprSpec::Bind(_, t, b) => { abbr_free_inst(cs, k, x, *t); abbr_free_inst(cs, k + 1, x, *b); assert(abbr_free(cs, crate::subst_algebra::inst(k, x, e))); },
+        ExprSpec::Let(t, v, b) => { abbr_free_inst(cs, k, x, *t); abbr_free_inst(cs, k, x, *v); abbr_free_inst(cs, k + 1, x, *b); assert(abbr_free(cs, crate::subst_algebra::inst(k, x, e))); },
+        ExprSpec::Proj(_, y) => { abbr_free_inst(cs, k, x, *y); assert(abbr_free(cs, crate::subst_algebra::inst(k, x, e))); },
         _ => {},
     }
 }
 
 /// Unfolding produces an applicable arity-1 abbreviation only from itself.
-pub proof fn dnorm_head(sig: Sig, f: ExprSpec)
+pub proof fn dnorm_head(cs: Map<u64, crate::ti_syntax::ConstDecl>, f: ExprSpec)
     ensures
-        (dnorm(sig, f) matches ExprSpec::Const(c, ls) && ls.len() == 0 && abbr1(sig, c)) ==> dnorm(sig, f) == f,
+        (dnorm(cs, f) matches ExprSpec::Const(c, ls) && ls.len() == 0 && abbr1(cs, c)) ==> dnorm(cs, f) == f,
     decreases f,
 {
     match f {
         ExprSpec::Const(c, ls) => {},
         ExprSpec::App(g, a) => {
             if let ExprSpec::Const(c, ls) = *g {
-                if ls.len() == 0 && abbr1(sig, c) {
-                    let body = *sig.consts[c].val->Some_0->Bind_2;
-                    let r = crate::subst_algebra::inst(0, dnorm(sig, *a), body);
+                if ls.len() == 0 && abbr1(cs, c) {
+                    let body = *cs[c].val->Some_0->Bind_2;
+                    let r = crate::subst_algebra::inst(0, dnorm(cs, *a), body);
                     if let ExprSpec::Const(c2, ls2) = body {
                         assert(r == body);
                     }
@@ -593,39 +609,39 @@ pub proof fn dnorm_head(sig: Sig, f: ExprSpec)
 
 /// Unfolding leaves nothing to unfold, and an abbreviation-free term is
 /// its own unfolding: `dnorm` is idempotent.
-pub proof fn dnorm_abbr_free(sig: Sig, e: ExprSpec)
+pub proof fn dnorm_abbr_free(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
     ensures
-        abbr_free(sig, dnorm(sig, e)),
-        abbr_free(sig, e) ==> dnorm(sig, e) == e,
+        abbr_free(cs, dnorm(cs, e)),
+        abbr_free(cs, e) ==> dnorm(cs, e) == e,
     decreases e,
 {
     match e {
         ExprSpec::Const(c, ls) => {
-            if ls.len() == 0 && abbr0(sig, c) {
-                def_free_abbr_free(sig, sig.consts[c].val->Some_0);
+            if ls.len() == 0 && abbr0(cs, c) {
+                def_free_abbr_free(cs, cs[c].val->Some_0);
             }
         },
         ExprSpec::App(f, a) => {
-            dnorm_abbr_free(sig, *f);
-            dnorm_abbr_free(sig, *a);
-            dnorm_head(sig, *f);
+            dnorm_abbr_free(cs, *f);
+            dnorm_abbr_free(cs, *a);
+            dnorm_head(cs, *f);
             if let ExprSpec::Const(c, ls) = *f {
-                if ls.len() == 0 && abbr0(sig, c) {
-                    let v = sig.consts[c].val->Some_0;
+                if ls.len() == 0 && abbr0(cs, c) {
+                    let v = cs[c].val->Some_0;
                     if let ExprSpec::Const(c2, ls2) = v {
-                        assert(!(sig.consts.contains_key(c2) && sig.consts[c2].val is Some));
+                        assert(!(cs.contains_key(c2) && cs[c2].val is Some));
                     }
                 }
             }
             if let ExprSpec::Const(c, ls) = *f {
-                if ls.len() == 0 && abbr1(sig, c) {
-                    abbr_free_inst(sig, 0, dnorm(sig, *a), *sig.consts[c].val->Some_0->Bind_2);
+                if ls.len() == 0 && abbr1(cs, c) {
+                    abbr_free_inst(cs, 0, dnorm(cs, *a), *cs[c].val->Some_0->Bind_2);
                 }
             }
         },
-        ExprSpec::Bind(_, t, b) => { dnorm_abbr_free(sig, *t); dnorm_abbr_free(sig, *b); },
-        ExprSpec::Let(t, v, b) => { dnorm_abbr_free(sig, *t); dnorm_abbr_free(sig, *v); dnorm_abbr_free(sig, *b); },
-        ExprSpec::Proj(_, x) => dnorm_abbr_free(sig, *x),
+        ExprSpec::Bind(_, t, b) => { dnorm_abbr_free(cs, *t); dnorm_abbr_free(cs, *b); },
+        ExprSpec::Let(t, v, b) => { dnorm_abbr_free(cs, *t); dnorm_abbr_free(cs, *v); dnorm_abbr_free(cs, *b); },
+        ExprSpec::Proj(_, x) => dnorm_abbr_free(cs, *x),
         _ => {},
     }
 }
@@ -633,23 +649,578 @@ pub proof fn dnorm_abbr_free(sig: Sig, e: ExprSpec)
 /// A TYPE WITH ITS ABBREVIATIONS UNFOLDED: arity-0 abbreviations by their
 /// values, arity-1 ones applied to one argument by their bodies at it
 /// (docs/TYPED_TARGET.md, "Slice: type abbreviations").
-pub open spec fn dnorm(sig: Sig, e: ExprSpec) -> ExprSpec
+pub open spec fn dnorm(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec) -> ExprSpec
     decreases e,
 {
     match e {
-        ExprSpec::Const(c, ls) => if ls.len() == 0 && abbr0(sig, c) { sig.consts[c].val->Some_0 } else { e },
+        ExprSpec::Const(c, ls) => if ls.len() == 0 && abbr0(cs, c) { cs[c].val->Some_0 } else { e },
         ExprSpec::App(f, a) => match *f {
-            ExprSpec::Const(c, ls) => if ls.len() == 0 && abbr1(sig, c) {
-                crate::subst_algebra::inst(0, dnorm(sig, *a), *sig.consts[c].val->Some_0->Bind_2)
+            ExprSpec::Const(c, ls) => if ls.len() == 0 && abbr1(cs, c) {
+                crate::subst_algebra::inst(0, dnorm(cs, *a), *cs[c].val->Some_0->Bind_2)
             } else {
-                ExprSpec::App(Box::new(dnorm(sig, *f)), Box::new(dnorm(sig, *a)))
+                ExprSpec::App(Box::new(dnorm(cs, *f)), Box::new(dnorm(cs, *a)))
             },
-            _ => ExprSpec::App(Box::new(dnorm(sig, *f)), Box::new(dnorm(sig, *a))),
+            _ => ExprSpec::App(Box::new(dnorm(cs, *f)), Box::new(dnorm(cs, *a))),
         },
-        ExprSpec::Bind(k, t, b) => ExprSpec::Bind(k, Box::new(dnorm(sig, *t)), Box::new(dnorm(sig, *b))),
-        ExprSpec::Let(t, v, b) => ExprSpec::Let(Box::new(dnorm(sig, *t)), Box::new(dnorm(sig, *v)), Box::new(dnorm(sig, *b))),
-        ExprSpec::Proj(i, x) => ExprSpec::Proj(i, Box::new(dnorm(sig, *x))),
+        ExprSpec::Bind(k, t, b) => ExprSpec::Bind(k, Box::new(dnorm(cs, *t)), Box::new(dnorm(cs, *b))),
+        ExprSpec::Let(t, v, b) => ExprSpec::Let(Box::new(dnorm(cs, *t)), Box::new(dnorm(cs, *v)), Box::new(dnorm(cs, *b))),
+        ExprSpec::Proj(i, x) => ExprSpec::Proj(i, Box::new(dnorm(cs, *x))),
         _ => e,
+    }
+}
+
+/// Every definition's value mentions only the map's constants.
+pub open spec fn vals_closed(cs: Map<u64, crate::ti_syntax::ConstDecl>) -> bool {
+    forall|c: u64| #[trigger] cs.contains_key(c) && cs[c].val is Some ==> crate::ti_level::all_consts(cs[c].val->Some_0, cs.dom())
+}
+
+/// `cs2` extends `cs1`: every constant kept, as it was.
+pub open spec fn cs_ext(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>) -> bool {
+    forall|c: u64| #[trigger] cs1.contains_key(c) ==> cs2.contains_key(c) && cs2[c] == cs1[c]
+}
+
+/// Every constructor's type and every definition mention only the
+/// signature's constants (what unfolding needs to be stable as the
+/// signature grows).
+pub open spec fn ctors_closed(sig: Sig) -> bool {
+    &&& vals_closed(sig.consts)
+    &&& forall|c: u64| #[trigger] sig.ienv.ctor_ind.contains_key(c) && sig.consts.contains_key(c)
+        ==> crate::ti_level::all_consts(sig.consts[c].ty, sig.consts.dom())
+}
+
+pub proof fn all_consts_mono(e: ExprSpec, a: Set<u64>, b: Set<u64>)
+    requires
+        crate::ti_level::all_consts(e, a),
+        a.subset_of(b),
+    ensures
+        crate::ti_level::all_consts(e, b),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { all_consts_mono(*f, a, b); all_consts_mono(*x, a, b); },
+        ExprSpec::Bind(_, t, x) => { all_consts_mono(*t, a, b); all_consts_mono(*x, a, b); },
+        ExprSpec::Let(t, v, x) => { all_consts_mono(*t, a, b); all_consts_mono(*v, a, b); all_consts_mono(*x, a, b); },
+        ExprSpec::Proj(_, x) => all_consts_mono(*x, a, b),
+        _ => {},
+    }
+}
+
+/// Definition-freeness reads only the constants a term mentions.
+pub proof fn def_free_ext(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    requires
+        cs_ext(cs1, cs2),
+        crate::ti_level::all_consts(e, cs1.dom()),
+    ensures
+        def_free(cs1, e) == def_free(cs2, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { def_free_ext(cs1, cs2, *f); def_free_ext(cs1, cs2, *x); },
+        ExprSpec::Bind(_, t, x) => { def_free_ext(cs1, cs2, *t); def_free_ext(cs1, cs2, *x); },
+        ExprSpec::Let(t, v, x) => { def_free_ext(cs1, cs2, *t); def_free_ext(cs1, cs2, *v); def_free_ext(cs1, cs2, *x); },
+        ExprSpec::Proj(_, x) => def_free_ext(cs1, cs2, *x),
+        _ => {},
+    }
+}
+
+/// An abbreviation of the smaller map is one of the larger, and a constant
+/// of the smaller map is an abbreviation of both or neither.
+pub proof fn abbr_ext(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, c: u64)
+    requires
+        vals_closed(cs1),
+        cs_ext(cs1, cs2),
+        cs1.contains_key(c),
+    ensures
+        abbr0(cs1, c) == abbr0(cs2, c),
+        abbr1(cs1, c) == abbr1(cs2, c),
+{
+    assert(cs1.dom().subset_of(cs2.dom()));
+    let d = cs1[c];
+    if d.val is Some {
+        let v = d.val->Some_0;
+        if crate::ti_level::all_consts(v, cs1.dom()) {
+            all_consts_mono(v, cs1.dom(), cs2.dom());
+            def_free_ext(cs1, cs2, v);
+            if v is Bind {
+                reveal_with_fuel(crate::ti_level::all_consts, 2);
+                def_free_ext(cs1, cs2, *v->Bind_1);
+                def_free_ext(cs1, cs2, *v->Bind_2);
+            }
+        }
+    }
+}
+
+/// UNFOLDING IS STABLE UNDER EXTENSION, for a term over the smaller map's
+/// constants.
+pub proof fn dnorm_ext(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    requires
+        vals_closed(cs1),
+        cs_ext(cs1, cs2),
+        crate::ti_level::all_consts(e, cs1.dom()),
+    ensures
+        dnorm(cs1, e) == dnorm(cs2, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, _) => abbr_ext(cs1, cs2, c),
+        ExprSpec::App(f, x) => {
+            dnorm_ext(cs1, cs2, *f);
+            dnorm_ext(cs1, cs2, *x);
+            if let ExprSpec::Const(c, _) = *f {
+                assert(crate::ti_level::all_consts(*f, cs1.dom()));
+                abbr_ext(cs1, cs2, c);
+            }
+        },
+        ExprSpec::Bind(_, t, x) => { dnorm_ext(cs1, cs2, *t); dnorm_ext(cs1, cs2, *x); },
+        ExprSpec::Let(t, v, x) => { dnorm_ext(cs1, cs2, *t); dnorm_ext(cs1, cs2, *v); dnorm_ext(cs1, cs2, *x); },
+        ExprSpec::Proj(_, x) => dnorm_ext(cs1, cs2, *x),
+        _ => {},
+    }
+}
+
+pub proof fn all_consts_lift(n: nat, c: nat, e: ExprSpec, ids: Set<u64>)
+    requires
+        crate::ti_level::all_consts(e, ids),
+    ensures
+        crate::ti_level::all_consts(lift(n, c, e), ids),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { all_consts_lift(n, c, *f, ids); all_consts_lift(n, c, *x, ids); },
+        ExprSpec::Bind(_, t, b) => { all_consts_lift(n, c, *t, ids); all_consts_lift(n, c + 1, *b, ids); },
+        ExprSpec::Let(t, v, b) => { all_consts_lift(n, c, *t, ids); all_consts_lift(n, c, *v, ids); all_consts_lift(n, c + 1, *b, ids); },
+        ExprSpec::Proj(_, x) => all_consts_lift(n, c, *x, ids),
+        _ => {},
+    }
+}
+
+pub proof fn all_consts_inst_fwd(k: nat, a: ExprSpec, e: ExprSpec, ids: Set<u64>)
+    requires
+        crate::ti_level::all_consts(a, ids),
+        crate::ti_level::all_consts(e, ids),
+    ensures
+        crate::ti_level::all_consts(crate::subst_algebra::inst(k, a, e), ids),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { all_consts_lift(k, 0, a, ids); },
+        ExprSpec::App(f, x) => { all_consts_inst_fwd(k, a, *f, ids); all_consts_inst_fwd(k, a, *x, ids); },
+        ExprSpec::Bind(_, t, b) => { all_consts_inst_fwd(k, a, *t, ids); all_consts_inst_fwd(k + 1, a, *b, ids); },
+        ExprSpec::Let(t, v, b) => { all_consts_inst_fwd(k, a, *t, ids); all_consts_inst_fwd(k, a, *v, ids); all_consts_inst_fwd(k + 1, a, *b, ids); },
+        ExprSpec::Proj(_, x) => all_consts_inst_fwd(k, a, *x, ids),
+        _ => {},
+    }
+}
+
+/// Unfolding mentions only the map's constants, for a term that does.
+pub proof fn dnorm_all_consts(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    requires
+        crate::ti_level::all_consts(e, cs.dom()),
+    ensures
+        crate::ti_level::all_consts(dnorm(cs, e), cs.dom()),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            dnorm_all_consts(cs, *f);
+            dnorm_all_consts(cs, *x);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(cs, c) {
+                    let v = cs[c].val->Some_0;
+                    assert(crate::ti_level::all_consts(*v->Bind_2, cs.dom()));
+                    all_consts_inst_fwd(0, dnorm(cs, *x), *v->Bind_2, cs.dom());
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_all_consts(cs, *t); dnorm_all_consts(cs, *b); },
+        ExprSpec::Let(t, v, b) => { dnorm_all_consts(cs, *t); dnorm_all_consts(cs, *v); dnorm_all_consts(cs, *b); },
+        ExprSpec::Proj(_, x) => dnorm_all_consts(cs, *x),
+        _ => {},
+    }
+}
+
+/// The constants a set's definitions mention stay in the set.
+pub open spec fn vals_within(cs: Map<u64, crate::ti_syntax::ConstDecl>, ids: Set<u64>) -> bool {
+    forall|c: u64| #[trigger] ids.contains(c) && cs.contains_key(c) && cs[c].val is Some ==> crate::ti_level::all_consts(cs[c].val->Some_0, ids)
+}
+
+/// Unfolding stays within a set of constants closed under the definitions'
+/// values.
+pub proof fn dnorm_consts_sub(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec, ids: Set<u64>)
+    requires
+        crate::ti_level::all_consts(e, ids),
+        vals_within(cs, ids),
+    ensures
+        crate::ti_level::all_consts(dnorm(cs, e), ids),
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, ls) => {
+            if ls.len() == 0 && abbr0(cs, c) {
+                assert(ids.contains(c));
+            }
+        },
+        ExprSpec::App(f, x) => {
+            dnorm_consts_sub(cs, *f, ids);
+            dnorm_consts_sub(cs, *x, ids);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(cs, c) {
+                    let v = cs[c].val->Some_0;
+                    assert(ids.contains(c));
+                    assert(crate::ti_level::all_consts(*v->Bind_2, ids));
+                    all_consts_inst_fwd(0, dnorm(cs, *x), *v->Bind_2, ids);
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_consts_sub(cs, *t, ids); dnorm_consts_sub(cs, *b, ids); },
+        ExprSpec::Let(t, v, b) => { dnorm_consts_sub(cs, *t, ids); dnorm_consts_sub(cs, *v, ids); dnorm_consts_sub(cs, *b, ids); },
+        ExprSpec::Proj(_, x) => dnorm_consts_sub(cs, *x, ids),
+        _ => {},
+    }
+}
+
+/// Two maps with the same constants, values and level parameters.
+pub open spec fn same_vals(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>) -> bool {
+    &&& cs1.dom() == cs2.dom()
+    &&& forall|c: u64| #[trigger] cs1.contains_key(c) ==> cs2[c].val == cs1[c].val && cs2[c].lps == cs1[c].lps
+}
+
+pub proof fn def_free_same(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    requires
+        same_vals(cs1, cs2),
+    ensures
+        def_free(cs1, e) == def_free(cs2, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, _) => { assert(cs1.contains_key(c) == cs2.contains_key(c)); },
+        ExprSpec::App(f, x) => { def_free_same(cs1, cs2, *f); def_free_same(cs1, cs2, *x); },
+        ExprSpec::Bind(_, t, x) => { def_free_same(cs1, cs2, *t); def_free_same(cs1, cs2, *x); },
+        ExprSpec::Let(t, v, x) => { def_free_same(cs1, cs2, *t); def_free_same(cs1, cs2, *v); def_free_same(cs1, cs2, *x); },
+        ExprSpec::Proj(_, x) => def_free_same(cs1, cs2, *x),
+        _ => {},
+    }
+}
+
+/// Unfolding reads only the definitions: maps that agree on them unfold
+/// alike.
+pub proof fn dnorm_same_vals(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    requires
+        same_vals(cs1, cs2),
+    ensures
+        dnorm(cs1, e) == dnorm(cs2, e),
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, _) => {
+            if cs1.contains_key(c) && cs1[c].val is Some {
+                let v = cs1[c].val->Some_0;
+                def_free_same(cs1, cs2, v);
+            }
+            assert(cs1.contains_key(c) == cs2.contains_key(c));
+        },
+        ExprSpec::App(f, x) => {
+            dnorm_same_vals(cs1, cs2, *f);
+            dnorm_same_vals(cs1, cs2, *x);
+            if let ExprSpec::Const(c, _) = *f {
+                assert(cs1.contains_key(c) == cs2.contains_key(c));
+                if cs1.contains_key(c) && cs1[c].val is Some && cs1[c].val->Some_0 is Bind {
+                    let v = cs1[c].val->Some_0;
+                    def_free_same(cs1, cs2, *v->Bind_1);
+                    def_free_same(cs1, cs2, *v->Bind_2);
+                    def_free_same(cs1, cs2, v);
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, x) => { dnorm_same_vals(cs1, cs2, *t); dnorm_same_vals(cs1, cs2, *x); },
+        ExprSpec::Let(t, v, x) => { dnorm_same_vals(cs1, cs2, *t); dnorm_same_vals(cs1, cs2, *v); dnorm_same_vals(cs1, cs2, *x); },
+        ExprSpec::Proj(_, x) => dnorm_same_vals(cs1, cs2, *x),
+        _ => {},
+    }
+}
+
+pub proof fn elp_inst_fwd(k: nat, a: ExprSpec, e: ExprSpec, us: Seq<u64>)
+    requires
+        crate::level_inst::elp_in(a, us),
+        crate::level_inst::elp_in(e, us),
+    ensures
+        crate::level_inst::elp_in(crate::subst_algebra::inst(k, a, e), us),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { crate::twin::elp_lift(k, 0, a, us); },
+        ExprSpec::App(f, x) => { elp_inst_fwd(k, a, *f, us); elp_inst_fwd(k, a, *x, us); },
+        ExprSpec::Bind(_, t, b) => { elp_inst_fwd(k, a, *t, us); elp_inst_fwd(k + 1, a, *b, us); },
+        ExprSpec::Let(t, v, b) => { elp_inst_fwd(k, a, *t, us); elp_inst_fwd(k, a, *v, us); elp_inst_fwd(k + 1, a, *b, us); },
+        ExprSpec::Proj(_, x) => elp_inst_fwd(k, a, *x, us),
+        _ => {},
+    }
+}
+
+pub proof fn nofv_lift(n: nat, c: nat, e: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(e),
+    ensures
+        !crate::expr_model::has_fv(lift(n, c, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { nofv_lift(n, c, *f); nofv_lift(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { nofv_lift(n, c, *t); nofv_lift(n, c + 1, *b); },
+        ExprSpec::Let(t, v, b) => { nofv_lift(n, c, *t); nofv_lift(n, c, *v); nofv_lift(n, c + 1, *b); },
+        ExprSpec::Proj(_, x) => nofv_lift(n, c, *x),
+        _ => {},
+    }
+}
+
+pub proof fn nofv_inst(k: nat, a: ExprSpec, e: ExprSpec)
+    requires
+        !crate::expr_model::has_fv(a),
+        !crate::expr_model::has_fv(e),
+    ensures
+        !crate::expr_model::has_fv(crate::subst_algebra::inst(k, a, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { nofv_lift(k, 0, a); },
+        ExprSpec::App(f, x) => { nofv_inst(k, a, *f); nofv_inst(k, a, *x); },
+        ExprSpec::Bind(_, t, b) => { nofv_inst(k, a, *t); nofv_inst(k + 1, a, *b); },
+        ExprSpec::Let(t, v, b) => { nofv_inst(k, a, *t); nofv_inst(k, a, *v); nofv_inst(k + 1, a, *b); },
+        ExprSpec::Proj(_, x) => nofv_inst(k, a, *x),
+        _ => {},
+    }
+}
+
+/// Unfolding mentions no level parameter and no local the term did not.
+pub proof fn dnorm_elp_nofv(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec, us: Seq<u64>)
+    ensures
+        crate::level_inst::elp_in(e, us) ==> crate::level_inst::elp_in(dnorm(cs, e), us),
+        !crate::expr_model::has_fv(e) ==> !crate::expr_model::has_fv(dnorm(cs, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::Const(c, ls) => {
+            if ls.len() == 0 && abbr0(cs, c) {
+                crate::dom_levels::elp_mono(cs[c].val->Some_0, Seq::empty(), us);
+            }
+        },
+        ExprSpec::App(f, x) => {
+            dnorm_elp_nofv(cs, *f, us);
+            dnorm_elp_nofv(cs, *x, us);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(cs, c) {
+                    let v = cs[c].val->Some_0;
+                    crate::dom_levels::elp_mono(v, Seq::empty(), us);
+                    assert(crate::level_inst::elp_in(*v->Bind_2, us));
+                    assert(!crate::expr_model::has_fv(*v->Bind_2));
+                    if crate::level_inst::elp_in(e, us) {
+                        elp_inst_fwd(0, dnorm(cs, *x), *v->Bind_2, us);
+                    }
+                    if !crate::expr_model::has_fv(e) {
+                        nofv_inst(0, dnorm(cs, *x), *v->Bind_2);
+                    }
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_elp_nofv(cs, *t, us); dnorm_elp_nofv(cs, *b, us); },
+        ExprSpec::Let(t, v, b) => { dnorm_elp_nofv(cs, *t, us); dnorm_elp_nofv(cs, *v, us); dnorm_elp_nofv(cs, *b, us); },
+        ExprSpec::Proj(_, x) => dnorm_elp_nofv(cs, *x, us),
+        _ => {},
+    }
+}
+
+/// Instantiating the variable at depth `k` with a term below `m` closes
+/// one level.
+pub proof fn inst_nlbv_fwd(k: nat, a: ExprSpec, e: ExprSpec, m: nat)
+    requires
+        crate::expr_model::nlbv(e) <= m + k + 1,
+        crate::expr_model::nlbv(a) <= m,
+    ensures
+        crate::expr_model::nlbv(crate::subst_algebra::inst(k, a, e)) <= m + k,
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { crate::dom_psimple::nlbv_lift(k, 0, a); },
+        ExprSpec::App(f, x) => { inst_nlbv_fwd(k, a, *f, m); inst_nlbv_fwd(k, a, *x, m); },
+        ExprSpec::Bind(_, t, b) => { inst_nlbv_fwd(k, a, *t, m); inst_nlbv_fwd(k + 1, a, *b, m); },
+        ExprSpec::Let(t, v, b) => { inst_nlbv_fwd(k, a, *t, m); inst_nlbv_fwd(k, a, *v, m); inst_nlbv_fwd(k + 1, a, *b, m); },
+        ExprSpec::Proj(_, x) => inst_nlbv_fwd(k, a, *x, m),
+        _ => {},
+    }
+}
+
+pub proof fn inst_sf_fwd(k: nat, a: ExprSpec, e: ExprSpec)
+    requires
+        crate::beta_model::string_free(a),
+        crate::beta_model::string_free(e),
+    ensures
+        crate::beta_model::string_free(crate::subst_algebra::inst(k, a, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { crate::twin::lift_sf(k, 0, a); },
+        ExprSpec::App(f, x) => { inst_sf_fwd(k, a, *f); inst_sf_fwd(k, a, *x); },
+        ExprSpec::Bind(_, t, b) => { inst_sf_fwd(k, a, *t); inst_sf_fwd(k + 1, a, *b); },
+        ExprSpec::Let(t, v, b) => { inst_sf_fwd(k, a, *t); inst_sf_fwd(k, a, *v); inst_sf_fwd(k + 1, a, *b); },
+        ExprSpec::Proj(_, x) => inst_sf_fwd(k, a, *x),
+        _ => {},
+    }
+}
+
+/// Every definition's value is string-free.
+pub open spec fn vals_sf(cs: Map<u64, crate::ti_syntax::ConstDecl>) -> bool {
+    forall|c: u64| #[trigger] cs.contains_key(c) && cs[c].val is Some ==> crate::beta_model::string_free(cs[c].val->Some_0)
+}
+
+/// Unfolding adds no loose variable and, with string-free definitions, no
+/// string literal.
+pub proof fn dnorm_nlbv_sf(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    ensures
+        crate::expr_model::nlbv(dnorm(cs, e)) <= crate::expr_model::nlbv(e),
+        vals_sf(cs) && crate::beta_model::string_free(e) ==> crate::beta_model::string_free(dnorm(cs, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            dnorm_nlbv_sf(cs, *f);
+            dnorm_nlbv_sf(cs, *x);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(cs, c) {
+                    let v = cs[c].val->Some_0;
+                    let dx = dnorm(cs, *x);
+                    assert(crate::expr_model::nlbv(*v->Bind_2) <= 1);
+                    inst_nlbv_fwd(0, dx, *v->Bind_2, crate::expr_model::nlbv(dx));
+                    if vals_sf(cs) && crate::beta_model::string_free(e) {
+                        assert(crate::beta_model::string_free(v));
+                        inst_sf_fwd(0, dx, *v->Bind_2);
+                    }
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_nlbv_sf(cs, *t); dnorm_nlbv_sf(cs, *b); },
+        ExprSpec::Let(t, v, b) => { dnorm_nlbv_sf(cs, *t); dnorm_nlbv_sf(cs, *v); dnorm_nlbv_sf(cs, *b); },
+        ExprSpec::Proj(_, x) => dnorm_nlbv_sf(cs, *x),
+        _ => {},
+    }
+}
+
+/// A telescope's domains with their abbreviations unfolded.
+pub open spec fn nfields(cs: Map<u64, crate::ti_syntax::ConstDecl>, ds: Seq<ExprSpec>) -> Seq<ExprSpec> {
+    Seq::new(ds.len(), |k: int| fnorm(cs, ds[k]))
+}
+
+/// A field unfolded when it has no `let` and no projection (what
+/// `ti_sr::dnorm_conv` converts); left as declared otherwise.
+pub open spec fn fnorm(cs: Map<u64, crate::ti_syntax::ConstDecl>, d: ExprSpec) -> ExprSpec {
+    if lp_free(d) { dnorm(cs, d) } else { d }
+}
+
+/// Unfolding keeps a term free of `let` and projections.
+pub proof fn dnorm_lp_free(cs: Map<u64, crate::ti_syntax::ConstDecl>, e: ExprSpec)
+    requires
+        lp_free(e),
+    ensures
+        lp_free(dnorm(cs, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => {
+            dnorm_lp_free(cs, *f);
+            dnorm_lp_free(cs, *x);
+            if let ExprSpec::Const(c, ls) = *f {
+                if ls.len() == 0 && abbr1(cs, c) {
+                    let v = cs[c].val->Some_0;
+                    assert(lp_free(*v->Bind_2));
+                    lp_free_inst(0, dnorm(cs, *x), *v->Bind_2);
+                }
+            }
+        },
+        ExprSpec::Bind(_, t, b) => { dnorm_lp_free(cs, *t); dnorm_lp_free(cs, *b); },
+        _ => {},
+    }
+}
+
+pub proof fn lp_free_lift(n: nat, c: nat, e: ExprSpec)
+    requires
+        lp_free(e),
+    ensures
+        lp_free(lift(n, c, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::App(f, x) => { lp_free_lift(n, c, *f); lp_free_lift(n, c, *x); },
+        ExprSpec::Bind(_, t, b) => { lp_free_lift(n, c, *t); lp_free_lift(n, c + 1, *b); },
+        _ => {},
+    }
+}
+
+pub proof fn lp_free_inst(k: nat, a: ExprSpec, e: ExprSpec)
+    requires
+        lp_free(a),
+        lp_free(e),
+    ensures
+        lp_free(crate::subst_algebra::inst(k, a, e)),
+    decreases e,
+{
+    match e {
+        ExprSpec::Var(i) => if i == k { lp_free_lift(k, 0, a); },
+        ExprSpec::App(f, x) => { lp_free_inst(k, a, *f); lp_free_inst(k, a, *x); },
+        ExprSpec::Bind(_, t, b) => { lp_free_inst(k, a, *t); lp_free_inst(k + 1, a, *b); },
+        _ => {},
+    }
+}
+
+/// `fnorm` is idempotent, reads only the definitions, and is stable under
+/// extension -- `dnorm`'s facts, through the guard.
+pub proof fn fnorm_facts(cs: Map<u64, crate::ti_syntax::ConstDecl>, d: ExprSpec)
+    ensures
+        fnorm(cs, fnorm(cs, d)) == fnorm(cs, d),
+{
+    if lp_free(d) {
+        dnorm_lp_free(cs, d);
+        dnorm_abbr_free(cs, d);
+        dnorm_abbr_free(cs, dnorm(cs, d));
+    }
+}
+
+
+/// A telescope's domains from the `m`-th on unfolded (`fnorm`).
+pub open spec fn tel_fnorm(cs: Map<u64, crate::ti_syntax::ConstDecl>, ds: Seq<ExprSpec>, m: nat) -> Seq<ExprSpec> {
+    Seq::new(ds.len(), |k: int| if k < m { ds[k] } else { fnorm(cs, ds[k]) })
+}
+
+/// A CONSTRUCTOR'S TYPE WITH ITS FIELDS' ABBREVIATIONS UNFOLDED: the first
+/// `np` domains (the parameters) and the result as declared, the domains
+/// between them unfolded (what the canonical twin declares).
+pub open spec fn ctor_norm(cs: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprSpec, np: nat) -> ExprSpec {
+    let n = tarity(t);
+    if np <= n {
+        binds(BinderKind::Pi, tdoms(t, np) + nfields(cs, tdoms(tbody(t, np), (n - np) as nat)), tbody(t, n))
+    } else {
+        t
+    }
+}
+
+/// A shape with its fields' abbreviations unfolded (what `shape_of` reads
+/// off constructors declared with the shape's fields).
+pub open spec fn nshape(cs: Map<u64, crate::ti_syntax::ConstDecl>, sh: IndShape) -> IndShape {
+    IndShape { fields: Seq::new(sh.fields.len(), |j: int| nfields(cs, sh.fields[j])), ..sh }
+}
+
+/// A constructor form unfolds alike under maps with the same definitions.
+pub proof fn dnorm_same_vals_ctor(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprSpec, np: nat)
+    requires
+        same_vals(cs1, cs2),
+    ensures
+        ctor_norm(cs1, t, np) == ctor_norm(cs2, t, np),
+{
+    let n = tarity(t);
+    if np <= n {
+        let ds = tdoms(tbody(t, np), (n - np) as nat);
+        assert forall|k: int| 0 <= k < ds.len() implies #[trigger] fnorm(cs1, ds[k]) == fnorm(cs2, ds[k]) by {
+            dnorm_same_vals(cs1, cs2, ds[k]);
+        }
+        assert(nfields(cs1, ds) =~= nfields(cs2, ds));
     }
 }
 
@@ -661,7 +1232,7 @@ pub open spec fn shape_of(sig: Sig, rd: RecDataSpec, ind: u64) -> IndShape {
     let nmin = rd.num_minors;
     let ni = (rd.major_idx - np - 1 - nmin) as nat;
     let ctors = Seq::new(nmin, |j: int| rd.rules[j].ctor_id);
-    let fields = Seq::new(nmin, |j: int| tdoms(tbody(sig.consts[ctors[j]].ty, np), rd.rules[j].nfields));
+    let fields = Seq::new(nmin, |j: int| nfields(sig.consts, tdoms(tbody(sig.consts[ctors[j]].ty, np), rd.rules[j].nfields)));
     let tss = Seq::new(nmin, |j: int| {
         let res = tbody(sig.consts[ctors[j]].ty, np + rd.rules[j].nfields);
         spine_args(res).subrange(np as int, (np + ni) as int)

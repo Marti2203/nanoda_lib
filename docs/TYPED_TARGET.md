@@ -2604,22 +2604,46 @@ head-reduce to its sort, so the logical relation sees a sort
 alike. The certified field typings get the alias facts from the
 certificate signature's well-formedness (`dom_field_ty::pdom_alias_down`).
 
-**Slice: type abbreviations (started 2026-10-22; foundation).** Field
-types written with a definition, almost all `Unit` (`Thunk.mk`,
-`AndThen.mk`, ...: `Unit -> a`) and `Not` (`Decidable.isFalse`): Core by
-dependency closure 804 -> 892 (`target/work/coverage/fieldgain3.py`).
-`rec_canon::dnorm` unfolds the abbreviations a field can be read through:
-level-free definitions of arity 0 (`abbr0`: `Unit := PUnit.{1}`) or 1
-(`abbr1`: `Not := fun a => a -> False`) whose values mention no definition
-(`def_free`) and, at arity 1, never apply their argument and are not just
-it (`no_head_var`), so unfolding is idempotent (`dnorm_abbr_free`). A typed
-type converts with its unfolding at its type (`ti_sr::dnorm_conv`: Delta,
-then Beta at an applied abbreviation; congruence and context conversion
-elsewhere), so by soundness the two denote alike. Route (user's choice,
-over normalizing where shapes are read): the canonical twin unfolds the
-field part of a constructor's declared type, the shapes read the unfolded
-fields, and the kernel's constructor-constant claim converts the declared
-type to the twin's.
+**Slice: type abbreviations (2026-10-22).** Field types written with a
+definition, almost all `Unit` (`Thunk.mk`, `AndThen.mk`, ...: `Unit -> a`)
+and `Not` (`Decidable.isFalse`): Core by dependency closure 804 -> 892
+(`target/work/coverage/abl_abbr.py`, which unfolds fields exactly as
+`dnorm` does). `rec_canon::dnorm` unfolds the abbreviations a field can be
+read through: level-free definitions of arity 0 (`abbr0`:
+`Unit := PUnit.{1}`) or 1 (`abbr1`: `Not := fun a => a -> False`) whose
+values mention no definition (`def_free`) and, at arity 1, never apply
+their argument and are not just it (`no_head_var`), so unfolding is
+idempotent (`dnorm_abbr_free`). `fnorm` unfolds a field only when it has no
+`let` or projection (what the conversion covers). A typed type converts
+with its unfolding at its type (`ti_sr::dnorm_conv`: Delta, then Beta at an
+applied abbreviation; congruence and context conversion elsewhere), so by
+soundness the two denote alike; `tel_fnorm_conv`/`ctor_norm_conv` lift this
+to a constructor's telescope.
+
+Route (user's choice, over normalizing where shapes are read): the
+canonical twin declares a constructor at `rec_canon::ctor_norm` of its
+declared type (parameters and result as declared, fields unfolded), and
+`shape_of` reads the fields through `nfields`. Idempotence makes the
+twin's shapes and the declared ones agree (`twin_canon`). On the kernel
+side:
+- `jkernel::typed_const` types a constructor at its declared type by
+  converting from the twin's (`ctor_twin_conv`, then level instantiation
+  with `kclaims::kh_frag_lp`); it now exports that conversion, which the
+  projection walk (`proj_reg::walk_ty`) uses: nanoda walks the declared
+  type, the model's telescope is the twin's.
+- The export certifies the twin's constructor type as a type before the
+  declaration (`export_sound::ctor_twin_typed`: the declared type converts
+  to its constructor form, which reads only definitions declared earlier,
+  `twin::ctor_norm_ext`).
+- A block certificate's shape has the declared fields; the twin's is
+  `rec_canon::nshape` of it (`rec_block_at`, `shape_read`).
+- Unfolding must be stable as the signature grows, which needs the
+  definitions' values and the constructors' types to mention only known
+  constants: `twin::grows` and `ti_valid::sig_ext` (when constants are
+  added) carry `rec_canon::vals_closed`/`ctors_closed`, from `env_wf`
+  (`env_weaken::jsig_ctors_closed`). `env_weaken::twin_le` gains the
+  tables' "no constructor is a recursor" (so the twin's constructor
+  branch never meets a canonical recursor).
 
 ### The conditional theorem (started 2026-10-12)
 

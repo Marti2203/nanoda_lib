@@ -38,6 +38,7 @@ pub open spec fn rec_core(sig: Sig, rid: u64) -> bool {
     &&& spine_head(tdoms(sig.consts[rid].ty, rd.major_idx + 1)[rd.major_idx as int]) is Const
     &&& sig.consts.contains_key(ind) && sig.consts[ind].val is None
     &&& !sig.ienv.recs.contains_key(ind)
+    &&& !sig.ienv.ctor_np.contains_key(ind)
     &&& rd.num_motives == 1
     &&& rd.major_idx == np + 1 + nmin + ni
     &&& nmin == rd.rules.len()
@@ -60,7 +61,7 @@ pub open spec fn rec_core(sig: Sig, rid: u64) -> bool {
         &&& sig.ienv.ctor_np.contains_key(c) && sig.ienv.ctor_np[c] as nat == np
         &&& !sig.ienv.recs.contains_key(c)
         &&& sh.fields[j].len() == nf
-        &&& t == binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, np + nf))
+        &&& t == binds(BinderKind::Pi, sh.pdoms + tdoms(tbody(t, np), nf), tbody(t, np + nf))
         &&& tbody(t, np + nf) == ind_app(ind, sh.us(), vars(nf, np) + sh.tss[j])
         &&& sh.tss[j].len() == ni
         &&& forall|q: int| 0 <= q < ni ==> !crate::inductive_model::contains_const_named(#[trigger] sh.tss[j][q], seq![ind])
@@ -80,6 +81,7 @@ pub open spec fn grows(s1: Sig, s2: Sig) -> bool {
         (s2.ienv.recs.contains_key(k) ==> s1.ienv.recs.contains_key(k))
         && (s2.ienv.ctor_ind.contains_key(k) ==> s1.ienv.ctor_ind.contains_key(k))
         && (s2.ienv.ctor_np.contains_key(k) ==> s1.ienv.ctor_np.contains_key(k))
+    &&& crate::rec_canon::vals_closed(s1.consts)
 }
 
 /// Constants in a smaller set are in a larger one.
@@ -165,10 +167,12 @@ pub proof fn psimple_grow(s1: Sig, s2: Sig, ind: u64, pdoms: Seq<ExprSpec>, np: 
 /// The inductive's shape reads only the inductive and its constructors.
 pub proof fn shape_grow(s1: Sig, s2: Sig, rd: RecDataSpec, ind: u64)
     requires
-        grows(s1, s2),
+        crate::rec_canon::cs_ext(s1.consts, s2.consts),
+        crate::rec_canon::vals_closed(s1.consts),
         s1.consts.contains_key(ind),
         rd.num_minors <= rd.rules.len(),
-        forall|j: int| 0 <= j < rd.num_minors ==> s1.consts.contains_key(#[trigger] rd.rules[j].ctor_id),
+        forall|j: int| 0 <= j < rd.num_minors ==> s1.consts.contains_key(#[trigger] rd.rules[j].ctor_id)
+            && crate::ti_level::all_consts(s1.consts[rd.rules[j].ctor_id].ty, s1.consts.dom()),
     ensures
         shape_of(s1, rd, ind) == shape_of(s2, rd, ind),
 {
@@ -176,6 +180,18 @@ pub proof fn shape_grow(s1: Sig, s2: Sig, rd: RecDataSpec, ind: u64)
     assert(a.ctors =~= b.ctors);
     assert forall|j: int| 0 <= j < rd.num_minors implies s2.consts[#[trigger] a.ctors[j]] == s1.consts[a.ctors[j]] by {
         assert(s1.consts.contains_key(rd.rules[j].ctor_id));
+    }
+    assert forall|j: int| 0 <= j < rd.num_minors implies #[trigger] a.fields[j] == b.fields[j] by {
+        let c = rd.rules[j].ctor_id;
+        let t = s1.consts[c].ty;
+        let np = rd.num_params;
+        let raw = tdoms(tbody(t, np), rd.rules[j].nfields);
+        all_consts_tel(t, np, s1.consts.dom());
+        all_consts_tel(tbody(t, np), rd.rules[j].nfields, s1.consts.dom());
+        assert forall|k: int| 0 <= k < raw.len() implies crate::rec_canon::dnorm(s1.consts, #[trigger] raw[k]) == crate::rec_canon::dnorm(s2.consts, raw[k]) by {
+            crate::rec_canon::dnorm_ext(s1.consts, s2.consts, raw[k]);
+        }
+        assert(a.fields[j] =~= b.fields[j]);
     }
     assert(a.fields =~= b.fields);
     assert(a.tss =~= b.tss);
@@ -235,6 +251,7 @@ pub proof fn rec_core_grow(s1: Sig, s2: Sig, rid: u64)
             assert forall|k: nat| (k as int) < sh.fields[j].len() implies #[trigger] field_kind(s1, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, sh.fields[j][k as int])
                 == field_kind(s2, ind, sh.pdoms, sh.us(), sh.np, sh.ni, k, sh.fields[j][k as int]) by {
                 reveal(field_kind);
+                crate::rec_canon::dnorm_all_consts(s1.consts, tdoms(tbody(t, sh.np), rd.rules[j].nfields)[k as int]);
                 psimple_grow(s1, s2, ind, sh.pdoms, sh.np, k, sh.fields[j][k as int]);
             }
         }
@@ -270,6 +287,23 @@ pub proof fn binds_elp(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, us: Seq<u
             assert(ds.drop_first()[i] == ds[i + 1]);
         }
         binds_elp(bk, ds.drop_first(), b, us);
+    }
+}
+
+/// A telescope's constants from its parts'.
+pub proof fn binds_consts(bk: BinderKind, ds: Seq<ExprSpec>, b: ExprSpec, ids: Set<u64>)
+    requires
+        forall|i: int| 0 <= i < ds.len() ==> crate::ti_level::all_consts(#[trigger] ds[i], ids),
+        crate::ti_level::all_consts(b, ids),
+    ensures
+        crate::ti_level::all_consts(binds(bk, ds, b), ids),
+    decreases ds.len(),
+{
+    if ds.len() > 0 {
+        assert forall|i: int| 0 <= i < ds.drop_first().len() implies crate::ti_level::all_consts(#[trigger] ds.drop_first()[i], ids) by {
+            assert(ds.drop_first()[i] == ds[i + 1]);
+        }
+        binds_consts(bk, ds.drop_first(), b, ids);
     }
 }
 
@@ -537,8 +571,11 @@ pub proof fn canon_parts(sig: Sig, rid: u64)
         assert(c == rd.rules[j].ctor_id);
         let t = sig.consts[c].ty;
         let nf = rd.rules[j].nfields;
-        crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf), il);
-        assert((sh.pdoms + sh.fields[j])[sh.pdoms.len() + k] == sh.fields[j][k]);
+        let rawf = tdoms(tbody(t, sh.np), nf);
+        crate::ti_level::elp_binds(BinderKind::Pi, sh.pdoms + rawf, tbody(t, sh.np + nf), il);
+        assert((sh.pdoms + rawf)[sh.pdoms.len() + k] == rawf[k]);
+        crate::rec_canon::dnorm_elp_nofv(sig.consts, rawf[k], il);
+        assert(sh.fields[j][k] == crate::rec_canon::fnorm(sig.consts, rawf[k]));
         crate::dom_levels::elp_mono(sh.fields[j][k], il, up);
     }
     assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies crate::level_inst::elp_in(#[trigger] sh.tss[j][q], up) by {
@@ -546,7 +583,7 @@ pub proof fn canon_parts(sig: Sig, rid: u64)
         assert(c == rd.rules[j].ctor_id);
         let t = sig.consts[c].ty;
         let nf = rd.rules[j].nfields;
-        crate::ti_proj::elp_binds_body(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf), il);
+        crate::ti_proj::elp_binds_body(BinderKind::Pi, sh.pdoms + tdoms(tbody(t, sh.np), nf), tbody(t, sh.np + nf), il);
         let args = vars(nf, sh.np) + sh.tss[j];
         crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, sh.us()), args);
         spine_args_elp(tbody(t, sh.np + nf), il);
@@ -1436,15 +1473,18 @@ pub proof fn canon_parts_fv(sig: Sig, rid: u64)
         assert(sig.consts.contains_key(c));
         let t = sig.consts[c].ty;
         let nf = rd.rules[j].nfields;
-        binds_parts_nofv(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf));
-        assert((sh.pdoms + sh.fields[j])[sh.pdoms.len() + k] == sh.fields[j][k]);
+        let rawf = tdoms(tbody(t, sh.np), nf);
+        binds_parts_nofv(BinderKind::Pi, sh.pdoms + rawf, tbody(t, sh.np + nf));
+        assert((sh.pdoms + rawf)[sh.pdoms.len() + k] == rawf[k]);
+        crate::rec_canon::dnorm_elp_nofv(sig.consts, rawf[k], Seq::empty());
+        assert(sh.fields[j][k] == crate::rec_canon::fnorm(sig.consts, rawf[k]));
     }
     assert forall|j: int, q: int| 0 <= j < sh.nmin() && 0 <= q < sh.tss[j].len() implies !crate::expr_model::has_fv(#[trigger] sh.tss[j][q]) by {
         let c = sh.ctors[j];
         assert(sig.consts.contains_key(c));
         let t = sig.consts[c].ty;
         let nf = rd.rules[j].nfields;
-        binds_parts_nofv(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t, sh.np + nf));
+        binds_parts_nofv(BinderKind::Pi, sh.pdoms + tdoms(tbody(t, sh.np), nf), tbody(t, sh.np + nf));
         let args = vars(nf, sh.np) + sh.tss[j];
         crate::beta_model::spine_destruct_app(ExprSpec::Const(ind, sh.us()), args);
         spine_args_nofv(tbody(t, sh.np + nf));
@@ -1593,11 +1633,15 @@ pub open spec fn canon_rules(sig: Sig, rid: u64) -> Seq<RecRuleSpec> {
 }
 
 /// THE TWIN: each recursor with a canonical inductive side at its
-/// canonical type and rules; everything else as it is.
+/// canonical type and rules; each constructor with its fields'
+/// abbreviations unfolded (`rec_canon::ctor_norm`); everything else as it is.
 pub open spec fn twin(sig: Sig) -> Sig {
     Sig {
         consts: Map::new(sig.consts.dom(), |c: u64|
-            if sig.ienv.recs.contains_key(c) && rec_core(sig, c) { ConstDecl { ty: canon_ty(sig, c), ..sig.consts[c] } } else { sig.consts[c] }),
+            if sig.ienv.recs.contains_key(c) && rec_core(sig, c) { ConstDecl { ty: canon_ty(sig, c), ..sig.consts[c] } }
+            else if sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_np.contains_key(c) && !sig.ienv.recs.contains_key(c) {
+                ConstDecl { ty: crate::rec_canon::ctor_norm(sig.consts, sig.consts[c].ty, sig.ienv.ctor_np[c] as nat), ..sig.consts[c] }
+            } else { sig.consts[c] }),
         ienv: EnvSpec {
             recs: Map::new(sig.ienv.recs.dom(), |r: u64|
                 if rec_core(sig, r) { RecDataSpec { rules: canon_rules(sig, r), ..sig.ienv.recs[r] } } else { sig.ienv.recs[r] }),
@@ -1607,15 +1651,314 @@ pub open spec fn twin(sig: Sig) -> Sig {
     }
 }
 
-/// The twin keeps every constant that is no recursor, and the recursor
-/// table's names.
+/// The twin keeps every constant that is neither a recursor nor a
+/// constructor (whose fields it unfolds), and the recursor table's names.
 pub proof fn twin_keeps(sig: Sig, c: u64)
     ensures
         twin(sig).consts.dom() == sig.consts.dom(),
         twin(sig).ienv.recs.dom() == sig.ienv.recs.dom(),
-        !sig.ienv.recs.contains_key(c) && sig.consts.contains_key(c) ==> twin(sig).consts[c] == sig.consts[c],
+        !sig.ienv.recs.contains_key(c) && !(sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_np.contains_key(c)) && sig.consts.contains_key(c) ==> twin(sig).consts[c] == sig.consts[c],
+        !sig.ienv.recs.contains_key(c) && sig.ienv.ctor_ind.contains_key(c) && sig.ienv.ctor_np.contains_key(c) && sig.consts.contains_key(c) ==> twin(sig).consts[c]
+            == (crate::ti_syntax::ConstDecl { ty: crate::rec_canon::ctor_norm(sig.consts, sig.consts[c].ty, sig.ienv.ctor_np[c] as nat), ..sig.consts[c] }),
         sig.consts.contains_key(c) ==> twin(sig).consts[c].lps == sig.consts[c].lps && twin(sig).consts[c].val == sig.consts[c].val,
 {
+}
+
+/// The twin keeps every definition: it unfolds alike.
+pub proof fn twin_same_vals(sig: Sig)
+    ensures
+        crate::rec_canon::same_vals(sig.consts, twin(sig).consts),
+{
+    assert forall|c: u64| #[trigger] sig.consts.contains_key(c) implies twin(sig).consts[c].val == sig.consts[c].val
+        && twin(sig).consts[c].lps == sig.consts[c].lps by {
+        twin_keeps(sig, c);
+    }
+    twin_keeps(sig, 0);
+}
+
+/// A constructor declared as a telescope of parameters and fields ending in
+/// no Pi: the twin declares it with the fields unfolded.
+pub proof fn twin_ctor_ty(sig: Sig, c: u64, dp: Seq<ExprSpec>, df: Seq<ExprSpec>, b: ExprSpec)
+    requires
+        sig.consts.contains_key(c),
+        !sig.ienv.recs.contains_key(c),
+        sig.ienv.ctor_ind.contains_key(c),
+        sig.ienv.ctor_np.contains_key(c),
+        sig.ienv.ctor_np[c] as nat == dp.len(),
+        sig.consts[c].ty == binds(BinderKind::Pi, dp + df, b),
+        !(b is Bind && b->Bind_0 == BinderKind::Pi),
+    ensures
+        twin(sig).consts[c].ty == binds(BinderKind::Pi, dp + crate::rec_canon::nfields(sig.consts, df), b),
+        tdoms(twin(sig).consts[c].ty, dp.len()) == dp,
+        tdoms(tbody(twin(sig).consts[c].ty, dp.len()), df.len()) == crate::rec_canon::nfields(sig.consts, df),
+        tbody(twin(sig).consts[c].ty, dp.len() + df.len()) == b,
+{
+    twin_keeps(sig, c);
+    let t = sig.consts[c].ty;
+    let np = dp.len();
+    crate::dom_rec_shape::binds_concat(BinderKind::Pi, dp, df, b);
+    crate::dom_rec_shape::tarity_binds(dp + df, b);
+    crate::kminor::tdoms_binds(dp, binds(BinderKind::Pi, df, b));
+    crate::dom_iota::tbody_binds(dp, binds(BinderKind::Pi, df, b));
+    crate::kminor::tdoms_binds(df, b);
+    crate::dom_iota::tbody_binds(df, b);
+    crate::dom_iota::tbody_binds(dp + df, b);
+    assert(tarity(t) == np + df.len());
+    let nf = crate::rec_canon::nfields(sig.consts, df);
+    let t2 = binds(BinderKind::Pi, dp + nf, b);
+    assert(crate::rec_canon::ctor_norm(sig.consts, t, np) == t2);
+    crate::dom_rec_shape::binds_concat(BinderKind::Pi, dp, nf, b);
+    crate::kminor::tdoms_binds(dp, binds(BinderKind::Pi, nf, b));
+    crate::dom_iota::tbody_binds(dp, binds(BinderKind::Pi, nf, b));
+    crate::kminor::tdoms_binds(nf, b);
+    crate::dom_iota::tbody_binds(nf, b);
+    crate::dom_iota::tbody_binds(dp + nf, b);
+}
+
+/// A constructor's unfolded type is the same in a larger map, for a type
+/// over the smaller one's constants.
+pub proof fn ctor_norm_ext(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprSpec, np: nat)
+    requires
+        crate::rec_canon::cs_ext(cs1, cs2),
+        crate::rec_canon::vals_closed(cs1),
+        crate::ti_level::all_consts(t, cs1.dom()),
+    ensures
+        crate::rec_canon::ctor_norm(cs1, t, np) == crate::rec_canon::ctor_norm(cs2, t, np),
+{
+    let n = tarity(t);
+    if np <= n {
+        all_consts_tel(t, np, cs1.dom());
+        all_consts_tel(tbody(t, np), (n - np) as nat, cs1.dom());
+        let ds = tdoms(tbody(t, np), (n - np) as nat);
+        assert forall|k: int| 0 <= k < ds.len() implies #[trigger] crate::rec_canon::fnorm(cs1, ds[k]) == crate::rec_canon::fnorm(cs2, ds[k]) by {
+            crate::rec_canon::dnorm_ext(cs1, cs2, ds[k]);
+        }
+        assert(crate::rec_canon::nfields(cs1, ds) =~= crate::rec_canon::nfields(cs2, ds));
+    }
+}
+
+/// A type and its constructor form (`ctor_norm`) as one telescope over the
+/// same body, the domains after the parameters unfolded.
+pub proof fn ctor_norm_tel(cs: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprSpec, np: nat)
+    ensures
+        tdoms(t, tarity(t)).len() == tarity(t),
+        t == binds(BinderKind::Pi, tdoms(t, tarity(t)), tbody(t, tarity(t))),
+        crate::rec_canon::ctor_norm(cs, t, np) == binds(BinderKind::Pi, crate::rec_canon::tel_fnorm(cs, tdoms(t, tarity(t)), np), tbody(t, tarity(t))),
+{
+    let n = tarity(t);
+    let ds = tdoms(t, n);
+    crate::dom_field_ty::tel_split(t, n);
+    if np <= n {
+        crate::kgen::tdoms_split(t, np, (n - np) as nat);
+        crate::kgen::tbody_add(t, np, (n - np) as nat);
+        let nf = crate::rec_canon::nfields(cs, tdoms(tbody(t, np), (n - np) as nat));
+        assert(tdoms(t, np) + nf =~= crate::rec_canon::tel_fnorm(cs, ds, np));
+    } else {
+        assert(crate::rec_canon::tel_fnorm(cs, ds, np) =~= ds);
+    }
+}
+
+/// A constructor's declared and twin types as one telescope over the same
+/// body, the twin's domains after the parameters unfolded.
+pub proof fn twin_ctor_tel(sig: Sig, c: u64)
+    requires
+        sig.consts.contains_key(c),
+        !sig.ienv.recs.contains_key(c),
+        sig.ienv.ctor_ind.contains_key(c),
+        sig.ienv.ctor_np.contains_key(c),
+    ensures
+        ({
+            let t = sig.consts[c].ty;
+            let n = tarity(t);
+            &&& tdoms(t, n).len() == n
+            &&& t == binds(BinderKind::Pi, tdoms(t, n), tbody(t, n))
+            &&& twin(sig).consts[c].ty == binds(BinderKind::Pi, crate::rec_canon::tel_fnorm(sig.consts, tdoms(t, n), sig.ienv.ctor_np[c] as nat), tbody(t, n))
+        }),
+{
+    twin_keeps(sig, c);
+    ctor_norm_tel(sig.consts, sig.consts[c].ty, sig.ienv.ctor_np[c] as nat);
+}
+
+/// The twin's types mention only their own level parameters, as the
+/// signature's do.
+pub proof fn twin_ty_elp(sig: Sig, k: u64)
+    requires
+        sig.consts.contains_key(k),
+        forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> crate::level_inst::elp_in(sig.consts[c].ty, sig.consts[c].lps),
+    ensures
+        crate::level_inst::elp_in(twin(sig).consts[k].ty, twin(sig).consts[k].lps),
+{
+    twin_keeps(sig, k);
+    let us = sig.consts[k].lps;
+    if sig.ienv.recs.contains_key(k) && rec_core(sig, k) {
+        canon_elp_sig(sig, k);
+        rec_core_basic(sig, k);
+    } else if sig.ienv.ctor_ind.contains_key(k) && sig.ienv.ctor_np.contains_key(k) && !sig.ienv.recs.contains_key(k) {
+        twin_ctor_tel(sig, k);
+        let t = sig.consts[k].ty;
+        let n = tarity(t);
+        let np = sig.ienv.ctor_np[k] as nat;
+        let ds = tdoms(t, n);
+        let fs = crate::rec_canon::tel_fnorm(sig.consts, ds, np);
+        crate::full_red::tdoms_facts(t, n, 0, us);
+        crate::full_red::elp_tbody(t, n, us);
+        assert forall|i: int| 0 <= i < fs.len() implies crate::level_inst::elp_in(#[trigger] fs[i], us) by {
+            assert(crate::level_inst::elp_in(ds[i], us));
+            crate::rec_canon::dnorm_elp_nofv(sig.consts, ds[i], us);
+        }
+        binds_elp(BinderKind::Pi, fs, tbody(t, n), us);
+    }
+}
+
+/// The twin's types mention no local, as the signature's do.
+pub proof fn twin_ty_nofv(sig: Sig, k: u64)
+    requires
+        sig.consts.contains_key(k),
+        forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> !crate::expr_model::has_fv(sig.consts[c].ty),
+    ensures
+        !crate::expr_model::has_fv(twin(sig).consts[k].ty),
+{
+    twin_keeps(sig, k);
+    if sig.ienv.recs.contains_key(k) && rec_core(sig, k) {
+        canon_nofv(sig, k);
+    } else if sig.ienv.ctor_ind.contains_key(k) && sig.ienv.ctor_np.contains_key(k) && !sig.ienv.recs.contains_key(k) {
+        twin_ctor_tel(sig, k);
+        let t = sig.consts[k].ty;
+        let n = tarity(t);
+        let ds = tdoms(t, n);
+        let fs = crate::rec_canon::tel_fnorm(sig.consts, ds, sig.ienv.ctor_np[k] as nat);
+        binds_parts_nofv(BinderKind::Pi, ds, tbody(t, n));
+        assert forall|i: int| 0 <= i < fs.len() implies !crate::expr_model::has_fv(#[trigger] fs[i]) by {
+            assert(!crate::expr_model::has_fv(ds[i]));
+            crate::rec_canon::dnorm_elp_nofv(sig.consts, ds[i], Seq::empty());
+        }
+        binds_nofv(BinderKind::Pi, fs, tbody(t, n));
+    }
+}
+
+/// A constructor's twin type mentions only the constants its declared one
+/// does.
+pub proof fn twin_ctor_consts(sig: Sig, k: u64, ids: Set<u64>)
+    requires
+        sig.consts.contains_key(k),
+        sig.consts.dom() == ids,
+        crate::ti_level::all_consts(sig.consts[k].ty, ids),
+        !(sig.ienv.recs.contains_key(k) && rec_core(sig, k)),
+    ensures
+        crate::ti_level::all_consts(twin(sig).consts[k].ty, ids),
+{
+    twin_keeps(sig, k);
+    if sig.ienv.ctor_ind.contains_key(k) && sig.ienv.ctor_np.contains_key(k) && !sig.ienv.recs.contains_key(k) {
+        twin_ctor_tel(sig, k);
+        let t = sig.consts[k].ty;
+        let n = tarity(t);
+        let ds = tdoms(t, n);
+        let fs = crate::rec_canon::tel_fnorm(sig.consts, ds, sig.ienv.ctor_np[k] as nat);
+        all_consts_tel(t, n, ids);
+        assert forall|i: int| 0 <= i < fs.len() implies crate::ti_level::all_consts(#[trigger] fs[i], ids) by {
+            assert(crate::ti_level::all_consts(ds[i], ids));
+            if crate::rec_canon::lp_free(ds[i]) {
+                crate::rec_canon::dnorm_all_consts(sig.consts, ds[i]);
+            }
+        }
+        binds_consts(BinderKind::Pi, fs, tbody(t, n), ids);
+    }
+}
+
+/// The certificate's shape with its fields unfolded keeps its closedness,
+/// bounds and string-freeness.
+pub proof fn nshape_facts(cs: Map<u64, crate::ti_syntax::ConstDecl>, sh: IndShape)
+    requires
+        shape_nlbv(sh),
+        shape_nofv(sh),
+        shape_sf(sh),
+        crate::rec_canon::vals_sf(cs),
+        sh.fields.len() == sh.nmin(),
+    ensures
+        shape_nlbv(crate::rec_canon::nshape(cs, sh)),
+        shape_nofv(crate::rec_canon::nshape(cs, sh)),
+        shape_sf(crate::rec_canon::nshape(cs, sh)),
+{
+    let nsh = crate::rec_canon::nshape(cs, sh);
+    assert forall|j: int, k: int| 0 <= j < nsh.nmin() && 0 <= k < nsh.fields[j].len() implies
+        crate::expr_model::nlbv(#[trigger] nsh.fields[j][k]) <= sh.np + k
+        && !crate::expr_model::has_fv(nsh.fields[j][k])
+        && crate::beta_model::string_free(nsh.fields[j][k]) by {
+        let f = sh.fields[j][k];
+        assert(nsh.fields[j][k] == crate::rec_canon::fnorm(cs, f));
+        crate::rec_canon::dnorm_nlbv_sf(cs, f);
+        crate::rec_canon::dnorm_elp_nofv(cs, f, Seq::empty());
+    }
+}
+
+/// A telescope unfolds alike in a larger map, when its domains mention only
+/// the smaller one's constants.
+pub proof fn tel_fnorm_ext(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, ds: Seq<ExprSpec>, m: nat)
+    requires
+        crate::rec_canon::cs_ext(cs1, cs2),
+        crate::rec_canon::vals_closed(cs1),
+        forall|i: int| 0 <= i < ds.len() ==> crate::ti_level::all_consts(#[trigger] ds[i], cs1.dom()),
+    ensures
+        crate::rec_canon::tel_fnorm(cs1, ds, m) == crate::rec_canon::tel_fnorm(cs2, ds, m),
+{
+    assert forall|i: int| 0 <= i < ds.len() implies #[trigger] crate::rec_canon::fnorm(cs1, ds[i]) == crate::rec_canon::fnorm(cs2, ds[i]) by {
+        crate::rec_canon::dnorm_ext(cs1, cs2, ds[i]);
+    }
+    assert(crate::rec_canon::tel_fnorm(cs1, ds, m) =~= crate::rec_canon::tel_fnorm(cs2, ds, m));
+}
+
+/// A telescope unfolds alike under maps with the same definitions.
+pub proof fn tel_fnorm_same(cs1: Map<u64, crate::ti_syntax::ConstDecl>, cs2: Map<u64, crate::ti_syntax::ConstDecl>, ds: Seq<ExprSpec>, m: nat)
+    requires
+        crate::rec_canon::same_vals(cs1, cs2),
+    ensures
+        crate::rec_canon::tel_fnorm(cs1, ds, m) == crate::rec_canon::tel_fnorm(cs2, ds, m),
+{
+    assert forall|i: int| 0 <= i < ds.len() implies #[trigger] crate::rec_canon::fnorm(cs1, ds[i]) == crate::rec_canon::fnorm(cs2, ds[i]) by {
+        crate::rec_canon::dnorm_same_vals(cs1, cs2, ds[i]);
+    }
+    assert(crate::rec_canon::tel_fnorm(cs1, ds, m) =~= crate::rec_canon::tel_fnorm(cs2, ds, m));
+}
+
+/// A constructor form stays within a set of constants closed under the
+/// definitions' values.
+pub proof fn ctor_norm_consts_sub(cs: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprSpec, np: nat, ids: Set<u64>)
+    requires
+        crate::ti_level::all_consts(t, ids),
+        crate::rec_canon::vals_within(cs, ids),
+    ensures
+        crate::ti_level::all_consts(crate::rec_canon::ctor_norm(cs, t, np), ids),
+{
+    ctor_norm_tel(cs, t, np);
+    let n = tarity(t);
+    let ds = tdoms(t, n);
+    let fs = crate::rec_canon::tel_fnorm(cs, ds, np);
+    all_consts_tel(t, n, ids);
+    assert forall|i: int| 0 <= i < fs.len() implies crate::ti_level::all_consts(#[trigger] fs[i], ids) by {
+        assert(crate::ti_level::all_consts(ds[i], ids));
+        if i >= np && crate::rec_canon::lp_free(ds[i]) {
+            crate::rec_canon::dnorm_consts_sub(cs, ds[i], ids);
+        }
+    }
+    binds_consts(BinderKind::Pi, fs, tbody(t, n), ids);
+}
+
+/// A constructor form has the type's arity and body.
+pub proof fn ctor_norm_arity(cs: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprSpec, np: nat)
+    ensures
+        tarity(crate::rec_canon::ctor_norm(cs, t, np)) == tarity(t),
+        tdoms(crate::rec_canon::ctor_norm(cs, t, np), tarity(t)).len() == tarity(t),
+        tbody(crate::rec_canon::ctor_norm(cs, t, np), tarity(t)) == tbody(t, tarity(t)),
+{
+    let n = tarity(t);
+    let r = tbody(t, n);
+    ctor_norm_tel(cs, t, np);
+    let fs = crate::rec_canon::tel_fnorm(cs, tdoms(t, n), np);
+    assert(fs.len() == n);
+    crate::dom_bound::tbody_end(t);
+    assert(tarity(r) == 0);
+    crate::dom_field_ty::tdoms_binds(fs, r);
+    crate::dom_iota::tbody_binds(fs, r);
 }
 
 /// A simple application is headed by another type former.
@@ -1833,9 +2176,6 @@ pub proof fn twin_canon(sig: Sig, rid: u64)
     // twin keeps
     assert(t.ienv.recs[rid] == RecDataSpec { rules: canon_rules(sig, rid), ..rd });
     assert(t.consts[ind] == sig.consts[ind]);
-    assert forall|j: int| 0 <= j < nmin implies #[trigger] t.consts[sh.ctors[j]] == sig.consts[sh.ctors[j]] by {
-        assert(!sig.ienv.recs.contains_key(sh.ctors[j]));
-    }
     let rt = t.ienv.recs[rid];
     let sh2 = shape_of(t, rt, ind);
     assert forall|j: int| 0 <= j < nmin implies rt.rules[j].ctor_id == rd.rules[j].ctor_id
@@ -1843,9 +2183,30 @@ pub proof fn twin_canon(sig: Sig, rid: u64)
         assert(rt.rules[j] == canon_rules(sig, rid)[j]);
     }
     assert(sh2.ctors =~= sh.ctors);
-    assert forall|j: int| 0 <= j < nmin implies #[trigger] t.consts[sh2.ctors[j]] == sig.consts[sh.ctors[j]] by {
-        assert(sh2.ctors[j] == sh.ctors[j]);
-        assert(!sig.ienv.recs.contains_key(sh.ctors[j]));
+    // the twin's constructors: the same telescope, its fields unfolded once
+    // more, which changes nothing
+    twin_same_vals(sig);
+    assert forall|j: int| 0 <= j < nmin implies #[trigger] sh2.fields[j] == sh.fields[j] && sh2.tss[j] == sh.tss[j]
+        && t.consts[sh.ctors[j]].ty == binds(BinderKind::Pi, sh.pdoms + sh.fields[j], tbody(t.consts[sh.ctors[j]].ty, np + rd.rules[j].nfields))
+        && tbody(t.consts[sh.ctors[j]].ty, np + rd.rules[j].nfields) == tbody(sig.consts[sh.ctors[j]].ty, np + rd.rules[j].nfields)
+        && t.consts[sh.ctors[j]].lps == sig.consts[sh.ctors[j]].lps && t.consts[sh.ctors[j]].val == sig.consts[sh.ctors[j]].val by {
+        let c = sh.ctors[j];
+        assert(sh2.ctors[j] == c);
+        let nf = rd.rules[j].nfields;
+        let tc = sig.consts[c].ty;
+        let rawf = tdoms(tbody(tc, np), nf);
+        let b = tbody(tc, np + nf);
+        assert(tc == binds(BinderKind::Pi, sh.pdoms + rawf, b));
+        assert(!(b is Bind && b->Bind_0 == BinderKind::Pi));
+        twin_ctor_ty(sig, c, sh.pdoms, rawf, b);
+        let nfs = crate::rec_canon::nfields(sig.consts, rawf);
+        assert forall|k: int| 0 <= k < nfs.len() implies #[trigger] crate::rec_canon::fnorm(t.consts, nfs[k]) == nfs[k] by {
+            crate::rec_canon::dnorm_same_vals(sig.consts, t.consts, nfs[k]);
+            crate::rec_canon::fnorm_facts(sig.consts, rawf[k]);
+        }
+        assert(sh2.fields[j] =~= nfs);
+        assert(sh.fields[j] =~= nfs);
+        twin_keeps(sig, c);
     }
     assert(sh2.fields =~= sh.fields);
     assert(sh2.tss =~= sh.tss);

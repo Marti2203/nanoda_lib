@@ -763,7 +763,7 @@ pub proof fn dnorm_conv(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec)
         crate::rec_canon::lp_free(e),
         derivable(sig, eq(g, e, e, t)),
     ensures
-        derivable(sig, eq(g, e, crate::rec_canon::dnorm(sig, e), t)),
+        derivable(sig, eq(g, e, crate::rec_canon::dnorm(sig.consts, e), t)),
     decreases e,
 {
     use crate::rec_canon::dnorm;
@@ -771,7 +771,7 @@ pub proof fn dnorm_conv(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec)
     gen(sig, de);
     match e {
         ExprSpec::Const(c, ls) => {
-            if ls.len() == 0 && crate::rec_canon::abbr0(sig, c) {
+            if ls.len() == 0 && crate::rec_canon::abbr0(sig.consts, c) {
                 assert(is_def(sig, c, ls));
                 delta_d(sig, g, c, ls, t);
                 assert(sig.consts[c].lps =~= Seq::<u64>::empty());
@@ -780,7 +780,7 @@ pub proof fn dnorm_conv(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec)
             }
         },
         ExprSpec::Bind(bk, a, b) => {
-            let (a2, b2) = (dnorm(sig, *a), dnorm(sig, *b));
+            let (a2, b2) = (dnorm(sig.consts, *a), dnorm(sig.consts, *b));
             if bk == BinderKind::Pi {
                 let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(*a, *b, l1, l2)
                     && typ(sig, g, *a, l1) && typ(sig, g.push(*a), *b, l2) && tchain(sig, g, t, sort(imax(l1, l2)));
@@ -826,12 +826,12 @@ pub proof fn dnorm_conv(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec)
                 && tchain(sig, g, t, inst(0, *x, b));
             let t1 = inst(0, *x, tb);
             dnorm_conv(sig, g, *x, ta);
-            let dx = dnorm(sig, *x);
+            let dx = dnorm(sig.consts, *x);
             crate::ti_spine::pi_typed_of(sig, g, *f, ta, tb);
             tchain_refl(sig, g, pi(ta, tb));
             tchain_sym(sig, g, t, t1);
             if let ExprSpec::Const(c, ls) = *f {
-                if ls.len() == 0 && crate::rec_canon::abbr1(sig, c) {
+                if ls.len() == 0 && crate::rec_canon::abbr1(sig.consts, c) {
                     // an applied abbreviation: Delta, then Beta
                     let v = sig.consts[c].val->Some_0;
                     let (a0, body) = (*v->Bind_1, *v->Bind_2);
@@ -868,11 +868,78 @@ pub proof fn dnorm_conv(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec)
                 }
             }
             dnorm_conv(sig, g, *f, pi(ta, tb));
-            crate::dom_sem_rel::app_pair(sig, g, *f, dnorm(sig, *f), pi(ta, tb), ta, tb, *x, dx);
-            conv_chain(sig, g, e, ExprSpec::App(Box::new(dnorm(sig, *f)), Box::new(dx)), t1, t);
+            crate::dom_sem_rel::app_pair(sig, g, *f, dnorm(sig.consts, *f), pi(ta, tb), ta, tb, *x, dx);
+            conv_chain(sig, g, e, ExprSpec::App(Box::new(dnorm(sig.consts, *f)), Box::new(dx)), t1, t);
         },
         _ => {},
     }
+}
+
+/// A TYPED TELESCOPE CONVERTS WITH ITS LATER DOMAINS UNFOLDED, at its sort
+/// (a constructor's declared type and the canonical twin's).
+pub proof fn tel_fnorm_conv(sig: Sig, g: Ctx, ds: Seq<ExprSpec>, b: ExprSpec, m: nat, l: LevelSpec)
+    requires
+        sig_wf(sig),
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, b), crate::rec_canon::binds(BinderKind::Pi, ds, b), sort(l))),
+    ensures
+        derivable(sig, eq(g, crate::rec_canon::binds(BinderKind::Pi, ds, b), crate::rec_canon::binds(BinderKind::Pi, crate::rec_canon::tel_fnorm(sig.consts, ds, m), b), sort(l))),
+    decreases ds.len(),
+{
+    let t = crate::rec_canon::binds(BinderKind::Pi, ds, b);
+    if ds.len() == 0 {
+        assert(crate::rec_canon::tel_fnorm(sig.consts, ds, m) =~= ds);
+        return;
+    }
+    let (a, rest) = (ds[0], ds.drop_first());
+    let tb = crate::rec_canon::binds(BinderKind::Pi, rest, b);
+    assert(t == pi(a, tb));
+    let dt = get(sig, eq(g, t, t, sort(l)));
+    gen(sig, dt);
+    let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(a, tb, l1, l2)
+        && typ(sig, g, a, l1) && typ(sig, g.push(a), tb, l2) && tchain(sig, g, sort(l), sort(imax(l1, l2)));
+    let m2: nat = if m > 0 { (m - 1) as nat } else { 0 };
+    tel_fnorm_conv(sig, g.push(a), rest, b, m2, l2);
+    let rest2 = crate::rec_canon::tel_fnorm(sig.consts, rest, m2);
+    let tb2 = crate::rec_canon::binds(BinderKind::Pi, rest2, b);
+    let a2 = if m > 0 { a } else { crate::rec_canon::fnorm(sig.consts, a) };
+    if m == 0 && crate::rec_canon::lp_free(a) {
+        dnorm_conv(sig, g, a, sort(l1));
+    }
+    assert(derivable(sig, eq(g, a, a2, sort(l1))));
+    ctx_conv(sig, g, a, a2, l1, tb, tb2, sort(l2));
+    let s = sort(imax(l1, l2));
+    let j = eq(g, t, pi(a2, tb2), s);
+    let p0 = get(sig, eq(g, a, a2, sort(l1)));
+    let p1 = get(sig, eq(g.push(a), tb, tb2, sort(l2)));
+    let p2 = get(sig, eq(g.push(a2), tb, tb2, sort(l2)));
+    let ps = seq![p0, p1, p2];
+    assert(prems(ps, seq![eq(g, a, a2, sort(l1)), eq(g.push(a), tb, tb2, sort(l2)), eq(g.push(a2), tb, tb2, sort(l2))]));
+    valid_node(sig, Rule::PiCong(l1, l2), j, ps);
+    mk_d(sig, node(Rule::PiCong(l1, l2), j, ps));
+    tchain_sym(sig, g, sort(l), s);
+    conv_chain(sig, g, t, pi(a2, tb2), s, sort(l));
+    let full = crate::rec_canon::tel_fnorm(sig.consts, ds, m);
+    assert(full =~= seq![a2] + rest2);
+    assert(full.drop_first() =~= rest2);
+    assert(crate::rec_canon::binds(BinderKind::Pi, full, b) == pi(a2, tb2));
+}
+
+/// A TYPED TYPE CONVERTS WITH ITS CONSTRUCTOR FORM (`rec_canon::ctor_norm`):
+/// its domains after the parameters unfolded.
+pub proof fn ctor_norm_conv(sig: Sig, g: Ctx, t: ExprSpec, np: nat, l: LevelSpec)
+    requires
+        sig_wf(sig),
+        crate::ti_syntax::iota_ok(sig),
+        crate::dom_rec_end::sig_sr(sig),
+        derivable(sig, eq(g, t, t, sort(l))),
+    ensures
+        derivable(sig, eq(g, t, crate::rec_canon::ctor_norm(sig.consts, t, np), sort(l))),
+{
+    let n = crate::rec_canon::tarity(t);
+    crate::twin::ctor_norm_tel(sig.consts, t, np);
+    tel_fnorm_conv(sig, g, crate::rec_canon::tdoms(t, n), crate::rec_canon::tbody(t, n), np, l);
 }
 
 /// SUBJECT REDUCTION: a typed term converts with its head reduct, at its

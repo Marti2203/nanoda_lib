@@ -211,6 +211,7 @@ pub proof fn struct_decl_grow(s1: Sig, s2: Sig, s: u64)
         forall|k: u64| #[trigger] s1.ienv.ctor_np.contains_key(k) ==> s2.ienv.ctor_np.contains_key(k) && s2.ienv.ctor_np[k] == s1.ienv.ctor_np[k],
         forall|k: u64| #[trigger] s1.ienv.ctor_nf.contains_key(k) ==> s2.ienv.ctor_nf.contains_key(k) && s2.ienv.ctor_nf[k] == s1.ienv.ctor_nf[k],
         forall|k: u64| #[trigger] s1.ienv.struct_ctor.contains_key(k) ==> s2.ienv.struct_ctor.contains_key(k) && s2.ienv.struct_ctor[k] == s1.ienv.struct_ctor[k],
+        s2.consts == s1.consts || crate::rec_canon::ctors_closed(s1),
     ensures
         struct_decl(s2, s),
         shape_of(s2, struct_rd(s2, s), s) == shape_of(s1, struct_rd(s1, s), s),
@@ -229,8 +230,18 @@ pub proof fn struct_decl_grow(s1: Sig, s2: Sig, s: u64)
     let sh2 = shape_of(s2, rd, s);
     assert(sh2.ctors =~= sh.ctors);
     assert(s2.consts[sh.ctors[0]] == s1.consts[sh.ctors[0]]);
-    assert(sh2.fields =~= sh.fields);
-    assert(sh2.tss =~= sh.tss);
+    if s2.consts == s1.consts {
+        assert(sh2.fields =~= sh.fields);
+        assert(sh2.tss =~= sh.tss);
+    } else {
+        assert forall|j: int| 0 <= j < rd.num_minors implies s1.consts.contains_key(#[trigger] rd.rules[j].ctor_id)
+            && crate::ti_level::all_consts(s1.consts[rd.rules[j].ctor_id].ty, s1.consts.dom()) by {
+            assert(j == 0);
+            assert(sh.ctors[0] == rd.rules[0].ctor_id);
+            assert(s1.ienv.ctor_ind.contains_key(c));
+        }
+        crate::twin::shape_grow(s1, s2, rd, s);
+    }
     assert(sh2 == sh);
     assert(ind_core(s2, s, sh)) by {
         assert forall|j: int| 0 <= j < sh.nmin() implies s2.consts[#[trigger] sh.ctors[j]] == s1.consts[sh.ctors[j]] by {

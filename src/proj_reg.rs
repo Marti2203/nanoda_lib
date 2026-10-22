@@ -296,7 +296,6 @@ proof fn walk_facts(
         &&& crate::beta_model::spine_args(ety) == am
         &&& forall|q: int| 0 <= q < np ==> #[trigger] crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), am[q], am[q],
             crate::ti_spine::vsub(crate::dom_rel::praw(sig, ind, ls, q), am.subrange(0, q))))
-        &&& cs[0] == crate::ti_syntax::dty_at(sig, cid, ls)
         &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(Seq::empty(), s, s, ety))
     }),
 {
@@ -1044,16 +1043,16 @@ proof fn walk_ty(
     walk_scope(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, k);
     crate::kclaims::sub_trans(rctx(g, cs[k]), rctx(g, ExprSpec::Proj(idx, Box::new(s))), d);
     if k == 0 {
-        crate::jkernel::kh_at(dty, denv, d);
-        crate::jkernel::wf_nil(sig);
-        crate::ti_ls2::levs_eq_refl(ls);
-        crate::jkernel::const_d(sig, g0, cid, ls, ls);
-        let dc = crate::ti_sub::get(sig, crate::ti_syntax::eq(g0, ExprSpec::Const(cid, ls), ExprSpec::Const(cid, ls), tyc));
-        crate::ti_valid::d_ty(sig, dc);
-        let (l0, dt) = crate::ti_sub::get_t(sig, g0, tyc, tyc);
-        crate::ti_meta::mk_d(sig, dt);
+        // the kernel walks the declared type, which converts to the twin's
+        let decl = cs[0];
+        crate::jkernel::typed_const(dty, denv, d, cid, ls);
+        let l0 = choose|l: LevelSpec| #[trigger] crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g0, decl, tyc, crate::ti_syntax::sort(l)));
+        crate::dom_adeq_syn::dsym(sig, g0, decl, tyc, crate::ti_syntax::sort(l0));
+        assert(crate::ti_sub::tconvd(sig, g0, decl, tyc)) by {
+            reveal(crate::ti_sub::tconvd);
+        }
+        crate::ti_chain::tchain_one(sig, g0, decl, tyc);
         assert(sq.subrange(0, 0) =~= Seq::<ExprSpec>::empty());
-        crate::ti_chain::tchain_refl(sig, g0, tyc);
         l0
     } else {
         let j = k - 1;

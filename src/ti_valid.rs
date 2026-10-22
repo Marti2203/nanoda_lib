@@ -148,6 +148,7 @@ pub open spec fn sig_ext(sig: Sig, sig2: Sig) -> bool {
     &&& forall|k: u64| #[trigger] sig.ienv.ctor_nf.contains_key(k) ==> sig2.ienv.ctor_nf.contains_key(k) && sig2.ienv.ctor_nf[k] == sig.ienv.ctor_nf[k]
     &&& forall|k: u64| #![trigger sig2.ienv.ctor_ind.contains_key(k), sig.consts.contains_key(k)]
         sig.consts.contains_key(k) && sig2.ienv.ctor_ind.contains_key(k) ==> sig.ienv.ctor_ind.contains_key(k)
+    &&& sig2.consts == sig.consts || crate::rec_canon::ctors_closed(sig)
 }
 
 /// A canonical recursor stays one in an extension, with the same
@@ -179,9 +180,18 @@ pub proof fn canon_grow(sig: Sig, sig2: Sig, r: u64)
     assert forall|j: int| 0 <= j < sh.nmin() implies sig2.consts[#[trigger] sh.ctors[j]] == sig.consts[sh.ctors[j]] by {
         assert(sig.consts.contains_key(sh.ctors[j]));
     }
-    assert(sh2.ctors =~= sh.ctors);
-    assert(sh2.fields =~= sh.fields);
-    assert(sh2.tss =~= sh.tss);
+    if sig2.consts == sig.consts {
+        assert(sh2.ctors =~= sh.ctors);
+        assert(sh2.fields =~= sh.fields);
+        assert(sh2.tss =~= sh.tss);
+    } else {
+        assert forall|j: int| 0 <= j < rd.num_minors implies sig.consts.contains_key(#[trigger] rd.rules[j].ctor_id)
+            && crate::ti_level::all_consts(sig.consts[rd.rules[j].ctor_id].ty, sig.consts.dom()) by {
+            assert(sh.ctors[j] == rd.rules[j].ctor_id);
+            assert(sig.ienv.ctor_ind.contains_key(rd.rules[j].ctor_id));
+        }
+        crate::twin::shape_grow(sig, sig2, rd, ind);
+    }
     assert(sh2 == sh);
     reveal(crate::dom_rec_end::rec_interp);
     reveal(crate::dom_rec_end::rec_large);

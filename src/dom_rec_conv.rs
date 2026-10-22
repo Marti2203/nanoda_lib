@@ -297,21 +297,13 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     // the parameter premises: the recursor's parameters are the
     // constructor's own
     let pj = crate::ti_syntax::iota_pjs(sig, g, m1);
-    reveal(crate::ti_syntax::iota_pjs);
     crate::beta_model::spine_destruct_app(h, xs1);
     crate::beta_model::spine_destruct_app(cc, pargs + args);
     assert(rd.num_params == np);
     assert(rd.major_idx == pre);
     assert(crate::ti_syntax::iota_lv(sig, m1)) by { reveal(crate::ti_syntax::iota_lv); }
     assert(l == crate::ti_syntax::iota_lm(sig, m1)) by { reveal(crate::ti_syntax::iota_lm); }
-    crate::dom_rec_end::rec_canon_ok(sig, c);
-    crate::dom_lift::eq_ctx_wf(sig, g, m1, m1, t);
-    assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
-        crate::ti_syntax::iota_pdom_id(sig, m1, q);
-        let _pq = crate::dom_rec_ty::rshape(sig, c).pdoms[q];
-        assert(xs1[q] == heads[q] && (pargs + args)[q] == pargs[q]);
-        crate::dom_adeq_syn::ptype_conv(sig, g, crate::dom_rec_ty::rshape(sig, c).ind, crate::dom_rec_ty::rinst(sig, c, lv), q, heads[q], pargs[q]);
-    }
+    rec_conv_pjs(sig, g, c, lv, cl, heads, j, pargs, args, t);
     let ps2 = seq![d0, d1, d2] + Seq::new(pj.len(), |q: int| crate::ti_sub::pick(sig, pj[q]));
     assert forall|q: int| 0 <= q < pj.len() implies crate::ti_syntax::valid(sig, #[trigger] crate::ti_sub::pick(sig, pj[q]))
         && crate::ti_syntax::concl(crate::ti_sub::pick(sig, pj[q])) == pj[q] by {
@@ -323,6 +315,51 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     crate::ti_meta::mk_d(sig, crate::ti_meta::node(Rule::Iota(l), jd, ps2));
     crate::dom_adeq_syn::dtrans(sig, g, m, m1, n1, t);
     crate::dom_adeq_syn::dtrans(sig, g, m, n1, r, t);
+}
+
+/// `rec_conv_side`'s Iota parameter premises: the recursor's parameters
+/// are the constructor's own.
+#[verifier::spinoff_prover]
+proof fn rec_conv_pjs(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq<LevelSpec>, heads: Seq<ExprSpec>, j: int,
+    pargs: Seq<ExprSpec>, args: Seq<ExprSpec>, t: ExprSpec)
+    requires
+        rec_hyps(sig, c),
+        0 <= j < rshape(sig, c).nmin(),
+        heads.len() == rshape(sig, c).np + rshape(sig, c).nmin() + 1,
+        pargs.len() == rshape(sig, c).np,
+        forall|q: int| 0 <= q < rshape(sig, c).np ==> derivable(sig, eq(g, #[trigger] heads[q], pargs[q],
+            crate::dom_rel::ptype(sig, rshape(sig, c).ind, crate::dom_rec_ty::rinst(sig, c, lv), q))),
+        derivable(sig, eq(g,
+            spine_app(ExprSpec::Const(c, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], cl), pargs + args))),
+            spine_app(ExprSpec::Const(c, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], cl), pargs + args))), t)),
+    ensures ({
+        let m1 = spine_app(ExprSpec::Const(c, lv), heads.push(spine_app(ExprSpec::Const(rshape(sig, c).ctors[j], cl), pargs + args)));
+        forall|q: int| 0 <= q < crate::ti_syntax::iota_pjs(sig, g, m1).len() ==> derivable(sig, #[trigger] crate::ti_syntax::iota_pjs(sig, g, m1)[q])
+    }),
+{
+    let sh = rshape(sig, c);
+    let rd = sig.ienv.recs[c];
+    let np = sh.np;
+    let pre = (np + sh.nmin() + 1) as int;
+    let h = ExprSpec::Const(c, lv);
+    let cc = ExprSpec::Const(sh.ctors[j], cl);
+    let cx = spine_app(cc, pargs + args);
+    let xs1 = heads.push(cx);
+    let m1 = spine_app(h, xs1);
+    let pj = crate::ti_syntax::iota_pjs(sig, g, m1);
+    reveal(crate::ti_syntax::iota_pjs);
+    crate::beta_model::spine_destruct_app(h, xs1);
+    crate::beta_model::spine_destruct_app(cc, pargs + args);
+    crate::dom_rec_end::rec_canon_ok(sig, c);
+    assert(rd.num_params == np);
+    assert(rd.major_idx == pre);
+    crate::dom_lift::eq_ctx_wf(sig, g, m1, m1, t);
+    assert forall|q: int| 0 <= q < pj.len() implies derivable(sig, #[trigger] pj[q]) by {
+        crate::ti_syntax::iota_pdom_id(sig, m1, q);
+        let _pq = sh.pdoms[q];
+        assert(xs1[q] == heads[q] && (pargs + args)[q] == pargs[q]);
+        crate::dom_adeq_syn::ptype_conv(sig, g, sh.ind, crate::dom_rec_ty::rinst(sig, c, lv), q, heads[q], pargs[q]);
+    }
 }
 
 /// SUBJECT REDUCTION'S IOTA FACTS, from the model's: a recursor of a

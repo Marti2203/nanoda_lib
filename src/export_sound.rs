@@ -326,12 +326,11 @@ proof fn cut_ext<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: int)
     crate::env_model::env_le_at(a, view, keys, c, cc);
     crate::env_model::defs_stable_at(a, view, keys, c, cc);
     twin_le_at(ef, cc, c, cc);
-    assert forall|k: u64| #[trigger] sc.consts.contains_key(k) implies sb.consts.contains_key(k) && sb.consts[k] == sc.consts[k] by {
-        assert(dc.contains_key(k));
-        if nc.defs.contains_key(k) {
-            assert(denv.defs.contains_key(k) && denv.defs[k] == nc.defs[k]);
-        }
-    }
+    assert(crate::kclaims::kh(dc, nc));
+    crate::env_weaken::ew_consts(dc, nc, dty, denv, Map::empty());
+    assert(sb.consts == s0.consts);
+    crate::env_model::tables_ok_at(a, view, keys, c);
+    crate::env_weaken::jsig_ctors_closed(dc, nc, Map::empty());
     assert forall|k: u64| #[trigger] sc.ienv.recs.contains_key(k) implies sb.ienv.recs.contains_key(k) && sc.ienv.recs[k] == sb.ienv.recs[k] by {
         assert(nc.recs.contains_key(k));
         table_declared(ef, c, k);
@@ -385,6 +384,9 @@ proof fn typed_below_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             if denv.recs.contains_key(cid) && crate::twin::rec_core(raw0, cid) {
                 assert(crate::metatheory::is_type(dc, nc, Map::empty(), crate::twin::canon_ty(raw0, cid)));
                 assert(t == crate::twin::canon_ty(raw0, cid));
+            } else if !denv.recs.contains_key(cid) && denv.ctor_ind.contains_key(cid) && denv.ctor_np.contains_key(cid) {
+                ctor_twin_typed(ef, cc, cid, c);
+                assert(t == crate::rec_canon::ctor_norm(raw0.consts, dty[cid].1, denv.ctor_np[cid] as nat));
             } else {
                 assert(t == dty[cid].1);
             }
@@ -480,23 +482,46 @@ proof fn ctors_below_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64,
     assert(rec_simple(ef, rid));
     assert(kh_hyp(dty, denv));
     assert(rec_fields_ok(raw0, rid));
-    let (sh, qi) = rec_block_at(ef, cc, rid);
+    let (shc, qi) = rec_block_at(ef, cc, rid);
     crate::twin::twin_canon(raw0, rid);
     crate::twin::rec_core_basic(raw0, rid);
     reveal(crate::twin::rec_core);
+    let sh = crate::rec_canon::nshape(raw0.consts, shc);
     assert(crate::dom_rec_ty::rshape(t, rid) == sh);
     assert(crate::dom_rec_ty::rshape(tw, rid) == sh);
     let c = sh.ctors[p];
-    assert(ctor_at(ef, cc, sh, p));
+    assert(ctor_at(ef, cc, shc, p));
     let ind = sh.ind;
     pos_find(ef, cc, qi);
     assert(pos_of(ef, ind) == qi);
     assert(dty.contains_key(ind));
     assert(crate::dom_code::rk(tw, ind) == qi);
     crate::twin::twin_keeps(raw0, c);
-    assert(tw.consts[c].ty == dty[c].1);
-    ctor_known_at(ef, cc, rid, sh, qi, p);
+    let np = denv.ctor_np[c] as nat;
+    assert(tw.consts[c].ty == crate::rec_canon::ctor_norm(raw0.consts, dty[c].1, np));
+    ctor_known_at(ef, cc, rid, shc, qi, p);
     let known = m_dty(ef, qi).dom().insert(ind);
+    // the definitions before the inductive mention only constants before it
+    let (dq, nq) = (m_dty(ef, qi), m_denv(ef, qi));
+    assert(crate::kclaims::kh(dq, nq));
+    crate::env_weaken::vals_closed_of_wf(dq, nq);
+    crate::env_model::env_le_at(ef.arena(), ef.declars_view(), keys, qi, cc);
+    crate::env_model::defs_stable_at(ef.arena(), ef.declars_view(), keys, qi, cc);
+    let rq = crate::metatheory::jsig_raw(dq, nq, Map::empty());
+    assert(rq.consts.dom() =~= dq.dom());
+    assert forall|k: u64| #[trigger] known.contains(k) && raw0.consts.contains_key(k) && raw0.consts[k].val is Some
+        implies crate::ti_level::all_consts(raw0.consts[k].val->Some_0, known) by {
+        if k == ind {
+            assert(!denv.defs.contains_key(ind));
+        } else {
+            assert(dq.contains_key(k));
+            assert(denv.defs.contains_key(k));
+            assert(nq.defs.contains_key(k) && nq.defs[k] == denv.defs[k]);
+            assert(rq.consts.contains_key(k) && rq.consts[k].val is Some);
+            crate::twin::all_consts_mono(raw0.consts[k].val->Some_0, dq.dom(), known);
+        }
+    }
+    crate::twin::ctor_norm_consts_sub(raw0.consts, dty[c].1, np, known);
     let target = crate::dom_rec_end::below(tw, qi).insert(ind);
     assert forall|k: u64| #[trigger] known.contains(k) implies target.contains(k) by {
         if k != ind {
@@ -505,7 +530,7 @@ proof fn ctors_below_one<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64,
             assert(dty.contains_key(k));
         }
     }
-    crate::twin::all_consts_mono(dty[c].1, known, target);
+    crate::twin::all_consts_mono(tw.consts[c].ty, known, target);
 }
 
 /// THE BLOCK'S CHECK of a canonical recursor's constructor (`ctors_known`):
@@ -705,27 +730,32 @@ proof fn field_cert<'p>(ef: crate::util::ExportFile<'p>, cc: int, ind: u64, p: i
     assert(rec_simple(ef, rid));
     assert(kh_hyp(dty, denv));
     assert(rec_fields_ok(raw0, rid));
-    let (sh, qi) = rec_block_at(ef, cc, rid);
+    let (shc, qi) = rec_block_at(ef, cc, rid);
     crate::twin::twin_canon(raw0, rid);
     crate::twin::rec_core_basic(raw0, rid);
     reveal(crate::twin::rec_core);
+    let sh = crate::rec_canon::nshape(raw0.consts, shc);
     assert(crate::dom_rec_ty::rshape(t, rid) == sh);
     assert(crate::dom_rec_ty::rshape(tw, rid) == sh);
     assert(crate::dom_code::canon_shape(tw, ind) == sh);
-    // its constructor, typed at its certificate
+    // its constructor, typed at its certificate: the twin's type, its
+    // fields unfolded
     let c = sh.ctors[p];
-    assert(ctor_at(ef, cc, sh, p));
+    assert(ctor_at(ef, cc, shc, p));
     let c0 = decl_facts(ef, cc, c);
     let (d0, n0) = (m_dty(ef, c0), m_denv(ef, c0));
     let s = crate::metatheory::jsig(d0, n0, Map::empty());
     let xs = sh.pdoms + sh.fields[p];
     let body = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[p].len(), sh.np) + sh.tss[p]);
-    let tc = dty[c].1;
+    crate::twin::twin_keeps(raw0, c);
+    crate::twin::twin_ctor_ty(raw0, c, shc.pdoms, shc.fields[p], body);
+    let tc = tw.consts[c].ty;
     assert(tc == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, xs, body));
+    ctor_twin_typed(ef, cc, c, c0);
     let l0 = crate::jkernel::is_type_sort(d0, n0, Map::empty(), tc);
     if let crate::env::Declar::Recursor(rr) = decl_at(ef, p0) {
         if let crate::env::Declar::Inductive(ind_d) = decl_at(ef, qi) {
-            assert(crate::inductive::block_ok(ef, ind_d, sh, decl_at(ef, p0)));
+            assert(crate::inductive::block_ok(ef, ind_d, shc, decl_at(ef, p0)));
         }
     }
     assert(sh.pdoms.len() == sh.np);
@@ -1043,6 +1073,9 @@ proof fn types_ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         if denv.recs.contains_key(cid) && crate::twin::rec_core(raw0, cid) {
             assert(crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), crate::twin::canon_ty(raw0, cid)));
             type_crank(ef, cc, cid, c, crate::twin::canon_ty(raw0, cid), tw);
+        } else if !denv.recs.contains_key(cid) && denv.ctor_ind.contains_key(cid) && denv.ctor_np.contains_key(cid) {
+            ctor_twin_typed(ef, cc, cid, c);
+            type_crank(ef, cc, cid, c, tw.consts[cid].ty, tw);
         } else {
             type_crank(ef, cc, cid, c, dty[cid].1, tw);
         }
@@ -1104,7 +1137,10 @@ proof fn ctor_field_s0<'p>(ef: crate::util::ExportFile<'p>, cc: int, c: u64, lv:
     let s0 = crate::metatheory::jsig(d0, n0, Map::empty());
     cert_sig_facts(ef, cc, c0);
     let t = tw.consts[ct].ty;
-    assert(t == dty[ct].1);
+    // the twin's constructor type, its fields unfolded: a type at the
+    // certificate
+    ctor_twin_typed(ef, cc, ct, c0);
+    assert(t == crate::rec_canon::ctor_norm(raw0.consts, dty[ct].1, denv.ctor_np[ct] as nat));
     let xs0 = sh.pdoms + sh.fields[p];
     let tb = crate::rec_canon::tbody(t, np + nf);
     let l0 = crate::jkernel::is_type_sort(d0, n0, Map::empty(), t);
@@ -1360,6 +1396,60 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
     }
 }
 
+/// A CONSTRUCTOR'S TWIN TYPE IS A TYPE at its certificate: its declared
+/// type converts to its constructor form, which reads only the
+/// definitions before it.
+#[verifier::spinoff_prover]
+proof fn ctor_twin_typed<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: int)
+    requires
+        below_ok(ef, cc),
+        m_dty(ef, cc).contains_key(cid),
+        0 <= c <= pos_of(ef, cid) < cc,
+        crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)),
+        crate::env_weaken::env_le(m_dty(ef, c), m_denv(ef, c), m_dty(ef, cc), m_denv(ef, cc)),
+        crate::env_weaken::defs_stable(m_dty(ef, c), m_denv(ef, c), m_denv(ef, cc)),
+        crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), m_dty(ef, cc)[cid].1),
+        m_denv(ef, cc).ctor_np.contains_key(cid),
+    ensures
+        crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), crate::rec_canon::ctor_norm(
+            crate::metatheory::jsig_raw(m_dty(ef, cc), m_denv(ef, cc), Map::empty()).consts, m_dty(ef, cc)[cid].1, m_denv(ef, cc).ctor_np[cid] as nat)),
+{
+    let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
+    let (dc, nc) = (m_dty(ef, c), m_denv(ef, c));
+    let em = Map::<nat, ExprSpec>::empty();
+    let g0 = Seq::<ExprSpec>::empty();
+    let sc = crate::metatheory::jsig(dc, nc, em);
+    let raw = crate::metatheory::jsig_raw(dty, denv, em);
+    let rc = crate::metatheory::jsig_raw(dc, nc, em);
+    let t = dty[cid].1;
+    let np = denv.ctor_np[cid] as nat;
+    let ty = crate::rec_canon::ctor_norm(raw.consts, t, np);
+    crate::jkernel::kh_at(dc, nc, em);
+    assert(kh_hyp(dc, nc));
+    assert(!nc.full);
+    let l0 = crate::jkernel::is_type_sort(dc, nc, em, t);
+    assert(crate::kclaims::ind_ok(sc));
+    crate::ti_sr::ctor_norm_conv(sc, g0, t, np, l0);
+    crate::twin::twin_same_vals(rc);
+    crate::rec_canon::dnorm_same_vals_ctor(rc.consts, sc.consts, t, np);
+    let dv = crate::ti_sub::get(sc, crate::ti_syntax::eq(g0, t, t, crate::ti_syntax::sort(l0)));
+    crate::ti_level::d_consts(sc, dv);
+    crate::twin::twin_keeps(rc, 0);
+    crate::env_weaken::vals_closed_of_wf(dc, nc);
+    assert forall|k: u64| #[trigger] rc.consts.contains_key(k) implies raw.consts.contains_key(k) && raw.consts[k] == rc.consts[k] by {
+        assert(dc.contains_key(k));
+        if nc.defs.contains_key(k) {
+            assert(denv.defs.contains_key(k) && denv.defs[k] == nc.defs[k]);
+        }
+        if denv.defs.contains_key(k) {
+            assert(nc.defs.contains_key(k));
+        }
+    }
+    crate::twin::ctor_norm_ext(rc.consts, raw.consts, t, np);
+    crate::dom_adeq_syn::dsym(sc, g0, t, ty, crate::ti_syntax::sort(l0));
+    crate::kclaims::is_type_of_sort(dc, nc, em, ty, l0);
+}
+
 /// A declaration's type and a definition's value, at a level instance,
 /// typed in the environment of its certificate.
 #[verifier::spinoff_prover]
@@ -1389,57 +1479,27 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
     let g0 = Seq::<ExprSpec>::empty();
     let em = Map::<nat, ExprSpec>::empty();
     let raw = crate::metatheory::jsig_raw(dty, denv, em);
+    let rc = crate::metatheory::jsig_raw(dc, nc, em);
     let tw = denv.recs.contains_key(cid) && crate::twin::rec_core(raw, cid);
+    let tc = !denv.recs.contains_key(cid) && denv.ctor_ind.contains_key(cid) && denv.ctor_np.contains_key(cid);
     let lps = dty[cid].0;
-    let ty = if tw { crate::twin::canon_ty(raw, cid) } else { dty[cid].1 };
+    let ty = if tw { crate::twin::canon_ty(raw, cid) } else if tc {
+        crate::rec_canon::ctor_norm(raw.consts, dty[cid].1, denv.ctor_np[cid] as nat) } else { dty[cid].1 };
     crate::twin::twin_keeps(raw, cid);
     assert(crate::metatheory::jsig(dty, denv, em).consts[cid].ty == ty);
     assert(crate::metatheory::jsig(dty, denv, em).consts[cid].lps == lps);
+    assert(kh_hyp(dc, nc));
     assert(crate::metatheory::is_type(dc, nc, em, ty)) by {
         if tw {
             assert(m_denv(ef, cc).recs.contains_key(cid));
+        } else if tc {
+            ctor_twin_typed(ef, cc, cid, c);
         }
     }
+    let l = crate::jkernel::is_type_sort(dc, nc, em, ty);
     // the signature before the declaration instantiates
-    assert(crate::ti_level::sig_lp_ok(sc, lps, ls)) by {
-        let rc = crate::metatheory::jsig_raw(dc, nc, em);
-        assert(crate::kclaims::twin_ok(dc, nc));
-        // the canonical recursors' levels (`twin::canon_elp_sig`)
-        assert(crate::level_typed::dty_lp_ok(dc));
-        assert forall|k: u64| #[trigger] rc.consts.contains_key(k) implies crate::level_inst::elp_in(rc.consts[k].ty, rc.consts[k].lps) by {
-            assert(dc.contains_key(k));
-        }
-        assert forall|id: u64, j: int| #![trigger sc.ienv.recs[id].rules[j]] sc.ienv.recs.contains_key(id) && 0 <= j < sc.ienv.recs[id].rules.len()
-            implies crate::level_inst::elp_in(sc.ienv.recs[id].rules[j].rhs, sc.ienv.recs[id].uparams) by {
-            assert(sc == crate::twin::twin(rc));
-            if crate::twin::rec_core(rc, id) {
-                assert(nc.recs.contains_key(id));
-                crate::twin::canon_elp_sig(rc, id);
-                assert(sc.ienv.recs[id].rules[j] == crate::twin::canon_rules(rc, id)[j]);
-            } else {
-                assert(sc.ienv.recs[id] == nc.recs[id]);
-            }
-        }
-        assert forall|k: u64| #[trigger] sc.consts.contains_key(k) implies crate::level_inst::elp_in(sc.consts[k].ty, sc.consts[k].lps)
-            && (sc.consts[k].val is Some ==> crate::level_inst::elp_in(sc.consts[k].val->Some_0, sc.consts[k].lps)) by {
-            crate::twin::twin_keeps(rc, k);
-            assert(dc.contains_key(k));
-            if nc.defs.contains_key(k) {
-                assert(crate::metatheory::env_wf(dc, nc));
-            }
-            assert(sc == crate::twin::twin(rc));
-            if nc.recs.contains_key(k) && crate::twin::rec_core(rc, k) {
-                crate::twin::canon_elp_sig(rc, k);
-                crate::twin::rec_core_basic(rc, k);
-                assert(crate::level_inst::elp_in(crate::twin::canon_ty(rc, k), dc[k].0));
-                assert(sc.consts[k].ty == crate::twin::canon_ty(rc, k));
-            } else {
-                assert(sc.consts[k] == rc.consts[k]);
-            }
-        }
-    }
+    crate::kclaims::kh_frag_lp(dc, nc, lps, ls);
     assert(crate::ti_level::gls(g0, lps, ls) =~= g0);
-    let l = crate::jkernel::is_type_sort(dc, nc, Map::empty(), ty);
     crate::ti_level::derivable_ls(sc, crate::ti_syntax::eq(g0, ty, ty, ExprSpec::Sort(l)), lps, ls);
     crate::ti_level::ls_nlbv(ty, lps, ls);
     if denv.defs.contains_key(cid) {
@@ -1448,6 +1508,8 @@ proof fn inst_decl<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, ls: S
             crate::twin::rec_core_basic(raw, cid);
         }
         assert(!tw);
+        crate::env_model::tables_ok_at(ef.arena(), ef.declars_view(), ef.declars_keys(), cc);
+        assert(!tc);
         let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dc, nc, Map::empty(), val, t2)
             && crate::metatheory::tconv(dc, nc, Map::empty(), t2, ty);
         crate::ti_level::derivable_ls(sc, crate::ti_syntax::eq(g0, val, val, t2), lps, ls);
@@ -1513,7 +1575,7 @@ proof fn rec_ctors<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64)
 proof fn twin_le_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, c1: int, c2: int)
     requires
         below_ok(ef, cc),
-        0 <= c1 <= cc,
+        0 <= c1 < cc,
         c1 <= c2 <= ef.declars_keys().len(),
     ensures
         crate::env_weaken::twin_le(m_dty(ef, c1), m_denv(ef, c1), m_dty(ef, c2), m_denv(ef, c2)),
@@ -1528,8 +1590,11 @@ proof fn twin_le_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, c1: int, c2: i
     crate::env_model::env_le_at(a, view, keys, c1, c2);
     crate::env_model::defs_stable_at(a, view, keys, c1, c2);
     crate::env_model::tables_stable_at(a, view, keys, c1, c2);
+    assert(crate::kclaims::kh(d1, n1));
+    assert(crate::metatheory::env_wf(d1, n1));
     crate::env_weaken::grows_of(d1, n1, d2, n2);
     let (r1, r2) = (crate::metatheory::jsig_raw(d1, n1, Map::empty()), crate::metatheory::jsig_raw(d2, n2, Map::empty()));
+    crate::env_model::tables_ok_at(a, view, keys, c1);
     assert forall|c: u64| d1.contains_key(c) || #[trigger] n1.recs.contains_key(c) implies {
         &&& (n1.recs.contains_key(c) && crate::twin::rec_core(r1, c)) == (n2.recs.contains_key(c) && crate::twin::rec_core(r2, c))
         &&& n1.recs.contains_key(c) && crate::twin::rec_core(r1, c) ==> crate::twin::canon_ty(r1, c) == crate::twin::canon_ty(r2, c)
@@ -1619,14 +1684,7 @@ proof fn lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             && (s.consts[k].val is Some ==> crate::level_inst::elp_in(s.consts[k].val->Some_0, s.consts[k].lps)) by {
             crate::twin::twin_keeps(raw, k);
             assert(dty.contains_key(k));
-            if denv.recs.contains_key(k) && crate::twin::rec_core(raw, k) {
-                crate::twin::canon_elp_sig(raw, k);
-                crate::twin::rec_core_basic(raw, k);
-                assert(crate::level_inst::elp_in(crate::twin::canon_ty(raw, k), dty[k].0));
-                assert(s.consts[k].ty == crate::twin::canon_ty(raw, k));
-            } else {
-                assert(s.consts[k] == raw.consts[k]);
-            }
+            crate::twin::twin_ty_elp(raw, k);
         }
         assert forall|r: int, ks: Seq<u64>, vs: Seq<crate::level_model::LevelSpec>| ks.len() == vs.len()
             implies #[trigger] crate::ti_level::sig_lp_ok(crate::ti_strip::strip_below(s, r), ks, vs) by {
@@ -1656,13 +1714,10 @@ proof fn lps_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             && (s0.consts[k].val is Some ==> crate::level_inst::elp_in(s0.consts[k].val->Some_0, s0.consts[k].lps)) by {
             crate::twin::twin_keeps(raw0, k);
             assert(dty.contains_key(k));
-            if denv.recs.contains_key(k) && crate::twin::rec_core(raw0, k) {
-                crate::twin::canon_elp_sig(raw0, k);
-                crate::twin::rec_core_basic(raw0, k);
-                assert(s0.consts[k].ty == crate::twin::canon_ty(raw0, k));
-            } else {
-                assert(s0.consts[k] == raw0.consts[k]);
+            assert forall|k2: u64| #[trigger] raw0.consts.contains_key(k2) implies crate::level_inst::elp_in(raw0.consts[k2].ty, raw0.consts[k2].lps) by {
+                assert(dty.contains_key(k2));
             }
+            crate::twin::twin_ty_elp(raw0, k);
         }
         assert forall|id: u64, j: int| #![trigger s0.ienv.recs[id].rules[j]] s0.ienv.recs.contains_key(id) && 0 <= j < s0.ienv.recs[id].rules.len()
             implies crate::level_inst::elp_in(s0.ienv.recs[id].rules[j].rhs, s0.ienv.recs[id].uparams) by {
@@ -1997,9 +2052,10 @@ proof fn shape_read(raw: crate::ti_syntax::Sig, rd: crate::expr_arena_bridge::Re
             && raw.consts[sh.ctors[j]].ty == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j],
                 crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(sh.fields[j].len(), sh.np) + sh.tss[j])),
     ensures
-        crate::rec_canon::shape_of(raw, rd, sh.ind) == sh,
+        crate::rec_canon::shape_of(raw, rd, sh.ind) == crate::rec_canon::nshape(raw.consts, sh),
 {
     let shr = crate::rec_canon::shape_of(raw, rd, sh.ind);
+    let nsh = crate::rec_canon::nshape(raw.consts, sh);
     let (np, ni, nmin) = (sh.np, sh.ni, sh.nmin());
     let b = crate::rec_canon::tbody(ti, np + ni);
     let pi = crate::expr_model::BinderKind::Pi;
@@ -2011,7 +2067,7 @@ proof fn shape_read(raw: crate::ti_syntax::Sig, rd: crate::expr_arena_bridge::Re
     assert(shr.pdoms == sh.pdoms);
     assert(shr.idoms == sh.idoms);
     assert(shr.ctors =~= sh.ctors);
-    assert forall|j: int| 0 <= j < nmin implies shr.fields[j] == sh.fields[j] && shr.tss[j] == sh.tss[j] by {
+    assert forall|j: int| 0 <= j < nmin implies shr.fields[j] == nsh.fields[j] && shr.tss[j] == sh.tss[j] by {
         let c = sh.ctors[j];
         let t = raw.consts[c].ty;
         let nf = sh.fields[j].len();
@@ -2028,7 +2084,7 @@ proof fn shape_read(raw: crate::ti_syntax::Sig, rd: crate::expr_arena_bridge::Re
         crate::beta_model::spine_destruct_app(ExprSpec::Const(sh.ind, sh.us()), args);
         assert(args.subrange(np as int, (np + ni) as int) =~= sh.tss[j]);
     }
-    assert(shr.fields =~= sh.fields);
+    assert(shr.fields =~= nsh.fields);
     assert(shr.tss =~= sh.tss);
 }
 
@@ -2055,7 +2111,7 @@ pub proof fn rec_block_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64
         let p = pos_of(ef, rid);
         &&& crate::twin::rec_core(raw, rid)
         &&& crate::rec_canon::rec_ind(raw, rid) == sh.ind
-        &&& crate::rec_canon::shape_of(raw, raw.ienv.recs[rid], sh.ind) == sh
+        &&& crate::rec_canon::shape_of(raw, raw.ienv.recs[rid], sh.ind) == crate::rec_canon::nshape(raw.consts, sh)
         &&& 0 <= qi < p < cc && p < ef.declars_keys().len()
         &&& crate::level_arena_bridge::name_id(ef.declars_keys()[p]) == rid
         &&& crate::level_arena_bridge::name_id(ef.declars_keys()[qi]) == sh.ind
@@ -2147,11 +2203,20 @@ pub proof fn rec_block_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64
             assert(kh_hyp(dty, denv));
             crate::kclaims::frag_term_sf(ti);
             crate::twin::shape_sf_of(sh, ti, cty);
-            assert forall|j: int| 0 <= j < nmin implies crate::rec_canon::rule_shape(#[trigger] sh.rule_rhs(lm, rid, crate::rec_canon::plevels(rd.uparams), j)) by {
-                crate::twin::rule_shape_canon(sh, lm, rid, j, rd.uparams);
+            // the shape read off the signature: the certificate's, its
+            // fields unfolded
+            let nsh = crate::rec_canon::nshape(raw.consts, sh);
+            assert forall|k: u64| #[trigger] raw.consts.contains_key(k) && raw.consts[k].val is Some
+                implies crate::beta_model::string_free(raw.consts[k].val->Some_0) by {
+                assert(denv.defs.contains_key(k));
+                crate::kclaims::frag_term_sf(denv.defs[k].1);
+            }
+            crate::twin::nshape_facts(raw.consts, sh);
+            assert forall|j: int| 0 <= j < nmin implies crate::rec_canon::rule_shape(#[trigger] nsh.rule_rhs(lm, rid, crate::rec_canon::plevels(rd.uparams), j)) by {
+                crate::twin::rule_shape_canon(nsh, lm, rid, j, rd.uparams);
             }
             let shr = crate::rec_canon::shape_of(raw, rd, crate::rec_canon::rec_ind(raw, rid));
-            assert(shr == sh);
+            assert(shr == nsh);
             assert(raw.ienv.recs.contains_key(rid));
             assert(raw.consts.contains_key(rid) && raw.consts[rid].val is None && raw.consts[rid].lps == rd.uparams);
             assert(crate::rec_canon::tdoms(raw.consts[rid].ty, rd.major_idx + 1).len() == rd.major_idx + 1);
@@ -2175,6 +2240,7 @@ pub proof fn rec_block_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64
                 &&& !raw.ienv.recs.contains_key(c)
                 &&& sh.fields[j].len() == nf
                 &&& t == crate::rec_canon::binds(crate::expr_model::BinderKind::Pi, sh.pdoms + sh.fields[j], crate::rec_canon::tbody(t, np + nf))
+                &&& crate::rec_canon::tdoms(crate::rec_canon::tbody(t, np), nf) == sh.fields[j]
                 &&& crate::rec_canon::tbody(t, np + nf) == crate::rec_canon::ind_app(ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j])
                 &&& sh.tss[j].len() == ni
             } by {
@@ -2183,6 +2249,11 @@ pub proof fn rec_block_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u64
                 let nf = sh.fields[j].len();
                 let ia = crate::rec_canon::ind_app(ind, sh.us(), crate::rec_canon::vars(nf, np) + sh.tss[j]);
                 crate::dom_iota::tbody_binds(sh.pdoms + sh.fields[j], ia);
+                let pi = crate::expr_model::BinderKind::Pi;
+                crate::dom_rec_shape::binds_concat(pi, sh.pdoms, sh.fields[j], ia);
+                let y = crate::rec_canon::binds(pi, sh.fields[j], ia);
+                crate::dom_iota::tbody_binds(sh.pdoms, y);
+                crate::kminor::tdoms_binds(sh.fields[j], ia);
             }
             reveal(crate::twin::rec_core);
             (sh, qi)
@@ -2362,7 +2433,8 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
     let (dty, denv) = (m_dty(ef, cc), m_denv(ef, cc));
     let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
     let t = crate::twin::twin(raw);
-    let (sh, qi) = rec_block_at(ef, cc, rid);
+    let (shc, qi) = rec_block_at(ef, cc, rid);
+    let sh = crate::rec_canon::nshape(raw.consts, shc);
     let p = pos_of(ef, rid);
     let ind = sh.ind;
     crate::twin::twin_canon(raw, rid);
@@ -2374,7 +2446,7 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
     // distinct constructors (the block certificate)
     if let crate::env::Declar::Recursor(r) = decl_at(ef, p) {
         if let crate::env::Declar::Inductive(ind_d) = decl_at(ef, qi) {
-            assert(crate::inductive::block_ok(ef, ind_d, sh, decl_at(ef, p)));
+            assert(crate::inductive::block_ok(ef, ind_d, shc, decl_at(ef, p)));
         }
     }
     // the only canonical recursor of its inductive
@@ -2395,8 +2467,11 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
     assert(t.consts[ind] == raw.consts[ind]);
     assert forall|q: int| 0 <= q < nmin implies crate::level_inst::elp_in(t.consts[#[trigger] sh.ctors[q]].ty, t.consts[ind].lps)
         && !t.ienv.recs.contains_key(sh.ctors[q]) by {
-        assert(ctor_at(ef, cc, sh, q));
-        decl_lps_at(ef, cc, sh.ctors[q]);
+        assert(ctor_at(ef, cc, shc, q));
+        assert forall|k: u64| #[trigger] raw.consts.contains_key(k) implies crate::level_inst::elp_in(raw.consts[k].ty, raw.consts[k].lps) by {
+            decl_lps_at(ef, cc, k);
+        }
+        crate::twin::twin_ty_elp(raw, sh.ctors[q]);
         crate::twin::twin_keeps(raw, sh.ctors[q]);
     }
     assert(crate::dom_rec_ty::rec_elp(t, rid)) by {
@@ -2419,7 +2494,7 @@ pub proof fn twin_scope_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, rid: u6
         assert(t.ienv.recs[rid].rules[q] == crate::twin::canon_rules(raw, rid)[q]);
         assert(crate::twin::canon_rules(raw, rid)[q].ctor_id == rd.rules[q].ctor_id);
         assert(sh.ctors[q] == rd.rules[q].ctor_id);
-        assert(ctor_at(ef, cc, sh, q));
+        assert(ctor_at(ef, cc, shc, q));
     }
 }
 
@@ -2501,6 +2576,7 @@ proof fn ctor_form_at<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64)
         let raw = crate::metatheory::jsig_raw(dty, denv, Map::empty());
         crate::twin::twin_keeps(raw, cid);
         crate::twin::twin_keeps(raw, ind);
+        crate::twin::ctor_norm_arity(raw.consts, dty[cid].1, denv.ctor_np[cid] as nat);
         assert(dty[cid] == crate::env_model::ty_entry(d)->0);
         assert(crate::env_model::declar_params_ok(d));
         crate::kgen::plevels_names(crate::level_arena_bridge::to_model_of_levels(c.info.uparams));
