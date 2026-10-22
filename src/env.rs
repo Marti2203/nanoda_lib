@@ -317,8 +317,10 @@ pub open spec fn limit_cutoff_ok_vk<'a>(view: Map<NamePtr<'a>, Declar<'a>>, keys
         EnvLimit::ByIndex(i) => cutoff == i,
         EnvLimit::PpUnlimited => cutoff == keys.len(),
         EnvLimit::ByName(n) => vstd::std_specs::hash::keys_obey_model::<NamePtr<'a>>(view.dom().insert(n))
-            && keys.no_duplicates() && keys.to_set() == view.dom() ==> cutoff == 0 || (
-            0 <= cutoff < keys.len() && keys[cutoff] == n),
+            && keys.no_duplicates() && keys.to_set() == view.dom() ==> (cutoff == 0 || (
+            0 <= cutoff < keys.len() && keys[cutoff] == n))
+            // a declared name's cutoff is its own position
+            && (view.dom().contains(n) ==> 0 <= cutoff < keys.len() && keys[cutoff] == n),
     }
 }
 

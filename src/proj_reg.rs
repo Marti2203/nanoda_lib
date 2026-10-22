@@ -1174,7 +1174,7 @@ pub proof fn cc_proj(
         crate::kclaims::cc(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
 {
     let p = ExprSpec::Proj(idx, Box::new(s));
-    if kh(dty, denv) && crate::kclaims::cterm(denv, p) {
+    if kh(dty, denv) && crate::kclaims::cterm(dty, denv, p) {
         let ety = spine_app(ExprSpec::Const(ind, ls), am);
         ci_proj(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, lv);
         assert forall|d: Map<nat, ExprSpec>| lctx_wf(dty, denv, d) && sub(rctx(g, p), d)
@@ -1244,7 +1244,7 @@ proof fn cc_proj_full_at(
         crate::ti_syntax::never_zero(lv) || pprop_ok(dty, denv, g, idx, cid, ws, btm),
         pwalk_ok(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm),
         crate::kclaims::cc(dty, denv, g, s, spine_app(ExprSpec::Const(ind, ls), am)),
-        crate::kclaims::cterm(denv, ExprSpec::Proj(idx, Box::new(s))),
+        crate::kclaims::cterm(dty, denv, ExprSpec::Proj(idx, Box::new(s))),
         ci(dty, denv, g, ExprSpec::Proj(idx, Box::new(s)), btm),
         lctx_wf(dty, denv, d),
         sub(rctx(g, ExprSpec::Proj(idx, Box::new(s))), d),
@@ -1259,7 +1259,7 @@ proof fn cc_proj_full_at(
     crate::jkernel::kh_at(dty, denv, d);
     rctx_mono(g, s, p);
     crate::kclaims::sub_trans(rctx(g, s), rctx(g, p), d);
-    assert(crate::kclaims::cterm(denv, s));
+    assert(crate::kclaims::cterm(dty, denv, s));
     crate::kclaims::cc_use(dty, denv, g, d, s, ety);
     crate::kclaims::ci_use(dty, denv, g, d, s, ety);
     assert(walk_at(dty, denv, g, idx, s, ind, cid, ls, am, cs, ws, btm, d));

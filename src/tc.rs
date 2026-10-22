@@ -6511,16 +6511,18 @@ pub open spec fn declar_cert_at<'p>(ef: crate::util::ExportFile<'p>, d: crate::e
     let ty = to_model_expr(crate::env::declar_info(d).ty);
     &&& 0 <= c
     &&& forall|i: int| 0 <= i < keys.len() && #[trigger] keys[i] == crate::env::declar_info(d).name ==> c <= i
+    // checked at its own position
+    &&& view.dom().contains(crate::env::declar_info(d).name) ==> 0 <= c < keys.len() && keys[c] == crate::env::declar_info(d).name
     &&& !crate::expr_model::has_fv(ty)
     &&& crate::expr_model::nlbv(ty) <= 0
     &&& crate::level_arena_bridge::distinct_params(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams))
     &&& crate::level_inst::elp_in(ty, crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
     &&& (d matches crate::env::Declar::Inductive(i) ==> (is_structure(i) ==> struct_shape_cert(ef, i)))
-    &&& crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(ty) ==> crate::metatheory::is_type(dty, denv, Map::empty(), ty)
+    &&& crate::kclaims::kh(dty, denv) && crate::kclaims::cterm(dty, denv, ty) ==> crate::metatheory::is_type(dty, denv, Map::empty(), ty)
     &&& type_cert_full(dty, crate::kclaims::flag(denv), ty)
     &&& (declar_value(d) matches Some(v) ==> !crate::expr_model::has_fv(to_model_expr(v))
         && crate::level_inst::elp_in(to_model_expr(v), crate::level_model::level_names(crate::level_arena_bridge::to_model_of_levels(crate::env::declar_info(d).uparams)))
-        && (crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(to_model_expr(v)) && crate::kclaims::frag_term(ty) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), to_model_expr(v), t2)
+        && (crate::kclaims::kh(dty, denv) && crate::kclaims::cterm(dty, denv, to_model_expr(v)) && crate::kclaims::cterm(dty, denv, ty) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), to_model_expr(v), t2)
             && crate::metatheory::tconv(dty, denv, Map::empty(), t2, ty))
         && val_cert_full(dty, crate::kclaims::flag(denv), to_model_expr(v), ty))
     &&& (d matches crate::env::Declar::Recursor(r) ==> forall|j: int| 0 <= j < r.rec_rules@.len()
@@ -6557,7 +6559,7 @@ pub open spec fn ctor_e2_cert<'p>(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: cra
     &&& crate::inductive::ctor_form_m(to_model_expr(c.info.ty), ind, dty[ind].1, crate::level_arena_bridge::to_model_of_levels(c.info.uparams))
     &&& !denv.defs.contains_key(ind) && !denv.ctor_ind.contains_key(ind) && !denv.recs.contains_key(ind)
     &&& crate::e2_lift::pi_prefix(dty[ind].1, c.num_params as nat)
-    &&& (crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
+    &&& (crate::kclaims::kh(dty, denv) && crate::kclaims::cterm(dty, denv, crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
         ==> crate::kclaims::rtyped(dty, denv, Map::empty(), crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
     &&& (crate::kclaims::kh(dty, crate::kclaims::flag(denv)) && crate::kclaims::full_term(crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat))
         ==> crate::kclaims::rtyped(dty, crate::kclaims::flag(denv), Map::empty(), crate::e2_lift::lmk(dty[ind].1, to_model_expr(c.info.ty), c.num_params as nat)))
@@ -6696,7 +6698,7 @@ pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::Constru
     crate::env_model::to_model_of_defs_at(env, ind);
     crate::env_model::to_model_of_ctor_ind_at(env, ind);
     crate::env_model::to_model_of_recursors_at(env, ind);
-    if crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(l) {
+    if crate::kclaims::kh(dty, denv) && crate::kclaims::cterm(dty, denv, l) {
         crate::kclaims::cc_closed_typed(dty, denv, crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), l, inf);
         let t2 = choose|t2: ExprSpec| #[trigger] crate::metatheory::typed(dty, denv, Map::empty(), l, t2)
             && crate::metatheory::tconv(dty, denv, Map::empty(), t2, inf);
@@ -6714,7 +6716,7 @@ pub proof fn ctor_e2_cert_intro<'x, 't>(env: Env<'x, 't>, c: crate::env::Constru
 /// DECLARATION CERTIFICATE, type: under the environment's hypotheses the
 /// declared type, a term of the fragment, is a type in the empty context.
 pub open spec fn ktype_cert<'x, 't>(env: Env<'x, 't>, ty: ExprSpec) -> bool {
-    &&& crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::frag_term(ty)
+    &&& crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::cterm(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), ty)
         ==> crate::metatheory::is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), ty)
     &&& type_cert_full(crate::env_model::to_model_of_declar_ty(env), crate::kclaims::flag(crate::env_model::to_model_of_env(env)), ty)
 }
@@ -6723,8 +6725,8 @@ pub open spec fn ktype_cert<'x, 't>(env: Env<'x, 't>, ty: ExprSpec) -> bool {
 /// value, a term of the fragment, is typed in the empty context, at a type
 /// convertible to the declared one.
 pub open spec fn kval_cert<'x, 't>(env: Env<'x, 't>, val: ExprSpec, ty: ExprSpec) -> bool {
-    &&& crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::frag_term(val)
-        && crate::kclaims::frag_term(ty) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), val, t2)
+    &&& crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::cterm(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), val)
+        && crate::kclaims::cterm(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), ty) ==> exists|t2: ExprSpec| #[trigger] crate::metatheory::typed(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), val, t2)
         && crate::metatheory::tconv(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), Map::empty(), t2, ty)
     &&& val_cert_full(crate::env_model::to_model_of_declar_ty(env), crate::kclaims::flag(crate::env_model::to_model_of_env(env)), val, ty)
 }
@@ -6736,7 +6738,7 @@ pub proof fn ktype_cert_intro<'x, 't>(env: Env<'x, 't>, ty: ExprSpec, l: crate::
     ensures
         ktype_cert(env, ty),
 {
-    if crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::frag_term(ty) {
+    if crate::kclaims::kh(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env)) && crate::kclaims::cterm(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), ty) {
         crate::kclaims::cc_closed_is_type(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), ty, l);
     }
     let fe = crate::kclaims::flag(crate::env_model::to_model_of_env(env));
@@ -6759,7 +6761,7 @@ pub proof fn kval_cert_intro<'x, 't>(env: Env<'x, 't>, val: ExprSpec, inf: ExprS
     let (dty, denv) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env));
     let g = crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env));
     let fe = crate::kclaims::flag(denv);
-    if crate::kclaims::kh(dty, denv) && crate::kclaims::frag_term(val) && crate::kclaims::frag_term(ty) {
+    if crate::kclaims::kh(dty, denv) && crate::kclaims::cterm(dty, denv, val) && crate::kclaims::cterm(dty, denv, ty) {
         val_cert_m(dty, denv, g, val, inf, ty);
     }
     if crate::kclaims::kh(dty, fe) && crate::kclaims::full_term(val) && crate::kclaims::full_term(ty) {
@@ -6772,7 +6774,7 @@ pub proof fn kval_cert_intro<'x, 't>(env: Env<'x, 't>, val: ExprSpec, inf: ExprS
 pub proof fn val_cert_m(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, g: Map<nat, ExprSpec>, val: ExprSpec, inf: ExprSpec, ty: ExprSpec)
     requires
         crate::kclaims::kh(dty, denv),
-        crate::kclaims::cterm(denv, val),
+        crate::kclaims::cterm(dty, denv, val),
         crate::kclaims::cc(dty, denv, g, val, inf),
         crate::kclaims::ci(dty, denv, g, val, inf),
         crate::kclaims::cw(dty, denv, g, inf, ty),

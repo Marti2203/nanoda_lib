@@ -889,7 +889,8 @@ pub proof fn crank_bound(sig: Sig, e: ExprSpec, ids: Set<u64>, n: nat)
     requires
         all_consts(e, ids),
         forall|c: u64| #[trigger] ids.contains(c) ==> sig.rank.contains_key(c) && sig.rank[c] < n,
-        sig.ienv.full || !crate::rec_canon::has_lit(e),
+        sig.ienv.full || !crate::rec_canon::has_lit(e)
+            || (ids.contains(crate::expr_arena_bridge::nat_zero_id(sig.ienv.export)) && ids.contains(crate::expr_arena_bridge::nat_succ_id(sig.ienv.export))),
     ensures
         crank(sig, e) <= n,
     decreases e,

@@ -89,7 +89,18 @@ pub open spec fn kh_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> b
     &&& names_ok(denv.export)
     &&& forall|cid: u64| #[trigger] dty.contains_key(cid) ==> crate::kclaims::frag_term(dty[cid].1)
     &&& forall|cid: u64| #[trigger] denv.defs.contains_key(cid) ==> crate::kclaims::frag_term(denv.defs[cid].1)
+    &&& lits_ok(dty, denv)
     &&& forall|rid: u64| #[trigger] denv.recs.contains_key(rid) ==> rec_fields_ok(crate::metatheory::jsig_raw(dty, denv, Map::empty()), rid)
+}
+
+/// NAT LITERALS IN DECLARATIONS: only in definitions' types and values (a
+/// constant without a value has a literal-free type, so the canonical twin
+/// is), and only once `Nat.succ` is declared (checkable at every prefix).
+pub open spec fn lits_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
+    &&& forall|cid: u64| #[trigger] dty.contains_key(cid) && !denv.defs.contains_key(cid) ==> !crate::rec_canon::has_lit(dty[cid].1)
+    &&& forall|cid: u64| #[trigger] dty.contains_key(cid)
+        && (crate::rec_canon::has_lit(dty[cid].1) || (denv.defs.contains_key(cid) && crate::rec_canon::has_lit(denv.defs[cid].1)))
+        ==> dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export))
 }
 
 /// A name visible at a cutoff is one of the declarations before it.
@@ -249,12 +260,74 @@ proof fn decl_facts<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64) -> (
         assert(pos_of(ef, id) == j);
     }
     assert(crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)));
+    // the certificate's terms are checkable there: literals only where
+    // `Nat.succ` is declared
+    assert(crate::kclaims::frag_term(m_dty(ef, cc)[cid].1));
+    if crate::rec_canon::has_lit(m_dty(ef, cc)[cid].1)
+        || (m_denv(ef, cc).defs.contains_key(cid) && crate::rec_canon::has_lit(m_denv(ef, cc).defs[cid].1)) {
+        lit_cert(ef, cc, cid, c);
+    }
+    assert(crate::kclaims::cterm(m_dty(ef, c), m_denv(ef, c), m_dty(ef, cc)[cid].1));
     if m_denv(ef, cc).defs.contains_key(cid) {
         assert(crate::tc::declar_value(d) is Some);
         assert(crate::kclaims::frag_term(m_denv(ef, cc).defs[cid].1));
-        assert(crate::kclaims::frag_term(m_dty(ef, cc)[cid].1));
+        assert(crate::kclaims::cterm(m_dty(ef, c), m_denv(ef, c), m_denv(ef, cc).defs[cid].1));
     }
     c
+}
+
+/// A DECLARATION USING A NAT LITERAL IS CHECKED WHERE `Nat.succ` IS
+/// DECLARED: its certificate is at its own position (`declar_cert_at`), and
+/// `Nat.succ`, declared once it is (`lits_ok` there), is no definition, so
+/// comes strictly before it.
+proof fn lit_cert<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: int)
+    requires
+        below_ok(ef, cc),
+        m_dty(ef, cc).contains_key(cid),
+        0 <= c <= pos_of(ef, cid) < cc,
+        crate::tc::declar_cert_at(ef, decl_at(ef, pos_of(ef, cid)), c),
+        crate::rec_canon::has_lit(m_dty(ef, cc)[cid].1)
+            || (m_denv(ef, cc).defs.contains_key(cid) && crate::rec_canon::has_lit(m_denv(ef, cc).defs[cid].1)),
+    ensures
+        m_dty(ef, c).contains_key(crate::expr_arena_bridge::nat_succ_id(m_denv(ef, c).export)),
+        m_denv(ef, c).export == m_denv(ef, cc).export,
+{
+    let view = ef.declars_view();
+    let keys = ef.declars_keys();
+    let a = ef.arena();
+    crate::inductive::export_keys_ids_inj(ef);
+    crate::inductive::export_ok_facts(ef);
+    ef.declars_views();
+    let i = pos_of(ef, cid);
+    let d = decl_at(ef, i);
+    pos_find(ef, cc, i);
+    // the certificate is at the declaration's own position
+    assert(keys.to_set().contains(keys[i]));
+    assert(view.contains_key(keys[i]));
+    assert(crate::env::declar_info(d).name == keys[i]);
+    assert(keys[c] == keys[i]);
+    assert(c == i);
+    // `Nat.succ` is declared just after it, and is not it
+    let (d1, n1) = (m_dty(ef, i + 1), m_denv(ef, i + 1));
+    assert(kh_hyp(d1, n1));
+    pos_find(ef, i + 1, i);
+    crate::env_model::env_le_at(a, view, keys, i + 1, cc);
+    crate::env_model::defs_stable_at(a, view, keys, i + 1, cc);
+    assert(d1.contains_key(cid));
+    assert(d1[cid] == m_dty(ef, cc)[cid]);
+    if m_denv(ef, cc).defs.contains_key(cid) {
+        assert(n1.defs.contains_key(cid) && n1.defs[cid] == m_denv(ef, cc).defs[cid]);
+    }
+    assert(lits_ok(d1, n1));
+    let succ = crate::expr_arena_bridge::nat_succ_id(n1.export);
+    assert(d1.contains_key(succ));
+    crate::env_model::tables_ok_at(a, view, keys, i + 1);
+    assert(crate::kclaims::nat_ctors_ok(d1, n1));
+    assert(succ != cid);
+    pos_before(ef, i + 1, succ);
+    let j = pos_of(ef, succ);
+    assert(j != i);
+    pos_find(ef, c, j);
 }
 
 /// A type at a cutoff no later than `cid`'s position mentions only
@@ -265,7 +338,9 @@ proof fn type_crank<'p>(ef: crate::util::ExportFile<'p>, cc: int, cid: u64, c: i
         forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> 0 <= pos_of(ef, id) < c,
         crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), ty),
         forall|id: u64| #[trigger] m_dty(ef, c).contains_key(id) ==> sig.rank.contains_key(id) && sig.rank[id] == pos_of(ef, id) as nat,
-        sig.ienv.full || !crate::rec_canon::has_lit(ty),
+        sig.ienv.full || !crate::rec_canon::has_lit(ty)
+            || (m_dty(ef, c).contains_key(crate::expr_arena_bridge::nat_zero_id(sig.ienv.export))
+                && m_dty(ef, c).contains_key(crate::expr_arena_bridge::nat_succ_id(sig.ienv.export))),
     ensures
         crate::ti_syntax::crank(sig, ty) <= pos_of(ef, cid),
 {
@@ -1073,13 +1148,23 @@ proof fn types_ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
             assert(dty.contains_key(id));
         }
         crate::twin::twin_keeps(raw0, cid);
-        // the declarations are literal-free (`kh_hyp`), so are the twin's types
+        // value-less declarations are literal-free (`lits_ok`), so are the
+        // twin's types for them; a definition's type may use literals, where
+        // `Nat.succ` and `Nat.zero` precede it
         assert(kh_hyp(dty, denv));
-        assert forall|k: u64| #[trigger] raw0.consts.contains_key(k) implies !crate::rec_canon::has_lit(raw0.consts[k].ty) by {
+        assert(lits_ok(dty, denv));
+        assert forall|k: u64| #[trigger] raw0.consts.contains_key(k) && raw0.consts[k].val is None
+            implies !crate::rec_canon::has_lit(raw0.consts[k].ty) by {
             assert(dty.contains_key(k));
-            crate::kclaims::frag_term_sf(dty[k].1);
+            assert(!denv.defs.contains_key(k));
         }
-        crate::twin::twin_ty_nolit(raw0, cid);
+        if raw0.consts[cid].val is None {
+            crate::twin::twin_ty_nolit(raw0, cid);
+        } else if crate::rec_canon::has_lit(dty[cid].1) {
+            lit_cert(ef, cc, cid, c);
+            assert(kh_hyp(m_dty(ef, c), m_denv(ef, c)));
+            assert(crate::kclaims::nat_ctors_ok(m_dty(ef, c), m_denv(ef, c)));
+        }
         if denv.recs.contains_key(cid) && crate::twin::rec_core(raw0, cid) {
             assert(crate::metatheory::is_type(m_dty(ef, c), m_denv(ef, c), Map::empty(), crate::twin::canon_ty(raw0, cid)));
             type_crank(ef, cc, cid, c, crate::twin::canon_ty(raw0, cid), tw);
@@ -1383,9 +1468,13 @@ proof fn ranked_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         assert forall|id: u64| #[trigger] dc.dom().contains(id) implies sr.rank.contains_key(id) && sr.rank[id] < pos_of(ef, cid) by {
             assert(dc.contains_key(id));
         }
-        assert(kh_hyp(dty, denv));
-        crate::kclaims::frag_term_sf(val);
+        // a literal in the value: `Nat.succ` and `Nat.zero` precede it
         crate::rec_canon::has_lit_sl(val, lps, ls);
+        if crate::rec_canon::has_lit(val) {
+            lit_cert(ef, cc, cid, c);
+            assert(kh_hyp(dc, nc));
+            assert(crate::kclaims::nat_ctors_ok(dc, nc));
+        }
         crate::ti_level::crank_bound(sr, crate::ti_syntax::dval(sr, cid, ls), dc.dom(), pos_of(ef, cid) as nat);
     }
     assert(crate::metatheory::rank_ok(dty, denv, r));
@@ -2960,10 +3049,8 @@ proof fn types_at<'p>(ef: crate::util::ExportFile<'p>, cc: int)
         && crate::level_inst::elp_in(dty[cid].1, dty[cid].0)
         && crate::metatheory::is_type(dty, denv, em, dty[cid].1) by {
         let i = entry_of(ef, cc, cid);
-        let c = cert_of(ef, i);
-        assert(crate::kclaims::kh(m_dty(ef, c), m_denv(ef, c)));
-        crate::env_model::env_le_at(a, view, keys, c, cc);
-        crate::env_model::defs_stable_at(a, view, keys, c, cc);
+        assert(pos_of(ef, cid) == i);
+        let c = decl_facts(ef, cc, cid);
         twin_le_at(ef, cc, c, cc);
         crate::env_weaken::ew_is_type(m_dty(ef, c), m_denv(ef, c), dty, denv, em, dty[cid].1);
     }

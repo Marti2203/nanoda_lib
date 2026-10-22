@@ -1962,7 +1962,7 @@ pub proof fn ctor_norm_arity(cs: Map<u64, crate::ti_syntax::ConstDecl>, t: ExprS
 }
 
 // The same, for Nat literals (`rec_canon::has_lit`): the twin's types are
-// literal-free when the declarations are.
+// literal-free when the value-less declarations' are.
 
 /// Lifting keeps a term literal-free.
 pub proof fn lift_nolit(n: nat, c: nat, e: ExprSpec)
@@ -2171,7 +2171,7 @@ pub proof fn head_nolit(sh: IndShape, lm: LevelSpec)
 pub proof fn canon_parts_lit(sig: Sig, rid: u64)
     requires
         rec_core(sig, rid),
-        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> !crate::rec_canon::has_lit(sig.consts[k].ty),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) && sig.consts[k].val is None ==> !crate::rec_canon::has_lit(sig.consts[k].ty),
     ensures
         shape_nolit(shape_of(sig, sig.ienv.recs[rid], rec_ind(sig, rid))),
 {
@@ -2217,7 +2217,7 @@ pub proof fn canon_parts_lit(sig: Sig, rid: u64)
 pub proof fn canon_nolit(sig: Sig, rid: u64)
     requires
         rec_core(sig, rid),
-        forall|k: u64| #[trigger] sig.consts.contains_key(k) ==> !crate::rec_canon::has_lit(sig.consts[k].ty),
+        forall|k: u64| #[trigger] sig.consts.contains_key(k) && sig.consts[k].val is None ==> !crate::rec_canon::has_lit(sig.consts[k].ty),
     ensures
         !crate::rec_canon::has_lit(canon_ty(sig, rid)),
 {
@@ -2256,7 +2256,8 @@ pub proof fn canon_nolit(sig: Sig, rid: u64)
 pub proof fn twin_ty_nolit(sig: Sig, k: u64)
     requires
         sig.consts.contains_key(k),
-        forall|c: u64| #[trigger] sig.consts.contains_key(c) ==> !crate::rec_canon::has_lit(sig.consts[c].ty),
+        sig.consts[k].val is None,
+        forall|c: u64| #[trigger] sig.consts.contains_key(c) && sig.consts[c].val is None ==> !crate::rec_canon::has_lit(sig.consts[c].ty),
     ensures
         !crate::rec_canon::has_lit(twin(sig).consts[k].ty),
 {

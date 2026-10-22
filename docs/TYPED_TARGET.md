@@ -2681,6 +2681,30 @@ The binary operations stay undeclared in the fragment: their GMP fast
 path is sound only if the exported definitions compute arithmetic, a fact
 about the export's content (the full mode's `h_nat_ext`).
 
+**Slice: Nat literals in declarations (2026-10-22).** Definitions' types
+and values may use Nat literals: Core by dependency closure 960 -> 1053
+(`target/work/coverage/abl_natlits.py`; admitting literals in inductive
+blocks or axioms too gains nothing more). String literals stay out.
+- the hypothesis: `export_sound::lits_ok` (in `kh_hyp`): a constant
+  without a value has a literal-free type (so the canonical twin's types
+  are literal-free: `twin::*_nolit` need only value-less constants), and a
+  declaration using a literal comes after `Nat.succ`. Checked at every
+  prefix of Core and Init (`lits_prefix_check.py`: no literal precedes
+  `Nat.succ`; ten Core declarations, `BitVec.ofFin`, `UInt8.ofBitVec`,
+  ... and their recursors, carry literals in constructor types and stay
+  out).
+- the claims: `frag_term` admits Nat literals; the check claim's terms
+  (`kclaims::cterm`, now over `dty`) ask `Nat.succ` declared where a term
+  has one, and `cc_lit` types them (`lit_typed_frag`). The declaration
+  certificates' guards are `cterm` at the certificate's environment.
+- the certificate's position: `env::limit_cutoff_ok_vk` now says a
+  declared name's cutoff is its own position (what `Env::new` computes),
+  so a declaration is certified exactly where it sits
+  (`tc::declar_cert_at`), and `export_sound::lit_cert` shows
+  `Nat.succ` (and so `Nat.zero`) is declared there. Ranks:
+  `crank_bound` accepts a literal when both numeral constructors are
+  ranked below.
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named
