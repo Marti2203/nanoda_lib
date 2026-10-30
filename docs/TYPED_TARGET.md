@@ -2773,6 +2773,20 @@ undeclared (all of them would give 1178).
   non-folding environment defines no Nat operation its sub-environment
   does not.
 
+**Slice: Nat.ble (2026-10-30).** As `Nat.add`, for `Nat.ble`: Core by
+dependency closure 1154 -> 1168 (`target/work/coverage/abl_natble.py`).
+`nat_ble.rs`: `Nat.ble` recurses on its first argument through
+`Nat.brecOn`, and `Nat.ble.match_1` splits both arguments; `go_rec_ble`
+shows `(Nat.rec P BASE STEP (N n)).0 (N k)` reduces to `Bool.true` or
+`Bool.false` as `n <= k` (induction on `n`, a case split on `k`), so a
+ready fold redex reduces, without folding, to its folded result
+(`ble_fold_joins`). The hypothesis is `nat_ble::std_nat_ble_env`
+(checked by `natble_std_check.py` on Core and Init); `frag_hyp` admits a
+declared operation when `nat_ble::std_nat_op_env` holds (`Nat.add` or
+`Nat.ble` declared as Lean does), `h_nat_ext_ops` replaces
+`h_nat_ext_of`, and `jkernel::sr_ble_fold` types the step by subject
+reduction along that chain alone (its result is already a constructor).
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

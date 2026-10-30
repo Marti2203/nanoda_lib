@@ -83,6 +83,7 @@ pub mod name;
 pub mod name_arena_bridge;
 pub mod name_model;
 pub mod nat_add;
+pub mod nat_ble;
 pub mod nat_ext;
 pub mod nat_lit_model;
 pub mod parser;

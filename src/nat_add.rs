@@ -1483,41 +1483,6 @@ pub proof fn add_fold_joins(env: EnvSpec, add: u64, s: ExprSpec)
     lit_star(ne, a + b);
 }
 
-/// THE NAT EXTENSION AGREES WITH THE DEFINITIONS (`nat_ext::h_nat_ext`)
-/// where the only defined Nat operation is `Nat.add`, declared as Lean
-/// does: its fold joins the definition (`add_fold_joins`), and an operation
-/// that is no definition folds in the fold-free environment too.
-pub proof fn h_nat_ext_of(env: EnvSpec)
-    requires
-        forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(env.export, id) is Some && env.defs.contains_key(id)
-            ==> crate::expr_arena_bridge::nat_bin_op_of(env.export, id) == Some(0u8) && std_nat_add_env(env, id),
-    ensures
-        crate::nat_ext::h_nat_ext(env),
-{
-    let ne = nofold(env);
-    assert forall|s: ExprSpec| #[trigger] nat_fold_ready(env.export, s) implies defeq(ne, s, nat_fold_result(env.export, s)) by {
-        let id = spine_head(s)->Const_0;
-        let r = nat_fold_result(env.export, s);
-        if env.defs.contains_key(id) {
-            add_fold_joins(env, id, s);
-            let args = spine_args(s);
-            let c = canon_numeral(env.export, crate::beta_model::nat_value(env.export, args[0])->Some_0
-                + crate::beta_model::nat_value(env.export, args[1])->Some_0);
-            assert(pstep_star(ne, s, c) && pstep_star(ne, r, c));
-        } else {
-            // `s` is `op x y`: the fold fires in the fold-free environment
-            let (f, a) = (*s->App_0, *s->App_1);
-            assert(fold_on(ne, ExprSpec::App(Box::new(f), Box::new(a))));
-            assert(pstep(ne, f, f) && pstep(ne, a, a));
-            assert(fold_reduct(f, a));
-            assert(s == ExprSpec::App(Box::new(f), Box::new(a)));
-            assert(pstep(ne, s, r));
-            pstep_star_one(ne, s, r);
-            pstep_star_refl(ne, r);
-        }
-    }
-}
-
 /// The canonical numeral `succ^k zero`.
 pub open spec fn canon_numeral(export: nat, k: nat) -> ExprSpec
     decreases k,

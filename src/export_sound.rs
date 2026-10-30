@@ -139,8 +139,8 @@ pub proof fn cert_of<'p>(ef: crate::util::ExportFile<'p>, i: int) -> (c: int)
 }
 
 /// Church-Rosser's environment facts, in the fragment: the fold-free
-/// environment is overlap-free, and the extension agrees with `Nat.add`'s
-/// definition (`nat_add::h_nat_ext_of`).
+/// environment is overlap-free, and the extension agrees with `Nat.add`'s and `Nat.ble`'s
+/// definitions (`nat_ble::h_nat_ext_ops`).
 proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     requires
         crate::kclaims::frag_env(dty, denv),
@@ -183,10 +183,10 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     assert(crate::subst_algebra::env_bv_free(ne));
     assert(crate::conv_frag::env_rules_ok(denv));
     assert forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some && denv.defs.contains_key(id)
-        implies crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, id) by {
+        implies crate::nat_ble::std_nat_op_env(denv, id) by {
         assert(dty.contains_key(id));
     }
-    crate::nat_add::h_nat_ext_of(denv);
+    crate::nat_ble::h_nat_ext_ops(denv);
     assert(crate::nat_ext::h_nat_ext(denv));
     assert(crate::swap_model::env_fv_free(denv));
     assert(crate::conv_frag::env_rules_ok(denv));
@@ -195,7 +195,7 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     // a declared Nat operation is `Nat.add`, a definition: no recursor or constructor
     assert forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some && dty.contains_key(id)
         implies denv.defs.contains_key(id) by {
-        crate::nat_add::std_nat_add_env_defined(denv, id);
+        crate::nat_ble::std_nat_op_defined(denv, id);
     }
     assert forall|id: u64| #[trigger] ne.rec_data(id) is Some implies ne.ctor_num_params(id) is None
         && crate::expr_arena_bridge::nat_bin_op_of(ne.export, id) is None && crate::expr_arena_bridge::quot_kind_of(ne.export, id) is None by {

@@ -100,7 +100,7 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
 pub open spec fn frag_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& !denv.full
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==> !dty.contains_key(id)
-        || (crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, id))
+        || crate::nat_ble::std_nat_op_env(denv, id)
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& nat_ctors_ok(dty, denv)
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok_hyp(jsig(dty, denv, d))

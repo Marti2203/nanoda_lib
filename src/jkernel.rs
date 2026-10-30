@@ -168,15 +168,14 @@ pub proof fn head_typed(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec) -> (t2: Expr
 }
 
 /// In the fragment, a typed spine is no quotient redex, and a literal fold
-/// only of `Nat.add` declared as Lean does.
+/// only of `Nat.add` or `Nat.ble` declared as Lean does.
 pub proof fn no_builtin_head(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, e: ExprSpec, t: ExprSpec)
     requires
         crate::kclaims::frag_env(dty, denv),
         derivable(jsig(dty, denv, lctx), eq(g, e, e, t)),
     ensures
         crate::beta_model::nat_fold_ready(denv.export, e) ==> spine_head(e) is Const
-            && crate::expr_arena_bridge::nat_bin_op_of(denv.export, spine_head(e)->Const_0) == Some(0u8)
-            && crate::nat_add::std_nat_add_env(denv, spine_head(e)->Const_0),
+            && crate::nat_ble::std_nat_op_env(denv, spine_head(e)->Const_0),
         !crate::tc_model::quot_ready(denv.export, e),
 {
     let sig = jsig(dty, denv, lctx);
@@ -187,8 +186,7 @@ pub proof fn no_builtin_head(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
     if let ExprSpec::Const(id, _) = h {
         assert(sig.consts.contains_key(id));
         assert(dty.contains_key(id));
-        assert(crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==>
-            crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, id));
+        assert(crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==> crate::nat_ble::std_nat_op_env(denv, id));
         assert(crate::expr_arena_bridge::quot_kind_of(denv.export, id) is None);
     }
 }
@@ -638,6 +636,29 @@ proof fn sr_add_fold(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: M
     crate::dom_adeq_syn::dtrans(sig, g, s, c, lit, tt);
 }
 
+/// THE KERNEL'S `Nat.ble` FOLD IS TYPED: the redex reduces, without
+/// folding, to its folded result (`nat_ble::ble_fold_joins`), so subject
+/// reduction along that chain types the step.
+proof fn sr_ble_fold(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, ble: u64, s: ExprSpec, tt: ExprSpec)
+    requires
+        frag_ok(dty, denv, lctx),
+        crate::nat_ble::std_nat_ble_env(denv, ble),
+        crate::expr_arena_bridge::nat_bin_op_of(denv.export, ble) == Some(8u8),
+        crate::beta_model::nat_fold_ready(denv.export, s),
+        crate::beta_model::spine_head(s) is Const && crate::beta_model::spine_head(s)->Const_0 == ble,
+        derivable(jsig(dty, denv, lctx), eq(g, s, s, tt)),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, s, crate::beta_model::nat_fold_result(denv.export, s), tt)),
+    decreases 1int, 1int, 0int,
+{
+    let r = crate::beta_model::nat_fold_result(denv.export, s);
+    let ne = crate::conv_frag::nofold(denv);
+    crate::nat_ble::ble_fold_joins(denv, ble, s);
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == s && ch[ch.len() - 1] == r
+        && crate::beta_model::pstep_chain_valid(ne, ch);
+    sr_star_nofold(dty, denv, lctx, g, ch, tt, ch.len() - 1);
+}
+
 /// The fold-free environment keeps the recursor, constructor and
 /// definition tables.
 pub proof fn nofold_tables(denv: EnvSpec, ne: EnvSpec, s: ExprSpec)
@@ -739,14 +760,18 @@ proof fn sr_app_builtin(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: 
         assert(frag_ok(dty, denv, lctx));
         // a defined operation folds only where `ne` folds
         nofold_tables(denv, ne, s);
-        crate::nat_add::std_nat_add_env_defined(denv, add);
+        crate::nat_ble::std_nat_op_defined(denv, add);
         assert(denv.defs.contains_key(add));
         assert(ne.nat_fold);
         assert(crate::ti_zsize::zsize(sapp(f, x)) > 1) by {
             crate::ti_zsize::zsz_pos(f, Seq::empty());
             crate::ti_zsize::zsz_pos(x, Seq::empty());
         }
-        sr_add_fold(dty, denv, lctx, g, add, s, inst(0, x, b1));
+        if crate::expr_arena_bridge::nat_bin_op_of(denv.export, add) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, add) {
+            sr_add_fold(dty, denv, lctx, g, add, s, inst(0, x, b1));
+        } else {
+            sr_ble_fold(dty, denv, lctx, g, add, s, inst(0, x, b1));
+        }
         crate::dom_adeq_syn::dtrans(sig, g, sapp(f, x), s, m2, inst(0, x, b1));
         conv_to(sig, g, sapp(f, x), m2, inst(0, x, b1), t);
     }
