@@ -2736,6 +2736,43 @@ mentions earlier parameters or levels stays out (+28 more, open).
   `ptype_lv`, `praw_closed`, `ptype_closed` give its typing in the
   recursor's and constructor's telescopes.
 
+**Slice: Nat.add (2026-10-30).** The fragment admits `Nat.add` when the
+export declares it as Lean does: Core by dependency closure 1101 -> 1154
+(`target/work/coverage/abl_natadd.py`). The other Nat operations stay
+undeclared (all of them would give 1178).
+- the hypothesis: `frag_hyp` lets a Nat operation be declared only when it
+  is `Nat.add` and `nat_add::std_nat_add_env` holds -- the values of
+  `Nat.add`, `Nat.brecOn`, `Nat.brecOn.go`, `Nat.add._f`,
+  `Nat.add.match_1` and `Nat.casesOn` have Lean's bodies (binder types and
+  type arguments free), `Nat.rec`'s rules are Lean's, `PProd.mk` takes two
+  parameters. `nat_ctors_ok` adds that `Nat` is no definition. Both checked
+  on Core and Init (`natadd_std_check.py`: every helper precedes
+  `Nat.add`).
+- the computation (`nat_add.rs`): a ready `Nat.add` fold redex and its
+  folded literal both reduce, WITHOUT folding, to `succ^(a+b) zero`
+  (`add_fold_joins`; `add_computes` unfolds through `brecOn` and
+  `brecOn.go` to `(Nat.rec P BASE STEP (N b)).0 x`, `go_rec_add` inducts on
+  `b`). This is `h_nat_ext` for `Nat.add`, proven from the definitions.
+- the typed fold (`jkernel`): subject reduction takes its step environment
+  `ne` (the environment or its fold-free form) and its measure leads with
+  whether `ne` folds; the fold case (`sr_add_fold`) runs subject reduction
+  along the fold-free chains (`sr_star_nofold`), types the literal by
+  `LitUnf` (`lit_conv_g`, the constructors typed off the canonical numeral:
+  `canon_parts_typed`, `succ_twin_ty`) and meets the redex's type by
+  uniqueness.
+- confluence: `Nat.add` is now both a definition and a fold head, so the
+  fragment can no longer ask that no definition heads a redex (`cr_env`).
+  The fold-free environment switches off only the folds that compete with
+  a definition (`beta_model::fold_on`: an operation folds where the
+  environment folds or where it is no definition; the kernel's environment
+  always folds, so nanoda's steps are unchanged), and the fragment takes
+  the full judgment's route (`nat_ext::cr_ext`): the fold-free environment
+  is overlap-free and every fold is a fold-free conversion
+  (`nat_add::h_nat_ext_of` -- `Nat.add` by `add_fold_joins`, an undeclared
+  operation's fold is itself a fold-free step). `EnvSpec::sub` adds that a
+  non-folding environment defines no Nat operation its sub-environment
+  does not.
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

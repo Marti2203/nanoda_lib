@@ -549,6 +549,7 @@ pub proof fn li_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, ks: Seq<u64>, vs
             } else if crate::beta_model::pstep_fold(env, *f, *x, e2) {
                 let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
                     (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *x, a2)
+                        && crate::beta_model::fold_on(env, ExprSpec::App(Box::new(f2), Box::new(a2)))
                         && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
                         == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)));
                 li_pstep(env, *f, f2, ks, vs);
@@ -556,6 +557,7 @@ pub proof fn li_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, ks: Seq<u64>, vs
                 let r = ExprSpec::App(Box::new(f2), Box::new(a2));
                 li_nat_fold(env.export, r, ks, vs);
                 li_nat_fold_result(env.export, r, ks, vs);
+                assert(subst_expr_levels(f2, ks, vs) == f2 && subst_expr_levels(a2, ks, vs) == a2);
                 assert(fold_reduct(subst_expr_levels(f2, ks, vs), subst_expr_levels(a2, ks, vs)));
                 assert(pstep(env, subst_expr_levels(e1, ks, vs), subst_expr_levels(e2, ks, vs)));
             } else {

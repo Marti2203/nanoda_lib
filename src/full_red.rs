@@ -53,7 +53,7 @@ pub open spec fn lit_unfold(export: nat, n: NatLitPayload) -> ExprSpec {
 pub open spec fn full_red(sig: Sig, m: ExprSpec, n: ExprSpec) -> bool {
     let env = sig.ienv;
     ||| rec_ready(env, m) && n == rec_result(env, m)
-    ||| env.nat_fold && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m)
+    ||| crate::beta_model::fold_on(env, m) && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m)
     ||| quot_ready(env.export, m) && n == quot_result(env.export, m)
     ||| m is Proj && iota_extract(env, m->Proj_0, *m->Proj_1, n)
     ||| m is NatLit && n == lit_unfold(env.export, m->NatLit_0)
@@ -236,7 +236,7 @@ pub proof fn full_red_psub(sig: Sig, m: ExprSpec, n: ExprSpec, t: Sub)
     let env = sig.ienv;
     if rec_ready(env, m) && n == rec_result(env, m) {
         crate::ti_subst::psub_rec(t, env, m);
-    } else if env.nat_fold && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
+    } else if crate::beta_model::fold_on(env, m) && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
         fold_closed(env.export, m);
         psub_closed(m, t);
         psub_closed(n, t);
@@ -260,9 +260,10 @@ pub proof fn full_red_fswap(sig: Sig, m: ExprSpec, n: ExprSpec, x: nat, y: nat)
     let env = sig.ienv;
     crate::swap_model::fswap_rec(env, m, x, y);
     crate::swap_model::fswap_nat_fold(env.export, m, x, y);
+    crate::swap_model::fswap_spine(m, x, y);
     crate::swap_model::fswap_quot(env.export, m, x, y);
     if rec_ready(env, m) && n == rec_result(env, m) {
-    } else if env.nat_fold && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
+    } else if crate::beta_model::fold_on(env, m) && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
     } else if quot_ready(env.export, m) && n == quot_result(env.export, m) {
     } else if m is Proj && iota_extract(env, m->Proj_0, *m->Proj_1, n) {
         crate::swap_model::fswap_iota_extract(env, m->Proj_0, *m->Proj_1, n, x, y);
@@ -283,7 +284,7 @@ pub proof fn full_red_fclose(sig: Sig, k: nat, c: nat, m: ExprSpec, n: ExprSpec)
     let env = sig.ienv;
     if rec_ready(env, m) && n == rec_result(env, m) {
         crate::fclose::fclose_rec(k, c, env, m);
-    } else if env.nat_fold && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
+    } else if crate::beta_model::fold_on(env, m) && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
         crate::fclose::fclose_nat_fold(k, c, env.export, m);
     } else if quot_ready(env.export, m) && n == quot_result(env.export, m) {
         crate::fclose::fclose_quot(k, c, env.export, m);
@@ -307,7 +308,7 @@ pub proof fn full_red_ls(sig: Sig, m: ExprSpec, n: ExprSpec, ks: Seq<u64>, vs: S
     if rec_ready(env, m) && n == rec_result(env, m) {
         crate::beta_model::rec_ready_u_of(env, m);
         crate::level_inst::li_rec(env, m, ks, vs);
-    } else if env.nat_fold && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
+    } else if crate::beta_model::fold_on(env, m) && nat_fold_ready(env.export, m) && n == nat_fold_result(env.export, m) {
         crate::level_inst::li_nat_fold(env.export, m, ks, vs);
         crate::level_inst::li_nat_fold_result(env.export, m, ks, vs);
     } else if quot_ready(env.export, m) && n == quot_result(env.export, m) {

@@ -563,6 +563,8 @@ pub proof fn lveq_pstep(env: EnvSpec, x: ExprSpec, y: ExprSpec, y2: ExprSpec) ->
                 rec_result(env, app3)
             } else if kind == 4 {
                 lveq_fold(env.export, app3, app2);
+                lveq_spine_parts(app3, app2);
+                assert(crate::beta_model::fold_on(env, app3));
                 pstep_fold_intro(env, xf, xa, f3, a3, nat_fold_result(env.export, app3));
                 nat_fold_result(env.export, app3)
             } else {

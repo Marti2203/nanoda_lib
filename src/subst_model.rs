@@ -555,11 +555,14 @@ pub proof fn fsubst_pstep(env: EnvSpec, e1: ExprSpec, e2: ExprSpec, k: nat, a: E
             } else if crate::beta_model::pstep_fold(env, *f, *x, e2) {
                 let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
                     (#[trigger] fold_reduct(f2, a2)) && pstep(env, *f, f2) && pstep(env, *x, a2)
+                        && crate::beta_model::fold_on(env, ExprSpec::App(Box::new(f2), Box::new(a2)))
                         && nat_fold_ready(env.export, ExprSpec::App(Box::new(f2), Box::new(a2))) && e2
                         == nat_fold_result(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)));
                 fsubst_pstep(env, *f, f2, k, a);
                 fsubst_pstep(env, *x, a2, k, a);
                 fsubst_nat_fold(env.export, ExprSpec::App(Box::new(f2), Box::new(a2)), k, a);
+                fsubst_spine_const(ExprSpec::App(Box::new(f2), Box::new(a2)), k, a);
+                assert(crate::beta_model::fold_on(env, ExprSpec::App(Box::new(fsubst(f2, k, a)), Box::new(fsubst(a2, k, a)))));
                 assert(fold_reduct(fsubst(f2, k, a), fsubst(a2, k, a)));
                 assert(pstep(env, fsubst(e1, k, a), fsubst(e2, k, a)));
             } else {

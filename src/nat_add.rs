@@ -67,8 +67,20 @@ pub proof fn pstep_nofold_up(env: EnvSpec, a: ExprSpec, b: ExprSpec)
                 assert(rec_ready(env, ExprSpec::App(Box::new(f2), Box::new(a2))));
                 assert(b == rec_result(env, ExprSpec::App(Box::new(f2), Box::new(a2))));
                 assert(rec_reduct(f2, a2));
+            } else if exists|f2: ExprSpec, a2: ExprSpec|
+                (#[trigger] fold_reduct(f2, a2)) && pstep(ne, *f, f2) && pstep(ne, *x, a2)
+                    && fold_on(ne, ExprSpec::App(Box::new(f2), Box::new(a2))) && nat_fold_ready(ne.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+                    && b == nat_fold_result(ne.export, ExprSpec::App(Box::new(f2), Box::new(a2))) {
+                // a fold of an operation that is no definition: it folds anywhere
+                let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
+                    (#[trigger] fold_reduct(f2, a2)) && pstep(ne, *f, f2) && pstep(ne, *x, a2)
+                        && fold_on(ne, ExprSpec::App(Box::new(f2), Box::new(a2))) && nat_fold_ready(ne.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
+                        && b == nat_fold_result(ne.export, ExprSpec::App(Box::new(f2), Box::new(a2)));
+                pstep_nofold_up(env, *f, f2);
+                pstep_nofold_up(env, *x, a2);
+                assert(fold_on(env, ExprSpec::App(Box::new(f2), Box::new(a2))));
+                assert(fold_reduct(f2, a2));
             } else {
-                // folding is off, so the step is a quotient contraction
                 let (f2, a2) = choose|f2: ExprSpec, a2: ExprSpec|
                     (#[trigger] quot_reduct(f2, a2)) && pstep(ne, *f, f2) && pstep(ne, *x, a2)
                         && crate::tc_model::quot_ready(ne.export, ExprSpec::App(Box::new(f2), Box::new(a2)))
@@ -1315,6 +1327,7 @@ pub proof fn go_rec_add(ne: EnvSpec, rid: u64, rls: Seq<crate::level_model::Leve
 /// `Nat.casesOn` it reaches, are Lean's (binder types and type arguments
 /// as exported), `Nat.rec`'s rules are Lean's, and `PProd.mk` takes two
 /// parameters. Checkable on the declarations.
+#[verifier::opaque]
 pub open spec fn std_nat_add_env(ne: EnvSpec, add: u64) -> bool {
     let (zid, sid) = (crate::expr_arena_bridge::nat_zero_id(ne.export), crate::expr_arena_bridge::nat_succ_id(ne.export));
     let ab = spine_bind(ne[add].1, 2)->Some_0;
@@ -1329,6 +1342,17 @@ pub open spec fn std_nat_add_env(ne: EnvSpec, add: u64) -> bool {
     &&& ne.ctor_num_params(head_of4(arg2_of4(gb))->Const_0) == Some(2u16)
     &&& ne.ctor_num_params(head_of4(lam_body(lam_body(arg3_of4(gb))))->Const_0) == Some(2u16)
     &&& add_f_links(ne, f)
+}
+
+/// `Nat.add` is defined where it is declared as Lean does.
+pub proof fn std_nat_add_env_defined(ne: EnvSpec, add: u64)
+    requires
+        std_nat_add_env(ne, add),
+    ensures
+        ne.contains_key(add),
+        ne.defs.contains_key(add),
+{
+    reveal(std_nat_add_env);
 }
 
 /// Numerals are closed.
@@ -1357,6 +1381,7 @@ pub proof fn add_computes(ne: EnvSpec, add: u64, x: ExprSpec, y: ExprSpec)
         pstep_star(ne, mk_app(mk_app(ExprSpec::Const(add, Seq::empty()), x), y),
             canon_numeral(ne.export, crate::beta_model::nat_value(ne.export, x)->Some_0 + crate::beta_model::nat_value(ne.export, y)->Some_0)),
 {
+    reveal(std_nat_add_env);
     let (zid, sid) = (crate::expr_arena_bridge::nat_zero_id(ne.export), crate::expr_arena_bridge::nat_succ_id(ne.export));
     let a = crate::beta_model::nat_value(ne.export, x)->Some_0;
     let b = crate::beta_model::nat_value(ne.export, y)->Some_0;
@@ -1416,6 +1441,7 @@ pub proof fn std_nat_add_env_nofold(env: EnvSpec, add: u64)
     ensures
         std_nat_add_env(nofold(env), add),
 {
+    reveal(std_nat_add_env);
     let ne = nofold(env);
     assert(forall|id: u64| #[trigger] ne.rec_data(id) == env.rec_data(id));
     assert(forall|id: u64| #[trigger] ne.ctor_num_params(id) == env.ctor_num_params(id));
@@ -1455,6 +1481,41 @@ pub proof fn add_fold_joins(env: EnvSpec, add: u64, s: ExprSpec)
     let b = crate::beta_model::nat_value(env.export, y)->Some_0;
     assert(nat_fold_result(env.export, s) == ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(a + b))));
     lit_star(ne, a + b);
+}
+
+/// THE NAT EXTENSION AGREES WITH THE DEFINITIONS (`nat_ext::h_nat_ext`)
+/// where the only defined Nat operation is `Nat.add`, declared as Lean
+/// does: its fold joins the definition (`add_fold_joins`), and an operation
+/// that is no definition folds in the fold-free environment too.
+pub proof fn h_nat_ext_of(env: EnvSpec)
+    requires
+        forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(env.export, id) is Some && env.defs.contains_key(id)
+            ==> crate::expr_arena_bridge::nat_bin_op_of(env.export, id) == Some(0u8) && std_nat_add_env(env, id),
+    ensures
+        crate::nat_ext::h_nat_ext(env),
+{
+    let ne = nofold(env);
+    assert forall|s: ExprSpec| #[trigger] nat_fold_ready(env.export, s) implies defeq(ne, s, nat_fold_result(env.export, s)) by {
+        let id = spine_head(s)->Const_0;
+        let r = nat_fold_result(env.export, s);
+        if env.defs.contains_key(id) {
+            add_fold_joins(env, id, s);
+            let args = spine_args(s);
+            let c = canon_numeral(env.export, crate::beta_model::nat_value(env.export, args[0])->Some_0
+                + crate::beta_model::nat_value(env.export, args[1])->Some_0);
+            assert(pstep_star(ne, s, c) && pstep_star(ne, r, c));
+        } else {
+            // `s` is `op x y`: the fold fires in the fold-free environment
+            let (f, a) = (*s->App_0, *s->App_1);
+            assert(fold_on(ne, ExprSpec::App(Box::new(f), Box::new(a))));
+            assert(pstep(ne, f, f) && pstep(ne, a, a));
+            assert(fold_reduct(f, a));
+            assert(s == ExprSpec::App(Box::new(f), Box::new(a)));
+            assert(pstep(ne, s, r));
+            pstep_star_one(ne, s, r);
+            pstep_star_refl(ne, r);
+        }
+    }
 }
 
 /// The canonical numeral `succ^k zero`.

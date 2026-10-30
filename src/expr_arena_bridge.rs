@@ -1621,6 +1621,10 @@ impl EnvSpec {
     pub open spec fn sub(self, other: EnvSpec) -> bool {
         &&& self.export == other.export
         &&& (self.nat_fold ==> other.nat_fold)
+        // a Nat operation `other` defines is defined in `self` already, where
+        // `other` does not fold: the fold `self` has there stays a step
+        &&& (!other.nat_fold ==> forall|k: u64| #[trigger] other.defs.contains_key(k) && nat_bin_op_of(other.export, k) is Some
+            ==> self.defs.contains_key(k))
         &&& (self.full ==> other.full)
         &&& forall|k: u64| #[trigger]
             self.defs.contains_key(k) ==> other.defs.contains_key(k) && self.defs[k] == other.defs[k]

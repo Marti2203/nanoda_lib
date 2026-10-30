@@ -1152,6 +1152,31 @@ pub proof fn ctx_bot(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelSp
     rc
 }
 
+/// `side_eta`'s redex: an eta redex of a smashed structure's recursor,
+/// its head and arguments read off the spine.
+#[verifier::spinoff_prover]
+proof fn side_eta_redex(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>)
+    requires
+        side_ok(sig, g, c, ls, xs, crate::dom_con_rel::trest(crate::ti_syntax::dty_at(sig, c, ls), xs)),
+    ensures ({
+        let m = spine_app(ExprSpec::Const(c, ls), xs);
+        &&& crate::ti_syntax::iota_ok(sig)
+        &&& crate::ti_hred::rec_smashed(sig, m)
+        &&& spine_head(m) == ExprSpec::Const(c, ls)
+        &&& spine_args(m) == xs
+        &&& sig.ienv.recs[c].major_idx == rshape(sig, c).np + 2
+    }),
+{
+    let t0 = crate::ti_syntax::dty_at(sig, c, ls);
+    let m = spine_app(ExprSpec::Const(c, ls), xs);
+    side_red(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs));
+    side_facts(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs));
+    crate::ti_eta::eta_facts(sig, c, ls, xs);
+    crate::dom_rec_minor::rec_tend(sig, c, ls, xs);
+    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
+    assert(crate::ti_hred::rec_smashed(sig, m));
+}
+
 /// `side_conv`'s eta step: rule RecEta at the redex, from its premises.
 #[verifier::spinoff_prover]
 proof fn side_eta(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec>, n: ExprSpec, e: ExprSpec, la: LevelSpec)
@@ -1182,13 +1207,7 @@ proof fn side_eta(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<ExprSpec
     let cx = crate::ti_eta::eta_cx(sig, c, ls, xs);
     let ci = crate::ti_eta::eta_st(sig, c, ls, xs);
     let m2 = crate::ti_hred::reta_exp(sig, m);
-    side_red(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs));
-    side_facts(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs));
-    crate::ti_eta::eta_facts(sig, c, ls, xs);
-    crate::dom_rec_minor::rec_tend(sig, c, ls, xs);
-    crate::beta_model::spine_destruct_app(ExprSpec::Const(c, ls), xs);
-    // the eta step
-    assert(crate::ti_hred::rec_smashed(sig, m));
+    side_eta_redex(sig, g, c, ls, xs);
     let q0 = crate::ti_sub::get(sig, eq(g, m, m, e));
     let q1 = crate::ti_sub::get(sig, eq(g, n, n, e));
     let q2 = crate::ti_sub::get(sig, eq(g, e, e, sort(la)));

@@ -49,7 +49,7 @@ pub open spec fn kh(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool 
 
 /// In the fragment: the domain model discharges the metatheory.
 pub open spec fn kh_frag(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
-    frag_env(dty, denv) && fv_free(dty, denv) && crate::conv_frag::cr_env(denv)
+    frag_env(dty, denv) && fv_free(dty, denv) && crate::nat_ext::cr_ext(denv)
         && crate::metatheory::env_wf(dty, denv) && crate::ti_sr::sig_wf(crate::metatheory::jsig(dty, denv, Map::empty()))
         && crate::jkernel::lev_ok(crate::metatheory::jsig(dty, denv, Map::empty()))
         && crate::level_typed::dty_lp_ok(dty) && crate::level_inst::env_lp_ok(denv)
@@ -100,6 +100,7 @@ pub open spec fn frag_env(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) ->
 pub open spec fn frag_hyp(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> bool {
     &&& !denv.full
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==> !dty.contains_key(id)
+        || (crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, id))
     &&& forall|id: u64| #[trigger] crate::expr_arena_bridge::quot_kind_of(denv.export, id) is Some ==> !dty.contains_key(id)
     &&& nat_ctors_ok(dty, denv)
     &&& forall|d: Map<nat, ExprSpec>| #[trigger] ind_ok_hyp(jsig(dty, denv, d))
@@ -121,6 +122,7 @@ pub open spec fn nat_ctors_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec
     &&& dty.contains_key(s) ==> dty.contains_key(z)
     &&& (dty.contains_key(z) || dty.contains_key(s)) ==> dty.contains_key(n)
         && dty[n] == (Seq::<u64>::empty(), ExprSpec::Sort(crate::level_model::LevelSpec::Succ(Box::new(crate::level_model::LevelSpec::Zero))))
+        && !denv.defs.contains_key(n)
 }
 
 /// THE CONSTRUCTOR TABLES: a constructor is a declared constant, no
@@ -3761,11 +3763,7 @@ pub proof fn cw_of_ceq(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: Ma
         cw(dty, denv, g, x, y),
 {
     if kh(dty, denv) {
-        if denv.full {
-            crate::nat_ext::ceq_jn_ext(denv, x, y, h);
-        } else {
-            crate::conv_frag::ceq_jn(denv, x, y, h);
-        }
+        crate::nat_ext::ceq_jn_ext(denv, x, y, h);
         cw_of_jn(dty, denv, g, x, y);
     }
 }
@@ -4389,15 +4387,10 @@ pub proof fn cw_of_step(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, g: M
         cw(dty, denv, g, x, y),
 {
     if kh(dty, denv) {
-        if denv.full {
-            // joinable with the Nat extension off (`h_nat_ext`), so here
-            crate::nat_ext::cr_into_ext(denv);
-            crate::conv_frag::jn_of_leaf(denv, crate::conv_frag::nofold(denv), x, y);
-            crate::conv_frag::jn_up(denv, crate::conv_frag::nofold(denv), x, y);
-        } else {
-            crate::conv_frag::cr_into_self(denv);
-            crate::conv_frag::jn_of_leaf(denv, denv, x, y);
-        }
+        // joinable with the Nat extension off (`h_nat_ext`), so here
+        crate::nat_ext::cr_into_ext(denv);
+        crate::conv_frag::jn_of_leaf(denv, crate::conv_frag::nofold(denv), x, y);
+        crate::conv_frag::jn_up(denv, crate::conv_frag::nofold(denv), x, y);
         cw_of_jn(dty, denv, g, x, y);
     }
 }

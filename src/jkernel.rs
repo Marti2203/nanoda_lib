@@ -39,7 +39,7 @@ pub open spec fn defs_in(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec) -> 
 
 /// The kernel-side assumptions of the fragment's subject reduction.
 pub open spec fn frag_ok(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>) -> bool {
-    &&& crate::conv_frag::cr_env(denv)
+    &&& crate::nat_ext::cr_ext(denv)
     &&& crate::kclaims::frag_env(dty, denv)
     &&& defs_in(dty, denv)
     &&& crate::ti_sr::sig_wf(jsig(dty, denv, lctx))
@@ -167,14 +167,16 @@ pub proof fn head_typed(sig: Sig, g: Ctx, e: ExprSpec, t: ExprSpec) -> (t2: Expr
     }
 }
 
-/// In the fragment, a typed spine is neither a literal fold nor a quotient
-/// redex.
+/// In the fragment, a typed spine is no quotient redex, and a literal fold
+/// only of `Nat.add` declared as Lean does.
 pub proof fn no_builtin_head(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, e: ExprSpec, t: ExprSpec)
     requires
         crate::kclaims::frag_env(dty, denv),
         derivable(jsig(dty, denv, lctx), eq(g, e, e, t)),
     ensures
-        !crate::beta_model::nat_fold_ready(denv.export, e),
+        crate::beta_model::nat_fold_ready(denv.export, e) ==> spine_head(e) is Const
+            && crate::expr_arena_bridge::nat_bin_op_of(denv.export, spine_head(e)->Const_0) == Some(0u8)
+            && crate::nat_add::std_nat_add_env(denv, spine_head(e)->Const_0),
         !crate::tc_model::quot_ready(denv.export, e),
 {
     let sig = jsig(dty, denv, lctx);
@@ -185,7 +187,8 @@ pub proof fn no_builtin_head(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec,
     if let ExprSpec::Const(id, _) = h {
         assert(sig.consts.contains_key(id));
         assert(dty.contains_key(id));
-        assert(crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is None);
+        assert(crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some ==>
+            crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, id));
         assert(crate::expr_arena_bridge::quot_kind_of(denv.export, id) is None);
     }
 }
@@ -401,6 +404,240 @@ pub proof fn app_parts(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec) 
     (a1, b1, k1, k2)
 }
 
+/// `Nat.succ`'s type in the fragment's signature is `Nat -> Nat`: the twin
+/// unfolds constructor fields' abbreviations, and `Nat` is none.
+proof fn succ_twin_ty(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>)
+    requires
+        frag_ok(dty, denv, lctx),
+        dty.contains_key(crate::expr_arena_bridge::nat_succ_id(denv.export)),
+    ensures
+        crate::ti_syntax::dty_at(jsig(dty, denv, lctx), crate::expr_arena_bridge::nat_succ_id(denv.export), Seq::empty())
+            == pi(crate::ti_syntax::nat_ty(denv.export), crate::ti_syntax::nat_ty(denv.export)),
+{
+    let ex = denv.export;
+    let (sid, n) = (crate::expr_arena_bridge::nat_succ_id(ex), crate::expr_arena_bridge::nat_type_id(ex));
+    let nt = crate::ti_syntax::nat_ty(ex);
+    let raw = crate::metatheory::jsig_raw(dty, denv, lctx);
+    let sig = jsig(dty, denv, lctx);
+    assert(crate::kclaims::nat_ctors_ok(dty, denv));
+    assert(!denv.full);
+    let t = pi(nt, nt);
+    assert(raw.consts[sid].ty == t && raw.consts[sid].lps == Seq::<u64>::empty());
+    assert(!crate::rec_canon::abbr0(raw.consts, n));
+    assert(crate::rec_canon::dnorm(raw.consts, nt) == nt);
+    assert(crate::rec_canon::lp_free(nt));
+    crate::twin::twin_keeps(raw, sid);
+    if denv.ctor_ind.contains_key(sid) && denv.ctor_np.contains_key(sid) && !denv.recs.contains_key(sid) {
+        let np = denv.ctor_np[sid] as nat;
+        assert(crate::rec_canon::tarity(t) == 1) by {
+            reveal_with_fuel(crate::rec_canon::tarity, 2);
+        }
+        assert(crate::rec_canon::ctor_norm(raw.consts, t, np) == t) by {
+            reveal_with_fuel(crate::rec_canon::tdoms, 3);
+            reveal_with_fuel(crate::rec_canon::tbody, 3);
+            reveal_with_fuel(crate::rec_canon::binds, 3);
+            if np <= 1 {
+                assert(crate::rec_canon::nfields(raw.consts, crate::rec_canon::tdoms(crate::rec_canon::tbody(t, np), (1 - np) as nat))
+                    =~= crate::rec_canon::tdoms(crate::rec_canon::tbody(t, np), (1 - np) as nat));
+                assert(crate::rec_canon::tdoms(t, np) + crate::rec_canon::tdoms(crate::rec_canon::tbody(t, np), (1 - np) as nat) =~= seq![nt]);
+            }
+        }
+    }
+    crate::expr_model::subst_expr_levels_empty(t);
+}
+
+/// A TYPED CANONICAL NUMERAL types its constructors at their declared
+/// types (`Nat.zero : Nat`, and `Nat.succ : Nat -> Nat` when it has one)
+/// and `Nat` at a sort, in its context.
+pub proof fn canon_parts_typed(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, k: nat, tk: ExprSpec)
+    requires
+        frag_ok(dty, denv, lctx),
+        derivable(jsig(dty, denv, lctx), eq(g, crate::nat_add::canon_numeral(denv.export, k), crate::nat_add::canon_numeral(denv.export, k), tk)),
+    ensures ({
+        let sig = jsig(dty, denv, lctx);
+        let nt = crate::ti_syntax::nat_ty(denv.export);
+        let zc = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_zero_id(denv.export));
+        let sc = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(denv.export));
+        &&& derivable(sig, eq(g, zc, zc, nt))
+        &&& k > 0 ==> derivable(sig, eq(g, sc, sc, pi(nt, nt)))
+        &&& derivable(sig, Jd::Wf(g))
+        &&& exists|l: LevelSpec| #[trigger] derivable(sig, eq(g, nt, nt, sort(l)))
+    }),
+    decreases k,
+{
+    let sig = jsig(dty, denv, lctx);
+    let ex = denv.export;
+    let (zid, sid) = (crate::expr_arena_bridge::nat_zero_id(ex), crate::expr_arena_bridge::nat_succ_id(ex));
+    let nt = crate::ti_syntax::nat_ty(ex);
+    let zc = crate::beta_model::const_expr_no_levels(zid);
+    let sc = crate::beta_model::const_expr_no_levels(sid);
+    let c = crate::nat_add::canon_numeral(ex, k);
+    assert(crate::kclaims::nat_ctors_ok(dty, denv));
+    let dc = get(sig, eq(g, c, c, tk));
+    let w = d_wf(sig, dc);
+    mk_d(sig, w);
+    if k == 0 {
+        crate::ti_spine::const_typed(sig, g, zid, Seq::empty(), tk);
+        assert(dty.contains_key(zid));
+        crate::expr_model::subst_expr_levels_empty(nt);
+        assert(dty[zid].0 =~= Seq::<u64>::empty());
+        assert(crate::ti_syntax::dty_at(sig, zid, Seq::empty()) == nt);
+    } else {
+        let p = crate::nat_add::canon_numeral(ex, (k - 1) as nat);
+        assert(c == sapp(sc, p));
+        gen(sig, dc);
+        let (a1, b1, k1, k2) = app_parts(sig, g, sc, p, tk);
+        canon_parts_typed(dty, denv, lctx, g, (k - 1) as nat, a1);
+        crate::ti_spine::const_typed(sig, g, sid, Seq::empty(), pi(a1, b1));
+        assert(dty.contains_key(sid));
+        crate::expr_model::subst_expr_levels_empty(pi(nt, nt));
+        succ_twin_ty(dty, denv, lctx);
+        assert(crate::ti_syntax::dty_at(sig, sid, Seq::empty()) == pi(nt, nt));
+    }
+    let dz = get(sig, eq(g, zc, zc, nt));
+    crate::ti_valid::d_ty(sig, dz);
+    let (l, dt) = get_t(sig, g, nt, nt);
+    mk_d(sig, dt);
+}
+
+/// A LITERAL CONVERTS WITH ITS CANONICAL NUMERAL at `Nat`, in a context
+/// that types `Nat` and its constructors (Rule `LitUnf` at each digit, and
+/// `Nat.succ` congruence).
+pub proof fn lit_conv_g(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, v: nat, l: LevelSpec)
+    requires
+        frag_ok(dty, denv, lctx),
+        derivable(jsig(dty, denv, lctx), Jd::Wf(g)),
+        derivable(jsig(dty, denv, lctx), eq(g, crate::ti_syntax::nat_ty(denv.export), crate::ti_syntax::nat_ty(denv.export), sort(l))),
+        derivable(jsig(dty, denv, lctx), eq(g, crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_zero_id(denv.export)),
+            crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_zero_id(denv.export)), crate::ti_syntax::nat_ty(denv.export))),
+        v > 0 ==> derivable(jsig(dty, denv, lctx), eq(g, crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(denv.export)),
+            crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(denv.export)),
+            pi(crate::ti_syntax::nat_ty(denv.export), crate::ti_syntax::nat_ty(denv.export)))),
+    ensures ({
+        let sig = jsig(dty, denv, lctx);
+        let m = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(v)));
+        &&& derivable(sig, eq(g, m, crate::nat_add::canon_numeral(denv.export, v), crate::ti_syntax::nat_ty(denv.export)))
+        &&& derivable(sig, eq(g, m, m, crate::ti_syntax::nat_ty(denv.export)))
+    }),
+    decreases v,
+{
+    let sig = jsig(dty, denv, lctx);
+    let ex = denv.export;
+    let nt = crate::ti_syntax::nat_ty(ex);
+    let zc = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_zero_id(ex));
+    let sc = crate::beta_model::const_expr_no_levels(crate::expr_arena_bridge::nat_succ_id(ex));
+    let pv = crate::expr_model::NatLitPayload(Ghost(v));
+    let m = ExprSpec::NatLit(pv);
+    let u = crate::full_red::lit_unfold(ex, pv);
+    assert(!denv.full);
+    assert(sig.ienv.export == ex && !sig.ienv.full);
+    let w = get(sig, Jd::Wf(g));
+    let dt = get(sig, eq(g, nt, nt, sort(l)));
+    if v == 0 {
+        assert(u == zc);
+    } else {
+        let p = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((v - 1) as nat)));
+        lit_conv_g(dty, denv, lctx, g, (v - 1) as nat, l);
+        let pc = crate::nat_add::canon_numeral(ex, (v - 1) as nat);
+        // `Nat.succ : Nat -> Nat`, its domain and codomain types
+        let ds = get(sig, eq(g, sc, sc, pi(nt, nt)));
+        crate::ti_valid::d_ty(sig, ds);
+        let (lp, dp) = get_t(sig, g, pi(nt, nt), pi(nt, nt));
+        gen(sig, dp);
+        let (k1, k2) = choose|k1: LevelSpec, k2: LevelSpec| #[trigger] gmark(nt, nt, k1, k2)
+            && typ(sig, g, nt, k1) && typ(sig, g.push(nt), nt, k2);
+        app_cong_d(sig, g, sc, sc, p, p, nt, nt, k1, k2);
+        app_cong_d(sig, g, sc, sc, p, pc, nt, nt, k1, k2);
+        assert(inst(0, p, nt) == nt);
+        assert(u == sapp(sc, p));
+        assert(crate::nat_add::canon_numeral(ex, v) == sapp(sc, pc));
+    }
+    let du = get(sig, eq(g, u, u, nt));
+    let j = eq(g, m, u, nt);
+    let ps = seq![w, dt, du];
+    assert(prems(ps, seq![Jd::Wf(g), eq(g, nt, nt, sort(l)), eq(g, u, u, nt)]));
+    valid_node(sig, Rule::LitUnf(l), j, ps);
+    mk_d(sig, node(Rule::LitUnf(l), j, ps));
+    if v > 0 {
+        let p = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost((v - 1) as nat)));
+        let pc = crate::nat_add::canon_numeral(ex, (v - 1) as nat);
+        crate::dom_adeq_syn::dtrans(sig, g, m, u, sapp(sc, pc), nt);
+    }
+    crate::dom_adeq_syn::dsym(sig, g, m, u, nt);
+    crate::dom_adeq_syn::dtrans(sig, g, m, u, m, nt);
+}
+
+/// Subject reduction along a fold-free chain.
+proof fn sr_star_nofold(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, ch: Seq<ExprSpec>, t: ExprSpec, k: int)
+    requires
+        sr_ok(dty, denv, lctx),
+        ch.len() >= 1,
+        0 <= k < ch.len(),
+        crate::beta_model::pstep_chain_valid(crate::conv_frag::nofold(denv), ch),
+        derivable(jsig(dty, denv, lctx), eq(g, ch[0], ch[0], t)),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, ch[0], ch[k], t)),
+    decreases 1int, 0int, k,
+{
+    let sig = jsig(dty, denv, lctx);
+    let ne = crate::conv_frag::nofold(denv);
+    if k > 0 {
+        sr_star_nofold(dty, denv, lctx, g, ch, t, k - 1);
+        crate::dom_adeq_syn::dsym(sig, g, ch[0], ch[k - 1], t);
+        crate::dom_adeq_syn::dtrans(sig, g, ch[k - 1], ch[0], ch[k - 1], t);
+        assert(pstep(ne, ch[k - 1], ch[k - 1 + 1]));
+        sr_pstep_ne(dty, denv, ne, lctx, g, ch[k - 1], ch[k], t);
+        crate::dom_adeq_syn::dtrans(sig, g, ch[0], ch[k - 1], ch[k], t);
+    }
+}
+
+/// THE KERNEL'S `Nat.add` FOLD IS TYPED: a typed `Nat.add` redex on
+/// numerals converts with its folded literal, at its type, where the export
+/// declares `Nat.add` as Lean does (`nat_add::add_fold_joins`, then subject
+/// reduction along the fold-free reductions).
+proof fn sr_add_fold(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, add: u64, s: ExprSpec, tt: ExprSpec)
+    requires
+        frag_ok(dty, denv, lctx),
+        crate::nat_add::std_nat_add_env(denv, add),
+        crate::expr_arena_bridge::nat_bin_op_of(denv.export, add) == Some(0u8),
+        crate::beta_model::nat_fold_ready(denv.export, s),
+        crate::beta_model::spine_head(s) is Const && crate::beta_model::spine_head(s)->Const_0 == add,
+        derivable(jsig(dty, denv, lctx), eq(g, s, s, tt)),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, s, crate::beta_model::nat_fold_result(denv.export, s), tt)),
+    decreases 1int, 1int, 0int,
+{
+    let sig = jsig(dty, denv, lctx);
+    let ex = denv.export;
+    let ne = crate::conv_frag::nofold(denv);
+    let nt = crate::ti_syntax::nat_ty(ex);
+    crate::nat_add::add_fold_joins(denv, add, s);
+    let args = crate::beta_model::spine_args(s);
+    let a = crate::beta_model::nat_value(ex, args[0])->Some_0;
+    let b = crate::beta_model::nat_value(ex, args[1])->Some_0;
+    let c = crate::nat_add::canon_numeral(ex, a + b);
+    let lit = ExprSpec::NatLit(crate::expr_model::NatLitPayload(Ghost(a + b)));
+    assert(crate::beta_model::nat_fold_result(ex, s) == lit);
+    // the redex to the canonical numeral, by subject reduction
+    let ch = choose|ch: Seq<ExprSpec>| ch.len() >= 1 && ch[0] == s && ch[ch.len() - 1] == c
+        && crate::beta_model::pstep_chain_valid(ne, ch);
+    sr_star_nofold(dty, denv, lctx, g, ch, tt, ch.len() - 1);
+    crate::dom_adeq_syn::dsym(sig, g, s, c, tt);
+    crate::dom_adeq_syn::dtrans(sig, g, c, s, c, tt);
+    // the literal to the canonical numeral, at `Nat`
+    canon_parts_typed(dty, denv, lctx, g, a + b, tt);
+    let l = choose|l: LevelSpec| #[trigger] derivable(sig, eq(g, nt, nt, sort(l)));
+    lit_conv_g(dty, denv, lctx, g, a + b, l);
+    crate::dom_adeq_syn::dsym(sig, g, lit, c, nt);
+    crate::dom_adeq_syn::dtrans(sig, g, c, lit, c, nt);
+    // the redex's type is `Nat`'s
+    assert(crate::kclaims::ind_ok(sig));
+    crate::ti_sr::uniq(sig, g, c, tt, nt);
+    conv_to(sig, g, lit, c, nt, tt);
+    crate::dom_adeq_syn::dsym(sig, g, lit, c, tt);
+    crate::dom_adeq_syn::dtrans(sig, g, s, c, lit, tt);
+}
+
 /// The fold-free environment keeps the recursor, constructor and
 /// definition tables.
 pub proof fn nofold_tables(denv: EnvSpec, ne: EnvSpec, s: ExprSpec)
@@ -462,7 +699,7 @@ proof fn sr_app_builtin(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: 
         app_facts(jsig(dty, denv, lctx), g, f, x, t, a1, b1, k1, k2),
         pstep(ne, sapp(f, x), m2),
         (exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-            && pstep(ne, f, f2) && pstep(ne, x, a2) && ne.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::beta_model::fold_on(ne, sapp(f2, a2)) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
             && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2)))
         || (exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::quot_reduct(f2, a2))
             && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::tc_model::quot_ready(denv.export, sapp(f2, a2))
@@ -473,10 +710,10 @@ proof fn sr_app_builtin(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: 
 {
     let sig = jsig(dty, denv, lctx);
     let (f2, x2) = if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-        && pstep(ne, f, f2) && pstep(ne, x, a2) && ne.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+        && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::beta_model::fold_on(ne, sapp(f2, a2)) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
         && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2)) {
         choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-            && pstep(ne, f, f2) && pstep(ne, x, a2) && ne.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::beta_model::fold_on(ne, sapp(f2, a2)) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
             && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2))
     } else {
         choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::quot_reduct(f2, a2))
@@ -496,6 +733,22 @@ proof fn sr_app_builtin(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: 
         sr_fold_quot(dty, denv, lctx, g, f, x, f2, x2, m2, t, inst(0, x, b1));
     } else {
         no_builtin_head(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+        // in the fragment the step is a `Nat.add` fold: typed by the definition
+        let s = sapp(f2, x2);
+        let add = spine_head(s)->Const_0;
+        assert(frag_ok(dty, denv, lctx));
+        // a defined operation folds only where `ne` folds
+        nofold_tables(denv, ne, s);
+        crate::nat_add::std_nat_add_env_defined(denv, add);
+        assert(denv.defs.contains_key(add));
+        assert(ne.nat_fold);
+        assert(crate::ti_zsize::zsize(sapp(f, x)) > 1) by {
+            crate::ti_zsize::zsz_pos(f, Seq::empty());
+            crate::ti_zsize::zsz_pos(x, Seq::empty());
+        }
+        sr_add_fold(dty, denv, lctx, g, add, s, inst(0, x, b1));
+        crate::dom_adeq_syn::dtrans(sig, g, sapp(f, x), s, m2, inst(0, x, b1));
+        conv_to(sig, g, sapp(f, x), m2, inst(0, x, b1), t);
     }
 }
 
@@ -551,7 +804,7 @@ proof fn sr_fold_quot(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
         derivable(jsig(dty, denv, lctx), eq(g, sapp(f2, x2), sapp(f2, x2), tt)),
         tchain(jsig(dty, denv, lctx), g, t, tt),
         // the redex this pair witnesses is the one `m2` contracts
-        (denv.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, x2)) && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, x2)))
+        (crate::beta_model::fold_on(denv, sapp(f2, x2)) && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, x2)) && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, x2)))
             || (crate::tc_model::quot_ready(denv.export, sapp(f2, x2)) && m2 == crate::tc_model::quot_result(denv.export, sapp(f2, x2))),
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), m2, t)),
@@ -865,6 +1118,10 @@ proof fn sr_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec,
 {
     let sig = jsig(dty, denv, lctx);
     let m = ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b));
+    nofold_tables(denv, ne, m);
+    assert(crate::subst_algebra::env_bv_free(denv) ==> crate::subst_algebra::env_bv_free(ne));
+    assert(crate::conv_frag::nofold(denv).defs == denv.defs);
+    assert(crate::subst_algebra::env_bv_free(crate::conv_frag::nofold(denv)) ==> crate::subst_algebra::env_bv_free(ne));
     let (tt, l1) = choose|tt: ExprSpec, l1: LevelSpec| #[trigger] gmark(tt, v, l1, l1)
         && typ(sig, g, a, l1) && derivable(sig, eq(g, v, v, a))
         && derivable(sig, eq(g, inst(0, v, b), inst(0, v, b), tt)) && tchain(sig, g, t, tt);
@@ -1301,7 +1558,7 @@ pub proof fn kh_at(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map
     requires
         crate::kclaims::kh(dty, denv),
     ensures
-        crate::kclaims::kh_frag(dty, denv) ==> frag_ok(dty, denv, lctx) && crate::conv_frag::cr_env(denv),
+        crate::kclaims::kh_frag(dty, denv) ==> frag_ok(dty, denv, lctx) && crate::nat_ext::cr_ext(denv),
         crate::kclaims::kh_full(dty, denv) ==> full_ok(dty, denv, lctx),
         lev_ok(jsig(dty, denv, lctx)),
         crate::ti_sr::sig_wf(jsig(dty, denv, lctx)),

@@ -138,7 +138,9 @@ pub proof fn cert_of<'p>(ef: crate::util::ExportFile<'p>, i: int) -> (c: int)
     c
 }
 
-/// Church-Rosser's environment facts, in the fragment.
+/// Church-Rosser's environment facts, in the fragment: the fold-free
+/// environment is overlap-free, and the extension agrees with `Nat.add`'s
+/// definition (`nat_add::h_nat_ext_of`).
 proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
     requires
         crate::kclaims::frag_env(dty, denv),
@@ -149,9 +151,10 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
         forall|id: u64, j: int| #![trigger denv.recs[id].rules[j]] denv.recs.contains_key(id) && 0 <= j < denv.recs[id].rules.len() ==>
             crate::expr_model::nlbv(denv.recs[id].rules[j].rhs) == 0 && denv.ctor_np.contains_key(denv.recs[id].rules[j].ctor_id),
     ensures
-        crate::conv_frag::cr_env(denv),
+        crate::nat_ext::cr_ext(denv),
 {
     let s0 = crate::metatheory::jsig(dty, denv, Map::empty());
+    let ne = crate::conv_frag::nofold(denv);
     assert(crate::kclaims::ind_ok(s0));
     assert forall|id: u64| #[trigger] denv.recs.contains_key(id) implies dty.contains_key(id) && !denv.defs.contains_key(id)
         && forall|i: int| 0 <= i < denv.recs[id].rules.len() ==> crate::beta_model::rule_rhs_ok(denv, #[trigger] denv.recs[id].rules[i]) by {
@@ -169,11 +172,43 @@ proof fn cr_env_of(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec)
             assert(denv.ctor_num_params(denv.recs[id].rules[i].ctor_id) is Some);
         }
     }
-    assert forall|id: u64| #[trigger] denv.defs.contains_key(id) implies !crate::confluence::redex_head(denv, id) by {
+    assert forall|id: u64| #[trigger] ne.defs.contains_key(id) implies !crate::confluence::redex_head(ne, id) by {
         assert(dty.contains_key(id));
         assert(crate::kclaims::nat_ctors_ok(dty, denv));
         assert(crate::kclaims::tables_ok(dty, denv));
+        assert(ne.rec_data(id) == denv.rec_data(id) && ne.ctor_num_params(id) == denv.ctor_num_params(id));
     }
+    assert(forall|id: u64| #[trigger] ne.rec_data(id) == denv.rec_data(id));
+    assert(forall|id: u64| #[trigger] ne.ctor_num_params(id) == denv.ctor_num_params(id));
+    assert(crate::subst_algebra::env_bv_free(ne));
+    assert(crate::conv_frag::env_rules_ok(denv));
+    assert forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some && denv.defs.contains_key(id)
+        implies crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) == Some(0u8) && crate::nat_add::std_nat_add_env(denv, id) by {
+        assert(dty.contains_key(id));
+    }
+    crate::nat_add::h_nat_ext_of(denv);
+    assert(crate::nat_ext::h_nat_ext(denv));
+    assert(crate::swap_model::env_fv_free(denv));
+    assert(crate::conv_frag::env_rules_ok(denv));
+    assert(ne.export == denv.export);
+    let (zid, sid) = (crate::expr_arena_bridge::nat_zero_id(ne.export), crate::expr_arena_bridge::nat_succ_id(ne.export));
+    // a declared Nat operation is `Nat.add`, a definition: no recursor or constructor
+    assert forall|id: u64| #[trigger] crate::expr_arena_bridge::nat_bin_op_of(denv.export, id) is Some && dty.contains_key(id)
+        implies denv.defs.contains_key(id) by {
+        crate::nat_add::std_nat_add_env_defined(denv, id);
+    }
+    assert forall|id: u64| #[trigger] ne.rec_data(id) is Some implies ne.ctor_num_params(id) is None
+        && crate::expr_arena_bridge::nat_bin_op_of(ne.export, id) is None && crate::expr_arena_bridge::quot_kind_of(ne.export, id) is None by {
+        assert(denv.recs.contains_key(id));
+        assert(dty.contains_key(id) && !denv.defs.contains_key(id));
+    }
+    assert forall|id: u64| #[trigger] ne.ctor_num_params(id) is Some implies crate::expr_arena_bridge::nat_bin_op_of(ne.export, id) is None
+        && crate::expr_arena_bridge::quot_kind_of(ne.export, id) is None by {
+        assert(denv.ctor_np.contains_key(id));
+        assert(crate::kclaims::tables_ok(dty, denv));
+    }
+    assert(ne.rec_data(zid) is None && ne.rec_data(sid) is None);
+    assert(crate::confluence::env_conf(ne));
 }
 
 /// A name's position in the export.
