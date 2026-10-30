@@ -2261,7 +2261,7 @@ pub open spec fn r2l_ok(sig: Sig, rid: u64, lv: Seq<LevelSpec>, p: int, clv: Seq
     &&& crate::dom_code::prop_ok(sig, sh.ind) && crate::dom_code::fields_blind(sig, sh.ind) && crate::dom_levels::sig_lps(sig)
     &&& crate::dom_code::pdoms_alias(sig, sh.ind)
     &&& crate::dom_code::fields_typed(sig, sh.ind)
-    &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q])
+    &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_adm(#[trigger] sh.pdoms[q])
     &&& forall|k: int| 0 <= k < sh.fields[p].len() && !isrec(sig, rid, p, k) && crate::rec_canon::simple_ty(sig, sh.ind, sh.fields[p][k]) ==>
         crate::dom_canon::ranked(sig, #[trigger] sh.fields[p][k], crate::dom_code::rk(sig, sh.ind))
 }
@@ -2299,7 +2299,7 @@ pub proof fn sort_mem_lv(sig: Sig, l1: LevelSpec, l2: LevelSpec, rho: Env, a: Cp
 pub proof fn chain_pdoms_lv(sig: Sig, rid: u64, us: Seq<LevelSpec>, us2: Seq<LevelSpec>, dps: Seq<Cpt>, pv: Seq<Cpt>)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, rid).np ==> crate::rec_canon::pdom_ok(#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]),
+        forall|q: int| 0 <= q < crate::dom_rec_ty::rshape(sig, rid).np ==> crate::rec_canon::pdom_adm(#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q]),
         us.len() == crate::dom_rec_ty::rshape(sig, rid).lps.len(),
         crate::conv_cr::levs_eq(us, us2),
         crate::dom_tele::chain_ok(sig, pdoms_at(sig, rid, us), bot_env(), dps, pv),
@@ -2314,11 +2314,18 @@ pub proof fn chain_pdoms_lv(sig: Sig, rid: u64, us: Seq<LevelSpec>, us2: Seq<Lev
         crate::dom_tele::exts(bot_env(), pv.subrange(0, i)), dps[i], pv[i]) by {
         let env = crate::dom_tele::exts(bot_env(), pv.subrange(0, i));
         assert(crate::dom_sound::dfit(sig, pd[i], env, dps[i], pv[i]));
-        let l0 = crate::rec_canon::pdom_lvl(sh.pdoms[i]);
-        let (l1, l2) = (crate::level_model::subst_level_spec(l0, sh.lps, us), crate::level_model::subst_level_spec(l0, sh.lps, us2));
-        assert(pd[i] == ExprSpec::Sort(l1) && pd2[i] == ExprSpec::Sort(l2));
-        crate::ti_ls2::ll_pair(l0, l0, sh.lps, us, us2);
-        sort_mem_lv(sig, l1, l2, env, dps[i]);
+        if crate::rec_canon::pdom_ok(sh.pdoms[i]) {
+            let l0 = crate::rec_canon::pdom_lvl(sh.pdoms[i]);
+            let (l1, l2) = (crate::level_model::subst_level_spec(l0, sh.lps, us), crate::level_model::subst_level_spec(l0, sh.lps, us2));
+            assert(pd[i] == ExprSpec::Sort(l1) && pd2[i] == ExprSpec::Sort(l2));
+            crate::ti_ls2::ll_pair(l0, l0, sh.lps, us, us2);
+            sort_mem_lv(sig, l1, l2, env, dps[i]);
+        } else {
+            // a value parameter's level-free domain, at either instance
+            crate::level_inst::expr_closed(sh.pdoms[i], sh.lps, us);
+            crate::level_inst::expr_closed(sh.pdoms[i], sh.lps, us2);
+            assert(pd[i] == pd2[i]);
+        }
     }
 }
 

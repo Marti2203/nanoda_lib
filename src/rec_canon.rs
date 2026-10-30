@@ -156,6 +156,29 @@ pub open spec fn pdom_ok(e: ExprSpec) -> bool {
     e is Sort || (e is App && *e->App_0 is Const && e->App_0->Const_1.len() == 1 && *e->App_1 is Sort)
 }
 
+/// A VALUE PARAMETER'S DOMAIN the model admits: a closed, level-free type
+/// (`OfNat`'s `n : Nat`).
+pub open spec fn pdom_cl(e: ExprSpec) -> bool {
+    crate::expr_model::nlbv(e) == 0 && !crate::expr_model::has_fv(e) && crate::level_inst::elp_in(e, Seq::empty())
+}
+
+/// A parameter domain the model admits: a sort (or sort alias), or a value
+/// parameter's closed, level-free type.
+pub open spec fn pdom_adm(e: ExprSpec) -> bool {
+    pdom_ok(e) || pdom_cl(e)
+}
+
+/// A sort-shaped domain is closed.
+pub proof fn pdom_ok_cl(e: ExprSpec)
+    requires
+        pdom_ok(e),
+    ensures
+        crate::expr_model::nlbv(e) == 0 && !crate::expr_model::has_fv(e),
+{
+    reveal_with_fuel(crate::expr_model::nlbv, 2);
+    reveal_with_fuel(crate::expr_model::has_fv, 2);
+}
+
 /// Its sort's level.
 pub open spec fn pdom_lvl(e: ExprSpec) -> LevelSpec {
     if e is Sort { e->Sort_0 } else { e->App_1->Sort_0 }

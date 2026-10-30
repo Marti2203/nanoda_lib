@@ -180,7 +180,7 @@ pub proof fn rec_conv_side(sig: Sig, g: Ctx, c: u64, lv: Seq<LevelSpec>, cl: Seq
     pargs: Seq<ExprSpec>, args: Seq<ExprSpec>)
     requires
         rec_hyps(sig, c),
-        forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, c).pdoms[q]),
+        forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_adm(#[trigger] rshape(sig, c).pdoms[q]),
         lv.len() == sig.ienv.recs[c].uparams.len(),
         0 <= j < rshape(sig, c).nmin(),
         heads.len() == rshape(sig, c).np + rshape(sig, c).nmin() + 1,

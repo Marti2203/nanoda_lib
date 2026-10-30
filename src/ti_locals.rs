@@ -194,17 +194,20 @@ proof fn proj_pjs_swap(sig: Sig, g: Ctx, m: ExprSpec, x: nat, y: nat)
     }
 }
 
-/// A PARAMETER'S DOMAIN IS INERT: no local, no variable, so swapping and
-/// closing locals and substituting leave it as it is.
+/// A PARAMETER'S DOMAIN IS INERT: closed, so swapping and closing locals
+/// and substituting leave it as it is.
 pub proof fn pdom_inert(e: ExprSpec, x: nat, y: nat, k: nat, c: nat)
     requires
-        crate::rec_canon::pdom_ok(e),
+        crate::rec_canon::pdom_ok(e) || (crate::expr_model::nlbv(e) == 0 && !has_fv(e)),
     ensures
         crate::swap_model::fswap(e, x, y) == e,
         crate::fclose::fclose(k, c, e) == e,
 {
-    reveal_with_fuel(crate::swap_model::fswap, 3);
-    reveal_with_fuel(crate::fclose::fclose, 3);
+    if crate::rec_canon::pdom_ok(e) {
+        crate::rec_canon::pdom_ok_cl(e);
+    }
+    crate::swap_model::fswap_closed(e, x, y);
+    crate::fclose::fclose_closed(k, c, e);
 }
 
 /// RULE PROJIOTA'S PARAMETER PREMISES UNDER CLOSING A LOCAL.

@@ -544,8 +544,8 @@ proof fn sdoms_rebuilt(tw: crate::ti_syntax::Sig, r: int, e: ExprSpec, t0: ExprS
         assert(n == xs.len());
         assert(crate::rec_canon::tdoms(ty, n) == xs);
         crate::dom_rel::lpad_id(us, lps.len());
-        assert forall|q: int| 0 <= q < a.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies
-            crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
+        assert forall|q: int| 0 <= q < a.len() && q < sh.np implies
+            crate::rec_canon::pdom_ok(sh.pdoms[q]) && crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(tw, j, crate::dom_rel::iinst(tw, j, e), q))) by {
             crate::ti_spine::tel_next(dsu, bu, a, q);
             assert(xs[q] == sh.pdoms[q]);
@@ -1168,8 +1168,8 @@ proof fn pdoms_rebuilt(tw: crate::ti_syntax::Sig, r: int, dl: crate::ti_syntax::
         assert(n == xs.len());
         assert(crate::rec_canon::tdoms(ty, n) == xs);
         crate::dom_rel::lpad_id(us, lps.len());
-        assert forall|q: int| 0 <= q < a.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) implies
-            crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
+        assert forall|q: int| 0 <= q < a.len() && q < sh.np implies
+            crate::rec_canon::pdom_ok(sh.pdoms[q]) && crate::ti_syntax::derivable(crate::ti_strip::strip_below(tw, r), crate::ti_syntax::eq(dl, #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(tw, j, crate::dom_rel::iinst(tw, j, e), q))) by {
             crate::ti_spine::tel_next(dsu, bu, a, q);
             assert(xs[q] == sh.pdoms[q]);

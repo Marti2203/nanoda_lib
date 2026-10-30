@@ -831,22 +831,31 @@ pub proof fn iota_major_len(sig: Sig, m: ExprSpec)
     assert(sig.ienv.ctor_np[cid] as nat == sh.np);
 }
 
-/// Iota's parameter premises are at sorts: the recursor fragment's
-/// parameters are type parameters.
+/// Iota's parameter premises are at closed types: the recursor fragment's
+/// parameters have closed domains.
 pub proof fn iota_pdoms(sig: Sig, m: ExprSpec)
     requires
         iota_ok(sig),
         sig.ienv.recs.contains_key(crate::beta_model::spine_head(m)->Const_0),
     ensures ({
         let rid = crate::beta_model::spine_head(m)->Const_0;
-        crate::dom_rec_end::rec_interp(sig, rid) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> crate::rec_canon::pdom_ok(#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q])
+        crate::dom_rec_end::rec_interp(sig, rid) ==> forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params ==> crate::rec_canon::pdom_adm(#[trigger] crate::dom_rec_ty::rshape(sig, rid).pdoms[q])
     }),
 {
-    crate::ti_syntax::frag_of(sig, crate::beta_model::spine_head(m)->Const_0);
+    let rid = crate::beta_model::spine_head(m)->Const_0;
+    crate::ti_syntax::frag_of(sig, rid);
+    if crate::dom_rec_end::rec_interp(sig, rid) {
+        assert(crate::dom_rec_end::rec_frag_l(sig, rid));
+        let sh = crate::dom_rec_ty::rshape(sig, rid);
+        assert(sh.np == sig.ienv.recs[rid].num_params);
+        assert forall|q: int| 0 <= q < sig.ienv.recs[rid].num_params implies crate::rec_canon::pdom_adm(#[trigger] sh.pdoms[q]) by {
+            assert(0 <= q < sh.np);
+        }
+    }
 }
 
-/// Iota's premise types: the declared parameter sorts at the recursor's
-/// instance, which is the inductive's instance there.
+/// Iota's premise types: the declared parameter domains at the recursor's
+/// instance, which is the inductive's instance there, closed.
 pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     requires
         iota_ok(sig),
@@ -858,8 +867,11 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
         let lv = crate::beta_model::spine_head(m)->Const_1;
         let sh = crate::dom_rec_ty::rshape(sig, rid);
         let pd = sh.pdoms[q];
-        &&& crate::rec_canon::pdom_ok(pd)
-        &&& crate::rec_canon::pdom_ok(crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv))
+        &&& crate::rec_canon::pdom_adm(pd)
+        &&& crate::rec_canon::pdom_cl(pd) ==> crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv) == pd
+        &&& crate::expr_model::nlbv(pd) == 0 && !crate::expr_model::has_fv(pd)
+        &&& crate::expr_model::nlbv(crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv)) == 0
+        &&& !crate::expr_model::has_fv(crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv))
         &&& crate::expr_model::subst_expr_levels(pd, sig.ienv.recs[rid].uparams, lv)
             == crate::expr_model::subst_expr_levels(pd, sh.lps, crate::dom_rec_ty::rinst(sig, rid, lv))
         &&& crate::level_inst::elp_in(pd, sig.ienv.recs[rid].uparams)
@@ -874,7 +886,16 @@ pub proof fn iota_pdom_id(sig: Sig, m: ExprSpec, q: int)
     crate::dom_rec_ty::rinst_id(sig, rid, lv, pd);
     crate::dom_rec_ty::rec_lps_sub(sig, rid);
     crate::dom_levels::elp_mono(pd, sh.lps, sig.ienv.recs[rid].uparams);
-    crate::rec_canon::pdom_facts(pd, sig.ienv.recs[rid].uparams, lv);
+    if crate::rec_canon::pdom_ok(pd) {
+        crate::rec_canon::pdom_ok_cl(pd);
+    } else {
+        crate::level_inst::expr_closed(pd, sig.ienv.recs[rid].uparams, lv);
+    }
+    crate::ti_level::ls_nlbv(pd, sig.ienv.recs[rid].uparams, lv);
+    crate::ti_locals::sel_no_fv(pd, sig.ienv.recs[rid].uparams, lv);
+    if crate::rec_canon::pdom_cl(pd) {
+        crate::level_inst::expr_closed(pd, sig.ienv.recs[rid].uparams, lv);
+    }
 }
 
 /// A derivation is valid: every rule instance is correct.

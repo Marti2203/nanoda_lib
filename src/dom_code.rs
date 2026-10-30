@@ -398,8 +398,8 @@ pub open spec fn sdoms_typed(sig: Sig, r: int, e: ExprSpec) -> bool {
     let (h, a) = (spine_head(e), spine_args(e));
     let sh = canon_shape(sig, h->Const_0);
     h is Const && has_canon(sig, h->Const_0) ==>
-        forall|q: int| 0 <= q < a.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
-            ==> crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
+        forall|q: int| 0 <= q < a.len() && q < sh.np
+            ==> crate::rec_canon::pdom_ok(sh.pdoms[q]) && crate::ti_syntax::derivable(crate::ti_strip::strip_below(sig, r), crate::ti_syntax::eq(Seq::empty(), #[trigger] a[q], a[q],
                 crate::dom_rel::ptype(sig, h->Const_0, crate::dom_rel::iinst(sig, h->Const_0, e), q)))
 }
 

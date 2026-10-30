@@ -648,7 +648,6 @@ pub proof fn pjs_psub(sig: crate::ti_syntax::Sig, g: crate::ti_syntax::Ctx, g2: 
         let pi = crate::expr_model::subst_expr_levels(pdoms[q], rd.uparams, spine_head(m)->Const_1);
         assert(spine_head(psub(m, t)) == spine_head(m));
         assert(pj[q] == crate::ti_syntax::eq(g, args[q], cargs[q], pi));
-        crate::rec_canon::pdom_facts(pi, Seq::empty(), Seq::empty());
         psub_closed(pi, t);
         assert(spine_args(psub(m, t))[q] == psub(args[q], t));
         assert(spine_args(psub(major, t))[q] == psub(cargs[q], t));

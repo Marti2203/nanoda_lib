@@ -165,7 +165,7 @@ pub proof fn eta_facts(sig: Sig, rid: u64, lv: Seq<LevelSpec>, a0: Seq<ExprSpec>
         &&& sh.lps == sig.consts[sh.ind].lps
         &&& rinst(sig, rid, lv).len() == sig.consts[sh.ind].lps.len()
         &&& crate::dom_code::prop_ok(sig, sh.ind)
-        &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_ok(#[trigger] sh.pdoms[q])
+        &&& forall|q: int| 0 <= q < sh.np ==> crate::rec_canon::pdom_adm(#[trigger] sh.pdoms[q])
         &&& crate::dom_levels::lps_distinct(sig.consts[sh.ind].lps)
         &&& crate::dom_code::pdoms_alias(sig, sh.ind)
         &&& sh.pdoms.len() == sh.np
@@ -309,9 +309,8 @@ pub proof fn eta_proj_typed(sig: Sig, g: Ctx, rid: u64, lv: Seq<LevelSpec>, a0: 
         let ps = a0.subrange(0, np as int);
         assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] ps[q], ps[q],
             crate::dom_rel::ptype(sig, sh.ind, us, q))) by {
-            crate::iota_sr::ptype_at(sig, rid, us, q);
-            let lq = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(sh.pdoms[q]), sig.consts[sh.ind].lps, us);
-            crate::ti_spine::vsub_closed(sort(lq), a0.subrange(0, q));
+            crate::iota_sr::ptype_closed(sig, rid, us, q);
+            crate::ti_spine::vsub_closed(crate::dom_rel::ptype(sig, sh.ind, us, q), a0.subrange(0, q));
         }
         crate::dom_adeq_proj::sfield_conv(sig, g, sh.ind, k as nat, us, us, ps, ps, pj, pj)
     };

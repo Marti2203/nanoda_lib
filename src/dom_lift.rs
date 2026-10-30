@@ -54,7 +54,7 @@ pub proof fn former_args_typed(sig: Sig, g: Ctx, j: u64, us: Seq<LevelSpec>, xs:
         xs.len() <= canon_shape(sig, j).np + canon_shape(sig, j).ni,
         derivable(sig, eq(g, spine_app(ExprSpec::Const(j, us), xs), spine_app(ExprSpec::Const(j, us), xs), th)),
     ensures
-        forall|q: int| 0 <= q < xs.len() && q < canon_shape(sig, j).np && crate::rec_canon::pdom_ok(canon_shape(sig, j).pdoms[q])
+        forall|q: int| 0 <= q < xs.len() && q < canon_shape(sig, j).np && crate::rec_canon::pdom_adm(canon_shape(sig, j).pdoms[q])
             ==> derivable(sig, eq(g, #[trigger] xs[q], xs[q], crate::dom_rel::ptype(sig, j, us, q))),
 {
     let sh = canon_shape(sig, j);
@@ -73,16 +73,23 @@ pub proof fn former_args_typed(sig: Sig, g: Ctx, j: u64, us: Seq<LevelSpec>, xs:
         crate::ti_spine::tel_next(ds, b, xs, i);
     }
     crate::ti_spine::spine_ty(sig, g, h, tr, xs, th);
-    assert forall|q: int| 0 <= q < xs.len() && q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
+    assert forall|q: int| 0 <= q < xs.len() && q < sh.np && crate::rec_canon::pdom_adm(sh.pdoms[q])
         implies derivable(sig, eq(g, #[trigger] xs[q], xs[q], crate::dom_rel::ptype(sig, j, us, q))) by {
         crate::ti_spine::tel_next(ds, b, xs, q);
         assert(ds[q] == crate::expr_model::subst_expr_levels((sh.pdoms + sh.idoms)[q], lps, us));
         assert(ds[q] == crate::dom_rel::praw(sig, j, us, q));
-        crate::rec_canon::pdom_facts(sh.pdoms[q], lps, us);
-        crate::ti_spine::vsub_closed(ds[q], xs.subrange(0, q));
-        assert(derivable(sig, eq(g, xs[q], xs[q], crate::ti_spine::sdom(tr, xs, q))));
-        eq_ctx_wf(sig, g, xs[q], xs[q], ds[q]);
-        crate::dom_adeq_syn::ptype_conv(sig, g, j, us, q, xs[q], xs[q]);
+        if crate::rec_canon::pdom_ok(sh.pdoms[q]) {
+            crate::rec_canon::pdom_facts(sh.pdoms[q], lps, us);
+            crate::ti_spine::vsub_closed(ds[q], xs.subrange(0, q));
+            assert(derivable(sig, eq(g, xs[q], xs[q], crate::ti_spine::sdom(tr, xs, q))));
+            eq_ctx_wf(sig, g, xs[q], xs[q], ds[q]);
+            crate::dom_adeq_syn::ptype_conv(sig, g, j, us, q, xs[q], xs[q]);
+        } else {
+            // a value parameter's closed domain is its own type
+            crate::level_inst::expr_closed(sh.pdoms[q], lps, us);
+            crate::ti_spine::vsub_closed(ds[q], xs.subrange(0, q));
+            assert(derivable(sig, eq(g, xs[q], xs[q], crate::ti_spine::sdom(tr, xs, q))));
+        }
     }
 }
 
@@ -153,6 +160,80 @@ pub open spec fn tbl_canon(sig: Sig, j: u64, pv: Seq<Cpt>, a: Cpt) -> bool {
         ==> tbl(a->Nd_1)[p]->Nd_1.len() == canon_shape(sig, j).fields[p].len()
     &&& forall|p: int, k: int| 0 <= p < tbl(a->Nd_1).len() && tbl(a->Nd_1)[p] is Nd && 0 <= k < tbl(a->Nd_1)[p]->Nd_1.len()
         ==> #[trigger] entry_canon(sig, j, pv, p, k, tbl(a->Nd_1)[p]->Nd_1[k])
+}
+
+/// Two parameter vectors that agree on the type parameters.
+pub open spec fn pagree(pdoms: Seq<ExprSpec>, np: nat, pv1: Seq<Cpt>, pv2: Seq<Cpt>) -> bool {
+    &&& pv1.len() >= np && pv2.len() >= np
+    &&& forall|q: int| 0 <= q < np && crate::rec_canon::pdom_ok(#[trigger] pdoms[q]) ==> pv1[q] == pv2[q]
+}
+
+/// A simple type over the parameters reads only the type parameters' codes
+/// (a value parameter's variable is not a simple type).
+pub proof fn ceval_pmask(sig: Sig, r: int, outer: u64, ls: Seq<LevelSpec>, ind: u64, pdoms: Seq<ExprSpec>, np: nat, k: nat,
+    pv1: Seq<Cpt>, pv2: Seq<Cpt>, e: ExprSpec)
+    requires
+        crate::rec_canon::psimple(sig, ind, pdoms, np, k, e) || crate::rec_canon::psapp(sig, ind, pdoms, np, k, e),
+        pagree(pdoms, np, pv1, pv2),
+    ensures
+        crate::dom_code::ceval(sig, r, outer, ls, crate::dom_code::fpe(pv1, np, k), e)
+            == crate::dom_code::ceval(sig, r, outer, ls, crate::dom_code::fpe(pv2, np, k), e),
+        crate::dom_code::cargs(sig, r, outer, ls, crate::dom_code::fpe(pv1, np, k), e)
+            == crate::dom_code::cargs(sig, r, outer, ls, crate::dom_code::fpe(pv2, np, k), e),
+    decreases e,
+{
+    let (pe1, pe2) = (crate::dom_code::fpe(pv1, np, k), crate::dom_code::fpe(pv2, np, k));
+    match e {
+        ExprSpec::Var(i) => {
+            let q = (k + np - 1 - i) as int;
+            assert(pe1.len() == np + k && pe2.len() == np + k);
+            assert(pe1[q] == pv1[q] && pe2[q] == pv2[q]);
+            assert(crate::rec_canon::pdom_ok(pdoms[q]));
+        },
+        ExprSpec::Bind(_, a, b) => {
+            ceval_pmask(sig, r, outer, ls, ind, pdoms, np, k, pv1, pv2, *a);
+            ceval_pmask(sig, r, outer, ls, ind, pdoms, np, k + 1, pv1, pv2, *b);
+            assert(pe1.push(Cpt::Bot) =~= crate::dom_code::fpe(pv1, np, k + 1));
+            assert(pe2.push(Cpt::Bot) =~= crate::dom_code::fpe(pv2, np, k + 1));
+        },
+        ExprSpec::App(f, x) => {
+            ceval_pmask(sig, r, outer, ls, ind, pdoms, np, k, pv1, pv2, *f);
+            ceval_pmask(sig, r, outer, ls, ind, pdoms, np, k, pv1, pv2, *x);
+            assert(crate::dom_code::cargs(sig, r, outer, ls, pe1, e) == crate::dom_code::cargs(sig, r, outer, ls, pe2, e));
+        },
+        _ => {
+            // a constant or a sort: no arguments to read
+            assert(crate::dom_code::cargs(sig, r, outer, ls, pe1, e) == crate::dom_code::cargs(sig, r, outer, ls, pe2, e));
+        },
+    }
+}
+
+/// The canonical table at `pv1` is the one at any `pv2` that agrees on the
+/// type parameters: only simple types' codes are bounded by it.
+pub proof fn tbl_pmask(sig: Sig, j: u64, pv1: Seq<Cpt>, pv2: Seq<Cpt>, a: Cpt)
+    requires
+        tbl_canon(sig, j, pv1, a),
+        pagree(canon_shape(sig, j).pdoms, canon_shape(sig, j).np, pv1, pv2),
+    ensures
+        tbl_canon(sig, j, pv2, a),
+{
+    let sh = canon_shape(sig, j);
+    assert forall|p: int, k: int| 0 <= p < tbl(a->Nd_1).len() && tbl(a->Nd_1)[p] is Nd && 0 <= k < tbl(a->Nd_1)[p]->Nd_1.len()
+        implies #[trigger] entry_canon(sig, j, pv2, p, k, tbl(a->Nd_1)[p]->Nd_1[k]) by {
+        let e = tbl(a->Nd_1)[p]->Nd_1[k];
+        assert(entry_canon(sig, j, pv1, p, k, e));
+        if is_centry(e) {
+            crate::dom_canon::canon_fields(sig, j, p, k);
+            let fe = sh.fields[p][k];
+            if crate::rec_canon::simple_ty(sig, j, fe) {
+                crate::dom_code::ceval_closed(sig, rk(sig, j), j, Seq::empty(),
+                    crate::dom_code::fpe(pv1, sh.np, k as nat), crate::dom_code::fpe(pv2, sh.np, k as nat), j, fe);
+            } else {
+                ceval_pmask(sig, rk(sig, j), j, Seq::empty(), j, sh.pdoms, sh.np, k as nat, pv1, pv2, fe);
+            }
+            assert(cf(sig, j, pv1, p, k) == cf(sig, j, pv2, p, k));
+        }
+    }
 }
 
 /// THE PARAMETERS' RELATION: at every typed code below a type parameter's
@@ -509,7 +590,7 @@ pub proof fn closed_rel(sig: Sig, n: nat, g: Ctx, j: u64, r: ExprSpec, c: Cpt)
         // fully applied and typed: its parameters are equal to themselves
         crate::dom_ctor_bound::ctor_shape_ind(sig, kk);
         crate::dom_rec_shape::tarity_binds(sk.pdoms + sk.idoms, crate::rec_canon::tbody(sig.consts[kk].ty, sk.np + sk.ni));
-        assert forall|q: int| 0 <= q < sk.np && crate::rec_canon::pdom_ok(sk.pdoms[q])
+        assert forall|q: int| 0 <= q < sk.np && crate::rec_canon::pdom_adm(sk.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, kk, crate::dom_rel::iinst(sig, kk, r), q, spine_args(r)[q], spine_args(r)[q]) by {
             let x = spine_args(r)[q];
             let pt = crate::dom_rel::ptype(sig, kk, crate::dom_rel::iinst(sig, kk, r), q);
@@ -954,7 +1035,7 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
         crate::dom_levels::lpad_sl(us, nk, ks, ls);
         assert(i1 == crate::level_model::subst_levels_spec(i0, ks, ls));
         // the type parameters
-        assert forall|q: int| 0 <= q < sk.np && crate::rec_canon::pdom_ok(sk.pdoms[q])
+        assert forall|q: int| 0 <= q < sk.np && crate::rec_canon::pdom_adm(sk.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, kk, i1, q, spine_args(x)[q], spine_args(x2)[q]) by {
             let ai = spine_args(e)[q];
             let (y, y2) = (crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls), a), crate::ti_spine::vsub(crate::expr_model::subst_expr_levels(ai, sig.consts[j].lps, ls2), a2));
@@ -965,6 +1046,8 @@ pub proof fn ps_pconv(sig: Sig, g: Ctx, j: u64, ls: Seq<LevelSpec>, ls2: Seq<Lev
             crate::ti_chain::tchain_one(sig, g, y, y2);
             let pt0 = crate::dom_rel::ptype(sig, kk, i0, q);
             let pq0 = sk.pdoms[q];
+            // a simple type's head takes types only
+            assert(crate::rec_canon::pdom_ok(pq0) && q < spine_args(e).len());
             let lq = crate::rec_canon::pdom_lvl(pq0);
             crate::dom_levels::pdoms_elp(sig, kk, q);
             assert(crate::level_inst::lp_in(lq, sig.consts[kk].lps)) by {
@@ -1624,7 +1707,7 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
         let ii = crate::dom_rel::iinst(sig, kk, r);
         let i1 = crate::dom_rel::iinst(sig, kk, r1);
         crate::dom_levels::lpad_sl(us, nk, ks, ls1);
-        assert forall|q: int| 0 <= q < sk.np && crate::rec_canon::pdom_ok(sk.pdoms[q])
+        assert forall|q: int| 0 <= q < sk.np && crate::rec_canon::pdom_adm(sk.pdoms[q])
             implies #[trigger] crate::dom_rel::peq(sig, g, kk, i1, q, spine_args(r1)[q], spine_args(r2)[q]) by {
             let a = spine_args(r)[q];
             assert(styped(sig, rk(sig, j), a));
@@ -1633,6 +1716,8 @@ pub proof fn closed_pconv(sig: Sig, g: Ctx, j: u64, r: ExprSpec, ls1: Seq<LevelS
             crate::dom_levels::closed_conv(sig, rk(sig, j), g, a, la, ks, ls1, ls2);
             let pd = sk.pdoms[q];
             let pt = crate::dom_rel::ptype(sig, kk, ii, q);
+            // a simple type's head takes types only
+            assert(crate::rec_canon::pdom_ok(pd) && q < spine_args(r).len());
             assert(derivable(crate::ti_strip::strip_below(sig, rk(sig, j)), eq(Seq::empty(), a, a, pt)));
             crate::dom_levels::sig_lps_below(sig, rk(sig, j), ks, ls1);
             crate::dom_levels::sig_lps_below(sig, rk(sig, j), ks, ls2);

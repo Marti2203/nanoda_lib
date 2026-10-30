@@ -2705,6 +2705,37 @@ blocks or axioms too gains nothing more). String literals stay out.
   `crank_bound` accepts a literal when both numeral constructors are
   ranked below.
 
+**Slice: value parameters (2026-10-30).** An inductive's parameter may be
+a value, not a type, when its domain is closed and level-free
+(`rec_canon::pdom_cl`; `OfNat`'s `n : Nat`): Core by dependency closure
+1053 -> 1101 (`target/work/coverage/abl_valparams.py`). A domain that
+mentions earlier parameters or levels stays out (+28 more, open).
+- the gates: `kclaims::rec_small`, `dom_rec_end::rec_frag_l` and
+  `iota_sr::sr_ok` ask each parameter `rec_canon::pdom_adm` (a sort or sort
+  alias, `pdom_ok`, or `pdom_cl`). Relaxations only: no new hypothesis.
+  The structure clause (`ti_syntax`: a field that is not a parameter
+  needs every parameter a sort) and simple types' heads (`pdoms_typed`,
+  `sdoms_typed`: a former applied in a field's type takes types only) stay.
+- the relation: `dom_rel::peq` asks a value parameter only the equation
+  at its type (`ptype` is the closed domain itself; no conversion chain);
+  `cpar`, `pconv` and `tf_pconv` relate every admissible parameter.
+  Masking value arguments out of the canonical codes was rejected: iota
+  needs injectivity to recover them; a chain clause in `cpar` was
+  rejected too (its typing goes through subject reduction, circular
+  inside adequacy).
+- the model: no field's type reads a value parameter (a parameter
+  variable in a field is a sort's, `pvar_field`), so a value parameter's
+  code is irrelevant to the canonical table (`dom_lift::ceval_pmask`,
+  `tbl_pmask`). The recursor's context keeps the type parameters' codes
+  (`dom_rec_end::Rc::pv`: bottom at a value parameter), which makes every
+  per-parameter transfer fact (`ptr_at`, `pself_ok`) vacuous there; the
+  bounds the walk computes from the raw codes move over by `pv_tbl` and
+  `fdb_pmask`.
+- the telescopes: a value parameter's domain at any level instance is
+  itself (`level_inst::expr_closed`); `head_vdom` / `head_par_eq`,
+  `ptype_lv`, `praw_closed`, `ptype_closed` give its typing in the
+  recursor's and constructor's telescopes.
+
 ### The conditional theorem (started 2026-10-12)
 
 Goal: the end-to-end theorem for EVERY export, conditional on named

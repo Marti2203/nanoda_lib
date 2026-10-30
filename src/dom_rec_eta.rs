@@ -128,9 +128,8 @@ pub proof fn side_red(sig: Sig, g: Ctx, c: u64, ls: Seq<LevelSpec>, xs: Seq<Expr
     crate::ti_ls2::levs_eq_refl(us);
     assert forall|q: int| 0 <= q < np implies derivable(sig, eq(g, #[trigger] xs[q], s_pargs(sig, c, ls, xs)[q],
         crate::dom_rel::ptype(sig, sh.ind, us, q))) by {
-        crate::iota_sr::ptype_at(sig, c, us, q);
-        let lq = crate::level_model::subst_level_spec(crate::rec_canon::pdom_lvl(sh.pdoms[q]), sig.consts[sh.ind].lps, us);
-        crate::ti_spine::vsub_closed(sort(lq), xs.subrange(0, q));
+        crate::iota_sr::ptype_closed(sig, c, us, q);
+        crate::ti_spine::vsub_closed(crate::dom_rel::ptype(sig, sh.ind, us, q), xs.subrange(0, q));
     }
 }
 
@@ -482,8 +481,9 @@ pub proof fn par_conv(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelS
     requires
         crate::dom_rec_end::rec_hyps(sig, c),
         crate::dom_rec_adeq::rf_inv(sig, nn, n, g, c, sm, ls, ls2, 0, xs, xs2, a, ds, fs, u),
-        forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, c).pdoms[q]),
+        forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_adm(#[trigger] rshape(sig, c).pdoms[q]),
         0 <= q < rshape(sig, c).np,
+        crate::rec_canon::pdom_ok(rshape(sig, c).pdoms[q]),
         q < xs.len(),
     ensures
         crate::ti_chain::tchain(sig, g, xs[q], xs2[q]),
@@ -648,7 +648,7 @@ pub proof fn side_tys(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelS
     assert forall|q: int| 0 <= q < np implies #[trigger] derivable(sig, eq(g, xs[q], xs[q],
         crate::ti_spine::vsub(crate::dom_rel::ptype(sig, ind, us, q), xs.subrange(0, q)))) by {
         assert(crate::dom_con_rel::fld_ok(sig, nn, g, t0, t02, xs, xs2, ds, fs, 0, q));
-        crate::dom_rec_minor::head_pdom_eq(sig, c, ls, xs, q, g, xs[q], xs2[q]);
+        crate::dom_rec_minor::head_par_eq(sig, c, ls, xs, q, g, xs[q], xs2[q]);
         crate::ti_spine::vsub_closed(crate::dom_rel::ptype(sig, ind, us, q), xs.subrange(0, q));
         crate::dom_psimple::der_diag(sig, g, xs[q], xs2[q], crate::dom_rel::ptype(sig, ind, us, q));
     }
@@ -658,7 +658,7 @@ pub proof fn side_tys(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<LevelS
         let (td, td2) = (tel_dom_of(sig, c, ls, xs, q), tel_dom_of(sig, c, ls2, xs2, q));
         crate::dom_psimple::der_diag(sig, g, xs[q], xs2[q], td);
         crate::ti_chain::conv_chain(sig, g, xs2[q], xs2[q], td, td2);
-        crate::dom_rec_minor::head_pdom_eq(sig, c, ls2, xs2, q, g, xs2[q], xs2[q]);
+        crate::dom_rec_minor::head_par_eq(sig, c, ls2, xs2, q, g, xs2[q], xs2[q]);
         crate::ti_spine::vsub_closed(crate::dom_rel::ptype(sig, ind, us2, q), xs2.subrange(0, q));
     }
 }
@@ -833,7 +833,7 @@ pub proof fn pargs_at_cl(sig: Sig, rc0: crate::dom_rec_end::Rc)
         crate::dom_psimple::der_diag(sig, g, rc0.xs[q], rc0.pargs[q], pt);
         crate::ti_chain::tchain_refl(sig, g, rc0.pargs[q]);
         assert(crate::dom_rel::peq(sig, g, sh.ind, ri, q, rc0.pargs[q], rc0.pargs[q]));
-        assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
+        assert(crate::rec_canon::pdom_adm(sh.pdoms[q]));
         crate::dom_rel::peq_lv(sig, g, sh.ind, ri, rc0.cl, q, rc0.pargs[q], rc0.pargs[q]);
     }
     assert forall|q: int| 0 <= q < sh.np implies derivable(sig, eq(g, #[trigger] rc0.pargs2[q], rc0.pargs2[q],
@@ -843,7 +843,7 @@ pub proof fn pargs_at_cl(sig: Sig, rc0: crate::dom_rec_end::Rc)
         crate::dom_psimple::der_diag(sig, g, rc0.xs2[q], rc0.pargs2[q], pt);
         crate::ti_chain::tchain_refl(sig, g, rc0.pargs2[q]);
         assert(crate::dom_rel::peq(sig, g, sh.ind, ri2, q, rc0.pargs2[q], rc0.pargs2[q]));
-        assert(crate::rec_canon::pdom_ok(sh.pdoms[q]));
+        assert(crate::rec_canon::pdom_adm(sh.pdoms[q]));
         crate::dom_rel::peq_lv(sig, g, sh.ind, ri2, rc0.cl2, q, rc0.pargs2[q], rc0.pargs2[q]);
     }
 }
@@ -1022,7 +1022,7 @@ pub proof fn bot_sides(sig: Sig, nn: nat, n: nat, g: Ctx, c: u64, sm: (Seq<Level
         &&& side_ok(sig, g, c, ls, xs, crate::dom_con_rel::trest(t0, xs))
         &&& side_ok(sig, g, c, ls2, xs2, crate::dom_con_rel::trest(t02, xs2))
         &&& rshape(sig, c).nmin() == 1
-        &&& forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, c).pdoms[q])
+        &&& forall|q: int| 0 <= q < rshape(sig, c).np ==> crate::rec_canon::pdom_adm(#[trigger] rshape(sig, c).pdoms[q])
         &&& xs.last() == xs[(rshape(sig, c).np + 2) as int] && xs2.last() == xs2[(rshape(sig, c).np + 2) as int]
     }),
 {

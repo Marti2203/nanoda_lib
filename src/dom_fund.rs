@@ -576,7 +576,7 @@ pub proof fn ind_inj_chain(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, xs: S
     if ch.len() == 1 {
         let sh = crate::dom_code::canon_shape(sig, ind);
         crate::dom_lift::former_args_typed(sig, g, ind, ls, xs, th);
-        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q])
+        assert forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_adm(sh.pdoms[q])
             implies #[trigger] peq(sig, g, ind, crate::dom_rel::iinst(sig, ind, t), q, crate::beta_model::spine_args(t)[q], crate::beta_model::spine_args(t)[q]) by {
             crate::ti_chain::tchain_refl(sig, g, crate::beta_model::spine_args(t)[q]);
             crate::dom_rel::lpad_id(ls, sig.consts[ind].lps.len());
@@ -725,7 +725,7 @@ pub proof fn ind_inj_args(sig: Sig, g: Ctx, ind: u64, ls: Seq<LevelSpec>, ls2: S
     ensures
         ys.len() >= crate::dom_code::canon_shape(sig, ind).np,
         crate::conv_cr::levs_eq(ls, crate::dom_rel::lpad(ls2, sig.consts[ind].lps.len())),
-        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q])
+        forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np && crate::rec_canon::pdom_adm(crate::dom_code::canon_shape(sig, ind).pdoms[q])
             ==> #[trigger] peq(sig, g, ind, ls, q, xs[q], ys[q]),
         ys.len() == xs.len(),
         forall|q: int| 0 <= q < xs.len() && (q < crate::dom_code::canon_shape(sig, ind).np || !crate::dom_code::never_prop(sig, ind))

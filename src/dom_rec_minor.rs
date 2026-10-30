@@ -226,8 +226,8 @@ pub proof fn field_vsub_pre(sig: Sig, rid: u64, p: int, k: int, us: Seq<LevelSpe
 pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
-        forall|q: int| 0 <= q < rshape(sig, rid).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, rid).pdoms[q]),
         0 <= q < rshape(sig, rid).np,
+        crate::rec_canon::pdom_ok(rshape(sig, rid).pdoms[q]),
         q <= xs.len(),
         crate::dom_code::pdoms_alias(sig, rshape(sig, rid).ind),
     ensures
@@ -263,14 +263,78 @@ pub proof fn head_pdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>
     crate::dom_adeq_syn::pdom_hred(sig, pr);
 }
 
+/// A value parameter's declared domain in the recursor's telescope: its
+/// closed, level-free type, which is also its `ptype`.
+pub proof fn head_vdom(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        0 <= q < rshape(sig, rid).np,
+        crate::rec_canon::pdom_cl(rshape(sig, rid).pdoms[q]),
+        !crate::rec_canon::pdom_ok(rshape(sig, rid).pdoms[q]),
+        q <= xs.len(),
+    ensures
+        crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat)
+            == crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q),
+        crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q)
+            == crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q),
+        crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q) == rshape(sig, rid).pdoms[q],
+{
+    let sh = rshape(sig, rid);
+    let rd = sig.ienv.recs[rid];
+    let lm = crate::rec_canon::elim_level(sig, rid, crate::rec_canon::rec_ind(sig, rid));
+    crate::dom_iota::major_form(sig, rid, lv);
+    crate::dom_ctor_bound::ctor_shape_ind(sig, sh.ind);
+    assert(sh.pdoms.len() == sh.np);
+    let major = crate::rec_canon::ind_app(sh.ind, sh.us(), crate::rec_canon::vars(1 + sh.nmin(), sh.np));
+    assert((sh.head_doms(lm) + seq![major])[q] == sh.pdoms[q]);
+    rec_dom(sig, rid, lv, xs, q);
+    crate::dom_rec_ty::scope_ctor_ind(sig, rid);
+    crate::dom_rec_ty::rec_lps_sub(sig, rid);
+    crate::dom_levels::elp_mono(sh.pdoms[q], Seq::empty(), sh.lps);
+    crate::dom_rec_ty::rinst_id(sig, rid, lv, sh.pdoms[q]);
+    let us = crate::dom_rec_ty::rinst(sig, rid, lv);
+    let pr = crate::dom_rel::praw(sig, sh.ind, us, q);
+    assert(rtds(sig, rid, lv)[q] == pr);
+    crate::level_inst::expr_closed(sh.pdoms[q], sig.consts[sh.ind].lps, us);
+    crate::ti_spine::vsub_closed(pr, xs.subrange(0, q));
+}
+
+/// `head_pdom_eq` for any admissible parameter: at a value parameter the
+/// telescope's domain is the closed type itself (`head_vdom`).
+pub proof fn head_par_eq(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int, g: crate::ti_syntax::Ctx, x: ExprSpec, y: ExprSpec)
+    requires
+        crate::dom_rec_ty::rec_scope(sig, rid),
+        crate::dom_rec_end::sig_rec(sig),
+        0 <= q < rshape(sig, rid).np,
+        crate::rec_canon::pdom_adm(rshape(sig, rid).pdoms[q]),
+        q <= xs.len(),
+        crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat)))
+            || crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y,
+                crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q))),
+    ensures ({
+        let td = crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat);
+        let pt = crate::dom_rel::ptype(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q);
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, td))
+        &&& crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, pt))
+        &&& crate::expr_model::nlbv(pt) == 0
+        &&& td == crate::dom_rel::praw(sig, rshape(sig, rid).ind, crate::dom_rec_ty::rinst(sig, rid, lv), q)
+    }),
+{
+    if crate::rec_canon::pdom_ok(rshape(sig, rid).pdoms[q]) {
+        head_pdom_eq(sig, rid, lv, xs, q, g, x, y);
+    } else {
+        head_vdom(sig, rid, lv, xs, q);
+    }
+}
+
 /// `head_pdom` in a recursor's signature, with a typing at the
 /// telescope's domain moved to the parameter's sort and back.
 pub proof fn head_pdom_eq(sig: Sig, rid: u64, lv: Seq<LevelSpec>, xs: Seq<ExprSpec>, q: int, g: crate::ti_syntax::Ctx, x: ExprSpec, y: ExprSpec)
     requires
         crate::dom_rec_ty::rec_scope(sig, rid),
         crate::dom_rec_end::sig_rec(sig),
-        forall|q: int| 0 <= q < rshape(sig, rid).np ==> crate::rec_canon::pdom_ok(#[trigger] rshape(sig, rid).pdoms[q]),
         0 <= q < rshape(sig, rid).np,
+        crate::rec_canon::pdom_ok(rshape(sig, rid).pdoms[q]),
         q <= xs.len(),
         crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y, crate::dom_rel::tel_dom(crate::ti_syntax::dty_at(sig, rid, lv), xs, q as nat)))
             || crate::ti_syntax::derivable(sig, crate::ti_syntax::eq(g, x, y,

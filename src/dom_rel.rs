@@ -167,10 +167,11 @@ pub open spec fn praw(sig: Sig, ind: u64, ls: Seq<crate::level_model::LevelSpec>
     crate::expr_model::subst_expr_levels(crate::dom_code::canon_shape(sig, ind).pdoms[q], sig.consts[ind].lps, ls)
 }
 
-/// Type parameter `q` of `ind` at `x` and `y`: they convert as types and
-/// are equal at the declared sort at the instance `ls`.
+/// Parameter `q` of `ind` at `x` and `y`: equal at its declared domain at
+/// the instance `ls` (a type parameter's sort, a value parameter's closed
+/// type), and a type parameter's convert as types.
 pub open spec fn peq(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::LevelSpec>, q: int, x: ExprSpec, y: ExprSpec) -> bool {
-    &&& tchain(sig, g, x, y)
+    &&& crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q]) ==> tchain(sig, g, x, y)
     &&& derivable(sig, eq(g, x, y, ptype(sig, ind, ls, q)))
 }
 
@@ -182,9 +183,11 @@ pub proof fn peq_symm(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::Le
         peq(sig, g, ind, ls, q, x, x),
         peq(sig, g, ind, ls, q, y, y),
 {
-    crate::ti_chain::tchain_sym(sig, g, x, y);
-    crate::ti_chain::tchain_refl(sig, g, x);
-    crate::ti_chain::tchain_refl(sig, g, y);
+    if crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q]) {
+        crate::ti_chain::tchain_sym(sig, g, x, y);
+        crate::ti_chain::tchain_refl(sig, g, x);
+        crate::ti_chain::tchain_refl(sig, g, y);
+    }
     crate::dom_adeq_syn::dsym(sig, g, x, y, ptype(sig, ind, ls, q));
     crate::dom_psimple::der_diag(sig, g, x, y, ptype(sig, ind, ls, q));
 }
@@ -196,30 +199,39 @@ pub proof fn peq_trans(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::L
     ensures
         peq(sig, g, ind, ls, q, x, z),
 {
-    crate::ti_chain::tchain_trans(sig, g, x, y, z);
+    if crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q]) {
+        crate::ti_chain::tchain_trans(sig, g, x, y, z);
+    }
     crate::dom_adeq_syn::dtrans(sig, g, x, y, z, ptype(sig, ind, ls, q));
 }
 
-/// At a level-equivalent instance (the declared sort a sort).
+/// At a level-equivalent instance (the declared sort a sort; a value
+/// parameter's domain level-free).
 pub proof fn peq_lv(sig: Sig, g: Ctx, ind: u64, ls: Seq<crate::level_model::LevelSpec>, ls2: Seq<crate::level_model::LevelSpec>,
     q: int, x: ExprSpec, y: ExprSpec)
     requires
         peq(sig, g, ind, ls, q, x, y),
         crate::conv_cr::levs_eq(ls, ls2),
         ls.len() == sig.consts[ind].lps.len(),
-        crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q]),
+        crate::rec_canon::pdom_adm(crate::dom_code::canon_shape(sig, ind).pdoms[q]),
     ensures
         peq(sig, g, ind, ls2, q, x, y),
 {
-    let l0 = crate::rec_canon::pdom_lvl(crate::dom_code::canon_shape(sig, ind).pdoms[q]);
+    let d = crate::dom_code::canon_shape(sig, ind).pdoms[q];
     let lps = sig.consts[ind].lps;
-    let (l1, l2) = (crate::level_model::subst_level_spec(l0, lps, ls), crate::level_model::subst_level_spec(l0, lps, ls2));
-    crate::ti_ls2::ll_pair(l0, l0, lps, ls, ls2);
-    crate::dom_levels::sort_retype2(sig, g, x, y, l2, l1);
+    if crate::rec_canon::pdom_ok(d) {
+        let l0 = crate::rec_canon::pdom_lvl(d);
+        let (l1, l2) = (crate::level_model::subst_level_spec(l0, lps, ls), crate::level_model::subst_level_spec(l0, lps, ls2));
+        crate::ti_ls2::ll_pair(l0, l0, lps, ls, ls2);
+        crate::dom_levels::sort_retype2(sig, g, x, y, l2, l1);
+    } else {
+        crate::level_inst::expr_closed(d, lps, ls);
+        crate::level_inst::expr_closed(d, lps, ls2);
+    }
 }
 
-/// THE CONSTRUCTOR'S TYPE PARAMETERS are the type's: a constructor
-/// application's type-parameter arguments equal those of the application
+/// THE CONSTRUCTOR'S PARAMETERS are the type's: a constructor
+/// application's admitted parameter arguments equal those of the application
 /// its type reduces to, and its levels, as many as the inductive's, are
 /// that application's.
 pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> bool {
@@ -227,7 +239,7 @@ pub open spec fn cpar(sig: Sig, g: Ctx, ind: u64, x: ExprSpec, t: ExprSpec) -> b
         &&& crate::beta_model::spine_head(x)->Const_1.len() == sig.consts[ind].lps.len()
             ==> crate::conv_cr::levs_eq(crate::beta_model::spine_head(x)->Const_1, iinst(sig, ind, ir(sig, t, ind)))
         &&& forall|q: int| 0 <= q < crate::dom_code::canon_shape(sig, ind).np
-            && crate::rec_canon::pdom_ok(crate::dom_code::canon_shape(sig, ind).pdoms[q])
+            && crate::rec_canon::pdom_adm(crate::dom_code::canon_shape(sig, ind).pdoms[q])
             ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, crate::beta_model::spine_args(x)[q], crate::beta_model::spine_args(ir(sig, t, ind))[q])
     }
 }
@@ -243,7 +255,7 @@ pub open spec fn pconv(sig: Sig, g: Ctx, ind: u64, t: ExprSpec, t2: ExprSpec) ->
     let (a, a2) = (crate::beta_model::spine_args(ir(sig, t, ind)), crate::beta_model::spine_args(ir(sig, t2, ind)));
     crate::dom_code::has_canon(sig, ind) ==> a.len() >= sh.np && a2.len() == a.len()
         && crate::conv_cr::levs_eq(iinst(sig, ind, ir(sig, t, ind)), iinst(sig, ind, ir(sig, t2, ind)))
-        && (forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_ok(sh.pdoms[q]) ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q]))
+        && (forall|q: int| 0 <= q < sh.np && crate::rec_canon::pdom_adm(sh.pdoms[q]) ==> #[trigger] peq(sig, g, ind, iinst(sig, ind, ir(sig, t, ind)), q, a[q], a2[q]))
         && forall|q: int| 0 <= q < a.len() && (q < sh.np || !crate::dom_code::never_prop(sig, ind))
             ==> #[trigger] crate::ti_chain::mchain(sig, g, a[q], a2[q])
 }
