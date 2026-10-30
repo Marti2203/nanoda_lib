@@ -1144,7 +1144,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     ///
     /// `[a, b, c], e` ~> `(fun (a b c) => e)`
 
-    /// Abstract `e` with the binders in `binders`, creating a lambda
+    /// Abstract `e` with the binders in `binders`, creating a pi 
     /// telescope while backing out.
     ///
     /// `[a, b, c], e` ~> `(Pi (a b c) => e)`
@@ -1316,18 +1316,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
     /// Verified in place: the same telescope `abstr_pi_telescope` builds, over
     /// the iterator's elements.
     ///
-    /// VERUS-REWRITE(entry-params): parameters `mut binders, mut body` ->
-    /// `binders_in, body_in` with `let mut` copies (the claim names the entry
-    /// values), and the `IterSpec` bound `foldl_apps` also carries, so the
-    /// claim can name the iterator's elements.
+    /// VERUS-REWRITE(entry-params): the `IterSpec` bound `foldl_apps` also
+    /// carries, so the claim can name the iterator's elements.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn abstr_pis<I>(&mut self, binders_in: I, body_in: ExprPtr<'t>) -> (result: ExprPtr<'t>)
+    pub(crate) fn abstr_pis<I>(&mut self, binders_in: I, body: ExprPtr<'t>) -> (result: ExprPtr<'t>)
     where
-        I: Iterator<Item = ExprPtr<'t>> + DoubleEndedIterator + crate::util::IterSpec,
+        I: Iterator<Item = ExprPtr<'t>> + crate::util::IterSpec,
         requires
             binders_in.obeys_prophetic_iter_laws(),
             crate::util_model::owns_all(*old(self), binders_in.remaining()),
-            crate::util_model::owns(*old(self), body_in),
+            crate::util_model::owns(*old(self), body),
             forall|i: int| #![trigger binders_in.remaining()[i]] 0 <= i < binders_in.remaining().len()
                 ==> crate::expr_arena_bridge::to_model(binders_in.remaining()[i]) is Free,
         ensures
@@ -1336,60 +1334,16 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
             crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
-                Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body_in)),
+                Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body)),
     {
-        let mut binders = binders_in;
-        let mut body = body_in;
-        // VERUS-REWRITE(while-let-exit): `while let Some(local) = binders.next_back()`
-        // is the `loop`/`match` it stands for, so the proof can name the
-        // iterator before each pop and knows it is exhausted at the exit.
-        loop
-            invariant
-                binders.obeys_prophetic_iter_laws(),
-                crate::util_model::owns_all(*self, binders.remaining()),
-                crate::util_model::owns(*self, body),
-                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
-                self.dbj_level_counter == old(self).dbj_level_counter,
-                crate::util_model::same_arenas(*old(self), *self),
-                forall|i: int| #![trigger binders.remaining()[i]] 0 <= i < binders.remaining().len()
-                    ==> crate::expr_arena_bridge::to_model(binders.remaining()[i]) is Free,
-                crate::expr_arena_bridge::abstr_pi_telescope_model(
-                    Seq::new(binders.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders.remaining()[i])),
-                    Seq::new(binders.remaining().len(), |i: int| crate::quot_model::local_type(binders.remaining()[i])),
-                    crate::expr_arena_bridge::to_model(body),
-                ) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body_in)),
-            ensures
-                crate::util_model::owns(*self, body),
-                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
-                self.dbj_level_counter == old(self).dbj_level_counter,
-                crate::util_model::same_arenas(*old(self), *self),
-                crate::expr_arena_bridge::to_model(body) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders_in.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders_in.remaining()[i])), Seq::new(binders_in.remaining().len(), |i: int| crate::quot_model::local_type(binders_in.remaining()[i])), crate::expr_arena_bridge::to_model(body_in)),
-        {
-            let ghost rem = binders.remaining();
-            let local = match binders.next_back() {
-                Some(local) => local,
-                None => {
-                    proof {
-                        assert(Seq::new(rem.len(), |i: int| crate::expr_arena_bridge::expr_id(rem[i])) =~= Seq::<nat>::empty());
-                        assert(Seq::new(rem.len(), |i: int| crate::quot_model::local_type(rem[i])) =~= Seq::<crate::expr_model::ExprSpec>::empty());
-                        assert(crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::<nat>::empty(), Seq::<crate::expr_model::ExprSpec>::empty(),
-                            crate::expr_arena_bridge::to_model(body)) == crate::expr_arena_bridge::to_model(body));
-                    }
-                    break;
-                }
-            };
-            body = self.abstr_pi(local, body);
-            proof {
-                let ids = Seq::new(rem.len(), |i: int| crate::expr_arena_bridge::expr_id(rem[i]));
-                let tys = Seq::new(rem.len(), |i: int| crate::quot_model::local_type(rem[i]));
-                assert(ids.drop_last() =~= Seq::new(binders.remaining().len(), |i: int| crate::expr_arena_bridge::expr_id(binders.remaining()[i])));
-                assert(tys.drop_last() =~= Seq::new(binders.remaining().len(), |i: int| crate::quot_model::local_type(binders.remaining()[i])));
-                assert forall|i: int| 0 <= i < binders.remaining().len() implies crate::util_model::owns_in(crate::util_model::arena_ids(*self), #[trigger] binders.remaining()[i]) by {
-                    assert(binders.remaining()[i] == rem[i]);
-                }
+        let binders: Vec<ExprPtr<'t>> = binders_in.collect();
+        proof {
+            assert forall|i: int| #![trigger binders@[i]] 0 <= i < binders@.len()
+                implies crate::util_model::owns(*self, binders@[i]) && crate::expr_arena_bridge::to_model(binders@[i]) is Free by {
+                assert(binders@[i] == binders_in.remaining()[i]);
             }
         }
-        body
+        self.abstr_pi_telescope(&binders, body)
     }
 
     /// The debug-build check `has_nested_pfx` makes of its argument, the same
@@ -2471,81 +2425,126 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
         }
     }
 
-    /// Verified in place. crate::expr_model::ExprSpec::tructurally identical to `abstr_pi` -- the model does
-    /// not distinguish `Lambda` from `Pi`, both being `Exprcrate::expr_model::ExprSpec::pec::Bind`.
-    #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn apply_lambda(&mut self, binder: ExprPtr<'t>, body: ExprPtr<'t>) -> (result:
-        ExprPtr<'t>)
+    /// Abstract `e` with the binders in `binders`, creating a lambda
+    /// telescope while backing out.
+    ///
+    /// `[a, b, c], e` ~> `(fun (a b c) => e)`
+    pub(crate) fn abstr_lambda_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
-            crate::util_model::owns(*old(self), binder),
-            crate::util_model::owns(*old(self), body),
-            matches!(crate::expr_arena_bridge::to_model(binder), crate::expr_model::ExprSpec::Free(_)),
+            crate::util_model::owns_all(*old(self), binders@),
+            crate::util_model::owns(*old(self), e0),
+            (forall|i: int|
+                #![trigger binders@[i]]
+                0 <= i < binders@.len() ==> {
+                    let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                    matches!(m, crate::expr_model::ExprSpec::Free(_))
+                }),
         ensures
             crate::util_model::owns(*final(self), result),
             final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
             final(self).dbj_level_counter == old(self).dbj_level_counter,
             crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
-                Box::new(crate::quot_model::local_type(binder)),
-                Box::new(
-                    crate::expr_model::abstr_full(
-                        crate::expr_arena_bridge::to_model(body),
-                        seq![crate::expr_arena_bridge::expr_id(binder)],
-                        0,
-                    ),
-                ),
-            ),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam,
+                Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
     {
-        match self.read_expr(binder) {
-            Local { binder_name, binder_style, binder_type, .. } => {
-                let locals = [binder];
-                let body_abstr = self.abstr(body, &locals);
-                proof {
-                    assert(locals@ =~= seq![binder]);
-                    assert(crate::expr_arena_bridge::local_ids(locals@) =~= seq![
-                        crate::expr_arena_bridge::expr_id(binder),
-                    ]);
-                }
-                let res = self.mk_lambda(binder_name, binder_style, binder_type, body_abstr);
-                proof {
-                    assert(crate::expr_arena_bridge::to_model(res)
-                        == crate::expr_model::ExprSpec::Bind(crate::expr_model::BinderKind::Lam, 
-                        Box::new(crate::quot_model::local_type(binder)),
-                        Box::new(
-                            crate::expr_model::abstr_full(
-                                crate::expr_arena_bridge::to_model(body),
-                                seq![crate::expr_arena_bridge::expr_id(binder)],
-                                0,
-                            ),
-                        ),
-                    ));
-                }
-                res
-            },
-            _ => {
-                proof {
-                    assert(false);
-                }
-                unreachable!("Cannot apply lambda with non-local domain type")
-            },
-        }
+        self.abstr_telescope(binders, e0, false)
     }
 
-    /// Verified in place.
+    /// The telescope over `binders`, in one pass over `e` (and one over each binder's type, for
+    /// the binders before it) instead of one pass over the whole term per binder, which is
+    /// quadratic: a large mutual inductive's recursor rules have dozens of binders.
     ///
-    /// VERUS-REWRITE(slice-pattern): the original peels with
-    /// `while let [tl @ .., binder] = binders`. Verus rejects slice patterns
-    /// outright (`PatKind::Slice` is a flat `unsupported_err!`), so the peel is
-    /// an index walk over the same slice, taking the same element each time.
-    ///
-    /// The ceiling is the one `abstr_pi` carries, summed over the telescope --
-    /// each step adds a `Bind` whose domain is that binder's TYPE.
+    /// Verified in place: the result is the binder-by-binder telescope
+    /// (`expr_arena_bridge::tele_onepass`). VERUS-REWRITE(rev-range): the
+    /// original walks `for i in (0..binders.len()).rev()` and binds the binder
+    /// with `let Local { .. } = .. else { unreachable!() }`; here a `while`
+    /// loop counting down and a `match`, the same indices in the same order.
+    /// VERUS-REWRITE(tested-input): `abstr` gives each local a `u16` index, so
+    /// a telescope of more than `u16::MAX` binders is rejected.
     #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn abstr_pi_telescope(
-        &mut self,
-        binders: &[ExprPtr<'t>],
-        e0: ExprPtr<'t>,
-    ) -> (result: ExprPtr<'t>)
+    fn abstr_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>, pi: bool) -> (result: ExprPtr<'t>)
+        requires
+            crate::util_model::owns_all(*old(self), binders@),
+            crate::util_model::owns(*old(self), e0),
+            (forall|i: int|
+                #![trigger binders@[i]]
+                0 <= i < binders@.len() ==> {
+                    let m = crate::expr_arena_bridge::to_model(binders@[i]);
+                    matches!(m, crate::expr_model::ExprSpec::Free(_))
+                }),
+        ensures
+            crate::util_model::owns(*final(self), result),
+            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+            final(self).dbj_level_counter == old(self).dbj_level_counter,
+            crate::util_model::same_arenas(*old(self), *final(self)),
+            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_telescope_model(
+                if pi { crate::expr_model::BinderKind::Pi } else { crate::expr_model::BinderKind::Lam },
+                Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
+    {
+        let ghost k = if pi { crate::expr_model::BinderKind::Pi } else { crate::expr_model::BinderKind::Lam };
+        let ghost ids = Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i]));
+        let ghost tys = Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i]));
+        assert!(binders.len() <= u16::MAX as usize, "abstr_telescope: too many binders");
+        proof {
+            assert(crate::expr_arena_bridge::local_ids(binders@) =~= ids);
+            crate::expr_arena_bridge::tele_onepass(k, ids, tys, crate::expr_arena_bridge::to_model(e0));
+        }
+        let mut e = self.abstr(e0, binders);
+        let mut i = binders.len();
+        while i > 0
+            invariant
+                crate::util_model::owns(*self, e),
+                crate::util_model::owns_all(*old(self), binders@),
+                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
+                self.dbj_level_counter == old(self).dbj_level_counter,
+                crate::util_model::same_arenas(*old(self), *self),
+                i <= binders@.len(),
+                binders@.len() <= u16::MAX,
+                ids == Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])),
+                tys == Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])),
+                k == (if pi { crate::expr_model::BinderKind::Pi } else { crate::expr_model::BinderKind::Lam }),
+                crate::expr_arena_bridge::tele_from(k, ids, tys, i as nat, crate::expr_arena_bridge::to_model(e))
+                    == crate::expr_arena_bridge::abstr_telescope_model(k, ids, tys, crate::expr_arena_bridge::to_model(e0)),
+                (forall|j: int|
+                    #![trigger binders@[j]]
+                    0 <= j < binders@.len() ==> {
+                        let m = crate::expr_arena_bridge::to_model(binders@[j]);
+                        matches!(m, crate::expr_model::ExprSpec::Free(_))
+                    }),
+            decreases i,
+        {
+            i = i - 1;
+            let b = binders[i];
+            match self.read_expr(b) {
+                Local { binder_name, binder_style, binder_type, .. } => {
+                    let before = &binders[0..i];
+                    proof {
+                        assert(before@ =~= binders@.subrange(0, i as int));
+                        assert(crate::expr_arena_bridge::local_ids(before@) =~= ids.subrange(0, i as int));
+                    }
+                    let binder_type = self.abstr(binder_type, before);
+                    e = if pi {
+                        self.mk_pi(binder_name, binder_style, binder_type, e)
+                    } else {
+                        self.mk_lambda(binder_name, binder_style, binder_type, e)
+                    };
+                },
+                _ => {
+                    proof {
+                        assert(false);
+                    }
+                    unreachable!("Cannot make a telescope over a non-local")
+                },
+            }
+        }
+        e
+    }
+
+    /// Abstract `e` with the binders in `binders`, creating a pi
+    /// telescope while backing out.
+    ///
+    /// `[a, b, c], e` ~> `(Pi (a b c) => e)`
+    pub(crate) fn abstr_pi_telescope(&mut self, binders: &[ExprPtr<'t>], e0: ExprPtr<'t>) -> (result: ExprPtr<'t>)
         requires
             crate::util_model::owns_all(*old(self), binders@),
             crate::util_model::owns(*old(self), e0),
@@ -2563,113 +2562,7 @@ impl<'t, 'p: 't> TcCtx<'t, 'p> {
             crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_pi_telescope_model(
                 Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
     {
-        let mut e = e0;
-        let mut n = binders.len();
-        while n > 0
-            invariant
-                crate::util_model::owns(*old(self), e0),
-                crate::util_model::owns(*self, e),
-                crate::util_model::owns_all(*old(self), binders@),
-                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
-                self.dbj_level_counter == old(self).dbj_level_counter,
-                crate::util_model::same_arenas(*old(self), *self),
-                n <= binders@.len(),
-                crate::expr_arena_bridge::abstr_pi_telescope_model(
-                    Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])),
-                    Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i])),
-                    crate::expr_arena_bridge::to_model(e),
-                ) == crate::expr_arena_bridge::abstr_pi_telescope_model(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
-                (forall|i: int|
-                    #![trigger binders@[i]]
-                    0 <= i < binders@.len() ==> {
-                        let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                        matches!(m, crate::expr_model::ExprSpec::Free(_))
-                    }),
-            decreases n,
-        {
-            let ghost e_old = e;
-            let b = binders[n - 1];
-            e = self.abstr_pi(b, e);
-            proof {
-                let ids = Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i]));
-                let tys = Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i]));
-                assert(ids.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
-                assert(tys.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::quot_model::local_type(binders@[i])));
-            }
-            n = n - 1;
-        }
-        proof {
-            assert(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])) =~= Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
-        }
-        e
-    }
-
-    /// Verified in place. Identical to `abstr_pi_telescope` but building
-    /// lambdas; the model does not distinguish them.
-    ///
-    /// VERUS-REWRITE(slice-pattern): same as above.
-    #[verifier::exec_allows_no_decreases_clause]
-    pub(crate) fn abstr_lambda_telescope(
-        &mut self,
-        binders: &[ExprPtr<'t>],
-        e0: ExprPtr<'t>,
-    ) -> (result: ExprPtr<'t>)
-        requires
-            crate::util_model::owns_all(*old(self), binders@),
-            crate::util_model::owns(*old(self), e0),
-            (forall|i: int|
-                #![trigger binders@[i]]
-                0 <= i < binders@.len() ==> {
-                    let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                    matches!(m, crate::expr_model::ExprSpec::Free(_))
-                }),
-        ensures
-            crate::util_model::owns(*final(self), result),
-            final(self).expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
-            final(self).dbj_level_counter == old(self).dbj_level_counter,
-            crate::util_model::same_arenas(*old(self), *final(self)),
-            crate::expr_arena_bridge::to_model(result) == crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam, 
-                Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
-    {
-        let mut e = e0;
-        let mut n = binders.len();
-        while n > 0
-            invariant
-                crate::util_model::owns(*old(self), e0),
-                crate::util_model::owns(*self, e),
-                crate::util_model::owns_all(*old(self), binders@),
-                self.expr_cache.dsubst_cache == old(self).expr_cache.dsubst_cache,
-                self.dbj_level_counter == old(self).dbj_level_counter,
-                crate::util_model::same_arenas(*old(self), *self),
-                n <= binders@.len(),
-                crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam, 
-                    Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])),
-                    Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i])),
-                    crate::expr_arena_bridge::to_model(e),
-                ) == crate::expr_arena_bridge::abstr_telescope_model(crate::expr_model::BinderKind::Lam, Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])), Seq::new(binders@.len(), |i: int| crate::quot_model::local_type(binders@[i])), crate::expr_arena_bridge::to_model(e0)),
-                (forall|i: int|
-                    #![trigger binders@[i]]
-                    0 <= i < binders@.len() ==> {
-                        let m = crate::expr_arena_bridge::to_model(binders@[i]);
-                        matches!(m, crate::expr_model::ExprSpec::Free(_))
-                    }),
-            decreases n,
-        {
-            let ghost e_old = e;
-            let b = binders[n - 1];
-            e = self.apply_lambda(b, e);
-            proof {
-                let ids = Seq::new(n as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i]));
-                let tys = Seq::new(n as nat, |i: int| crate::quot_model::local_type(binders@[i]));
-                assert(ids.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
-                assert(tys.drop_last() =~= Seq::new((n - 1) as nat, |i: int| crate::quot_model::local_type(binders@[i])));
-            }
-            n = n - 1;
-        }
-        proof {
-            assert(Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])) =~= Seq::new(binders@.len(), |i: int| crate::expr_arena_bridge::expr_id(binders@[i])));
-        }
-        e
+        self.abstr_telescope(binders, e0, true)
     }
 
     /// Verified in place. Like `inst` and `abstr`, it RESETS its cache, so it

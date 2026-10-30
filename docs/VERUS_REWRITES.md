@@ -208,12 +208,10 @@ Verus comes to specify derived `Clone`s.
 
 ## 2. Rewrites needing a Verus language feature
 
-### Slice patterns — 4 rewrites
+### Slice patterns — 2 rewrites
 
 | function | file |
 |---|---|
-| `abstr_pi_telescope` | `src/expr.rs` |
-| `abstr_lambda_telescope` | `src/expr.rs` |
 | `init_k_target` | `src/inductive.rs` |
 | `large_elim_test` | `src/inductive.rs` |
 
@@ -267,7 +265,7 @@ pointer ... the dereference is implicit"): Verus does not model the implicit
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq` (`assert!(!std::ptr::eq(..))`) | `src/inductive.rs` |
 | `restore_and_check` | `src/inductive.rs` |
 
-### Formatted panic messages and `&A == &B` — 3 rewrites
+### Formatted panic messages and `&A == &B` — 4 rewrites
 
 `ck_recursor_names_simple`: the mismatch `panic!` formats `debug_print` output,
 which Verus cannot process, so the same `panic!` sits behind the claim-free
@@ -280,6 +278,7 @@ applies (`&A`'s forwarding `eq` carries none).
 |---|---|
 | `ck_recursor_names_simple` | `src/inductive.rs` |
 | `replace_dbj_level` (the not-a-local `panic!`, behind `replace_dbj_level_not_local`) | `src/util.rs` |
+| `check_restored_recursor1` (a restored rule's field count and a missing recursor, behind `restored_field_count_mismatch` / `restored_rec_missing`) | `src/inductive.rs` |
 
 ### A local named `old` — 2 rewrites
 
@@ -299,8 +298,7 @@ scope: `assert_nonnested_rec_rule_def_eq`'s parameter (`old_uparams`) and
 ### An exit proof inside a `while let` — 3 rewrites
 
 `unfold_apps` and `unfold_apps_stack` (`src/expr.rs`) are `loop` + `match`;
-so is `abstr_pis` (`src/expr.rs`), whose `while let Some(b) = binders.next_back()`
-needs the iterator's emptiness at exit; and `alpha_eq` (`src/expr.rs`), whose
+and `alpha_eq` (`src/expr.rs`), whose
 `while let Some((x, y)) = todo.pop()` needs the empty work stack at exit (its
 locals' `i == j` is also `fvar_id_eq`, as in `def_eq_local`).
 
@@ -345,7 +343,8 @@ needed a different shape.
 | `check_ctor` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `check_positivity1` | `src/inductive.rs` | parameter `mut ctor_type_cursor` → `ctor_type_in` with a `let mut` copy (the claim names the entry value) |
 | `large_elim_test_aux` | `src/inductive.rs` | parameters `mut ctor_type_cursor, mut rem_params` → `ctor_type_in, rem_params_in` with `let mut` copies (the claim names the entry values); the iterator and the result of the final `all` bound to `it`/`r`, so the proof can name what `all` saw |
-| `abstr_pis` | `src/expr.rs` | parameters `mut binders, mut body` → `binders_in, body_in` with `let mut` copies (the claim names the entry values); the `IterSpec` bound `foldl_apps` already carries |
+| `abstr_pis` | `src/expr.rs` | parameter `binders` → `binders_in` (the collected `Vec` would shadow it, and the claim names the entry value); the `IterSpec` bound `foldl_apps` already carries |
+| `abstr_telescope` | `src/expr.rs` | `for i in (0..binders.len()).rev()` → a `while` loop counting down, and `let Local { .. } = .. else { unreachable!() }` → a `match` with the same arms; the same indices in the same order |
 | `specialize_nested_aux` | `src/inductive.rs` | `for (n, e) in map.iter()` over the specialized-type table → the scan by position (`get_index`); `get_mut(i)` + `mem::replace(&mut old.ctors, ..)` → `set(i, ..)` of the same header with the new constructors (`i` is in range, so the kernel's `None => panic!` arm cannot fire); the iterator handed to `abstr_pis` bound to a local |
 | `replace_if_nested` | `src/inductive.rs` | `.iter().find(..)` over the specialized-type table → the scan by position it stands for; iterators handed to `foldl_apps`/`abstr_pis` bound to locals; the container's and each constructor's `(uparams, ty)` read through `env_model::get_declar_info_ty` (the same `info`, carrying the claim that the uparams are `Param`s; the `get_inductive`/`get_constructor` reads and their `?` rejections stay); the universe-arity test `subst_expr_levels` panics on made one frame earlier, as in `infer_const` |
 | `replace_f` | `src/inductive.rs` | the iterators handed to `foldl_apps` (`.iter().copied()`, `.skip(np)`) bound to locals so the proof can name their elements |
@@ -363,9 +362,12 @@ needed a different shape.
 | `reduce_quot` | `src/tc.rs` | the major premise's index is chosen first, then one `get` and one `whnf` -- the same work as the original's two branches |
 | `def_eq_quick_check` | `src/tc.rs` | the `eq_cache` lookup goes through `cached_eq`, the same lookup with the cache's claim |
 | `get_bignum_from_expr`, `get_bignum_succ_from_expr` | `src/expr.rs` | `read_bignum(..).cloned()` / `read_bignum(..)? + 1` through `read_bignum_value` / `biguint_succ`, which say which number |
+| `mk_rec_rule_val`, `mk_recursor_ty`, `push_all` | `src/inductive.rs` | the binder list `.iter().chain(..).chain(..).copied().collect()` (with `iter::once(&major)` for the recursor's type) is built by `push_all`, one push loop per part, then `push(major)`: vstd specifies neither `Chain` nor `Once`. The same `Vec`, in the same order |
 | `mk_rec_rule1` | `src/inductive.rs` | the rule's value is built by the verified `mk_rec_rule_val` (the same calls, same order), which proves its binder arity is params + motives + minors + constructor arguments; `mk_rec_rule1` itself is verified in place and assembles the `RecRule` |
 | `mk_recursor_aux` | `src/inductive.rs` | the recursor's type is built by the verified `mk_recursor_ty` (the same calls, same order), which proves its binder arity; `mk_recursor_aux` itself is verified in place and proves the recorded counts are those lengths, so the arity is the counts plus one. The fork specifies `Arc::<[T]>::from` (slice and `Vec`) |
 | `check_quot`, `check_eq` | `src/quot.rs` | the expected types are built by the verified `quot_expected_type` / `eq_expected_type` / `eq_refl_expected_type` (the same constructions, same order within each); the shells keep the name lookups, the choice of declaration, the environments and the `assert_def_eq` calls, and are themselves verified in place: the environment through `env_model::ctx_env` (`new_env` with option A's trusted match), `match .. .as_ref() { &[x] => .. }` as the length test and index it stands for, formatted panics behind claim-free helpers (`eq_malformed`, `eq_uparam_count`, `eq_ctor_count`, `invalid_quot`), and both sides of each `assert_def_eq` tested closed (`assert_closed`) |
+| `check_declar` (quotient arm), `check_quot` | `src/tc.rs`, `src/quot.rs` | nanoda (0.4.31) checks a quotient declaration's info in `check_declar`, in its own environment, before `check_quot`; here it is `check_quot`'s first step, where the certificate is proven. Same check, same environment, same order |
+| `check_quot`, `assert_quot_declared` | `src/quot.rs` | nanoda (0.4.31) asserts the four quotient names are declared as quotient declarations, looking `Quot.lift` / `Quot.ind` up by `str2` names; here all four come from the name cache (the export's own pointers, so the lookups agree), each checked by `assert_quot_declared` |
 | `nat_lit_to_constructor` | `src/expr.rs` | `read_bignum(..).unwrap()` → `read_bignum_value` (its `.cloned()`), `is_zero`/`Sub::sub(n, 1u8)` → `biguint_is_zero`/`biguint_pred`, the config flag through `nat_extension_on()` (`Config` is opaque); the local `n` renamed because the contract names the pointer |
 | `ExportFile` (field `ind_name_to_recursor_names`) | `src/util.rs` | `pub` → `pub(crate)` (nothing outside the crate reads it). Verus refuses a type invariant on a struct whose fields are all public outside the crate, and `ExportFile` now carries one: its name cache's arena is its dag's (docs/ARENA_STORAGE.md, stage 2) |
 | `alloc_expr` | `src/util.rs` | as `alloc_name`: `insert_full` → `arena_insert`, `Ptr::from` → `Ptr::from_in` (ghost arguments) |
@@ -407,7 +409,6 @@ still a rejection — but each is an improvement.
 | `mk_unique` | `src/util.rs` | `self.unique_counter += 1` on a `u32`, which WRAPS in a release build: after 2^32 locals two different locals would share an id, which unlike the others here could make distinct locals compare equal. Overflow is a rejection now (`checked_add`) |
 | `infer_proj` | `src/tc.rs` | `get_structure` states nothing, so two consistency checks were added that never fail on a well-formed environment: the structure's first constructor is the one the environment model records (`get_structure_first_ctor`), and the constructor's own parameter count equals the inductive's (`get_constructor_num_params`) — the projection typing rule is stated with the constructor's. A third check (tested-input): the field index is below the constructor's field count (`get_constructor_num_fields`); out of range, the walk runs past the constructor's telescope into its result type, which a well-formed environment never reduces to a Pi, so the kernel rejects such input anyway -- regularity of the field type is stated over the constructor's telescope |
 | `infer` (literal arms) | `src/tc.rs` | a literal's type constant (`Nat`, `String`) is tested declared without universe parameters at a sort (`lit_type_declared`) -- what makes the literal's inferred type a type; never fails on an export that declares the type before using its literals |
-| `check_quot` | `src/quot.rs` | the declared type is also checked as any declaration's is (inferred in `Check` mode to a sort, in the declaration's own environment); the comparison with the expected type does not show the type is a type. Never fails on the quotient declarations Lean exports |
 | `check_inductive_declar` | `src/inductive.rs` | a structure's constructor (one constructor, no indices) is tested to name the structure back and to have the structure shape (`TcCtx::ctor_shape_ok`: `np + nf` Pi binders over the structure at the constructor's universe parameters, applied to the parameters); never fails on a structure Lean exports. And the inductive type's declared type is also checked as any declaration's is, in the environment before it and with its own universe parameters; the block's own check runs in an environment that already holds the block, which cannot certify the type. Never fails on a block Lean exports |
 | `check_declar` (recursor arm) | `src/tc.rs` | the recursor's rules are checked too (`check_rec_rules`): each value tested closed and inferred in `Check` mode, in the whole environment (a recursive type's rules call the recursor itself), so its universe levels are the recursor's; the block's checker only compares them with the rules it builds, by conversion. Never fails on the rules Lean exports |
 | `check_declar` (constructor arm) | `src/tc.rs` | the constructor's parameters are checked against its inductive's (tested-input): the inductive is declared before it with the same universe parameters (pointer-equal `uparams`), the inductive's type has at least `num_params` Pi binders, and the closed term `λ (f : C) (x_i : A_i), f x_0 .. x_{np-1}` over those binders (`TcCtx::ctor_param_term`) is inferred in `Check` mode. It certifies E2' (`ctor_params_ok`). Never fails on a constructor Lean accepted |
@@ -442,7 +443,6 @@ still a rejection — but each is an improvement.
 | `Ptr` | `src/util.rs` | the struct is defined inside `verus!` with PRIVATE fields (were `pub` for a transparent registration), so verified code cannot build or alter a pointer; specifications read it through `raw_of` / `arena_of` |
 | `mk_dbj_level`, `remake_dbj_level`, `mk_unique` | `src/util.rs` | a local's type is TESTED closed before the local is stored (`assert!`); `alloc_expr` requires it of every local it stores, and unverified callers never checked it. Never fails on a well-formed declaration |
 | `ExportBuilder::add_expr_var` (was `go1`'s `ExprBVar` arm) | `src/export_builder.rs` | a bound variable at index `u16::MAX` is rejected when read; it was stored, and its loose-bvar count overflows on first use while `read_expr` claims every stored `Var` is below `u16::MAX` |
-| `ExportBuilder::level_ptr` (was `Parser::get_levels_ptr`) | `src/export_builder.rs` | a `Const`'s level indices are tested to be stored already, as a name's and an expression's always were; an out-of-range index made a dangling level pointer. Never fails on an export Lean writes |
 | `gen_elim_level` | `src/inductive.rs` | `i += 1` in an unbounded `loop` (panics at `u64::MAX` -- the crate builds with overflow checks) |
 | `abstr_aux` | `src/expr.rs` | `offset + 1` under a binder and the index sum `pos + offset` panic on `u16` overflow (overflow checks are on); both made explicit (the index check also excludes `u16::MAX` itself, which no stored `Var` may hold). With `inst` needing no depth bound at all, this is what retired the arena axiom `depth < 60000` (refutable by allocating a deep term) |
 | `leq_core` | `src/level.rs` | `diff - 1` / `diff + 1` in the `Succ` arms panic on `isize` overflow (overflow checks are on); the same checks are made explicit, which is what replaced the arena axiom bounding `leq_measure` (refutable by allocating ~500M nested levels) |
@@ -456,6 +456,7 @@ still a rejection — but each is an improvement.
 | `mk_rec_rule1` | `src/inductive.rs` | `pi_telescope_size(ctor.ty) as usize - np` panics on underflow; the same check, explicit, on the size bound to `tele`. Never fires on a constructor `check_ctor` accepted |
 | `assert_closed`, `specialize_nested`, `specialize_nested_aux` | `src/inductive.rs` | the types the inductive checker opens with `get_local_params` (the block's first type, each constructor type before specialization) and every type and constructor type it hands on (the final loop, which tested `!has_fvars` only) are TESTED closed -- no locals and no loose de Bruijn indices -- through the new helper `assert_closed`. The export parser checks neither; the verified steps after it require `level_free`. Never fails on a well-formed declaration |
 | `replace_if_nested` | `src/inductive.rs` | a nested container's type and its constructors' types are tested free of locals before `subst_expr_levels` (which requires it), as in `infer_proj`. Never fails on a well-formed export |
+| `abstr_telescope` | `src/expr.rs` | a telescope of more than `u16::MAX` binders is rejected: `abstr` numbers each local with a `u16`. Never fails on an export Lean writes |
 | `restore_e`, `check_restored_recursor1`, `check_restored_ctor1`, `assert_nonnested_tys_def_eq`, `assert_nonnested_ctors_def_eq` | `src/inductive.rs` | the terms restored from, and every pair handed to `assert_def_eq`, are TESTED closed first (`assert_closed`): opening a recursor's parameters with fresh locals needs it, and it is what puts both sides of the comparison in scope. The export's declarations and the temporary environment's are closed when well formed |
 | `assert_nonnested_rec_rule_def_eq`, `assert_nonnested_recursors_def_eq`, `restore_and_check` | `src/inductive.rs` | every pair handed to `assert_def_eq`, and the constructed rule value / imported type substituted into, TESTED closed first (`assert_closed`), as in `check_restored_recursor1` |
 | `assert_nonnested_recursors_def_eq` | `src/inductive.rs` | the imported recursor's universe parameters are TESTED to be distinct parameters (`no_dupes_all_params`, the test `check_declar_info` makes of every declaration it checks) before `subst_expr_levels` substitutes for them. Never fails on a well-formed export |

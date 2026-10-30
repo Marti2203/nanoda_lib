@@ -42,8 +42,8 @@ pub open spec fn local_type<'a>(ptr: ExprPtr<'a>) -> ExprSpec {
 }
 
 
-// `TcCtx::abstr_pi` and `TcCtx::apply_lambda` are verified in place now
-// (`expr.rs`); they used to be assumed here. Their old doc comments argued the
+// `TcCtx::abstr_pi` is verified in place now
+// (`expr.rs`); it used to be assumed here. Its old doc comment argued the
 // case informally -- "a composition of exactly `read_expr`, `abstr` and
 // `mk_pi`, all already trusted/bridged" -- and that is a proof now that `abstr`
 // is one of them rather than a trusted primitive.

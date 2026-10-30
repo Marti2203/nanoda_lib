@@ -2,7 +2,7 @@ use crate::env::{ConstructorData, Declar, InductiveData, Notation, ReducibilityH
 use crate::export_builder::ExportBuilder;
 use crate::expr::BinderStyle;
 use crate::name::Name;
-use crate::util::{new_fx_hash_map, Config, FxHashMap, NamePtr};
+use crate::util::{new_fx_hash_map, new_fx_hash_set, Config, FxHashMap, FxHashSet, NamePtr};
 use num_bigint::BigUint;
 use serde::de::{Error as DeError, Visitor};
 use serde::{Deserialize, Deserializer};
@@ -685,6 +685,71 @@ fn check_backref(br: Option<BackRef>, kind: u8, r: (usize, bool)) -> (out: ())
     }
 }
 
+/// Check ownership before flattening a block into the declaration map. The
+/// reconstruction checks follow the exported `all` and `ctors` lists, so
+/// those lists must cover exactly the declarations actually in this block.
+///
+/// Claims nothing (an `Err` is a rejection). The message names the block's
+/// line text where nanoda names its line number, which this parser does not
+/// keep.
+#[verifier::external_body]
+fn check_inductive_block(
+    line: &str,
+    types: &[IndInfo],
+    ctors: &[Constructor],
+    recs: &[Recursor],
+) -> Result<(), Box<dyn Error>> {
+    fn same_names(names: &[u32], expected: &FxHashSet<u32>) -> bool {
+        names.len() == expected.len() && names.iter().copied().collect::<FxHashSet<_>>() == *expected
+    }
+
+    let error = |message: String| -> Box<dyn Error> {
+        format!("invalid inductive block {}: {}", line.trim_end(), message).into()
+    };
+    if types.is_empty() {
+        return Err(error("expected at least one inductive type".to_owned()))
+    }
+
+    let mut member_names = new_fx_hash_set();
+    for name in types.iter().map(|t| t.name)
+        .chain(ctors.iter().map(|c| c.name))
+        .chain(recs.iter().map(|r| r.name))
+    {
+        if !member_names.insert(name) {
+            return Err(error(format!("duplicate declaration name index {}", name)))
+        }
+    }
+
+    let type_names = types.iter().map(|t| t.name).collect::<FxHashSet<_>>();
+    let mut ctors_by_type = new_fx_hash_map();
+    for ctor in ctors {
+        if !type_names.contains(&ctor.induct) {
+            return Err(error(format!("constructor {} must belong to an inductive in the same block", ctor.name)))
+        }
+        ctors_by_type.entry(ctor.induct).or_insert_with(new_fx_hash_set).insert(ctor.name);
+    }
+
+    let empty = new_fx_hash_set();
+    for ty in types {
+        if !same_names(&ty.all, &type_names) {
+            return Err(error(format!("inductive {} must list exactly the block's types without duplicates", ty.name)))
+        }
+        let expected_ctors = ctors_by_type.get(&ty.name).unwrap_or(&empty);
+        if !same_names(&ty.ctors, expected_ctors) {
+            return Err(error(format!("inductive {} must list exactly its constructors in this block without duplicates", ty.name)))
+        }
+    }
+
+    for rec in recs {
+        if !same_names(&rec.all, &type_names) {
+            return Err(error(format!("recursor {} must list exactly the block's types without duplicates", rec.name)))
+        }
+        // Rule constructors may belong to earlier container types for a
+        // nested inductive. Reconstruction validates those associations.
+    }
+    Ok(())
+}
+
 #[verifier::external_body]
 fn check_meta<'l>(meta: &FileMeta<'l>) -> Result<(), Box<dyn Error>> {
     check_semver(meta)
@@ -966,6 +1031,7 @@ fn apply<'a, 'l>(
             Ok(Ghost(Slot::At(b0.keys().len())))
         },
         ExportJsonVal::Inductive { ind_vals, ctor_vals, rec_vals } => {
+            check_inductive_block(line, &ind_vals, &ctor_vals, &rec_vals)?;
             let ghost (iv, cv, rv) = (ind_vals@, ctor_vals@, rec_vals@);
             let block_start = b.declars_len();
             let block_size = ind_vals.len().checked_add(ctor_vals.len()).unwrap().checked_add(rec_vals.len()).unwrap();

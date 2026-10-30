@@ -2,7 +2,7 @@
 use crate::env::{ConstructorData, Declar, EnvLimit, InductiveData};
 use crate::expr::{BinderStyle, BinderStyle::*};
 use crate::tc::TypeChecker;
-use crate::util::{ExprPtr, LevelPtr, NamePtr, TcCtx};
+use crate::util::{ExportFile, ExprPtr, LevelPtr, NamePtr, TcCtx};
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(verus_only)]
@@ -95,6 +95,29 @@ fn eq_uparam_count(n: usize) -> ! {
 #[verifier::external_body]
 fn eq_ctor_count(n: usize) -> ! {
     panic!("cannot add Quot; `Eq` type improperly formed; expected one constructor, found {}", n)
+}
+
+/// The quotient declaration named `n` (a name-cache slot) is declared, as a
+/// quotient declaration.
+fn assert_quot_declared<'p>(ef: &ExportFile<'p>, n: Option<NamePtr<'p>>)
+    requires
+        crate::inductive::export_ok(*ef),
+        n matches Some(x) ==> crate::util_model::export_tagged(ef.arena(), x),
+{
+    let n = match n {
+        Some(n) => n,
+        None => panic!("cannot add Quot; a quotient declaration is missing"),
+    };
+    proof {
+        crate::inductive::export_ok_facts(*ef);
+        ef.declars_views();
+        crate::util_model::build_hasher_default_valid_fx();
+        crate::inductive::export_declars_get(*ef, n);
+    }
+    match ef.declars.get(&n) {
+        Some(Declar::Quot { .. }) => {},
+        _ => panic!("cannot add Quot; a quotient name is not declared as a quotient declaration"),
+    }
 }
 
 #[verifier::external_body]
@@ -204,11 +227,8 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
     ensures
         exists|c: int| #[trigger] crate::tc::declar_cert_at(*old(ctx).export_file, *declar, c),
 {
-    // VERUS-REWRITE(tested-input): the declared type is also checked as any
-    // declaration's is (inferred in `Check` mode, to a sort), in the
-    // declaration's own environment. The comparison with the expected type
-    // below does not show the type is a type; this does. Never fails on the
-    // quotient declarations Lean exports.
+    // The declaration's info is checked first, in its own environment (in
+    // nanoda, `check_declar`'s `Quot` arm; see `ExportFile::check_declar`).
     {
         let env0 = crate::env_model::ctx_env(ctx, EnvLimit::ByName(declar.info().name));
         proof {
@@ -223,6 +243,17 @@ pub fn check_quot<'x, 't: 'x, 'p: 't>(ctx: &'x mut TcCtx<'t, 'p>, declar: &Decla
             crate::tc::declar_cert_intro(*ctx.export_file, env0, *declar);
         }
     }
+    proof {
+        crate::util::lemma_export_arena(*ctx.export_file);
+    }
+    // VERUS-REWRITE(name-cache): nanoda looks `Quot.lift` / `Quot.ind` up by
+    // `str2` names; the name cache holds the export's own pointers to them
+    // (`quot_lift()`, `quot_ind()`), so the lookups agree, and a missing
+    // slot is a missing declaration either way.
+    assert_quot_declared(ctx.export_file, ctx.export_file.name_cache.quot());
+    assert_quot_declared(ctx.export_file, ctx.export_file.name_cache.quot_mk());
+    assert_quot_declared(ctx.export_file, ctx.export_file.name_cache.quot_lift());
+    assert_quot_declared(ctx.export_file, ctx.export_file.name_cache.quot_ind());
     let which: u8 = if declar.info().name == ctx.str1("Quot") {
         0
     } else if declar.info().name == ctx.str2("Quot", "mk") {

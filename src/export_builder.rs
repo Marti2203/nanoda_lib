@@ -187,10 +187,6 @@ impl<'a> ExportBuilder<'a> {
     }
 
     /// The export level at `idx`, which must be stored already.
-    ///
-    /// VERUS-REWRITE(parser-check): a `Const`'s level indices were not tested
-    /// in range (a name's and an expression's were); now they are, as the
-    /// others. Never fails on an export Lean writes.
     pub fn level_ptr(&self, idx: u32) -> (result: LevelPtr<'a>)
         requires
             self.wf(),

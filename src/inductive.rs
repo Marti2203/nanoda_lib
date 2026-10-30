@@ -3201,6 +3201,52 @@ pub(crate) open spec fn elim_ctor_ok<'t, 'p>(c: TcCtx<'t, 'p>, st: InductiveChec
 }
 
 
+/// Appends `xs` to `v`, in order: what `.chain(xs.iter())` contributes to
+/// a collected `Vec`.
+fn push_all<'t>(v: &mut Vec<ExprPtr<'t>>, xs: &[ExprPtr<'t>])
+    ensures
+        final(v)@ == old(v)@ + xs@,
+{
+    let mut i: usize = 0;
+    while i < xs.len()
+        invariant
+            i <= xs@.len(),
+            v@ == old(v)@ + xs@.subrange(0, i as int),
+        decreases xs@.len() - i,
+    {
+        v.push(xs[i]);
+        i = i + 1;
+        proof {
+            assert(xs@.subrange(0, i as int) =~= xs@.subrange(0, i - 1) + seq![xs@[i - 1]]);
+        }
+    }
+    proof {
+        assert(xs@.subrange(0, xs@.len() as int) =~= xs@);
+    }
+}
+
+/// Owned free locals, concatenated, are owned free locals.
+proof fn cat_locals<'t, 'p>(c: crate::util::TcCtx<'t, 'p>, a: Seq<ExprPtr<'t>>, b: Seq<ExprPtr<'t>>)
+    requires
+        crate::util_model::owns_all(c, a),
+        crate::util_model::owns_all(c, b),
+        forall|i: int| #![trigger a[i]] 0 <= i < a.len() ==> crate::expr_arena_bridge::to_model(a[i]) is Free,
+        forall|i: int| #![trigger b[i]] 0 <= i < b.len() ==> crate::expr_arena_bridge::to_model(b[i]) is Free,
+    ensures
+        crate::util_model::owns_all(c, a + b),
+        forall|i: int| #![trigger (a + b)[i]] 0 <= i < (a + b).len() ==> crate::expr_arena_bridge::to_model((a + b)[i]) is Free,
+{
+    assert forall|i: int| 0 <= i < (a + b).len() implies
+        crate::util_model::owns_in(crate::util_model::arena_ids(c), #[trigger] (a + b)[i])
+        && crate::expr_arena_bridge::to_model((a + b)[i]) is Free by {
+        if i < a.len() {
+            assert((a + b)[i] == a[i]);
+        } else {
+            assert((a + b)[i] == b[i - a.len()]);
+        }
+    }
+}
+
 /// A telescope over `bs` adds one binder per element (`abstr_telescope_size`,
 /// with the ids and types the kernel's telescope builders use).
 pub proof fn tele_size_step<'t>(k: BinderKind, bs: Seq<ExprPtr<'t>>, e: ExprSpec)
@@ -4181,6 +4227,28 @@ pub proof fn rec_names_listed<'p>(ef: ExportFile<'p>, k: NamePtr<'p>)
 }
 
 impl<'t, 'p: 't> TcCtx<'t, 'p> {
+    /// The `assert_eq!` `check_restored_recursor1` makes of a restored rule's
+    /// field count, failing, with the same message (Verus does not process its
+    /// `format!` arguments). Claims nothing.
+    #[verifier::external_body]
+    fn restored_field_count_mismatch(&self, ctor_name: NamePtr<'t>, rec_name: NamePtr<'t>) -> ! {
+        panic!(
+            "recursor rule field count mismatch for {:?} in {:?}",
+            self.debug_print(ctor_name),
+            self.debug_print(rec_name),
+        )
+    }
+
+    /// The panic `check_restored_recursor1` raises when the exported recursor
+    /// is not in the block's environment, with the same message. Claims nothing.
+    #[verifier::external_body]
+    fn restored_rec_missing(&self, rec_name: NamePtr<'t>) -> ! {
+        panic!(
+            "expected exported recursor {:?} within the inductive block's environment",
+            self.debug_print(rec_name),
+        )
+    }
+
     /// The panic `ck_recursor_names_simple` raises on a mismatch, with the same
     /// message (Verus does not process its `format!` arguments). Claims nothing.
     #[verifier::external_body]
@@ -7737,7 +7805,8 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                 *st == *old(st),
         {
             let tester = self.ctx.append_index_after(n, idx);
-            if !self.env.get_old_declar(&tester).is_some() {
+            // Require no declaration is found, and this is not a name used anywhere in the export environment.
+            if (tester.dag_marker() == crate::util::DagMarker::TcCtx) && (!self.env.get_declar(&tester).is_some()) {
                 st.next_ngen_idx = idx + 1;
                 return tester;
             }
@@ -9068,9 +9137,12 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     /// Verified in place: the restored recursor is checked against the one
-    /// the export file declares, if any.
+    /// the export file declares, which must be in the block's environment.
     ///
-    /// VERUS-REWRITE(tested-closed): each pair handed to `assert_def_eq` is
+    /// VERUS-REWRITE(panic-wrapper): the two formatted rejections (a rule's
+    /// field count, a missing recursor) are the same `panic!`s behind
+    /// claim-free helpers (`restored_field_count_mismatch`,
+    /// `restored_rec_missing`). VERUS-REWRITE(tested-closed): each pair handed to `assert_def_eq` is
     /// tested closed first (`assert_closed`), which is what puts both in
     /// scope; a well-formed recursor's type and rules are closed.
     #[verifier::exec_allows_no_decreases_clause]
@@ -9131,6 +9203,11 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     let old = original.rec_rules[i];
                     let new = restored.rec_rules[i];
                     assert_eq!(old.ctor_name, new.ctor_name);
+                    // Iota reduction uses this count to separate parameters from fields;
+                    // restoring nested must preserve the reconstructed field count.
+                    if old.ctor_telescope_size_wo_params != new.ctor_telescope_size_wo_params {
+                        self.ctx.restored_field_count_mismatch(old.ctor_name, resolved_rec_name)
+                    }
                     self.tc_cache.clear();
                     proof {
                         assert(crate::env_model::env_owns(*self.env, original.rec_rules@[i as int].val));
@@ -9145,7 +9222,9 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     self.assert_def_eq(old.val, new.val);
                 }
             }
-            _ => {}
+            // A recursor moved to a later block is hidden by the environment
+            // cutoff; we must find it within the current cutoff.
+            _ => self.ctx.restored_rec_missing(resolved_rec_name),
         }
     }
 
@@ -10483,10 +10562,14 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
     }
 
     /// A recursor rule's value, built exactly as `mk_rec_rule1` built it:
-    /// `minor ctor_args* handled_rec_args*` under the lambda telescopes over the
-    /// constructor's arguments, the minor premises, the motives and the
-    /// parameters. Its binder arity is their counts: what iota reduction
+    /// `minor ctor_args* handled_rec_args*` under one lambda telescope over the
+    /// parameters, the motives, the minor premises and the constructor's
+    /// arguments. Its binder arity is their counts: what iota reduction
     /// instantiates.
+    ///
+    /// VERUS-REWRITE(chain-collect): the binder list
+    /// `.iter().chain(..).copied().collect()` is built by `push_all`, one part
+    /// after another (vstd specifies no `Chain`). The same `Vec`.
     ///
     /// VERUS-REWRITE(named-temp): the two iterators handed to `foldl_apps`
     /// are bound to locals so the proof can name their elements. Same calls.
@@ -10547,45 +10630,35 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             spine_free_size(BinderKind::Lam, crate::expr_arena_bridge::to_model(this_minor),
                 crate::expr_arena_bridge::ptr_models(all_ctor_args@) + crate::expr_arena_bridge::ptr_models(handled_rec_args@));
         }
-        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
-        let ghost body = prev;
-        let comp_rhs = self.ctx.abstr_lambda_telescope(all_ctor_args, comp_rhs);
+        // One telescope over the parameters, motives, minor premises and the constructor's
+        // arguments, outermost first.
+        let ghost body = crate::expr_arena_bridge::to_model(comp_rhs);
+        let mut binders: Vec<ExprPtr<'t>> = Vec::new();
+        push_all(&mut binders, st.local_params.as_slice());
+        push_all(&mut binders, st.motives.as_slice());
+        push_all(&mut binders, flat_mapped_minors);
+        push_all(&mut binders, all_ctor_args);
         proof {
-            tele_size_step(BinderKind::Lam, all_ctor_args@, prev);
-            tel_prepend(BinderKind::Lam, all_ctor_args@, Seq::empty(), body);
-            assert(all_ctor_args@ + Seq::<ExprPtr<'t>>::empty() =~= all_ctor_args@);
-            assert(local_ids(Seq::<ExprPtr<'t>>::empty()) =~= Seq::<nat>::empty());
-            assert(local_tys(Seq::<ExprPtr<'t>>::empty()) =~= Seq::<ExprSpec>::empty());
+            let c = *self.ctx;
+            assert(binders@ =~= st.local_params@ + st.motives@ + flat_mapped_minors@ + all_ctor_args@);
+            cat_locals(c, st.local_params@, st.motives@);
+            cat_locals(c, st.local_params@ + st.motives@, flat_mapped_minors@);
+            cat_locals(c, st.local_params@ + st.motives@ + flat_mapped_minors@, all_ctor_args@);
+            tele_size_step(BinderKind::Lam, binders@, body);
         }
-        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
-        let comp_rhs = self.ctx.abstr_lambda_telescope(flat_mapped_minors, comp_rhs);
-        proof {
-            tele_size_step(BinderKind::Lam, flat_mapped_minors@, prev);
-            tel_prepend(BinderKind::Lam, flat_mapped_minors@, all_ctor_args@, body);
-        }
-        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
-        let comp_rhs = self.ctx.abstr_lambda_telescope(st.motives.as_slice(), comp_rhs);
-        proof {
-            tele_size_step(BinderKind::Lam, st.motives@, prev);
-            tel_prepend(BinderKind::Lam, st.motives@, flat_mapped_minors@ + all_ctor_args@, body);
-            assert(st.motives@ + (flat_mapped_minors@ + all_ctor_args@) =~= st.motives@ + flat_mapped_minors@ + all_ctor_args@);
-        }
-        let ghost prev = crate::expr_arena_bridge::to_model(comp_rhs);
-        let comp_rhs = self.ctx.abstr_lambda_telescope(st.local_params.as_slice(), comp_rhs);
-        proof {
-            tele_size_step(BinderKind::Lam, st.local_params@, prev);
-            tel_prepend(BinderKind::Lam, st.local_params@, st.motives@ + flat_mapped_minors@ + all_ctor_args@, body);
-            assert(st.local_params@ + (st.motives@ + flat_mapped_minors@ + all_ctor_args@)
-                =~= st.local_params@ + st.motives@ + flat_mapped_minors@ + all_ctor_args@);
-        }
+        let comp_rhs = self.ctx.abstr_lambda_telescope(binders.as_slice(), comp_rhs);
         comp_rhs
     }
 
     /// The recursor's type, built exactly as `mk_recursor_aux` built it:
-    /// `motive indices* major` under a `Pi` for the major premise, then the
-    /// telescopes over the indices, the minor premises, the motives and the
-    /// parameters. Its binder arity is their counts plus one -- the positions
-    /// `reduce_rec` splits a recursor application at.
+    /// `motive indices* major` under one `Pi` telescope over the parameters,
+    /// the motives, the minor premises, the indices and the major premise. Its
+    /// binder arity is their counts plus one -- the positions `reduce_rec`
+    /// splits a recursor application at.
+    ///
+    /// VERUS-REWRITE(chain-collect): the binder list, `.chain(..)`s ending in
+    /// `iter::once(&major)`, is built by `push_all` and a final `push`
+    /// (vstd specifies neither `Chain` nor `Once`). The same `Vec`.
     ///
     /// VERUS-REWRITE(named-temp): the index iterator handed to `foldl_apps`
     /// is bound to a local so the proof can name its elements. Same call.
@@ -10635,50 +10708,26 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
         let motive_app = self.ctx.mk_app(motive_app_base, major);
         let ghost body = crate::expr_arena_bridge::to_model(motive_app);
 
-        let rec_ty = self.ctx.abstr_pi(major, motive_app);
+        // One telescope over the parameters, motives, minor premises, indices and
+        // major premise, outermost first.
+        let mut binders: Vec<ExprPtr<'t>> = Vec::new();
+        push_all(&mut binders, st.local_params.as_slice());
+        push_all(&mut binders, st.motives.as_slice());
+        push_all(&mut binders, flat_mapped_minors);
+        push_all(&mut binders, local_indices);
+        binders.push(major);
         proof {
+            let c = *self.ctx;
             let mj = seq![major];
-            assert(local_ids(mj) =~= seq![crate::expr_arena_bridge::expr_id(major)]);
-            assert(local_tys(mj) =~= seq![crate::quot_model::local_type(major)]);
-            assert(seq![crate::expr_arena_bridge::expr_id(major)].drop_last() =~= Seq::<nat>::empty());
-            assert(seq![crate::quot_model::local_type(major)].drop_last() =~= Seq::<ExprSpec>::empty());
-            assert(crate::expr_arena_bridge::to_model(rec_ty) == crate::expr_arena_bridge::abstr_telescope_model(BinderKind::Pi,
-                local_ids(mj), local_tys(mj), body)) by {
-                reveal_with_fuel(crate::expr_arena_bridge::abstr_telescope_model, 2);
-            }
+            assert(binders@ =~= st.local_params@ + st.motives@ + flat_mapped_minors@ + local_indices@ + mj);
+            assert(mj[0] == major);
+            cat_locals(c, st.local_params@, st.motives@);
+            cat_locals(c, st.local_params@ + st.motives@, flat_mapped_minors@);
+            cat_locals(c, st.local_params@ + st.motives@ + flat_mapped_minors@, local_indices@);
+            cat_locals(c, st.local_params@ + st.motives@ + flat_mapped_minors@ + local_indices@, mj);
+            tele_size_step(BinderKind::Pi, binders@, body);
         }
-        proof {
-            crate::inductive_model::abstr_full_telescope_size(BinderKind::Pi, crate::expr_arena_bridge::to_model(motive_app),
-                seq![crate::expr_arena_bridge::expr_id(major)], 0);
-        }
-        let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
-        let rec_ty = self.ctx.abstr_pi_telescope(local_indices, rec_ty);
-        proof {
-            tele_size_step(BinderKind::Pi, local_indices@, prev);
-            tel_prepend(BinderKind::Pi, local_indices@, seq![major], body);
-            assert(local_indices@ + (seq![major]) =~= local_indices@ + seq![major]);
-        }
-        let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
-        let rec_ty = self.ctx.abstr_pi_telescope(flat_mapped_minors, rec_ty);
-        proof {
-            tele_size_step(BinderKind::Pi, flat_mapped_minors@, prev);
-            tel_prepend(BinderKind::Pi, flat_mapped_minors@, local_indices@ + seq![major], body);
-            assert(flat_mapped_minors@ + (local_indices@ + seq![major]) =~= flat_mapped_minors@ + local_indices@ + seq![major]);
-        }
-        let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
-        let rec_ty = self.ctx.abstr_pi_telescope(st.motives.as_slice(), rec_ty);
-        proof {
-            tele_size_step(BinderKind::Pi, st.motives@, prev);
-            tel_prepend(BinderKind::Pi, st.motives@, flat_mapped_minors@ + local_indices@ + seq![major], body);
-            assert(st.motives@ + (flat_mapped_minors@ + local_indices@ + seq![major]) =~= st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major]);
-        }
-        let ghost prev = crate::expr_arena_bridge::to_model(rec_ty);
-        let rec_ty = self.ctx.abstr_pi_telescope(st.local_params.as_slice(), rec_ty);
-        proof {
-            tele_size_step(BinderKind::Pi, st.local_params@, prev);
-            tel_prepend(BinderKind::Pi, st.local_params@, st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major], body);
-            assert(st.local_params@ + (st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major]) =~= st.local_params@ + st.motives@ + flat_mapped_minors@ + local_indices@ + seq![major]);
-        }
+        let rec_ty = self.ctx.abstr_pi_telescope(binders.as_slice(), motive_app);
         rec_ty
     }
 

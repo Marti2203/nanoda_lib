@@ -49,7 +49,7 @@ use crate::expr_arena_bridge::verified_subst_expr_levels;
 #[cfg(verus_only)]
 use crate::expr_arena_bridge::{const_id, const_levels_of, const_levels_vec, const_name_of, is_const_shape, is_const_shape_model, to_model};
 use crate::expr_arena_bridge::{expr_as_app, expr_as_lambda, expr_as_let, expr_as_pi, expr_as_proj, expr_is_bind_shape, expr_is_const_shape};
-use crate::expr_arena_bridge::{expr_ptr_eq, verified_abstr_lambda_telescope, verified_abstr_pi_telescope, verified_foldl_apps};
+use crate::expr_arena_bridge::{expr_ptr_eq, verified_foldl_apps};
 #[cfg(verus_only)]
 use crate::expr_model::abstr_full;
 #[cfg(verus_only)]

@@ -2518,109 +2518,103 @@ pub open spec fn abstr_telescope_model(
     }
 }
 
-/// Real-arena mirror of `TcCtx::abstr_pi_telescope` (`expr.rs:670-676`),
-/// needed by `mk_motive_dep` (`inductive.rs:1058-1071`) to abstract a
-/// motive's own index binders into a `Pi`-telescope. Each `binders[i]`
-/// must be `Free`-shaped (an already-created `Local`, same precondition
-/// `abstr_pi` itself already carries) for its own `abstr_pi` step to
-/// apply.
-pub fn verified_abstr_pi_telescope<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>,
-    binders: &[ExprPtr<'t>],
-    e: ExprPtr<'t>,
-) -> (result: ExprPtr<'t>)
-    requires
-        crate::util_model::owns_all(*old(ctx), binders@),
-        crate::util_model::owns(*old(ctx), e),
-        (forall|i: int|
-            #![trigger binders@[i]]
-            0 <= i < binders@.len() ==> {
-                let m = to_model(binders@[i]);
-                matches!(m, ExprSpec::Free(_))
-            }),
-    ensures
-        crate::util_model::owns(*final(ctx), result),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        to_model(result) == abstr_pi_telescope_model(
-            Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
-            Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
-            to_model(e),
-        ),
-    decreases binders.len(),
+/// The telescope built in one pass (`TcCtx::abstr_telescope`): `body` already
+/// abstracted over every binder, then binders `i-1` down to `0` wrapped
+/// around it, each one's type abstracted over the binders before it.
+pub open spec fn tele_from(k: BinderKind, ids: Seq<nat>, tys: Seq<ExprSpec>, i: nat, body: ExprSpec) -> ExprSpec
+    decreases i,
 {
-    if binders.len() == 0 {
-        assert(Seq::new(binders@.len(), |i: int| expr_id(binders@[i])).len() == 0);
-        return e;
+    if i == 0 {
+        body
+    } else {
+        tele_from(k, ids, tys, (i - 1) as nat,
+            ExprSpec::Bind(k, Box::new(abstr_full(tys[i - 1], ids.subrange(0, i - 1), 0)), Box::new(body)))
     }
-    let last = binders[binders.len() - 1];
-    let rest = &binders[0..binders.len() - 1];
-    assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
-    let e2 = ctx.abstr_pi(last, e);
-    let result = verified_abstr_pi_telescope(ctx, rest, e2);
-    proof {
-        let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
-        let tys = Seq::new(binders@.len(), |i: int| local_type(binders@[i]));
-        let rest_ids = Seq::new(rest@.len(), |i: int| expr_id(rest@[i]));
-        let rest_tys = Seq::new(rest@.len(), |i: int| local_type(rest@[i]));
-        assert(ids.drop_last() =~= rest_ids);
-        assert(tys.drop_last() =~= rest_tys);
-        assert(ids.last() == expr_id(last));
-        assert(tys.last() == local_type(last));
-    }
-    result
 }
 
-/// Real-arena mirror of `TcCtx::abstr_lambda_telescope` (`expr.rs:658-
-/// 664`): peels `binders` from the end via `apply_lambda`, needed by
-/// `handle_rec_ctor_args_rec_rule`/`mk_rec_rule1` (`inductive.rs:1201-
-/// 1250`). Its closed form is `abstr_telescope_model` at `Lam`, the same
-/// recursion `abstr_pi_telescope_model` is at `Pi`.
-pub fn verified_abstr_lambda_telescope<'t, 'p: 't>(
-    ctx: &mut TcCtx<'t, 'p>,
-    binders: &[ExprPtr<'t>],
-    e: ExprPtr<'t>,
-) -> (result: ExprPtr<'t>)
-    requires
-        crate::util_model::owns_all(*old(ctx), binders@),
-        crate::util_model::owns(*old(ctx), e),
-        (forall|i: int|
-            #![trigger binders@[i]]
-            0 <= i < binders@.len() ==> {
-                let m = to_model(binders@[i]);
-                matches!(m, ExprSpec::Free(_))
-            }),
+/// Abstracting over no locals changes nothing.
+pub proof fn abstr_nil(e: ExprSpec, off: nat)
     ensures
-        crate::util_model::owns(*final(ctx), result),
-        final(ctx).dbj_level_counter == old(ctx).dbj_level_counter,
-        crate::util_model::same_arenas(*old(ctx), *final(ctx)),
-        to_model(result) == abstr_telescope_model(BinderKind::Lam, 
-            Seq::new(binders@.len(), |i: int| expr_id(binders@[i])),
-            Seq::new(binders@.len(), |i: int| local_type(binders@[i])),
-            to_model(e),
-        ),
-    decreases binders.len(),
+        abstr_full(e, Seq::empty(), off) == e,
+    decreases e,
 {
-    if binders.len() == 0 {
-        assert(Seq::new(binders@.len(), |i: int| expr_id(binders@[i])).len() == 0);
-        return e;
+    match e {
+        ExprSpec::Free(id) => {
+            assert(crate::expr_model::find_from_end(Seq::empty(), id) == None::<nat>);
+        },
+        ExprSpec::App(f, a) => { abstr_nil(*f, off); abstr_nil(*a, off); },
+        ExprSpec::Bind(_, t, b) => { abstr_nil(*t, off); abstr_nil(*b, off + 1); },
+        ExprSpec::Let(t, v, b) => { abstr_nil(*t, off); abstr_nil(*v, off); abstr_nil(*b, off + 1); },
+        ExprSpec::Proj(_, x) => { abstr_nil(*x, off); },
+        _ => {},
     }
-    let last = binders[binders.len() - 1];
-    let rest = &binders[0..binders.len() - 1];
-    assert(rest@ =~= binders@.subrange(0, binders@.len() as int - 1));
-    let e2 = ctx.apply_lambda(last, e);
-    let result = verified_abstr_lambda_telescope(ctx, rest, e2);
-    proof {
-        let ids = Seq::new(binders@.len(), |i: int| expr_id(binders@[i]));
-        let tys = Seq::new(binders@.len(), |i: int| local_type(binders@[i]));
-        let rest_ids = Seq::new(rest@.len(), |i: int| expr_id(rest@[i]));
-        let rest_tys = Seq::new(rest@.len(), |i: int| local_type(rest@[i]));
-        assert(ids.drop_last() =~= rest_ids);
-        assert(tys.drop_last() =~= rest_tys);
-        assert(ids.last() == expr_id(last));
-        assert(tys.last() == local_type(last));
+}
+
+/// Abstracting over `x`, then over `ys` one binder further out, is
+/// abstracting over `ys` then `x` at once (`find_from_end` counts from the
+/// innermost binder).
+pub proof fn abstr_compose(e: ExprSpec, x: nat, ys: Seq<nat>, off: nat)
+    ensures
+        abstr_full(abstr_full(e, seq![x], off), ys, off + 1) == abstr_full(e, ys.push(x), off),
+    decreases e,
+{
+    match e {
+        ExprSpec::Free(id) => {
+            reveal_with_fuel(crate::expr_model::find_from_end, 2);
+            assert(seq![x].subrange(0, 0) =~= Seq::<nat>::empty());
+            assert(ys.push(x).subrange(0, ys.len() as int) =~= ys);
+        },
+        ExprSpec::App(f, a) => { abstr_compose(*f, x, ys, off); abstr_compose(*a, x, ys, off); },
+        ExprSpec::Bind(_, t, b) => { abstr_compose(*t, x, ys, off); abstr_compose(*b, x, ys, off + 1); },
+        ExprSpec::Let(t, v, b) => {
+            abstr_compose(*t, x, ys, off); abstr_compose(*v, x, ys, off); abstr_compose(*b, x, ys, off + 1);
+        },
+        ExprSpec::Proj(_, s) => { abstr_compose(*s, x, ys, off); },
+        _ => {},
     }
-    result
+}
+
+/// `tele_from` reads only the binders below `i`.
+pub proof fn tele_from_prefix(k: BinderKind, ids: Seq<nat>, tys: Seq<ExprSpec>, ids2: Seq<nat>, tys2: Seq<ExprSpec>, i: nat, body: ExprSpec)
+    requires
+        i <= ids.len(), i <= tys.len(), i <= ids2.len(), i <= tys2.len(),
+        forall|j: int| 0 <= j < i ==> ids[j] == ids2[j] && tys[j] == tys2[j],
+    ensures
+        tele_from(k, ids, tys, i, body) == tele_from(k, ids2, tys2, i, body),
+    decreases i,
+{
+    if i > 0 {
+        assert(ids.subrange(0, i - 1) =~= ids2.subrange(0, i - 1));
+        assert(tys[i - 1] == tys2[i - 1]);
+        tele_from_prefix(k, ids, tys, ids2, tys2, (i - 1) as nat,
+            ExprSpec::Bind(k, Box::new(abstr_full(tys[i - 1], ids.subrange(0, i - 1), 0)), Box::new(body)));
+    }
+}
+
+/// The telescope built binder by binder is the one built in one pass.
+pub proof fn tele_onepass(k: BinderKind, ids: Seq<nat>, tys: Seq<ExprSpec>, m: ExprSpec)
+    requires
+        ids.len() == tys.len(),
+    ensures
+        abstr_telescope_model(k, ids, tys, m) == tele_from(k, ids, tys, ids.len(), abstr_full(m, ids, 0)),
+    decreases ids.len(),
+{
+    let n = ids.len();
+    if n == 0 {
+        abstr_nil(m, 0);
+        assert(ids =~= Seq::<nat>::empty());
+    } else {
+        let (ids1, tys1) = (ids.drop_last(), tys.drop_last());
+        let (x, t) = (ids.last(), tys.last());
+        let b = ExprSpec::Bind(k, Box::new(t), Box::new(abstr_full(m, seq![x], 0)));
+        tele_onepass(k, ids1, tys1, b);
+        abstr_compose(m, x, ids1, 0);
+        assert(ids1.push(x) =~= ids);
+        assert(ids.subrange(0, n - 1) =~= ids1);
+        let inner = ExprSpec::Bind(k, Box::new(abstr_full(t, ids1, 0)), Box::new(abstr_full(m, ids, 0)));
+        assert(abstr_full(b, ids1, 0) == inner);
+        tele_from_prefix(k, ids1, tys1, ids, tys, (n - 1) as nat, inner);
+    }
 }
 
 /// Real-arena counterpart to real `TcCtx::subst_aux`/`subst_expr_levels`
