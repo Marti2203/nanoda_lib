@@ -199,7 +199,22 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
         pstep(denv, m, m2),
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, m, m2, t)),
-    decreases crate::ti_zsize::zsize(m), 2int,
+{
+    sr_pstep_ne(dty, denv, denv, lctx, g, m, m2, t);
+}
+
+/// `sr_pstep` for a step in the environment or in its fold-free form
+/// (`ne`): the fold case reduces without folding, so the measure leads with
+/// whether `ne` folds.
+proof fn sr_pstep_ne(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, m: ExprSpec, m2: ExprSpec, t: ExprSpec)
+    requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
+        sr_ok(dty, denv, lctx),
+        derivable(jsig(dty, denv, lctx), eq(g, m, m, t)),
+        pstep(ne, m, m2),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, m, m2, t)),
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(m), 2int,
 {
     let sig = jsig(dty, denv, lctx);
     if m == m2 {
@@ -208,10 +223,10 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
     match m {
-        ExprSpec::Proj(i, x) => sr_proj(dty, denv, lctx, g, i, *x, m2, t),
-        ExprSpec::App(f, x) => sr_app(dty, denv, lctx, g, *f, *x, m2, t),
-        ExprSpec::Bind(bk, a, b) => sr_bind(dty, denv, lctx, g, bk, *a, *b, m2, t),
-        ExprSpec::Let(a, v, b) => sr_let(dty, denv, lctx, g, *a, *v, *b, m2, t),
+        ExprSpec::Proj(i, x) => sr_proj(dty, denv, ne, lctx, g, i, *x, m2, t),
+        ExprSpec::App(f, x) => sr_app(dty, denv, ne, lctx, g, *f, *x, m2, t),
+        ExprSpec::Bind(bk, a, b) => sr_bind(dty, denv, ne, lctx, g, bk, *a, *b, m2, t),
+        ExprSpec::Let(a, v, b) => sr_let(dty, denv, ne, lctx, g, *a, *v, *b, m2, t),
         ExprSpec::Const(id, ls) => {
             assert(denv.defs.contains_key(id));
             assert(is_def(sig, id, ls));
@@ -246,14 +261,15 @@ pub proof fn sr_pstep(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
 /// Projections: congruence, and the kernel's projection step at the
 /// reduced structure.
 #[verifier::spinoff_prover]
-proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
+proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
         sr_ok(dty, denv, lctx),
         derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), ExprSpec::Proj(i, Box::new(x)), t)),
-        pstep(denv, ExprSpec::Proj(i, Box::new(x)), m2),
+        pstep(ne, ExprSpec::Proj(i, Box::new(x)), m2),
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), m2, t)),
-    decreases crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 1int,
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 1int,
 {
     let sig = jsig(dty, denv, lctx);
     let m = ExprSpec::Proj(i, Box::new(x));
@@ -261,25 +277,25 @@ proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
     let dm = get(sig, eq(g, m, m, t));
     gen(sig, dm);
     if denv.full {
-        sr_proj_full(dty, denv, lctx, g, i, x, m2, t);
+        sr_proj_full(dty, denv, ne, lctx, g, i, x, m2, t);
         return;
     }
     assert(crate::kclaims::ind_ok(sig));
     let (st, l) = choose|st: ExprSpec, l: LevelSpec| #[trigger] crate::ti_gen::gmark(st, x, l, l)
         && derivable(sig, eq(g, x, x, st)) && crate::ti_syntax::proj_ty(sig, st, i as nat, x) is Some;
-    if m2 is Proj && m2->Proj_0 == i && pstep(denv, x, *m2->Proj_1) {
+    if m2 is Proj && m2->Proj_0 == i && pstep(ne, x, *m2->Proj_1) {
         let x2 = *m2->Proj_1;
-        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, st);
         crate::kiota::proj_cong_d(sig, g, i, x, x2, st, t);
         assert(m2 == ExprSpec::Proj(i, Box::new(x2)));
     } else {
-        let x2 = choose|inner2: ExprSpec| (#[trigger] crate::beta_model::iota_reduct(inner2)) && pstep(denv, x, inner2)
-            && crate::beta_model::iota_extract(denv, i, inner2, m2);
-        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        let x2 = choose|inner2: ExprSpec| (#[trigger] crate::beta_model::iota_reduct(inner2)) && pstep(ne, x, inner2)
+            && crate::beta_model::iota_extract(ne, i, inner2, m2);
+        sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, st);
         crate::kiota::proj_cong_d(sig, g, i, x, x2, st, t);
         let (cid, lv, args2, np) = choose|cid: u64, lv: Seq<LevelSpec>, args2: Seq<ExprSpec>, np: u16|
             #![trigger crate::beta_model::spine_app(ExprSpec::Const(cid, lv), args2), args2[(np as nat + i as nat) as int]]
-            x2 == crate::beta_model::spine_app(ExprSpec::Const(cid, lv), args2) && denv.ctor_num_params(cid) == Some(np)
+            x2 == crate::beta_model::spine_app(ExprSpec::Const(cid, lv), args2) && ne.ctor_num_params(cid) == Some(np)
                 && ((np as nat + i as nat) < args2.len()) && (m2 == args2[(np as nat + i as nat) as int]);
         crate::beta_model::spine_destruct_app(ExprSpec::Const(cid, lv), args2);
         crate::kiota::proj_step_d(sig, g, i, x2, t);
@@ -290,14 +306,15 @@ proof fn sr_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
 /// Projections in the full judgment: congruence through the generated
 /// subject, and the projection contraction by subject reduction.
 #[verifier::spinoff_prover]
-proof fn sr_proj_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
+proof fn sr_proj_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, i: usize, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
         full_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, ExprSpec::Proj(i, Box::new(x)), t),
-        pstep(denv, ExprSpec::Proj(i, Box::new(x)), m2),
+        pstep(ne, ExprSpec::Proj(i, Box::new(x)), m2),
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Proj(i, Box::new(x)), m2, t)),
-    decreases crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 0int,
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(ExprSpec::Proj(i, Box::new(x))), 0int,
 {
     let sig = jsig(dty, denv, lctx);
     let m = ExprSpec::Proj(i, Box::new(x));
@@ -311,15 +328,15 @@ proof fn sr_proj_full(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: 
     let dyx = get(sig, eq(g, y, x, st));
     let dx = d_right(sig, dyx);
     mk_d(sig, dx);
-    if m2 is Proj && m2->Proj_0 == i && pstep(denv, x, *m2->Proj_1) {
+    if m2 is Proj && m2->Proj_0 == i && pstep(ne, x, *m2->Proj_1) {
         let x2 = *m2->Proj_1;
-        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, st);
         gproj_cong(sig, g, i, st, l, y, x, x2, t);
         assert(m2 == ExprSpec::Proj(i, Box::new(x2)));
     } else {
-        let x2 = choose|inner2: ExprSpec| (#[trigger] crate::beta_model::iota_reduct(inner2)) && pstep(denv, x, inner2)
-            && crate::beta_model::iota_extract(denv, i, inner2, m2);
-        sr_pstep(dty, denv, lctx, g, x, x2, st);
+        let x2 = choose|inner2: ExprSpec| (#[trigger] crate::beta_model::iota_reduct(inner2)) && pstep(ne, x, inner2)
+            && crate::beta_model::iota_extract(ne, i, inner2, m2);
+        sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, st);
         gproj_cong(sig, g, i, st, l, y, x, x2, t);
         let mx2 = ExprSpec::Proj(i, Box::new(x2));
         let dmx = get(sig, eq(g, m, mx2, t));
@@ -384,16 +401,115 @@ pub proof fn app_parts(sig: Sig, g: Ctx, f: ExprSpec, x: ExprSpec, t: ExprSpec) 
     (a1, b1, k1, k2)
 }
 
-#[verifier::spinoff_prover]
-proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
+/// The fold-free environment keeps the recursor, constructor and
+/// definition tables.
+pub proof fn nofold_tables(denv: EnvSpec, ne: EnvSpec, s: ExprSpec)
     requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
+    ensures
+        crate::beta_model::rec_ready(ne, s) == crate::beta_model::rec_ready(denv, s),
+        crate::beta_model::rec_result(ne, s) == crate::beta_model::rec_result(denv, s),
+        ne.export == denv.export && ne.defs == denv.defs,
+{
+    assert(forall|id: u64| #[trigger] ne.rec_data(id) == denv.rec_data(id));
+    assert(forall|id: u64| #[trigger] ne.ctor_num_params(id) == denv.ctor_num_params(id));
+}
+
+/// An application's recursor step: the redex is typed, and its reduct by
+/// iota (`sr_iota_at`, or the full judgment's reduction rule).
+#[verifier::spinoff_prover]
+proof fn sr_app_rec(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec,
+    a1: ExprSpec, b1: ExprSpec, k1: LevelSpec, k2: LevelSpec)
+    requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
+        sr_ok(dty, denv, lctx),
+        app_facts(jsig(dty, denv, lctx), g, f, x, t, a1, b1, k1, k2),
+        exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::beta_model::rec_ready(ne, sapp(f2, a2))
+            && m2 == crate::beta_model::rec_result(ne, sapp(f2, a2)),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), m2, t)),
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(sapp(f, x)), 0int,
+{
+    let sig = jsig(dty, denv, lctx);
+    let m = sapp(f, x);
+    let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
+        && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::beta_model::rec_ready(ne, sapp(f2, a2))
+        && m2 == crate::beta_model::rec_result(ne, sapp(f2, a2));
+    nofold_tables(denv, ne, sapp(f2, x2));
+    sr_pstep_ne(dty, denv, ne, lctx, g, f, f2, pi(a1, b1));
+    sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, a1);
+    app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
+    if denv.full {
+        assert(sig.ienv == denv);
+        redg_d(sig, g, sapp(f2, x2), m2, inst(0, x, b1));
+    } else {
+        sr_iota_at(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+    }
+    crate::dom_adeq_syn::dtrans(sig, g, m, sapp(f2, x2), m2, inst(0, x, b1));
+    conv_to(sig, g, m, m2, inst(0, x, b1), t);
+}
+
+/// An application's literal-fold or quotient step: the redex is typed, and
+/// its contraction is the full judgment's (in the fragment no typed term is
+/// such a redex).
+#[verifier::spinoff_prover]
+proof fn sr_app_builtin(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec,
+    a1: ExprSpec, b1: ExprSpec, k1: LevelSpec, k2: LevelSpec)
+    requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
+        sr_ok(dty, denv, lctx),
+        app_facts(jsig(dty, denv, lctx), g, f, x, t, a1, b1, k1, k2),
+        pstep(ne, sapp(f, x), m2),
+        (exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && ne.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+            && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2)))
+        || (exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::quot_reduct(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::tc_model::quot_ready(denv.export, sapp(f2, a2))
+            && m2 == crate::tc_model::quot_result(denv.export, sapp(f2, a2))),
+    ensures
+        derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), m2, t)),
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(sapp(f, x)), 0int,
+{
+    let sig = jsig(dty, denv, lctx);
+    let (f2, x2) = if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
+        && pstep(ne, f, f2) && pstep(ne, x, a2) && ne.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+        && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2)) {
+        choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && ne.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
+            && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2))
+    } else {
+        choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::quot_reduct(f2, a2))
+            && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::tc_model::quot_ready(denv.export, sapp(f2, a2))
+            && m2 == crate::tc_model::quot_result(denv.export, sapp(f2, a2))
+    };
+    sr_pstep_ne(dty, denv, ne, lctx, g, f, f2, pi(a1, b1));
+    sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, a1);
+    app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
+    if denv.full {
+        if ne != denv {
+            crate::nat_add::pstep_nofold_up(denv, sapp(f, x), m2);
+            crate::nat_add::pstep_nofold_up(denv, f, f2);
+            crate::nat_add::pstep_nofold_up(denv, x, x2);
+        }
+        assert(ne.nat_fold == denv.nat_fold || !ne.nat_fold);
+        sr_fold_quot(dty, denv, lctx, g, f, x, f2, x2, m2, t, inst(0, x, b1));
+    } else {
+        no_builtin_head(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
+    }
+}
+
+#[verifier::spinoff_prover]
+proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec)
+    requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
         sr_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, sapp(f, x), t),
-        pstep(denv, sapp(f, x), m2),
+        pstep(ne, sapp(f, x), m2),
         sapp(f, x) != m2,
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), m2, t)),
-    decreases crate::ti_zsize::zsize(sapp(f, x)), 1int,
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(sapp(f, x)), 1int,
 {
     let sig = jsig(dty, denv, lctx);
     let m = sapp(f, x);
@@ -401,56 +517,23 @@ proof fn sr_app(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<na
     let is_beta = match f {
         ExprSpec::Bind(BinderKind::Lam, _, body) => exists|body2: ExprSpec, a2: ExprSpec|
             #![trigger crate::beta_model::subst1(body2, a2)]
-            pstep(denv, *body, body2) && pstep(denv, x, a2) && m2 == crate::beta_model::subst1(body2, a2),
+            pstep(ne, *body, body2) && pstep(ne, x, a2) && m2 == crate::beta_model::subst1(body2, a2),
         _ => false,
     };
     if is_beta {
-        sr_beta(dty, denv, lctx, g, f, *f->Bind_1, *f->Bind_2, x, m2, t, a1, b1, k1, k2);
-    } else if exists|f2: ExprSpec, a2: ExprSpec| pstep(denv, f, f2) && pstep(denv, x, a2) && m2 == ExprSpec::App(Box::new(f2), Box::new(a2)) {
-        let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| pstep(denv, f, f2) && pstep(denv, x, a2) && m2 == ExprSpec::App(Box::new(f2), Box::new(a2));
-        sr_pstep(dty, denv, lctx, g, f, f2, pi(a1, b1));
-        sr_pstep(dty, denv, lctx, g, x, x2, a1);
+        sr_beta(dty, denv, ne, lctx, g, f, *f->Bind_1, *f->Bind_2, x, m2, t, a1, b1, k1, k2);
+    } else if exists|f2: ExprSpec, a2: ExprSpec| pstep(ne, f, f2) && pstep(ne, x, a2) && m2 == ExprSpec::App(Box::new(f2), Box::new(a2)) {
+        let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| pstep(ne, f, f2) && pstep(ne, x, a2) && m2 == ExprSpec::App(Box::new(f2), Box::new(a2));
+        sr_pstep_ne(dty, denv, ne, lctx, g, f, f2, pi(a1, b1));
+        sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, a1);
         app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
         conv_to(sig, g, m, m2, inst(0, x, b1), t);
     } else if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
-        && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::rec_ready(denv, sapp(f2, a2))
-        && m2 == crate::beta_model::rec_result(denv, sapp(f2, a2)) {
-        let (f2, x2) = choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::rec_reduct(f2, a2))
-            && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::beta_model::rec_ready(denv, sapp(f2, a2))
-            && m2 == crate::beta_model::rec_result(denv, sapp(f2, a2));
-        sr_pstep(dty, denv, lctx, g, f, f2, pi(a1, b1));
-        sr_pstep(dty, denv, lctx, g, x, x2, a1);
-        app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
-        if denv.full {
-            assert(sig.ienv == denv);
-            redg_d(sig, g, sapp(f2, x2), m2, inst(0, x, b1));
-        } else {
-            sr_iota_at(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
-        }
-        crate::dom_adeq_syn::dtrans(sig, g, m, sapp(f2, x2), m2, inst(0, x, b1));
-        conv_to(sig, g, m, m2, inst(0, x, b1), t);
+        && pstep(ne, f, f2) && pstep(ne, x, a2) && crate::beta_model::rec_ready(ne, sapp(f2, a2))
+        && m2 == crate::beta_model::rec_result(ne, sapp(f2, a2)) {
+        sr_app_rec(dty, denv, ne, lctx, g, f, x, m2, t, a1, b1, k1, k2);
     } else {
-        // the remaining steps fire only on a literal-fold or quotient
-        // head, and their redex is typed
-        let (f2, x2) = if exists|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-            && pstep(denv, f, f2) && pstep(denv, x, a2) && denv.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
-            && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2)) {
-            choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::fold_reduct(f2, a2))
-                && pstep(denv, f, f2) && pstep(denv, x, a2) && denv.nat_fold && crate::beta_model::nat_fold_ready(denv.export, sapp(f2, a2))
-                && m2 == crate::beta_model::nat_fold_result(denv.export, sapp(f2, a2))
-        } else {
-            choose|f2: ExprSpec, a2: ExprSpec| (#[trigger] crate::beta_model::quot_reduct(f2, a2))
-                && pstep(denv, f, f2) && pstep(denv, x, a2) && crate::tc_model::quot_ready(denv.export, sapp(f2, a2))
-                && m2 == crate::tc_model::quot_result(denv.export, sapp(f2, a2))
-        };
-        sr_pstep(dty, denv, lctx, g, f, f2, pi(a1, b1));
-        sr_pstep(dty, denv, lctx, g, x, x2, a1);
-        app_cong_d(sig, g, f, f2, x, x2, a1, b1, k1, k2);
-        if denv.full {
-            sr_fold_quot(dty, denv, lctx, g, f, x, f2, x2, m2, t, inst(0, x, b1));
-        } else {
-            no_builtin_head(dty, denv, lctx, g, sapp(f2, x2), inst(0, x, b1));
-        }
+        sr_app_builtin(dty, denv, ne, lctx, g, f, x, m2, t, a1, b1, k1, k2);
     }
 }
 
@@ -649,23 +732,24 @@ pub proof fn spine_conv(sig: Sig, g: Ctx, f1: ExprSpec, f2: ExprSpec, args: Seq<
 }
 
 #[verifier::spinoff_prover]
-proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, aa: ExprSpec, body: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec, a1: ExprSpec, b1: ExprSpec, k1: LevelSpec, k2: LevelSpec)
+proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, f: ExprSpec, aa: ExprSpec, body: ExprSpec, x: ExprSpec, m2: ExprSpec, t: ExprSpec, a1: ExprSpec, b1: ExprSpec, k1: LevelSpec, k2: LevelSpec)
     requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
         sr_ok(dty, denv, lctx),
         f == lam(aa, body),
         app_facts(jsig(dty, denv, lctx), g, f, x, t, a1, b1, k1, k2),
         exists|body2: ExprSpec, a2: ExprSpec|
             #![trigger crate::beta_model::subst1(body2, a2)]
-            pstep(denv, body, body2) && pstep(denv, x, a2) && m2 == crate::beta_model::subst1(body2, a2),
+            pstep(ne, body, body2) && pstep(ne, x, a2) && m2 == crate::beta_model::subst1(body2, a2),
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, sapp(f, x), m2, t)),
-    decreases crate::ti_zsize::zsize(sapp(f, x)), 0int,
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(sapp(f, x)), 0int,
 {
     let sig = jsig(dty, denv, lctx);
     let m = sapp(f, x);
     let (body2, x2) = choose|body2: ExprSpec, a2: ExprSpec|
         #![trigger crate::beta_model::subst1(body2, a2)]
-        pstep(denv, body, body2) && pstep(denv, x, a2) && m2 == crate::beta_model::subst1(body2, a2);
+        pstep(ne, body, body2) && pstep(ne, x, a2) && m2 == crate::beta_model::subst1(body2, a2);
     crate::ti_zsize::zsize_bind(BinderKind::Lam, aa, body);
     let df = get(sig, eq(g, f, f, pi(a1, b1)));
     gen(sig, df);
@@ -679,8 +763,8 @@ proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
     crate::meta_hyp::pi_inj_m(sig, g, a1, b1, aa, bt);
     assert(f == ExprSpec::Bind(BinderKind::Lam, Box::new(aa), Box::new(body)));
     assert(m == ExprSpec::App(Box::new(f), Box::new(x)));
-    sr_pstep(dty, denv, lctx, g.push(aa), body, body2, bt);
-    sr_pstep(dty, denv, lctx, g, x, x2, a1);
+    sr_pstep_ne(dty, denv, ne, lctx, g.push(aa), body, body2, bt);
+    sr_pstep_ne(dty, denv, ne, lctx, g, x, x2, a1);
     conv_chain(sig, g, x, x2, a1, aa);
     crate::dom_adeq_syn::dsym(sig, g, x, x2, aa);
     crate::dom_adeq_syn::beta_d(sig, g, aa, body, bt, x, j1, j2);
@@ -693,25 +777,26 @@ proof fn sr_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
 }
 
 #[verifier::spinoff_prover]
-proof fn sr_bind(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, bk: BinderKind, a: ExprSpec, b: ExprSpec, m2: ExprSpec, t: ExprSpec)
+proof fn sr_bind(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, bk: BinderKind, a: ExprSpec, b: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
         sr_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, ExprSpec::Bind(bk, Box::new(a), Box::new(b)), t),
-        pstep(denv, ExprSpec::Bind(bk, Box::new(a), Box::new(b)), m2),
+        pstep(ne, ExprSpec::Bind(bk, Box::new(a), Box::new(b)), m2),
         ExprSpec::Bind(bk, Box::new(a), Box::new(b)) != m2,
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Bind(bk, Box::new(a), Box::new(b)), m2, t)),
-    decreases crate::ti_zsize::zsize(ExprSpec::Bind(bk, Box::new(a), Box::new(b))), 0int,
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(ExprSpec::Bind(bk, Box::new(a), Box::new(b))), 0int,
 {
     crate::ti_zsize::zsize_bind(bk, a, b);
     let sig = jsig(dty, denv, lctx);
     let m = ExprSpec::Bind(bk, Box::new(a), Box::new(b));
-    let (a2, b2) = choose|t2: ExprSpec, b2: ExprSpec| pstep(denv, a, t2) && pstep(denv, b, b2) && m2 == ExprSpec::Bind(bk, Box::new(t2), Box::new(b2));
+    let (a2, b2) = choose|t2: ExprSpec, b2: ExprSpec| pstep(ne, a, t2) && pstep(ne, b, b2) && m2 == ExprSpec::Bind(bk, Box::new(t2), Box::new(b2));
     if bk == BinderKind::Pi {
         let (l1, l2) = choose|l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(a, b, l1, l2)
             && typ(sig, g, a, l1) && typ(sig, g.push(a), b, l2) && tchain(sig, g, t, sort(imax(l1, l2)));
-        sr_pstep(dty, denv, lctx, g, a, a2, sort(l1));
-        sr_pstep(dty, denv, lctx, g.push(a), b, b2, sort(l2));
+        sr_pstep_ne(dty, denv, ne, lctx, g, a, a2, sort(l1));
+        sr_pstep_ne(dty, denv, ne, lctx, g.push(a), b, b2, sort(l2));
         ctx_conv(sig, g, a, a2, l1, b, b2, sort(l2));
         let q0 = get(sig, eq(g, a, a2, sort(l1)));
         let q1 = get(sig, eq(g.push(a), b, b2, sort(l2)));
@@ -726,8 +811,8 @@ proof fn sr_bind(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<n
         let (bt, l1, l2) = choose|bt: ExprSpec, l1: LevelSpec, l2: LevelSpec| #[trigger] gmark(bt, b, l1, l2)
             && typ(sig, g, a, l1) && derivable(sig, eq(g.push(a), b, b, bt)) && typ(sig, g.push(a), bt, l2)
             && tchain(sig, g, t, pi(a, bt));
-        sr_pstep(dty, denv, lctx, g, a, a2, sort(l1));
-        sr_pstep(dty, denv, lctx, g.push(a), b, b2, bt);
+        sr_pstep_ne(dty, denv, ne, lctx, g, a, a2, sort(l1));
+        sr_pstep_ne(dty, denv, ne, lctx, g.push(a), b, b2, bt);
         ctx_conv(sig, g, a, a2, l1, b, b2, bt);
         let q0 = get(sig, eq(g, a, a2, sort(l1)));
         let q1 = get(sig, eq(g.push(a), bt, bt, sort(l2)));
@@ -767,15 +852,16 @@ proof fn let_conv(sig: Sig, g: Ctx, a: ExprSpec, v: ExprSpec, b: ExprSpec, a2: E
 }
 
 #[verifier::spinoff_prover]
-proof fn sr_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, a: ExprSpec, v: ExprSpec, b: ExprSpec, m2: ExprSpec, t: ExprSpec)
+proof fn sr_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, ne: EnvSpec, lctx: Map<nat, ExprSpec>, g: Ctx, a: ExprSpec, v: ExprSpec, b: ExprSpec, m2: ExprSpec, t: ExprSpec)
     requires
+        ne == denv || ne == crate::conv_frag::nofold(denv),
         sr_ok(dty, denv, lctx),
         gen_ok(jsig(dty, denv, lctx), g, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)), t),
-        pstep(denv, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)), m2),
+        pstep(ne, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)), m2),
         ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)) != m2,
     ensures
         derivable(jsig(dty, denv, lctx), eq(g, ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b)), m2, t)),
-    decreases crate::ti_zsize::zsize(ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b))), 0int,
+    decreases (if ne.nat_fold { 1int } else { 0int }), crate::ti_zsize::zsize(ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b))), 0int,
 {
     let sig = jsig(dty, denv, lctx);
     let m = ExprSpec::Let(Box::new(a), Box::new(v), Box::new(b));
@@ -784,22 +870,22 @@ proof fn sr_let(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: EnvSpec, lctx: Map<na
         && derivable(sig, eq(g, inst(0, v, b), inst(0, v, b), tt)) && tchain(sig, g, t, tt);
     crate::ti_zsize::zsize_let(a, v, b);
     if exists|b2: ExprSpec, v2: ExprSpec| #![trigger crate::beta_model::subst1(b2, v2)]
-        pstep(denv, b, b2) && pstep(denv, v, v2) && m2 == crate::beta_model::subst1(b2, v2) {
+        pstep(ne, b, b2) && pstep(ne, v, v2) && m2 == crate::beta_model::subst1(b2, v2) {
         let (b2, v2) = choose|b2: ExprSpec, v2: ExprSpec| #![trigger crate::beta_model::subst1(b2, v2)]
-            pstep(denv, b, b2) && pstep(denv, v, v2) && m2 == crate::beta_model::subst1(b2, v2);
-        crate::subst_algebra::pstep_inst(denv, 0, v, v2, b, b2);
-        sr_pstep(dty, denv, lctx, g, inst(0, v, b), inst(0, v2, b2), tt);
+            pstep(ne, b, b2) && pstep(ne, v, v2) && m2 == crate::beta_model::subst1(b2, v2);
+        crate::subst_algebra::pstep_inst(ne, 0, v, v2, b, b2);
+        sr_pstep_ne(dty, denv, ne, lctx, g, inst(0, v, b), inst(0, v2, b2), tt);
         crate::ti_sr::zeta_node(sig, g, a, v, b, tt, l1);
         crate::dom_adeq_syn::dtrans(sig, g, m, inst(0, v, b), inst(0, v2, b2), tt);
         crate::subst_algebra::subst1_is_inst(b2, v2);
         conv_to(sig, g, m, m2, tt, t);
     } else {
         let (a2, v2, b2) = choose|t2: ExprSpec, v2: ExprSpec, b2: ExprSpec|
-            pstep(denv, a, t2) && pstep(denv, v, v2) && pstep(denv, b, b2) && m2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
-        sr_pstep(dty, denv, lctx, g, a, a2, sort(l1));
-        sr_pstep(dty, denv, lctx, g, v, v2, a);
-        crate::subst_algebra::pstep_inst(denv, 0, v, v2, b, b2);
-        sr_pstep(dty, denv, lctx, g, inst(0, v, b), inst(0, v2, b2), tt);
+            pstep(ne, a, t2) && pstep(ne, v, v2) && pstep(ne, b, b2) && m2 == ExprSpec::Let(Box::new(t2), Box::new(v2), Box::new(b2));
+        sr_pstep_ne(dty, denv, ne, lctx, g, a, a2, sort(l1));
+        sr_pstep_ne(dty, denv, ne, lctx, g, v, v2, a);
+        crate::subst_algebra::pstep_inst(ne, 0, v, v2, b, b2);
+        sr_pstep_ne(dty, denv, ne, lctx, g, inst(0, v, b), inst(0, v2, b2), tt);
         let_conv(sig, g, a, v, b, a2, v2, b2, tt, l1);
         conv_to(sig, g, m, m2, tt, t);
     }
