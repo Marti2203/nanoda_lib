@@ -155,3 +155,29 @@ string-literal expansion, delta in `whnf` and lazy delta's unfolding
 recursor steps (`rec_step_claim`), `Nat.succ` and binary-operation
 folding, projection of a constructor (`reduce_proj_core`), quotient
 steps.
+
+## Next slice: conversion and inference together
+
+`def_eq` and `infer` call each other (proof irrelevance infers both
+sides' types), so their semantic halves land together, as the typed
+claims did. Two shapes, after con-leche:
+
+- checking inference establishes the invariant: from the run, the term
+  and its type are well-denoted and the value is a member of the type
+  (`sem_infer`);
+- infer-only inference (nanoda's `InferOnly` flag) skips the argument
+  check, so it cannot establish the invariant; its claim takes the
+  term's well-denotedness as a premise and concludes con-leche's
+  hereditary relation at the computed type (the value is the point, a
+  member, or at a Pi a graph over its domain; `ClaimsIO.lean`). An
+  infer-only conclusion never feeds a site that needs the
+  establishing form; proof irrelevance consumes the premise form.
+
+Conversion's cases: the quick check, sorts and constants at equal
+levels, application congruence (the argument's slot domain is a type,
+so both arguments are proofs or neither is), Pi congruence (fibres are
+types, never the point), lazy delta (delta, then reduce-then-continue)
+and proof irrelevance (vacuous once both sides are proofs) are proven
+from the model; struct and unit eta and the literal comparisons are C5;
+lambda congruence and eta are the option-2 residue unless the call site
+supplies the bodies' type.
