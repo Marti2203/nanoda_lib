@@ -122,7 +122,7 @@ tested-input check in the kernel (a code change, so the user's call).
 |---|---|
 | C1 | probe: interface, `denote`, `well_denoted`, beta (done) |
 | C2 | the core's semantics (done): the regimes' introduction and elimination laws (`lam_value_mem`, `app_mem_pi_value`), `Sort n : Sort (n+1)`, Pi formation at `imax`, zeta, opening a binder at a local (`denote_open`), unused locals (`denote_fresh_local`), level instantiation as a change of level valuation, closed terms reading no environment (`denote_agree`) |
-| C3 | the semantic claims and their composition laws |
+| C3 | the semantic claims and their composition laws (`src/set_claims.rs`, done): `env_model`, `sat`, `sem_red` / `sem_conv` / `sem_infer` / `sem_type`; reductions chain, reduce-then-continue on either side, symmetry, an inferred type moves along a reduction or a conversion to a type; `delta_sound` |
 | C4 | add the semantic claims to the `whnf`/`def_eq`/`infer` contracts |
 | C5 | the environment model: definitions, axioms, inductives as least fixed points, recursors and iota, projections, structure and unit eta, Nat literals and the Nat extension, quotients |
 | C6 | the main theorem: an accepted export has a model; no constant of type `False` |
