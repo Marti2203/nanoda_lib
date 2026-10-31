@@ -75,9 +75,31 @@ mirrors the algorithm instead: reduce one side and continue (`redL`),
 `symm`, congruence, proof irrelevance, eta, sorts and constants by level
 equality.
 
-So the kernel claims need a relational description of nanoda's checker
-of that shape (a rules tier), and the contracts of `whnf`, `def_eq` and
-`infer` re-targeted to produce it. That is proof work on the claims only.
+Con-leche proves its checker against a syntactic rules tier and then
+proves the rules sound. Nanoda's claims are already stated per function
+as conjunctions (`whnf_claim`, `def_eq_claim`, `kinfer_claim`), so the
+semantic statements can be added to them directly, in con-leche's
+`Motive.lean` shapes, quantified over every model of the environment and
+every valuation satisfying the local context:
+
+- reduction `e ~> r`: if `e` is well-denoted and not `pt`, then `r` is
+  well-denoted and denotes the same set;
+- conversion `x == y`: two well-denoted sides that are not `pt` denote
+  the same set;
+- inference `e : t`: `e` and `t` are well-denoted, `t` denotes a type,
+  and `e`'s value is a member of it.
+
+These compose the ways nanoda's proofs compose their claims: reductions
+chain; a conversion after reducing a side ("reduce then continue") holds
+because the reduct of a well-denoted non-`pt` side is well-denoted and
+not `pt`; an inferred type moves along its whnf because a type is never
+`pt`. A free transitivity through an arbitrary middle term does not
+compose, and the survey of `kconv_trans`'s call sites (2026-10-31)
+found the reduce-then-compare shape at the def_eq sites and reductions
+of types at the inference sites. Locals are model data (`Model.locals`);
+a context is satisfied when each local's value is a member of its type's
+denotation, and a binder opened at a fresh local relates to `denote_under`
+through the opening lemma.
 
 ## The certification tax
 
@@ -99,8 +121,8 @@ tested-input check in the kernel (a code change, so the user's call).
 | stage | content |
 |---|---|
 | C1 | probe: interface, `denote`, `well_denoted`, beta (done) |
-| C2 | the rest of the core: zeta, delta (constants via the model's assignment), sorts and levels, Pi formation, application, lambda, let; contexts (`Sat`) and `Infer` soundness |
-| C3 | the rules tier: nanoda's reduction, definitional equality and inference as relations without free transitivity; soundness of each rule |
-| C4 | re-target the `whnf`/`def_eq`/`infer` contracts to the rules tier |
+| C2 | the core's semantics (done): the regimes' introduction and elimination laws (`lam_value_mem`, `app_mem_pi_value`), `Sort n : Sort (n+1)`, Pi formation at `imax`, zeta, opening a binder at a local (`denote_open`), unused locals (`denote_fresh_local`), level instantiation as a change of level valuation, closed terms reading no environment (`denote_agree`) |
+| C3 | the semantic claims and their composition laws |
+| C4 | add the semantic claims to the `whnf`/`def_eq`/`infer` contracts |
 | C5 | the environment model: definitions, axioms, inductives as least fixed points, recursors and iota, projections, structure and unit eta, Nat literals and the Nat extension, quotients |
 | C6 | the main theorem: an accepted export has a model; no constant of type `False` |
