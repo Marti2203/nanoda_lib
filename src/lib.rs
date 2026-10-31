@@ -95,6 +95,7 @@ pub mod rctx;
 pub mod real_gen;
 pub mod reduce_fv;
 pub mod regularity;
+pub mod set_model;
 pub mod subst_algebra;
 pub mod subst_model;
 pub mod subst_conv;

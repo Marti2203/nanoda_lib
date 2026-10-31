@@ -83,6 +83,18 @@ and its lazy-delta comparison of projections are verified, not trusted.
 The vstd fork adds `HashSet::capacity` (no claim) and that a `Cow<str>`
 formats without a requirement, like `str` and `String`.
 
+## S. The set theory (`src/set_model.rs`)
+
+The consistency work (docs/CONSISTENCY.md) proves the checker's rules
+sound in a set-theoretic model. Its set theory is an interface: the
+external type `ZSet`, uninterpreted operators (membership, separation,
+the point, the universe chain, graphs, function spaces, application) and
+20 `external_body` laws (`axiom_*`), which are con-leche's `SetLib`. They
+hold in V_kappa for an inaccessible kappa with an omega-chain of
+inaccessibles below it. `ZSet` is external so that nothing bounds its
+size; a concrete carrier such as `int` would contradict the graph laws
+by Cantor's theorem. Nothing on the export theorem's path uses them yet.
+
 ## P. The parser (`src/parser.rs`)
 
 The parser decodes the export file's lines and makes one `ExportBuilder`
