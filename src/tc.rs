@@ -1259,6 +1259,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                     kconv_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // M7: the unfolding's reduction claim, then whnf's
                     scope_pres_of_closed(crate::env_model::env_arena_ids(*self.env), sl, to_model_expr(c));
+                    ksem_red_unproven(*old(self).env, sl, to_model_expr(c));
                     whnf_claim_of_pstep_star(*old(self).env, sl, to_model_expr(c));
                     whnf_claim_trans(*old(self).env, sl, to_model_expr(c), to_model_expr(r));
                     // scope: the expansion has no locals, and whnf adds none
@@ -1641,6 +1642,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             assert(to_model_expr(rr) == ExprSpec::NatLit(ln));
                             crate::kdual::cwh_to_lit(kd, fme, kg, w, ln);
                             crate::kdual::cwh_trans(kd, fme, kg, em, w, to_model_expr(rr));
+                            ksem_red_unproven(env, em, to_model_expr(rr));
                         }
                     }
                     r
@@ -1884,6 +1886,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             }
             crate::kdual::cwh_of_pstep_star(kd, fm, kg, pm, to_model_expr(a));
             crate::kdual::cwh_trans(kd, fm, kg, ExprSpec::Proj(idx, Box::new(s0)), pm, to_model_expr(a));
+            ksem_red_unproven(env, ExprSpec::Proj(idx, Box::new(s0)), to_model_expr(a));
             // scope: the field is an argument of the whnf'd structure
             assert forall|SS: ISet<nat>, k: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), ExprSpec::Proj(idx, Box::new(s0)), SS, k)
                 implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(*self.env), to_model_expr(a), SS, k) by {
@@ -3675,6 +3678,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
                             to_model_expr(next_term),
                         );
                     }
+                    ksem_red_unproven(*old(self).env, to_model_expr(whnfd), to_model_expr(next_term));
                     whnf_claim_of_nofv(*old(self).env, to_model_expr(whnfd), to_model_expr(next_term));
                     whnf_claim_trans(
                         *old(self).env,
@@ -5410,6 +5414,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             if crate::expr_model::nlbv(to_model_expr(e)) <= 0 {
                 deq_any_of_nofv_pstep_star(*old(self).env, to_model_expr(e), to_model_expr(unfolded));
             }
+            ksem_red_unproven(*old(self).env, to_model_expr(e), to_model_expr(unfolded));
             whnf_claim_of_nofv(*old(self).env, to_model_expr(e), to_model_expr(unfolded));
             scope_pres_in_scope(*self, e, unfolded);
         }
@@ -7321,6 +7326,7 @@ pub proof fn nat_bin_whnf_claim<'x, 't>(env: Env<'x, 't>, h: ExprSpec, xm: ExprS
 {
     let (kd, fm, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
     let args0 = Seq::<ExprSpec>::empty().push(xm).push(ym);
+    ksem_red_unproven(env, ExprSpec::App(Box::new(ExprSpec::App(Box::new(h), Box::new(xm))), Box::new(ym)), rm);
     let args1 = args0.update(0, xwm);
     let args2 = args1.update(1, ywm);
     assert(args2 =~= Seq::<ExprSpec>::empty().push(xwm).push(ywm));
@@ -7369,6 +7375,7 @@ pub proof fn whnf_claim_spine_head<'x, 't>(env: Env<'x, 't>, h1: ExprSpec, h2: E
         crate::beta_model::spine_app_nlbv_decompose(h1, args);
         kconv_spine_congr(env, h1, h2, args);
         crate::beta_model::spine_app_nlbv(h2, args);
+        ksem_red_spine(env, h1, h2, args);
     }
     spine_scope_pres(crate::env_model::env_arena_ids(env), h1, h2, args);
     crate::kdual::cwh_head(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), h1, h2, args);
@@ -8024,6 +8031,54 @@ pub open spec fn whnf_claim<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) 
     // values preserve it whether or not the input is closed
     &&& scope_pres(crate::env_model::env_arena_ids(env), e, r)
     &&& kcwh(env, e, r)
+    &&& crate::expr_model::nlbv(e) <= 0 ==> ksem_red(env, e, r)
+}
+
+/// `whnf_claim`'s semantic half (docs/CONSISTENCY.md): in every set model
+/// of the environment, a well-denoted input that is not a proof keeps its
+/// value, under the run's named hypothesis (`set_claims::no_unproven_step`).
+pub open spec fn ksem_red<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec) -> bool {
+    crate::set_claims::no_unproven_step(crate::env_model::to_model_of_env(env).export)
+        ==> crate::set_claims::sem_red(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), e, r)
+}
+
+pub proof fn ksem_red_refl<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
+    ensures
+        ksem_red(env, a, a),
+{
+    crate::set_claims::sem_red_refl(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), a);
+}
+
+pub proof fn ksem_red_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: ExprSpec)
+    requires
+        ksem_red(env, a, b),
+        ksem_red(env, b, c),
+    ensures
+        ksem_red(env, a, c),
+{
+    if crate::set_claims::no_unproven_step(crate::env_model::to_model_of_env(env).export) {
+        crate::set_claims::sem_red_trans(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), a, b, c);
+    }
+}
+
+pub proof fn ksem_red_spine<'x, 't>(env: Env<'x, 't>, h1: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        ksem_red(env, h1, h2),
+    ensures
+        ksem_red(env, crate::beta_model::spine_app(h1, args), crate::beta_model::spine_app(h2, args)),
+{
+    if crate::set_claims::no_unproven_step(crate::env_model::to_model_of_env(env).export) {
+        crate::set_claims::sem_red_spine(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), h1, h2, args);
+    }
+}
+
+/// A step whose soundness in the model is not proven yet: it records
+/// itself against the run's named hypothesis. Every call site is one.
+pub proof fn ksem_red_unproven<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSpec)
+    ensures
+        ksem_red(env, e, r),
+{
+    crate::set_claims::unproven_step(crate::env_model::to_model_of_env(env).export);
 }
 
 /// The output mentions no local the input did not: at EVERY binder depth, if
@@ -8046,6 +8101,7 @@ pub proof fn whnf_claim_of_pstep_star<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: 
             r,
         ) && crate::expr_model::nlbv(r) <= 0),
         scope_pres(crate::env_model::env_arena_ids(env), e, r),
+        crate::expr_model::nlbv(e) <= 0 ==> ksem_red(env, e, r),
     ensures
         whnf_claim(env, e, r),
 {
@@ -8070,6 +8126,7 @@ pub proof fn whnf_claim_of_nofv<'x, 't>(env: Env<'x, 't>, e: ExprSpec, r: ExprSp
             r,
         ) && crate::expr_model::nlbv(r) <= 0),
         scope_pres(crate::env_model::env_arena_ids(env), e, r),
+        crate::expr_model::nlbv(e) <= 0 ==> ksem_red(env, e, r),
     ensures
         whnf_claim(env, e, r),
 {
@@ -8098,6 +8155,7 @@ pub proof fn whnf_claim_sort<'x, 't>(env: Env<'x, 't>, l1: crate::level_model::L
     kconv_of_deq(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
     kcw_of_step(env, ExprSpec::Sort(l1), ExprSpec::Sort(l2));
     crate::kdual::cwh_sort(kd, ke, kg, l1, l2);
+    crate::set_claims::sem_red_sort(kd, ke, kg, l1, l2);
 }
 
 /// N BETA STEPS AT ONCE, the model half of `whnf_no_unfolding_aux`'s lambda
@@ -8156,6 +8214,8 @@ pub proof fn beta_spine_claim<'x, 't>(
         crate::tc_model::deq_any_of_defeq(fm, em0, e2m);
         crate::beta_model::subst_full_nlbv_bound_n(bm, pa, 0);
         crate::beta_model::spine_app_nlbv(e1m, pb);
+        crate::set_claims::sem_red_spine_reduce(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), lam, pa);
+        crate::set_claims::sem_red_spine(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), crate::beta_model::spine_app(lam, pa), e1m, pb);
     }
     // scope: the reduct is built from the peeled body and the arguments
     assert forall|SS: ISet<nat>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), em0, SS, c) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), e2m, SS, c) by {
@@ -8214,6 +8274,8 @@ pub proof fn zeta_spine_claim<'x, 't>(
         crate::tc_model::deq_any_of_defeq(fm, em0, e2m);
         crate::beta_model::subst_full_nlbv_bound(bm, vm, 0);
         crate::beta_model::spine_app_nlbv(e1m, am);
+        crate::set_claims::sem_red_zeta(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), tm, vm, bm);
+        crate::set_claims::sem_red_spine(crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)), lm, rm, am);
     }
     assert forall|SS: ISet<nat>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), em0, SS, c) implies crate::expr_model::dbj_deep_in(crate::env_model::env_arena_ids(env), e2m, SS, c) by {
         spine_app_dbj_deep_in(crate::env_model::env_arena_ids(env), lm, am, SS, c);
@@ -8230,6 +8292,7 @@ pub proof fn whnf_claim_refl<'x, 't>(env: Env<'x, 't>, a: ExprSpec)
     let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
     kconv_refl(env, a);
     crate::kdual::cwh_refl(kd, ke, kg, a);
+    ksem_red_refl(env, a);
 }
 
 pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec, c: ExprSpec)
@@ -8242,6 +8305,7 @@ pub proof fn whnf_claim_trans<'x, 't>(env: Env<'x, 't>, a: ExprSpec, b: ExprSpec
     let (kd, ke, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::env_model::to_model_of_env(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
     if crate::expr_model::nlbv(a) <= 0 {
         kconv_trans(env, a, b, c);
+        ksem_red_trans(env, a, b, c);
     }
     crate::kdual::cwh_trans(kd, ke, kg, a, b, c);
 }
@@ -8257,6 +8321,9 @@ pub proof fn whnf_claim_proj<'x, 't>(env: Env<'x, 't>, idx: usize, a: ExprSpec, 
     let aids = crate::env_model::env_arena_ids(env);
     if crate::expr_model::nlbv(a) <= 0 {
         kconv_proj_congr(env, idx, a, b);
+        if crate::set_claims::no_unproven_step(ke.export) {
+            crate::set_claims::sem_red_proj(kd, ke, kg, idx, a, b);
+        }
     }
     crate::kdual::cwh_proj(kd, ke, kg, idx, a, b);
     assert forall|SS: ISet<nat>, c: u16| #[trigger] crate::expr_model::dbj_deep_in(aids, ExprSpec::Proj(idx, Box::new(a)), SS, c)
@@ -8753,6 +8820,7 @@ pub open spec fn lam_walk<'t>(
 }
 
 /// One more binder of the walk.
+#[verifier::spinoff_prover]
 pub proof fn lam_walk_step<'t>(
     aids: (nat, nat),
     Xs: Seq<ExprSpec>,
@@ -9939,6 +10007,7 @@ pub proof fn rec_step_claim<'x, 't>(
     let H = ExprSpec::Const(rid, lv);
     let x = crate::beta_model::spine_app(H, am);
     let mi = rd.major_idx as int;
+    ksem_red_unproven(env, x, r);
     let rule = rd.rules[ri];
     let nf = rule.nfields;
     let pre = am.subrange(0, crate::beta_model::rec_prefix(rd) as int);
@@ -10236,6 +10305,7 @@ pub proof fn quot_step_lemma<'x, 't>(
         let head = ExprSpec::Const(id, lv);
         let s0 = crate::beta_model::spine_app(head, am);
         // M7: the major replaced by its reduct, then the quotient step
+        ksem_red_unproven(env, s0, r);
         let (kd, kg) = (crate::env_model::to_model_of_declar_ty(env), crate::expr_arena_bridge::arena_lctx(crate::env_model::env_arena_ids(env)));
         let s2 = crate::beta_model::spine_app(head, args2);
         crate::kdual::cwh_replace(kd, fm, kg, head, am, q, qm);

@@ -52,6 +52,7 @@ pub open spec fn param_values(levels: Map<nat, nat>, ps: Seq<u64>) -> Seq<nat> {
 /// constant's value is a member of its type, which is a well-denoted
 /// type.
 pub open spec fn env_model(m: Model, dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec) -> bool {
+    &&& forall|i: usize| #[trigger] (m.proj)(i, pt()) == pt()
     &&& forall|c: u64, levels: Map<nat, nat>| #![trigger denv.defs[c], with_levels(m, levels)]
         denv.defs.contains_key(c) ==> {
             let m2 = with_levels(m, levels);
@@ -65,6 +66,20 @@ pub open spec fn env_model(m: Model, dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: 
             &&& is_type(value_of(m2, dty[c].1))
             &&& mem((m.consts)(c, param_values(levels, dty[c].0)), value_of(m2, dty[c].1))
         }
+}
+
+/// **The run's named hypothesis**: the checker took no step on this
+/// export whose soundness in the model is not proven. Each such step
+/// calls `unproven_step`, under the path condition that it is taken, so
+/// the theorem holds for the runs that take none. A misplaced call can
+/// only make the theorem vacuous, never false.
+pub uninterp spec fn no_unproven_step(export: nat) -> bool;
+
+#[verifier::external_body]
+pub proof fn unproven_step(export: nat)
+    ensures
+        !no_unproven_step(export),
+{
 }
 
 /// **A satisfied context**: each local's value is a member of its type,
@@ -285,6 +300,135 @@ pub proof fn delta_sound(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_
             subst_env_lookup(m.levels, ps, ls, i);
         }
         assert(param_values(levels, ps) =~= ls.map_values(|l: LevelSpec| level_value(m, l)));
+    }
+}
+
+pub open spec fn mk_app(f: ExprSpec, a: ExprSpec) -> ExprSpec {
+    ExprSpec::App(Box::new(f), Box::new(a))
+}
+
+/// **A step at an application's head**: an application that is not a
+/// proof has a head that is not one (a proof applied is a proof), so a
+/// sound head step keeps the application's value and invariant.
+pub proof fn app_head_sound(m: Model, f: ExprSpec, f2: ExprSpec, a: ExprSpec)
+    requires
+        denoted(m, mk_app(f, a)),
+        value_of(m, mk_app(f, a)) != pt(),
+        denoted(m, f) && value_of(m, f) != pt() ==> denoted(m, f2) && value_of(m, f2) == value_of(m, f),
+    ensures
+        denoted(m, mk_app(f2, a)),
+        value_of(m, mk_app(f2, a)) == value_of(m, mk_app(f, a)),
+{
+    axiom_app_pt(value_of(m, a));
+    assert(value_of(m, f) != pt());
+}
+
+pub proof fn sem_red_app_head(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, f: ExprSpec, f2: ExprSpec, a: ExprSpec)
+    requires
+        sem_red(dty, denv, lctx, f, f2),
+    ensures
+        sem_red(dty, denv, lctx, mk_app(f, a), mk_app(f2, a)),
+{
+    assert forall|m: Model| admissible(m, dty, denv, lctx) && denoted(m, mk_app(f, a)) && value_of(m, mk_app(f, a)) != pt()
+        implies denoted(m, mk_app(f2, a)) && value_of(m, mk_app(f2, a)) == value_of(m, mk_app(f, a)) by {
+        app_head_sound(m, f, f2, a);
+    }
+}
+
+/// A sound head step stays sound under any argument spine.
+pub proof fn sem_red_spine(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, h: ExprSpec, h2: ExprSpec, args: Seq<ExprSpec>)
+    requires
+        sem_red(dty, denv, lctx, h, h2),
+    ensures
+        sem_red(dty, denv, lctx, crate::beta_model::spine_app(h, args), crate::beta_model::spine_app(h2, args)),
+    decreases args.len(),
+{
+    if args.len() > 0 {
+        let init = args.subrange(0, args.len() - 1);
+        sem_red_spine(dty, denv, lctx, h, h2, init);
+        sem_red_app_head(dty, denv, lctx, crate::beta_model::spine_app(h, init), crate::beta_model::spine_app(h2, init), args[args.len() - 1]);
+    }
+}
+
+/// **Beta, as a claim.**
+pub proof fn sem_red_beta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, t: ExprSpec, b: ExprSpec, a: ExprSpec)
+    ensures
+        sem_red(dty, denv, lctx, mk_app(ExprSpec::Bind(BinderKind::Lam, Box::new(t), Box::new(b)), a), crate::beta_model::subst1(b, a)),
+{
+    let e = mk_app(ExprSpec::Bind(BinderKind::Lam, Box::new(t), Box::new(b)), a);
+    assert forall|m: Model| admissible(m, dty, denv, lctx) && denoted(m, e) && value_of(m, e) != pt()
+        implies denoted(m, crate::beta_model::subst1(b, a)) && value_of(m, crate::beta_model::subst1(b, a)) == value_of(m, e) by {
+        beta_sound(m, closed_env(m), t, b, a);
+    }
+}
+
+/// **Zeta, as a claim.**
+pub proof fn sem_red_zeta(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, t: ExprSpec, v: ExprSpec, b: ExprSpec)
+    ensures
+        sem_red(dty, denv, lctx, ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b)), crate::beta_model::subst1(b, v)),
+{
+    let e = ExprSpec::Let(Box::new(t), Box::new(v), Box::new(b));
+    assert forall|m: Model| admissible(m, dty, denv, lctx) && denoted(m, e) && value_of(m, e) != pt()
+        implies denoted(m, crate::beta_model::subst1(b, v)) && value_of(m, crate::beta_model::subst1(b, v)) == value_of(m, e) by {
+        zeta_sound(m, closed_env(m), t, v, b);
+    }
+}
+
+/// The model's telescoped beta (`spine_reduce`) is a chain of head steps.
+pub proof fn sem_red_spine_reduce(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, head: ExprSpec, args: Seq<ExprSpec>)
+    ensures
+        sem_red(dty, denv, lctx, crate::beta_model::spine_app(head, args), crate::beta_model::spine_reduce(head, args)),
+    decreases args.len(),
+{
+    if args.len() == 0 {
+        sem_red_refl(dty, denv, lctx, head);
+    } else {
+        let a0 = args[0];
+        let rest = args.subrange(1, args.len() as int);
+        match head {
+            ExprSpec::Bind(BinderKind::Lam, t, b) => {
+                let target = crate::beta_model::subst1(*b, a0);
+                sem_red_beta(dty, denv, lctx, *t, *b, a0);
+                sem_red_spine(dty, denv, lctx, mk_app(head, a0), target, rest);
+                crate::beta_model::spine_app_peel_front(head, a0, rest);
+                assert(seq![a0] + rest =~= args);
+                sem_red_spine_reduce(dty, denv, lctx, target, rest);
+                sem_red_trans(dty, denv, lctx, crate::beta_model::spine_app(head, args), crate::beta_model::spine_app(target, rest),
+                    crate::beta_model::spine_reduce(target, rest));
+            },
+            _ => {
+                sem_red_refl(dty, denv, lctx, crate::beta_model::spine_app(head, args));
+            },
+        }
+    }
+}
+
+/// Projection keeps a reduction's claim: a projection that is not a proof
+/// has a subject that is not one.
+pub proof fn sem_red_proj(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, i: usize, a: ExprSpec, b: ExprSpec)
+    requires
+        sem_red(dty, denv, lctx, a, b),
+    ensures
+        sem_red(dty, denv, lctx, ExprSpec::Proj(i, Box::new(a)), ExprSpec::Proj(i, Box::new(b))),
+{
+    let pa = ExprSpec::Proj(i, Box::new(a));
+    let pb = ExprSpec::Proj(i, Box::new(b));
+    assert forall|m: Model| admissible(m, dty, denv, lctx) && denoted(m, pa) && value_of(m, pa) != pt()
+        implies denoted(m, pb) && value_of(m, pb) == value_of(m, pa) by {
+        assert((m.proj)(i, pt()) == pt());
+        assert(value_of(m, a) != pt());
+    }
+}
+
+/// A level simplification keeps a sort's value.
+pub proof fn sem_red_sort(dty: Map<u64, (Seq<u64>, ExprSpec)>, denv: crate::expr_arena_bridge::EnvSpec, lctx: Map<nat, ExprSpec>, l1: LevelSpec, l2: LevelSpec)
+    requires
+        forall|rho: Map<nat, nat>| #[trigger] crate::level_model::interp(l1, rho) == crate::level_model::interp(l2, rho),
+    ensures
+        sem_red(dty, denv, lctx, ExprSpec::Sort(l1), ExprSpec::Sort(l2)),
+{
+    assert forall|m: Model| admissible(m, dty, denv, lctx) implies value_of(m, ExprSpec::Sort(l2)) == value_of(m, ExprSpec::Sort(l1)) by {
+        assert(crate::level_model::interp(l1, m.levels) == crate::level_model::interp(l2, m.levels));
     }
 }
 

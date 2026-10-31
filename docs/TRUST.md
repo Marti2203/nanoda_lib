@@ -95,6 +95,13 @@ inaccessibles below it. `ZSet` is external so that nothing bounds its
 size; a concrete carrier such as `int` would contradict the graph laws
 by Cantor's theorem. Nothing on the export theorem's path uses them yet.
 
+The semantic claims also carry one named hypothesis about the run,
+`set_claims::no_unproven_step(export)`: the checker took no step whose
+soundness in the model is not proven. Each such step calls the trusted
+`unproven_step` (through `tc::ksem_red_unproven`) under the path
+condition that it is taken; `grep ksem_red_unproven src` lists them. A
+misplaced call can only make the theorem vacuous, never false.
+
 ## P. The parser (`src/parser.rs`)
 
 The parser decodes the export file's lines and makes one `ExportBuilder`

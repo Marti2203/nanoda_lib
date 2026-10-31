@@ -123,6 +123,35 @@ tested-input check in the kernel (a code change, so the user's call).
 | C1 | probe: interface, `denote`, `well_denoted`, beta (done) |
 | C2 | the core's semantics (done): the regimes' introduction and elimination laws (`lam_value_mem`, `app_mem_pi_value`), `Sort n : Sort (n+1)`, Pi formation at `imax`, zeta, opening a binder at a local (`denote_open`), unused locals (`denote_fresh_local`), level instantiation as a change of level valuation, closed terms reading no environment (`denote_agree`) |
 | C3 | the semantic claims and their composition laws (`src/set_claims.rs`, done): `env_model`, `sat`, `sem_red` / `sem_conv` / `sem_infer` / `sem_type`; reductions chain, reduce-then-continue on either side, symmetry, an inferred type moves along a reduction or a conversion to a type; `delta_sound` |
-| C4 | add the semantic claims to the `whnf`/`def_eq`/`infer` contracts |
+| C4 | add the semantic claims to the `whnf`/`def_eq`/`infer` contracts; `whnf_claim` done (below) |
 | C5 | the environment model: definitions, axioms, inductives as least fixed points, recursors and iota, projections, structure and unit eta, Nat literals and the Nat extension, quotients |
 | C6 | the main theorem: an accepted export has a model; no constant of type `False` |
+
+## The run's named hypothesis (option 2, chosen 2026-10-31)
+
+The recursor step on a proof major is not sound in the model without a
+check nanoda does not make: with `h : Acc r x` reducing to
+`Acc.intro x' h'`, a proof's value says nothing about `x'`, so
+`Acc.rec motive minor x h` (motive into `Type`) and its reduct can
+denote different sets on a well-denoted but ill-typed input. Con-leche
+checks the reduced major's type there; λ-congruence and eta have the
+same kind of obligation (the bodies' types).
+
+The user chose to keep nanoda unchanged and name these as a hypothesis
+first (option 2), with the checks (option 1) as a later option. The
+hypothesis is about the run: `no_unproven_step(export)`, the checker
+took no step whose soundness is not proven, and each such step calls
+`tc::ksem_red_unproven` where it is taken. The same mechanism stages
+C4/C5: a step starts marked and its mark is removed when its soundness
+is proven. At the end the marks left are option 2's residue.
+
+## C4 progress
+
+`whnf_claim` carries `ksem_red` (2026-10-31). Proven: beta (telescoped,
+`sem_red_spine_reduce`), zeta, level simplification of a sort,
+projection and spine-head congruence, chains. Marked unproven (C5):
+string-literal expansion, delta in `whnf` and lazy delta's unfolding
+(`delta_sound` covers it once level parameters are known distinct),
+recursor steps (`rec_step_claim`), `Nat.succ` and binary-operation
+folding, projection of a constructor (`reduce_proj_core`), quotient
+steps.
